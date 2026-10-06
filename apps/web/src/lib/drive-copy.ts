@@ -39,6 +39,15 @@ export const DRIVE_COPY = {
 	calloutLead: 'Who reads what.',
 	calloutBody:
 		" When an agent needs to read a file, Maskin uses that human's Drive token — Google scopes reads to files the human can already see. Agents cannot see files a human wouldn't.",
+	foldersLabel: 'Folder watches',
+	// No spec copy for these three; written for this task. There is no add-a-watch
+	// control (approved call 8), so the empty state says where watches come from.
+	foldersEmptyTitle: 'No folders are being watched',
+	foldersEmptyDescription:
+		"Watches are set up from an agent's trigger settings. Once an agent watches a folder, it shows up here.",
+	foldersError: 'Could not load folder watches',
+	stopWatch: 'Stop watch',
+	stopWatchLabel: (folder: string) => `Stop watch for ${folder}`,
 	idleHuman: 'No Drive reads yet',
 	recentActivityLabel: 'Recent Drive activity',
 	// No spec copy for the empty state; written for this task.

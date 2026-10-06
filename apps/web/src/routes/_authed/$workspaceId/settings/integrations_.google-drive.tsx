@@ -1,3 +1,4 @@
+import { FolderWatches } from '@/components/integrations/drive/folder-watches'
 import { McpTag } from '@/components/integrations/drive/mcp-tag'
 import { ScopeDriftBanner } from '@/components/integrations/drive/scope-drift-banner'
 import { ScopeChip, ScopeRow } from '@/components/integrations/drive/scope-row'
@@ -194,6 +195,12 @@ function DriveDetail() {
 						<strong className="font-medium text-foreground">{DRIVE_COPY.calloutLead}</strong>
 						{DRIVE_COPY.calloutBody}
 					</div>
+					<FolderWatches
+						nameForAccount={(account) => {
+							const human = humans.find((h) => h.email === account.toLowerCase())
+							return human ? displayName(human) : (account.split('@')[0] ?? account)
+						}}
+					/>
 				</>
 			)}
 		</div>

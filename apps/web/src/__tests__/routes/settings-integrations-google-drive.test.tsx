@@ -2,12 +2,13 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildIntegrationResponse } from '../factories'
+import { buildDriveWatch, buildIntegrationResponse } from '../factories'
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
 
 const mockUseIntegrations = vi.fn()
 const mockConnect = vi.fn()
+const mockDriveWatches = vi.fn()
 const mockFlag = vi.fn<() => boolean>(() => true)
 
 vi.mock('@tanstack/react-router', async () => {
@@ -29,6 +30,8 @@ vi.mock('@/hooks/use-feature-flag', () => ({
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => mockUseIntegrations(),
 	useConnectIntegration: () => ({ mutate: mockConnect, isPending: false }),
+	useDriveWatches: () => mockDriveWatches(),
+	useStopDriveWatch: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -85,6 +88,7 @@ describe('Google Drive detail page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockFlag.mockReturnValue(true)
+		mockDriveWatches.mockReturnValue({ data: [], isLoading: false, isError: false })
 	})
 
 	it('renders nothing Drive-related when the flag is off', () => {
@@ -94,6 +98,8 @@ describe('Google Drive detail page', () => {
 		expect(screen.getByText('Google Drive is not available yet')).toBeInTheDocument()
 		expect(screen.queryByTestId('drive-detail')).not.toBeInTheDocument()
 		expect(mockUseIntegrations).not.toHaveBeenCalled()
+		expect(mockDriveWatches).not.toHaveBeenCalled()
+		expect(screen.queryByTestId('folder-watches')).not.toBeInTheDocument()
 	})
 
 	it('shows a skeleton while the integrations load', () => {
@@ -178,6 +184,42 @@ describe('Google Drive detail page', () => {
 		expect(screen.getByText('Drive is not connected')).toBeInTheDocument()
 		await userEvent.click(screen.getByRole('button', { name: 'Connect Drive' }))
 		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive' })
+	})
+
+	it('folder watches: lists seeded watches under the human the Drive row belongs to', () => {
+		setRows([googleRow('priya@acme.test', 'actor-priya'), driveRow('priya@acme.test')])
+		mockDriveWatches.mockReturnValue({
+			data: [
+				buildDriveWatch({ folderId: 'f-rec', name: 'Meet Recordings', account: 'priya@acme.test' }),
+				buildDriveWatch({ folderId: 'f-new', name: 'Brief drop', account: 'newcomer@acme.test' }),
+			],
+			isLoading: false,
+			isError: false,
+		})
+		render(<DriveDetailPage />)
+
+		const section = screen.getByTestId('folder-watches')
+		expect(within(section).getAllByRole('listitem')).toHaveLength(2)
+		// Named through the page's own human naming: actor name, else the email local part.
+		expect(
+			within(screen.getByTestId('folder-watch-f-rec')).getByTestId('folder-watch-meta'),
+		).toHaveTextContent('Priya Shah')
+		expect(
+			within(screen.getByTestId('folder-watch-f-new')).getByTestId('folder-watch-meta'),
+		).toHaveTextContent('newcomer')
+	})
+
+	it('folder watches: no watches shows the empty state on the connected page', () => {
+		setRows([driveRow('priya@acme.test')])
+		render(<DriveDetailPage />)
+		expect(screen.getByText('No folders are being watched')).toBeInTheDocument()
+	})
+
+	it('folder watches: not rendered, and not fetched, when no Drive is connected', () => {
+		setRows([buildIntegrationResponse({ provider: 'slack', externalId: 'T1' })])
+		render(<DriveDetailPage />)
+		expect(screen.queryByTestId('folder-watches')).not.toBeInTheDocument()
+		expect(mockDriveWatches).not.toHaveBeenCalled()
 	})
 
 	it('ignores revoked rows: a revoked Drive row reads as no Drive for that human', () => {
