@@ -10,21 +10,17 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from '@/components/ui/sheet'
-import {
-	flattenMessagesOldestFirst,
-	useConversation,
-	useConversationMessages,
-} from '@/hooks/use-conversation'
+import { useConversation, useConversationMessages } from '@/hooks/use-conversation'
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
-import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect } from 'react'
 import { z } from 'zod'
 
 // `?msg=<message id>` is the Origin block's deep-link — see `<Origin>` at
@@ -49,7 +45,6 @@ function ConversationThreadPage() {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
-	const updateMe = useUpdateConversationMe(workspaceId)
 	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
 	// Read once at this route per the feature-flags rule
 	// (`.claude/rules/feature-flags.md`) and threaded down as boolean props. Each
@@ -79,7 +74,6 @@ function ConversationThreadPage() {
 	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
 	// flags use above.
 	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
-	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
 	// Chat-level aggregate — one events fetch per chat time-window, shared
@@ -103,19 +97,7 @@ function ConversationThreadPage() {
 		})
 	}, [navigate, workspaceId, conversationId])
 
-	// Mark the newest message read once it's loaded — mirrors the "open = read"
-	// convention used elsewhere (subscriptions markRead on open).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: updateMe is a stable mutation handle; including it would rerun this on every render without changing behavior
-	useEffect(() => {
-		if (!conversation) return
-		const messages = flattenMessagesOldestFirst(messagesData)
-		const newest = messages[messages.length - 1]
-		if (!newest || newest.id <= 0) return
-		if (newest.id === conversation.last_read_message_id) return
-		if (lastMarkedRef.current === newest.id) return
-		lastMarkedRef.current = newest.id
-		updateMe.mutate({ id: conversationId, data: { last_read_message_id: newest.id } })
-	}, [conversation, messagesData, conversationId])
+	useMarkConversationRead(conversationId, workspaceId)
 
 	// P toggles the Produced pane. Skipped when the user is typing in an
 	// editable element (input/textarea/contentEditable) so composer keystrokes

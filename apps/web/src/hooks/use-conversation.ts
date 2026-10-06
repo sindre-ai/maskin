@@ -228,3 +228,18 @@ export function useRemoveConversationParticipant(id: string, workspaceId: string
 		},
 	})
 }
+
+/** The loop's shared group chat. Idempotent server-side: the first call creates it. */
+export function useLoopChat(loopId: string, workspaceId: string, options?: { enabled?: boolean }) {
+	const queryClient = useQueryClient()
+	return useQuery({
+		queryKey: queryKeys.conversations.loop(loopId),
+		queryFn: async () => {
+			const chat = await api.conversations.loopChat(loopId, workspaceId)
+			queryClient.setQueryData(queryKeys.conversations.detail(chat.id), chat)
+			return chat
+		},
+		enabled: !!loopId && !!workspaceId && (options?.enabled ?? true),
+		staleTime: Number.POSITIVE_INFINITY,
+	})
+}

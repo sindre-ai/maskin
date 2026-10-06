@@ -35,7 +35,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ParticipantsPopover } from './participants-popover'
+import { ParticipantsButton } from './participants-button'
 
 interface ThreadHeaderProps {
 	workspaceId: string
@@ -157,8 +157,6 @@ export function ThreadHeader({
 	}
 
 	const participants = conversation.participants
-	const visibleAvatars = participants.slice(0, 3)
-	const overflowCount = participants.length - visibleAvatars.length
 	const loopName = loop?.name ?? null
 	const loopLabel = loopName
 		? loopName.length > LOOP_CHIP_MAX
@@ -256,37 +254,12 @@ export function ThreadHeader({
 				</Tooltip>
 			</div>
 			<div className="flex flex-wrap items-center gap-2">
-				<ParticipantsPopover
+				<ParticipantsButton
 					workspaceId={workspaceId}
 					conversationId={conversationId}
 					participants={participants}
 					createdBy={conversation.createdBy}
-				>
-					<button
-						type="button"
-						className="inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full px-1.5 hover:bg-accent"
-						aria-label={`${participants.length} participants — manage`}
-					>
-						<span className="flex items-center -space-x-1.5">
-							{visibleAvatars.map((p) => (
-								<ActorAvatar
-									key={p.actorId}
-									id={p.actorId}
-									name={p.actorName}
-									type={p.actorType}
-									size="sm"
-									className="ring-2 ring-background"
-								/>
-							))}
-						</span>
-						{overflowCount > 0 ? (
-							<span className="text-[10.5px] font-bold text-muted-foreground">
-								+{overflowCount}
-							</span>
-						) : null}
-						<Plus size={11} className="text-muted-foreground" aria-hidden />
-					</button>
-				</ParticipantsPopover>
+				/>
 				{v4Polish && loopId && loopLabel ? (
 					<Tooltip>
 						<TooltipTrigger asChild>

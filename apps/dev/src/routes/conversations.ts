@@ -5,7 +5,9 @@ import {
 	conversationParticipants,
 	conversations,
 	messages,
+	objects,
 	sessions,
+	triggers,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
@@ -200,6 +202,29 @@ async function loadConversationWithAuth(db: Database, conversationId: string, ca
 	return row ?? null
 }
 
+type ConversationWithAuth = NonNullable<Awaited<ReturnType<typeof loadConversationWithAuth>>>
+
+/** The caller-scoped detail payload shared by GET /:id and the loop-chat get-or-create. */
+async function buildConversationDetail(
+	db: Database,
+	row: ConversationWithAuth,
+	id: string,
+): Promise<z.infer<typeof conversationDetailResponseSchema>> {
+	const [participantsByConversation, unreadByConversation] = await Promise.all([
+		loadParticipantsByConversation(db, [id]),
+		loadUnreadCounts(db, row.participant.actorId, [id]),
+	])
+	return {
+		...serialize(row.conversation),
+		loop_id: row.conversation.loopId,
+		pinned: row.participant.pinned,
+		archived: row.participant.archived,
+		unread_count: unreadByConversation.get(id) ?? 0,
+		last_read_message_id: row.participant.lastReadMessageId ?? null,
+		participants: participantsByConversation.get(id) ?? [],
+	} as z.infer<typeof conversationDetailResponseSchema>
+}
+
 // POST / - Create conversation
 const createConversationRoute = createRoute({
 	method: 'post',
@@ -321,6 +346,7 @@ app.openapi(createConversationRoute, (async (c) => {
 	return c.json(
 		{
 			...serialize(conversation),
+			loop_id: conversation.loopId,
 			pinned: false,
 			archived: false,
 			unread_count: 0,
@@ -330,6 +356,111 @@ app.openapi(createConversationRoute, (async (c) => {
 		201,
 	)
 }) as RouteHandler<typeof createConversationRoute, Env>)
+
+// POST /loop/:loopId - Get or create the loop's shared group chat
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const loopChatRoute = createRoute({
+	method: 'post',
+	path: '/loop/{loopId}',
+	tags: ['Conversations'],
+	summary: "Get or create a loop's shared group chat",
+	description:
+		"Idempotent. Returns the loop's single conversation (creating it on first call), joins the caller, and adds every agent that runs one of the loop's steps.",
+	request: { headers: workspaceIdHeader, params: z.object({ loopId: z.string().uuid() }) },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: conversationDetailResponseSchema } },
+			description: 'Loop chat',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'No such loop' },
+	},
+})
+
+app.openapi(loopChatRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({
+			id: objects.id,
+			title: objects.title,
+			metadata: objects.metadata,
+			createdBy: objects.createdBy,
+		})
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+	if (!loop) return c.json(createApiError('NOT_FOUND', 'Loop not found'), 404)
+
+	// Agents on the loop = targets of the step triggers in metadata.trigger_ids.
+	const rawTriggerIds = (loop.metadata as { trigger_ids?: unknown } | null)?.trigger_ids
+	const triggerIds = Array.isArray(rawTriggerIds)
+		? rawTriggerIds.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+	const agentRows =
+		triggerIds.length === 0
+			? []
+			: await db
+					.select({ actorId: triggers.targetActorId })
+					.from(triggers)
+					.where(and(inArray(triggers.id, triggerIds), eq(triggers.workspaceId, workspaceId)))
+	const candidateIds = Array.from(
+		new Set([
+			callerId,
+			loop.createdBy,
+			...agentRows.map((r) => r.actorId).filter((id): id is string => !!id),
+		]),
+	)
+	const memberIds = await loadWorkspaceMemberIds(db, workspaceId, candidateIds)
+	const participantIds = candidateIds.filter((id) => memberIds.has(id))
+
+	const findChat = () =>
+		db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(and(eq(conversations.loopId, loopId), eq(conversations.workspaceId, workspaceId)))
+			.limit(1)
+			.then((r) => r[0])
+	let chat = await findChat()
+	if (!chat) {
+		// onConflictDoNothing: a concurrent first open loses the unique-index race
+		// and falls through to the re-select below.
+		const [created] = await db
+			.insert(conversations)
+			.values({
+				workspaceId,
+				title: loop.title ?? 'Untitled loop',
+				createdBy: callerId,
+				loopId,
+				titleAutoState: 'manual',
+			})
+			.onConflictDoNothing()
+			.returning({ id: conversations.id })
+		if (created) {
+			await recordEvent(db, {
+				workspaceId,
+				actorId: callerId,
+				action: 'conversation_created',
+				entityType: 'conversation',
+				entityId: created.id,
+				data: { loop_id: loopId, participant_actor_ids: participantIds },
+			})
+		}
+		chat = created ?? (await findChat())
+	}
+	if (!chat) throw new Error('Failed to create loop chat')
+
+	await addParticipantsToConversation(db, chat.id, participantIds, callerId)
+
+	const row = await loadConversationWithAuth(db, chat.id, callerId)
+	if (!row) throw new Error('Caller is not a participant of the loop chat')
+	return c.json(await buildConversationDetail(db, row, chat.id), 200)
+}) as RouteHandler<typeof loopChatRoute, Env>)
 
 // GET / - List caller's active conversations
 const listConversationsRoute = createRoute({
@@ -454,6 +585,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 	return c.json({
 		conversations: page.map((r) => ({
 			...serialize(r.conversation),
+			loop_id: r.conversation.loopId,
 			pinned: r.participant.pinned,
 			archived: r.participant.archived,
 			unread_count: unreadByConversation.get(r.conversation.id) ?? 0,
@@ -493,18 +625,7 @@ app.openapi(getConversationRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
-	const [participantsByConversation, unreadByConversation] = await Promise.all([
-		loadParticipantsByConversation(db, [id]),
-		loadUnreadCounts(db, callerId, [id]),
-	])
-	return c.json({
-		...serialize(row.conversation),
-		pinned: row.participant.pinned,
-		archived: row.participant.archived,
-		unread_count: unreadByConversation.get(id) ?? 0,
-		last_read_message_id: row.participant.lastReadMessageId ?? null,
-		participants: participantsByConversation.get(id) ?? [],
-	} as z.infer<typeof conversationDetailResponseSchema>)
+	return c.json(await buildConversationDetail(db, row, id))
 }) as RouteHandler<typeof getConversationRoute, Env>)
 
 // PATCH /:id - Rename
@@ -558,18 +679,7 @@ app.openapi(updateConversationRoute, (async (c) => {
 		data: { title: body.title },
 	})
 
-	const [participantsByConversation, unreadByConversation] = await Promise.all([
-		loadParticipantsByConversation(db, [id]),
-		loadUnreadCounts(db, callerId, [id]),
-	])
-	return c.json({
-		...serialize(updated),
-		pinned: row.participant.pinned,
-		archived: row.participant.archived,
-		unread_count: unreadByConversation.get(id) ?? 0,
-		last_read_message_id: row.participant.lastReadMessageId ?? null,
-		participants: participantsByConversation.get(id) ?? [],
-	} as z.infer<typeof conversationDetailResponseSchema>)
+	return c.json(await buildConversationDetail(db, { ...row, conversation: updated }, id))
 }) as RouteHandler<typeof updateConversationRoute, Env>)
 
 // POST /:id/participants - Add participant(s)

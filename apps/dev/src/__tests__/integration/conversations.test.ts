@@ -14,7 +14,13 @@ import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertObject,
+	insertSession,
+	insertTrigger,
+	insertWorkspace,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -85,6 +91,54 @@ describe('Conversations Integration', () => {
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		workspaceId = ws.id
+	})
+
+	describe('loop chat get-or-create', () => {
+		async function insertLoop(agentId: string) {
+			const trigger = await insertTrigger(db, workspaceId, ownerId, agentId)
+			const loop = await insertObject(db, workspaceId, ownerId, {
+				type: 'loop',
+				metadata: { trigger_ids: [trigger?.id] },
+			})
+			return loop as NonNullable<typeof loop>
+		}
+
+		it('creates one chat per loop, with the loop agents as participants', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const loop = await insertLoop(agent.id)
+			const { app } = createConversationsApp(ownerId)
+
+			const call = () =>
+				app.request(
+					jsonRequest('POST', `/api/conversations/loop/${loop.id}`, undefined, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+			const first = (await (await call()).json()) as {
+				id: string
+				loop_id: string
+				participants: Array<{ actorId: string }>
+			}
+			const second = (await (await call()).json()) as { id: string }
+
+			expect(first.loop_id).toBe(loop.id)
+			expect(second.id).toBe(first.id)
+			expect(first.participants.map((p) => p.actorId).sort()).toEqual([ownerId, agent.id].sort())
+			const rows = await db.select().from(conversations).where(eq(conversations.loopId, loop.id))
+			expect(rows).toHaveLength(1)
+		})
+
+		it('returns 404 for an object that is not a loop', async () => {
+			const notALoop = await insertObject(db, workspaceId, ownerId, { type: 'task' })
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest('POST', `/api/conversations/loop/${notALoop?.id}`, undefined, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(404)
+		})
 	})
 
 	describe('create + list + detail', () => {

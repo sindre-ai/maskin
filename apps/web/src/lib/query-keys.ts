@@ -26,6 +26,7 @@ export const queryKeys = {
 		listInfinitePrefix: (workspaceId: string) =>
 			['conversations', workspaceId, 'listInfinite'] as const,
 		detail: (id: string) => ['conversations', 'detail', id] as const,
+		loop: (loopId: string) => ['conversations', 'loop', loopId] as const,
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,

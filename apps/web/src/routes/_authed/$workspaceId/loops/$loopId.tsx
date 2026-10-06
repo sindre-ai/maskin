@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { LoopChatPanel } from '@/components/loops/loop-chat-panel'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -26,6 +27,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
@@ -51,6 +53,11 @@ const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
+	// `?tab=chat` opens the loop's group chat; Overview is the default and never
+	// appears in the URL.
+	validateSearch: (search: Record<string, unknown>): { tab?: 'chat' } => ({
+		tab: search.tab === 'chat' ? 'chat' : undefined,
+	}),
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
@@ -66,6 +73,7 @@ interface ProposedEdit {
 
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
+	const { tab } = Route.useSearch()
 	const { workspaceId, workspace } = useWorkspace()
 	// Sub-flag for D5 (bet/d166-loops-v4-polish). Off → the Targets & owners
 	// section never renders even when the loop has targets, so a rollback is
@@ -341,6 +349,23 @@ function LoopDetailRoute() {
 		<>
 			<PageHeader
 				title={loop.name ?? 'Untitled loop'}
+				titleTabs={
+					<Tabs
+						value={tab ?? 'overview'}
+						onValueChange={(next) =>
+							navigate({
+								to: '/$workspaceId/loops/$loopId',
+								params: { workspaceId, loopId },
+								search: { tab: next === 'chat' ? 'chat' : undefined },
+							})
+						}
+					>
+						<TabsList variant="segmented">
+							<TabsTrigger value="overview">Overview</TabsTrigger>
+							<TabsTrigger value="chat">Chat</TabsTrigger>
+						</TabsList>
+					</Tabs>
+				}
 				actions={
 					confirmDelete ? (
 						// Inline confirm mirrors the agent-detail delete affordance
@@ -414,131 +439,137 @@ function LoopDetailRoute() {
 					)
 				}
 			/>
-			<div className="mx-auto flex w-full max-w-3xl flex-col">
-				<EditableTitle
-					value={loop.name}
-					entityId={loop.id}
-					onChange={object ? handleUpdateTitle : undefined}
-					ariaLabel="Loop title"
-					placeholder="Untitled loop"
-				/>
-
-				{/* The loop's promise, written the same way an object's document body
-				    is — the description IS the summary now. */}
-				{object && (
-					<ObjectDetailBody
-						object={object}
-						workspaceId={workspaceId}
-						onContentChange={handleUpdateContent}
+			{tab === 'chat' ? (
+				<div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
+					<LoopChatPanel loopId={loopId} workspaceId={workspaceId} />
+				</div>
+			) : (
+				<div className="mx-auto flex w-full max-w-3xl flex-col">
+					<EditableTitle
+						value={loop.name}
+						entityId={loop.id}
+						onChange={object ? handleUpdateTitle : undefined}
+						ariaLabel="Loop title"
+						placeholder="Untitled loop"
 					/>
-				)}
 
-				{isInstalledFromMarketplace && (
-					<Link
-						to="/$workspaceId/marketplace"
-						params={{ workspaceId }}
-						className="mt-3 text-[13px] leading-[1.55] text-muted-foreground hover:text-foreground hover:underline"
-					>
-						Installed from marketplace
-					</Link>
-				)}
+					{/* The loop's promise, written the same way an object's document body
+				    is — the description IS the summary now. */}
+					{object && (
+						<ObjectDetailBody
+							object={object}
+							workspaceId={workspaceId}
+							onContentChange={handleUpdateContent}
+						/>
+					)}
 
-				{/* Stable aria-live wrapper for the D3 AskBanner (loops-v4-polish
+					{isInstalledFromMarketplace && (
+						<Link
+							to="/$workspaceId/marketplace"
+							params={{ workspaceId }}
+							className="mt-3 text-[13px] leading-[1.55] text-muted-foreground hover:text-foreground hover:underline"
+						>
+							Installed from marketplace
+						</Link>
+					)}
+
+					{/* Stable aria-live wrapper for the D3 AskBanner (loops-v4-polish
 				    umbrella flag). The wrapper element is permanent so screen
 				    readers announce the banner appearance without racing the DOM
 				    swap — banner content swaps in and out of the wrapper, the
 				    wrapper does not swap. Never put aria-live on the banner. */}
-				{loopsV4Polish && (
-					<div
-						aria-live="polite"
-						aria-atomic="true"
-						data-testid="ask-banner-live-region"
-						className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
-					>
-						{askBannerVisible && (
-							<AskBanner
-								agentName={askAgentName}
-								askText={askText}
-								jumpHref={decideJumpHref}
-								onDecideClick={handleDecideClick}
-								pendingCount={pendingCount}
-								avatarId={askAgentActor?.id}
-								avatarType={askAvatarType}
+					{loopsV4Polish && (
+						<div
+							aria-live="polite"
+							aria-atomic="true"
+							data-testid="ask-banner-live-region"
+							className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
+						>
+							{askBannerVisible && (
+								<AskBanner
+									agentName={askAgentName}
+									askText={askText}
+									jumpHref={decideJumpHref}
+									onDecideClick={handleDecideClick}
+									pendingCount={pendingCount}
+									avatarId={askAgentActor?.id}
+									avatarType={askAvatarType}
+								/>
+							)}
+						</div>
+					)}
+
+					<div className="mt-5">
+						{loopsV4Enabled ? (
+							<LoopStats
+								loop={loop}
+								cyclesRunning={cyclesRunning}
+								asksWaiting={asksWaiting}
+								nextFire={nextFire}
 							/>
+						) : (
+							<LoopStats loop={loop} />
 						)}
 					</div>
-				)}
 
-				<div className="mt-5">
-					{loopsV4Enabled ? (
-						<LoopStats
-							loop={loop}
-							cyclesRunning={cyclesRunning}
-							asksWaiting={asksWaiting}
-							nextFire={nextFire}
-						/>
-					) : (
-						<LoopStats loop={loop} />
+					{isPreFirstRun && (
+						<div className="mt-4">
+							<LoopFirstRunBanner triggers={loopTriggers} />
+						</div>
 					)}
-				</div>
 
-				{isPreFirstRun && (
-					<div className="mt-4">
-						<LoopFirstRunBanner triggers={loopTriggers} />
+					{targetsFlag && <TargetsAndOwners loop={loop} actors={actors} />}
+
+					<div className="mt-7">
+						<LoopFlow
+							workspaceId={workspaceId}
+							triggers={loopTriggers}
+							actors={actors}
+							childObjects={children ?? []}
+							loop={loop}
+							variant={stepFlowEnabled ? 'vertical-story' : 'status-columns'}
+							steps={loopSteps}
+						/>
 					</div>
-				)}
 
-				{targetsFlag && <TargetsAndOwners loop={loop} actors={actors} />}
-
-				<div className="mt-7">
-					<LoopFlow
-						workspaceId={workspaceId}
-						triggers={loopTriggers}
-						actors={actors}
-						childObjects={children ?? []}
-						loop={loop}
-						variant={stepFlowEnabled ? 'vertical-story' : 'status-columns'}
-						steps={loopSteps}
-					/>
-				</div>
-
-				{/* The same Activity block object detail carries (mockup 1138–1143):
+					{/* The same Activity block object detail carries (mockup 1138–1143):
 				    a mono micro-heading on a hairline rule, then the shared timeline.
 				    A loop is an object, so this is the object's own event stream. */}
-				{object && (
-					<div className="mt-9">
-						<div className="flex items-center gap-2.5">
-							<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
-								Activity
-							</span>
-							<div className="h-px flex-1 bg-muted" />
+					{object && (
+						<div className="mt-9">
+							<div className="flex items-center gap-2.5">
+								<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+									Activity
+								</span>
+								<div className="h-px flex-1 bg-muted" />
+							</div>
+							<TimelineTab
+								object={object}
+								loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+								additionalEvents={activityEvents}
+							/>
 						</div>
-						<TimelineTab
-							object={object}
-							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
-							additionalEvents={activityEvents}
-						/>
-					</div>
-				)}
-
-				<LoopUtteranceInput
-					ref={composerRef}
-					loop={loop}
-					showSuggestions={!proposedEdit}
-					onUtterance={handleUtterance}
-				>
-					{proposedEdit && (
-						<LoopProposedEdit
-							utterance={proposedEdit.utterance}
-							rows={proposedEdit.rows}
-							nextPlan={proposedEdit.nextPlan}
-							onApply={applyProposedEdit}
-							onDismiss={() => setProposedEdit(null)}
-							applying={updateObject.isPending}
-						/>
 					)}
-				</LoopUtteranceInput>
-			</div>
+
+					<LoopUtteranceInput
+						ref={composerRef}
+						loop={loop}
+						showSuggestions={!proposedEdit}
+						onUtterance={handleUtterance}
+					>
+						{proposedEdit && (
+							<LoopProposedEdit
+								utterance={proposedEdit.utterance}
+								rows={proposedEdit.rows}
+								nextPlan={proposedEdit.nextPlan}
+								onApply={applyProposedEdit}
+								onDismiss={() => setProposedEdit(null)}
+								applying={updateObject.isPending}
+							/>
+						)}
+					</LoopUtteranceInput>
+				</div>
+			)}
 		</>
 	)
 }

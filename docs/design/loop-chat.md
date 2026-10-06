@@ -1,6 +1,6 @@
 ---
 title: Loop Chat
-status: proposed
+status: first slice built
 last_updated: 2026-10-06
 ---
 
@@ -46,7 +46,7 @@ Overview). It *is* a normal conversation — same tables, API, SSE, composer and
 
 ## Backend
 
-1. `GET /api/loops/:id/chat` — get-or-create (idempotent via the unique index + `ON CONFLICT`).
+1. `POST /api/conversations/loop/:loopId` — get-or-create (idempotent via the unique index + `ON CONFLICT`).
    Title = loop name; creator = caller. Returns the conversation (same shape as
    `GET /api/conversations/:id`). Header-scoped route, so `authMiddleware` already enforces
    membership; loop id is checked to be a `type='loop'` object in the workspace (UUID-validated).
@@ -79,10 +79,17 @@ Overview). It *is* a normal conversation — same tables, API, SSE, composer and
 - Lazy: the conversation is only created when the Chat tab is first opened (or the first
   system event fires), so loops nobody chats in cost nothing.
 
-## Rollout
+## Status
 
-Behind a `loop-chat` flag read once in `loops/$loopId.tsx` (shows the tab bar). Backend is additive
-and safe for everyone, per `.claude/rules/feature-flags.md`. Delete the flag once shipped.
+Built: migration `0088`, the get-or-create endpoint, `Overview | Chat` tabs (`?tab=chat`), and the
+chat panel reusing the `/chats` thread components. Shipped without a flag — the backend change is
+additive and the chat is created lazily on first open.
+
+Not built yet: loop-activity system messages (section 4), the pinned ask strip, the tab unread
+badge, auto-sync of participants when steps change (participants are refreshed on each open).
+
+![Loop chat, desktop](loop-chat-desktop.png)
+![Loop chat, mobile](loop-chat-mobile.png)
 
 ## Verification plan
 

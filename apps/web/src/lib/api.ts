@@ -974,6 +974,11 @@ export const api = {
 		},
 		get: (id: string, workspaceId: string) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
+		loopChat: (loopId: string, workspaceId: string) =>
+			request<ConversationDetailResponse>(`/conversations/loop/${loopId}`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		create: (workspaceId: string, data: CreateConversationInput) =>
 			request<ConversationDetailResponse>('/conversations', {
 				method: 'POST',

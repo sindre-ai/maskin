@@ -302,6 +302,8 @@ export const conversationListItemResponseSchema = z.object({
 	workspaceId: z.string().uuid(),
 	title: z.string(),
 	createdBy: z.string().uuid(),
+	// Set for a loop's shared chat; null for every ordinary conversation.
+	loop_id: z.string().uuid().nullable(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

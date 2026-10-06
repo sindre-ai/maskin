@@ -599,6 +599,9 @@ export const conversations = pgTable(
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
+		// Set only for a loop's shared group chat (one per loop, enforced by the
+		// partial unique index below). Cascades with the loop object.
+		loopId: uuid('loop_id').references((): AnyPgColumn => objects.id, { onDelete: 'cascade' }),
 		// Denormalized so "my conversations ordered by last activity" is a plain
 		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
 		// the same transaction as every message insert.
@@ -608,6 +611,7 @@ export const conversations = pgTable(
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		uniqueIndex('conversations_loop_id_uniq').on(t.loopId).where(sql`${t.loopId} IS NOT NULL`),
 		check(
 			'conversations_title_auto_state_check',
 			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,

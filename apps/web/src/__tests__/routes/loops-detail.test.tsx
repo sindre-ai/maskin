@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildLoopStep, buildLoopSummary } from '../factories'
 
 const mockNavigate = vi.fn()
+let mockSearch: { tab?: 'chat' } = {}
 // Tanstack router — the route file calls `createFileRoute` at module top; the
 // mock keeps the returned options shape so the component under test can be
 // pulled off `Route.component`, matching `loops-index.test.tsx`.
@@ -17,9 +18,14 @@ vi.mock('@tanstack/react-router', async () => {
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
 			useParams: () => ({ loopId: 'loop-1' }),
+			useSearch: () => mockSearch,
 		}),
 	}
 })
+
+vi.mock('@/components/loops/loop-chat-panel', () => ({
+	LoopChatPanel: ({ loopId }: { loopId: string }) => <div>chat panel for {loopId}</div>,
+}))
 
 const mockUseLoops = vi.fn()
 const mockUseLoopSteps = vi.fn()
@@ -77,7 +83,15 @@ vi.mock('@/components/layout/page-header', () => ({
 	// Render the actions slot so the delete-affordance tests below can query it;
 	// the AskBanner tests don't assert against page-header content, so exposing
 	// actions here is safe for the whole file.
-	PageHeader: ({ actions }: { actions?: React.ReactNode }) => <>{actions}</>,
+	PageHeader: ({
+		actions,
+		titleTabs,
+	}: { actions?: React.ReactNode; titleTabs?: React.ReactNode }) => (
+		<>
+			{titleTabs}
+			{actions}
+		</>
+	),
 }))
 vi.mock('@/components/loops/loop-flow', () => ({
 	LoopFlow: () => null,
@@ -152,6 +166,7 @@ function setFlags(state: { umbrella: boolean; stepFlow: boolean }) {
 }
 
 beforeEach(() => {
+	mockSearch = {}
 	vi.clearAllMocks()
 	mockUseLoopActivity.mockReturnValue({ data: [] })
 	mockUseTriggers.mockReturnValue({ data: [] })
@@ -406,5 +421,38 @@ describe('LoopDetailRoute — delete affordance', () => {
 		expect(screen.queryByText(/Delete this loop\?/i)).not.toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
 		expect(mockNavigate).not.toHaveBeenCalled()
+	})
+})
+
+describe('LoopDetailRoute — chat tab', () => {
+	beforeEach(() => {
+		mockUseLoops.mockReturnValue({
+			data: [buildLoopSummary({ id: 'loop-1', name: 'Deal pipeline' })],
+		})
+	})
+
+	it('shows the overview by default, with Overview and Chat tabs', () => {
+		render(<LoopDetailRoute />)
+
+		expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('data-state', 'active')
+		expect(screen.getByRole('tab', { name: 'Chat' })).toBeInTheDocument()
+		expect(screen.queryByText(/chat panel for/)).not.toBeInTheDocument()
+	})
+
+	it('renders the loop chat in place of the overview when ?tab=chat', () => {
+		mockSearch = { tab: 'chat' }
+		render(<LoopDetailRoute />)
+
+		expect(screen.getByText('chat panel for loop-1')).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('data-state', 'active')
+	})
+
+	it('navigates with ?tab=chat when the Chat tab is clicked', async () => {
+		const user = userEvent.setup()
+		render(<LoopDetailRoute />)
+
+		await user.click(screen.getByRole('tab', { name: 'Chat' }))
+
+		expect(mockNavigate).toHaveBeenCalledWith(expect.objectContaining({ search: { tab: 'chat' } }))
 	})
 })
