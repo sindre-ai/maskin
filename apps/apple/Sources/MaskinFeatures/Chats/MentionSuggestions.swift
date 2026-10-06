@@ -3,19 +3,34 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The `@` picker above the composer: people in this conversation first, then the workspace.
+/// The `@` list above the composer: up to five rows, each with an avatar, the name and a role label
+/// on the right ("Human · Owner", "Agent"). Tapping a row picks it; the composer writes `@FirstName `.
 struct MentionSuggestions: View {
-	let candidates: [ChatParticipant]
-	let inConversation: Set<String>
-	let onPick: (ChatParticipant) -> Void
+	let people: [MentionPerson]
+	let onPick: (MentionPerson) -> Void
+
+	init(people: [MentionPerson], onPick: @escaping (MentionPerson) -> Void) {
+		self.people = people
+		self.onPick = onPick
+	}
+
+	/// Source-compatible with the first picker: people without roles. `inConversation` no longer
+	/// draws a tag; the roster orders those people first instead.
+	init(
+		candidates: [ChatParticipant], inConversation: Set<String> = [],
+		onPick: @escaping (ChatParticipant) -> Void
+	) {
+		self.people = candidates.map { MentionPerson(id: $0.id, name: $0.name, kind: $0.kind) }
+		self.onPick = { onPick($0.participant) }
+	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			if candidates.isEmpty {
+			if people.isEmpty {
 				Text("No one by that name").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 					.padding(MaskinSpace.s8)
 			} else {
-				ForEach(candidates.prefix(6)) { person in
+				ForEach(people.prefix(MentionRoster.maxRows)) { person in
 					Button {
 						MaskinHaptics.play(.selection)
 						onPick(person)
@@ -23,22 +38,19 @@ struct MentionSuggestions: View {
 						HStack(spacing: MaskinSpace.s6) {
 							ActorAvatar(
 								name: person.name, kind: person.kind == .agent ? .agent : .human,
-								size: MaskinSpace.s12 + MaskinSpace.s2, seed: person.id)
-							Text(person.name).maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(1)
-							Spacer(minLength: 0)
-							if person.kind == .agent {
-								Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
-							}
-							if inConversation.contains(person.id) {
-								Text("in chat").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-							}
+								size: MaskinSpace.s14 - MaskinSpace.s1, seed: person.id)
+							Text(person.name).maskinText(.body).fontWeight(.semibold)
+								.foregroundStyle(MaskinColor.ink).lineLimit(1)
+							Spacer(minLength: MaskinSpace.s4)
+							Text(person.roleLabel).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+								.lineLimit(1)
 						}
 						.padding(.horizontal, MaskinSpace.s8)
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 					}
 					.buttonStyle(.plain)
-					.accessibilityLabel("Mention \(person.name)")
+					.accessibilityLabel("Mention \(person.name), \(person.roleLabel)")
 				}
 			}
 		}
