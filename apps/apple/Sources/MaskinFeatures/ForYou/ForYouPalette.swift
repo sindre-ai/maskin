@@ -19,6 +19,11 @@ enum ForYouPalette {
 	static let failureBorder = Color(light: RGBA(0xFECACA), dark: RGBA(0x5C2326))
 	static let failureForeground = Color(light: RGBA(0xB91C1C), dark: RGBA(0xFCA5A5))
 
+	/// The Chief of Staff's amber "Co" tile and the reader's indigo bubble (iPhone mockup).
+	static let coTile = Color(light: RGBA(0xF59E0B), dark: RGBA(0xFBBF24))
+	static let coTileText = Color(light: RGBA(0xFFFFFF), dark: RGBA(0x422006))
+	static let readerBubble = Color(light: RGBA(0x4F46E5), dark: RGBA(0x4F46E5))
+
 	static let heldNote = Color(light: RGBA(0xB45309), dark: RGBA(0xFBBF24))
 
 }

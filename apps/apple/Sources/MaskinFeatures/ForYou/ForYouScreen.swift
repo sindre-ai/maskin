@@ -25,7 +25,7 @@ public struct ForYouScreen: View {
 		NavigationStack {
 			ForYouFeedView(
 				store: runtime.store, outbox: runtime.outbox,
-				openObject: openObject
+				openObject: openObject, chief: runtime.chief, environment: environment
 			)
 			.shellToolbar(environment: environment, title: "For you")
 			.task(id: environment.workspaceId) { await runtime.store.load() }
@@ -40,6 +40,10 @@ struct ForYouFeedView: View {
 	@Bindable var store: ForYouStore
 	let outbox: Outbox
 	var openObject: ((String) -> Void)?
+	/// Replies and quick questions go to the Chief of Staff through this, opening the pop-up
+	/// sheet (which needs the environment to build its chat). Nil in snapshots.
+	var chief: ChiefOfStaffDesk?
+	var environment: AppEnvironment?
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
 
@@ -72,6 +76,24 @@ struct ForYouFeedView: View {
 		.toolbar {
 			if !store.typeCounts.isEmpty { ToolbarItem(placement: .primaryAction) { filterToggle } }
 		}
+		.sheet(item: presentedBinding) { presented in
+			if let chief, let environment {
+				ChiefOfStaffSheet(environment: environment, desk: chief, presented: presented)
+					.presentationDetents([.large])
+					.presentationDragIndicator(.visible)
+			}
+		}
+		.alert(
+			"Chief of Staff", isPresented: Binding(get: { chief?.notice != nil }, set: { if !$0 { chief?.notice = nil } })
+		) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text(chief?.notice ?? "")
+		}
+	}
+
+	private var presentedBinding: Binding<ChiefOfStaffDesk.Presented?> {
+		Binding(get: { chief?.presented }, set: { if $0 == nil { chief?.dismiss() } })
 	}
 
 	// MARK: Header
@@ -237,7 +259,7 @@ struct ForYouFeedView: View {
 		DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card), expanded: true,
 			now: fixedNow ?? Date(),
-			actions: .live(store: store, entry: entry, openObject: openObject))
+			actions: .live(store: store, entry: entry, openObject: openObject), chief: chief)
 	}
 
 	private func dismiss(_ entry: FeedEntry) {
