@@ -190,4 +190,41 @@ struct ForYouSnapshotTests {
 				}, width: width, dark: dark, name: "empty-offline")
 		}
 	}
+
+	@Test("quick questions and the Chief of Staff tile render", arguments: [false, true])
+	func chiefPieces(dark: Bool) throws {
+		for width in Self.widths {
+			try render(
+				page {
+					HStack { ChiefOfStaffTile(); ChiefOfStaffTile(size: MaskinSpace.s14 + MaskinSpace.s3) }
+					QuickQuestionChips(questions: ForYouQuickQuestions.chips(for: decisionCard)) { _ in }
+				}, width: width, dark: dark, name: "chief-pieces")
+		}
+	}
+
+	@Test("the suggested line names the recommended option and its first two consequences")
+	func suggested() {
+		#expect(
+			DecisionCardView.suggestedLine(for: decision)
+				== "Suggested: 7-day window. Ships with cycle 1 tomorrow. Adds 18 support tickets in week one.")
+		#expect(
+			DecisionCardView.suggestedLine(
+				for: DecisionPrompt(title: "t", summary: "s", ask: "a", options: [DecisionOption(label: "Hold")])) == nil)
+	}
+
+	@Test("story cards render unseen and seen", arguments: [false, true])
+	func storyCards(dark: Bool) throws {
+		let card = StoryCard(
+			id: "a", unit: "Market & Competitors", headline: "1 of 10 paying orgs, and at risk",
+			updatedAt: nil, content: .briefing(headline: "h", script: "s"))
+		for width in Self.widths {
+			try render(
+				page {
+					HStack {
+						StoryCardView(card: card, isSeen: false) {}
+						StoryCardView(card: card, isSeen: true) {}
+					}
+				}, width: width, dark: dark, name: "story-cards")
+		}
+	}
 }

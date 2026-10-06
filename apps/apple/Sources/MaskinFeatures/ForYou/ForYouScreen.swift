@@ -12,6 +12,7 @@ public struct ForYouScreen: View {
 	private let environment: AppEnvironment
 	private let openObject: ((String) -> Void)?
 	@Environment(AppRuntime.self) private var appRuntime
+	@State private var storiesProvider = StoriesProvider()
 
 	public init(environment: AppEnvironment, openObject: ((String) -> Void)? = nil) {
 		self.environment = environment
@@ -25,13 +26,40 @@ public struct ForYouScreen: View {
 		NavigationStack {
 			ForYouFeedView(
 				store: runtime.store, outbox: runtime.outbox,
-				openObject: openObject
+				openObject: openObject, chief: runtime.chief, environment: environment,
+				stories: storiesProvider.store(for: environment)
 			)
 			.shellToolbar(environment: environment, title: "For you")
-			.task(id: environment.workspaceId) { await runtime.store.load() }
+			.task(id: environment.workspaceId) {
+				async let feed: Void = runtime.store.load()
+				async let stories: Void = storiesProvider.store(for: environment)?.load() ?? ()
+				_ = await (feed, stories)
+			}
 		}
 	}
 
+}
+
+/// Builds the story store for the current workspace and keeps it until the workspace changes.
+@MainActor
+final class StoriesProvider {
+	private var current: (workspace: String, store: StoriesStore)?
+
+	func store(for environment: AppEnvironment) -> StoriesStore? {
+		guard let workspace = environment.workspaceId else { return nil }
+		if let current, current.workspace == workspace { return current.store }
+		let credentials = environment.auth.credentialsProvider
+		let files = APIFilesRemote(client: environment.client, credentials: credentials)
+		let store = StoriesStore(
+			loops: APILoopsSource(
+				client: environment.client, workspaceID: workspace,
+				objects: APIObjectsRemote(client: environment.client, credentials: credentials),
+				files: files),
+			files: files, briefing: APISpokenBriefing(client: environment.client, workspaceID: workspace),
+			readerName: { [weak environment] in environment?.auth.session?.name })
+		current = (workspace, store)
+		return store
+	}
 }
 
 /// The feed itself, driven by plain stores so previews and snapshots can host it without an
@@ -40,6 +68,13 @@ struct ForYouFeedView: View {
 	@Bindable var store: ForYouStore
 	let outbox: Outbox
 	var openObject: ((String) -> Void)?
+	/// Replies and quick questions go to the Chief of Staff through this, opening the pop-up
+	/// sheet (which needs the environment to build its chat). Nil in snapshots.
+	var chief: ChiefOfStaffDesk?
+	var environment: AppEnvironment?
+	/// The briefing cards above the feed; nil in snapshots.
+	var stories: StoriesStore?
+	@State private var openStory: StoryCard?
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
 
@@ -53,6 +88,15 @@ struct ForYouFeedView: View {
 	var body: some View {
 		let entries = store.entries
 		List {
+			if let stories, !stories.cards.isEmpty {
+				StoryRow(stories: stories) { card in
+					stories.markSeen(card)
+					openStory = card
+				}
+				.listRowSeparator(.hidden)
+				.listRowBackground(Color.clear)
+				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+			}
 			if showFilters && !store.typeCounts.isEmpty { filterPills }
 			headerRows(entries: entries)
 			feedRows(entries: entries)
@@ -72,6 +116,34 @@ struct ForYouFeedView: View {
 		.toolbar {
 			if !store.typeCounts.isEmpty { ToolbarItem(placement: .primaryAction) { filterToggle } }
 		}
+		.sheet(item: presentedBinding) { presented in
+			if let chief, let environment {
+				ChiefOfStaffSheet(environment: environment, desk: chief, presented: presented)
+					.presentationDetents([.large])
+					.presentationDragIndicator(.visible)
+			}
+		}
+		.storyCover(item: $openStory) { card in
+			switch card.content {
+			case .page(let output):
+				if let environment {
+					OutcomePresenter(environment: environment, output: output, sourceName: card.unit)
+				}
+			case .briefing(let headline, let script):
+				BriefingStoryView(headline: headline, script: script)
+			}
+		}
+		.alert(
+			"Chief of Staff", isPresented: Binding(get: { chief?.notice != nil }, set: { if !$0 { chief?.notice = nil } })
+		) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text(chief?.notice ?? "")
+		}
+	}
+
+	private var presentedBinding: Binding<ChiefOfStaffDesk.Presented?> {
+		Binding(get: { chief?.presented }, set: { if $0 == nil { chief?.dismiss() } })
 	}
 
 	// MARK: Header
@@ -237,7 +309,7 @@ struct ForYouFeedView: View {
 		DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card), expanded: true,
 			now: fixedNow ?? Date(),
-			actions: .live(store: store, entry: entry, openObject: openObject))
+			actions: .live(store: store, entry: entry, openObject: openObject), chief: chief)
 	}
 
 	private func dismiss(_ entry: FeedEntry) {
@@ -336,5 +408,19 @@ private struct FailureRow: View {
 				.strokeBorder(ForYouPalette.failureBorder, lineWidth: 1)
 		)
 		.accessibilityElement(children: .combine)
+	}
+}
+
+private extension View {
+	/// Stories open full screen on iPhone/iPad; elsewhere a sheet.
+	@ViewBuilder
+	func storyCover<Item: Identifiable, Content: View>(
+		item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content
+	) -> some View {
+		#if os(iOS)
+		fullScreenCover(item: item, content: content)
+		#else
+		sheet(item: item, content: content)
+		#endif
 	}
 }

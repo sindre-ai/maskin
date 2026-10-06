@@ -10,12 +10,16 @@ public final class ForYouRuntime {
 	public let outbox: Outbox
 	public let decisions: DecisionService
 	public let store: ForYouStore
+	/// Talking to the Chief of Staff from a card; nil for an inert runtime.
+	public let chief: ChiefOfStaffDesk?
 	/// Whose queue this is.
 	public let actorId: String?
 
 	public init(
-		outbox: Outbox, decisions: DecisionService, store: ForYouStore, actorId: String? = nil
+		outbox: Outbox, decisions: DecisionService, store: ForYouStore, actorId: String? = nil,
+		chief: ChiefOfStaffDesk? = nil
 	) {
+		self.chief = chief
 		self.outbox = outbox
 		self.decisions = decisions
 		self.store = store
@@ -83,6 +87,13 @@ public final class ForYouRuntime {
 			outbox.start(events: environment.events)
 			store.start(events: environment.events)
 		}
-		return ForYouRuntime(outbox: outbox, decisions: decisions, store: store, actorId: actorId)
+		let chief = ChiefOfStaffDesk(
+			workspaceId: { environment.workspaceId },
+			make: { workspace in
+				let chats = APIChatsSource(client: environment.client, workspaceID: workspace)
+				return (ConversationsStore(api: chats, events: nil), chats)
+			}, selfActorID: actorId ?? "")
+		return ForYouRuntime(
+			outbox: outbox, decisions: decisions, store: store, actorId: actorId, chief: chief)
 	}
 }

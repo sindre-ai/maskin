@@ -19,6 +19,16 @@ enum ForYouPalette {
 	static let failureBorder = Color(light: RGBA(0xFECACA), dark: RGBA(0x5C2326))
 	static let failureForeground = Color(light: RGBA(0xB91C1C), dark: RGBA(0xFCA5A5))
 
+	/// The reader's indigo bubble (iPhone mockup).
+	static let readerBubble = Color(light: RGBA(0x4F46E5), dark: RGBA(0x4F46E5))
+
+	/// Story cards sit on a dark gradient in both modes (iPhone mockup), so their text is fixed.
+	static let storyTop = Color(light: RGBA(0x24243A), dark: RGBA(0x24243A))
+	static let storyBottom = Color(light: RGBA(0x121220), dark: RGBA(0x121220))
+	static let storyAccent = Color(light: RGBA(0xA5B4FC), dark: RGBA(0xA5B4FC))
+	static let storyRing = Color(light: RGBA(0x7C3AED), dark: RGBA(0x7C3AED))
+	static let storyText = Color(light: RGBA(0xFFFFFF), dark: RGBA(0xFFFFFF))
+
 	static let heldNote = Color(light: RGBA(0xB45309), dark: RGBA(0xFBBF24))
 
 }
