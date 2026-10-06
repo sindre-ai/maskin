@@ -23,7 +23,9 @@ final class Dictation {
 	private(set) var state: State = .idle
 	var isListening: Bool { state == .listening }
 
-	@ObservationIgnored private let engine = AVAudioEngine()
+	/// Built per session: an engine kept across sessions holds a stale input format once the audio
+	/// session has been deactivated or the route changed, and the tap then fails or delivers nothing.
+	@ObservationIgnored private var engine: AVAudioEngine?
 	@ObservationIgnored private var task: SFSpeechRecognitionTask?
 	@ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
 	@ObservationIgnored private var onText: (@MainActor (String) -> Void)?
@@ -53,26 +55,35 @@ final class Dictation {
 			self.request = request
 			generation += 1
 			let current = generation
+			let engine = AVAudioEngine()
+			self.engine = engine
 			let input = engine.inputNode
-			input.removeTap(onBus: 0)
+			let format = input.outputFormat(forBus: 0)
+			guard format.sampleRate > 0, format.channelCount > 0 else { throw DictationError.noInput }
 			input.installTap(
-				onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0),
+				onBus: 0, bufferSize: 1024, format: format,
 				block: Self.makeTap(AudioFeed(request: request)))
 			engine.prepare()
 			try engine.start()
 			task = recognizer.recognitionTask(
 				with: request,
-				resultHandler: Self.makeHandler { [weak self] text, finished in
+				resultHandler: Self.makeHandler { [weak self] text, finished, error in
 					Task { @MainActor in
 						guard let self, self.generation == current else { return }
 						if let text { self.onText?(text) }
-						if finished { self.stop() }
+						guard finished else { return }
+						self.stop()
+						if let error, text == nil, let message = Self.message(for: error) {
+							self.state = .unavailable(message)
+						}
 					}
 				})
 			state = .listening
 		} catch {
 			stop()
-			state = .unavailable("Couldn't start the microphone.")
+			state = .unavailable(
+				(error as? DictationError)?.message
+					?? "Couldn't start the microphone (\(error.localizedDescription)).")
 		}
 	}
 
@@ -84,11 +95,26 @@ final class Dictation {
 	}
 
 	nonisolated private static func makeHandler(
-		_ deliver: @escaping @Sendable (String?, Bool) -> Void
+		_ deliver: @escaping @Sendable (String?, Bool, Error?) -> Void
 	) -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void {
 		{ result, error in
-			deliver(result?.bestTranscription.formattedString, result?.isFinal == true || error != nil)
+			deliver(
+				result?.bestTranscription.formattedString, result?.isFinal == true || error != nil, error)
 		}
+	}
+
+	private enum DictationError: Error {
+		case noInput
+		var message: String { "No microphone input is available right now." }
+	}
+
+	/// What to tell the user for a recogniser error; nil for the ones that aren't failures
+	/// (cancelled by us, or nothing was said).
+	private static func message(for error: Error) -> String? {
+		let ns = error as NSError
+		if ns.domain == "kAFAssistantErrorDomain", [216, 301, 1110].contains(ns.code) { return nil }
+		if ns.domain == "kLSRErrorDomain", ns.code == 301 { return nil }
+		return "Dictation stopped: \(ns.localizedDescription)"
 	}
 
 	/// TCC calls the completion on a background queue. Written here, in a nonisolated context, the
@@ -101,10 +127,11 @@ final class Dictation {
 
 	func stop() {
 		generation += 1
-		if engine.isRunning {
-			engine.stop()
+		if let engine {
+			if engine.isRunning { engine.stop() }
 			engine.inputNode.removeTap(onBus: 0)
 		}
+		engine = nil
 		request?.endAudio()
 		task?.cancel()
 		task = nil
