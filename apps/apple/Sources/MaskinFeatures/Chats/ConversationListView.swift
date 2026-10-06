@@ -3,8 +3,9 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The sidebar column: grouped conversations with search, a New chat button, and loading,
-/// empty and offline states. Pin, archive and unread live in the long-press menu.
+/// The sidebar column: pinned chats as tiles, then conversations in inset cards by day (or by
+/// agent), with search, a New chat button, a Display menu and loading, empty and offline states.
+/// Swipe left archives; pin, archive and unread also live in the long-press menu.
 struct ConversationListView: View {
 	let store: ConversationsStore
 	@Binding var selection: String?
@@ -13,8 +14,10 @@ struct ConversationListView: View {
 	var isLive = true
 	let onNewChat: () -> Void
 
+	@AppStorage("chats.groupBy") private var storedGroupBy = ConversationGroupBy.recent.rawValue
+
 	var body: some View {
-		let groups = store.groups(query: search)
+		let sections = store.sections(query: search, currentActorID: currentActorID)
 		List(selection: $selection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…")
@@ -22,19 +25,22 @@ struct ConversationListView: View {
 					.listRowBackground(Color.clear)
 					.listRowSeparator(.hidden)
 			}
-			ForEach(groups) { group in
+			if !sections.pinned.isEmpty {
+				PinnedTiles(
+					conversations: sections.pinned, currentActorID: currentActorID, selection: $selection,
+					onUnpin: { id in Task { await store.setPinned(id, false) } }
+				)
+				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+				.listRowBackground(Color.clear)
+				.listRowSeparator(.hidden)
+			}
+			ForEach(sections.groups) { group in
 				Section {
 					ForEach(group.items) { conversation in
 						ConversationRow(conversation: conversation, currentActorID: currentActorID)
 							.tag(conversation.id)
-							.listRowSeparator(.hidden)
-							// Rows start where the section header (and the large title) start: the list's own
-							// 16pt margin. The default row insets stack on the row's own padding, so they are
-							// set explicitly, with top and bottom tightened so chats sit closer together.
-							.listRowInsets(
-								EdgeInsets(
-									top: MaskinSpace.s2, leading: MaskinSpace.s9, bottom: MaskinSpace.s2,
-									trailing: MaskinSpace.s9))
+							.listRowBackground(MaskinSurface.card)
+							.listRowSeparatorTint(MaskinSurface.separator)
 							.contextMenu { menu(for: conversation) }
 							.swipeActions(edge: .leading, allowsFullSwipe: true) {
 								Button {
@@ -67,16 +73,42 @@ struct ConversationListView: View {
 					store.scope = store.scope == .archived ? .active : .archived
 				}
 				.foregroundStyle(MaskinColor.ink4)
+				.listRowBackground(Color.clear)
 			}
 		}
-		.listStyle(.plain)
-		.overlay { overlay(isEmpty: groups.isEmpty) }
+		#if os(iOS)
+		.listStyle(.insetGrouped)
+		#else
+		.listStyle(.inset)
+		#endif
+		.scrollContentBackground(.hidden)
+		.background(MaskinSurface.grouped)
+		.overlay { overlay(isEmpty: sections.isEmpty) }
 		.refreshable { await store.refresh() }
 		.chatSearch(store: store, text: $search)
+		.onAppear { store.groupBy = ConversationGroupBy(rawValue: storedGroupBy) ?? .recent }
 		.toolbar {
 			ToolbarItem(placement: .automatic) {
 				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
 					.keyboardShortcut("n", modifiers: .command)
+			}
+			// Display stays when New and Search collapse on scroll.
+			ToolbarItem(placement: .automatic) {
+				Menu {
+					Picker(
+						"Group by",
+						selection: Binding(
+							get: { store.groupBy },
+							set: {
+								store.groupBy = $0
+								storedGroupBy = $0.rawValue
+							})
+					) {
+						ForEach(ConversationGroupBy.allCases) { Text($0.title).tag($0) }
+					}
+				} label: {
+					Label("Display", systemImage: "line.3.horizontal.decrease")
+				}
 			}
 		}
 	}
@@ -172,4 +204,73 @@ private struct ChatSearchModifier: ViewModifier {
 		text.trimmingCharacters(in: .whitespaces).isEmpty
 			|| agent.name.localizedCaseInsensitiveContains(text)
 	}
+}
+
+/// Pinned chats: a three-column grid of tiles (the agent's avatar, its name and the chat's title).
+/// A pinned chat is not listed again below.
+struct PinnedTiles: View {
+	let conversations: [ConversationSummary]
+	let currentActorID: String?
+	@Binding var selection: String?
+	let onUnpin: (String) -> Void
+
+	private let columns = Array(
+		repeating: GridItem(.flexible(), spacing: MaskinSpace.s5, alignment: .top), count: 3)
+
+	var body: some View {
+		LazyVGrid(columns: columns, spacing: MaskinSpace.s5) {
+			ForEach(conversations) { conversation in
+				Button {
+					selection = conversation.id
+				} label: {
+					PinnedTile(conversation: conversation, currentActorID: currentActorID)
+				}
+				.buttonStyle(.plain)
+				.contextMenu {
+					Button("Unpin", systemImage: "pin.slash") { onUnpin(conversation.id) }
+				}
+			}
+		}
+		.accessibilityElement(children: .contain)
+	}
+}
+
+struct PinnedTile: View {
+	let conversation: ConversationSummary
+	let currentActorID: String?
+
+	var body: some View {
+		let others = conversation.others(excluding: currentActorID)
+		VStack(spacing: MaskinSpace.s3) {
+			ConversationAvatar(participants: others, size: Self.avatarSize)
+				.frame(height: Self.avatarSize)
+				.padding(.top, MaskinSpace.s5)
+			Text(conversation.counterpartName(excluding: currentActorID))
+				.maskinText(.subhead).fontWeight(.bold)
+				.foregroundStyle(MaskinColor.ink).lineLimit(1)
+			Text(ChatPreviewText.plain(conversation.title))
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink4)
+				.multilineTextAlignment(.center)
+				.lineLimit(2, reservesSpace: true)
+				.padding(.bottom, MaskinSpace.s5)
+		}
+		.padding(.horizontal, MaskinSpace.s4)
+		.frame(maxWidth: .infinity)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+		.overlay(alignment: .topTrailing) {
+			if conversation.isUnread {
+				UnreadBadge(count: conversation.unreadCount).padding(MaskinSpace.s4)
+			}
+		}
+		.contentShape(Rectangle())
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel(
+			"\(conversation.counterpartName(excluding: currentActorID)), \(ChatPreviewText.plain(conversation.title))"
+				+ (conversation.isUnread ? ", \(conversation.unreadCount) unread" : ""))
+		.accessibilityAddTraits(.isButton)
+	}
+
+	/// 54pt: the tile's avatar.
+	static let avatarSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s11 + MaskinSpace.s1
 }

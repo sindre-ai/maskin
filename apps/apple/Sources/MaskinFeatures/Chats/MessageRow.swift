@@ -14,11 +14,15 @@ struct ThreadDivider: View {
 	let label: String
 	/// Colours the label and rules (the "new messages" marker); nil keeps the quiet default.
 	var tint: Color?
+	/// False for a system line ("Sebastian added CPO"): centred grey text with no rules.
+	var ruled = true
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
-			line
-			Text(label).maskinText(.caption).foregroundStyle(tint ?? MaskinColor.ink4).lineLimit(1)
-			line
+			if ruled { line }
+			Text(label).maskinText(.caption).foregroundStyle(tint ?? MaskinColor.ink4).lineLimit(2)
+				.multilineTextAlignment(.center)
+				.frame(maxWidth: ruled ? nil : .infinity)
+			if ruled { line }
 		}
 		.padding(.vertical, MaskinSpace.s4)
 		.accessibilityElement(children: .combine)
@@ -107,6 +111,8 @@ struct MessageRow: View {
 	@State private var showsActions = false
 	@State private var copied = false
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
+	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	/// The message's full height once laid out, and whether the reader has opened a long one.
 	@State private var fullHeight: CGFloat = 0
 	@State private var expanded = false
@@ -259,12 +265,7 @@ struct MessageRow: View {
 	/// below keeps the whole width. Long-press for message actions.
 	private var header: some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s3) {
-			ActorAvatar(
-				name: message.actorName, kind: message.author == .agent ? .agent : .human,
-				size: MaskinSpace.s12, seed: message.actorID)
-				.accessibilityHidden(true)
-			Text(message.actorName).maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinColor.ink).lineLimit(1)
+			authorLabel
 			if message.author == .agent {
 				Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
 					.accessibilityHidden(true)
@@ -276,6 +277,30 @@ struct MessageRow: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
 		.contextMenu { actions }
+	}
+
+	/// The avatar and name. An agent's open its page; a person's don't.
+	@ViewBuilder
+	private var authorLabel: some View {
+		let label = HStack(spacing: MaskinSpace.s3) {
+			ActorAvatar(
+				name: message.actorName, kind: message.author == .agent ? .agent : .human,
+				size: MaskinSpace.s12, seed: message.actorID)
+				.accessibilityHidden(true)
+			Text(message.actorName).maskinText(.subhead).fontWeight(.bold)
+				.foregroundStyle(MaskinColor.ink).lineLimit(1)
+		}
+		if message.author == .agent, let runtime {
+			Button {
+				runtime.openAgent(message.actorID)
+			} label: {
+				label.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.accessibilityLabel("\(message.actorName), open agent")
+		} else {
+			label
+		}
 	}
 
 	// MARK: Action bar

@@ -10,6 +10,7 @@ struct ChatThreadView: View {
 	let composer: ChatComposerModel
 	var conversations: ConversationsStore?
 	var onShowParticipants: () -> Void = {}
+	var onInvite: () -> Void = {}
 
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(\.horizontalSizeClass) private var sizeClass
@@ -63,19 +64,20 @@ struct ChatThreadView: View {
 				// a "More" overflow.
 				ToolbarItem(placement: .primaryAction) {
 					Menu {
-						Button {
-							searching.toggle()
-							if !searching { searchText = "" }
-						} label: {
-							Label("Search this chat", systemImage: "magnifyingglass")
-						}
-						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
 								Task { await conversations.setPinned(row.id, !row.pinned) }
 							} label: {
-								Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
+								Label(row.pinned ? "Unpin" : "Pin to top", systemImage: row.pinned ? "pin.slash" : "pin")
 							}
+						}
+						Button(action: onInvite) { Label("Invite people", systemImage: "person.badge.plus") }
+						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
+						Button {
+							searching.toggle()
+							if !searching { searchText = "" }
+						} label: {
+							Label("Search in chat", systemImage: "magnifyingglass")
 						}
 						Button {
 							newTitle = store.title
@@ -90,7 +92,7 @@ struct ChatThreadView: View {
 							Button {
 								Task { await conversations.setArchived(row.id, !row.archived) }
 							} label: {
-								Label(row.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
+								Label(row.archived ? "Unarchive chat" : "Archive chat", systemImage: "archivebox")
 							}
 						}
 					} label: {
@@ -200,6 +202,14 @@ struct ChatThreadView: View {
 					message: "Messages here reach everyone in the conversation, including agents.")
 			} else {
 				VStack(spacing: 0) {
+					if store.participants.filter({ $0.id != store.currentActorID }).count > 1 {
+						GroupHeaderPill(
+							participants: store.participants, selfID: store.currentActorID, action: onShowParticipants
+						)
+						.padding(.top, MaskinSpace.s3)
+						.padding(.horizontal, MaskinSpace.s9)
+						.frame(maxWidth: .infinity, alignment: .leading)
+					}
 					if let problem = store.syncProblem {
 						StaleThreadBanner(problem: problem) { Task { await store.refresh() } }
 							.padding(.horizontal, MaskinSpace.s9)
@@ -446,19 +456,24 @@ struct ThreadTranscript: View {
 		let sections = ThreadLayout.sections(for: items)
 		let runs = ThreadLayout.runs(in: items)
 		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+		let handoffs = ChatHandoffs.handoffs(sessions: store.agentSessions, messages: messages)
+		let handoffsByTrigger = Dictionary(grouping: handoffs, by: \.triggerMessageID)
+		let handoffSessions = Set(handoffs.map(\.sessionID))
 		// One section per day: its header stays pinned at the top while that day scrolls by (the thread's
 		// LazyVStack asks for pinned section headers).
 		ForEach(sections) { section in
 			Section {
 				ForEach(section.items) { item in
-					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID)
+					row(
+						item, answers: answers, anchors: anchors, runs: runs, byID: byID,
+						handoffs: handoffsByTrigger, handoffSessions: handoffSessions)
 				}
 			} header: {
 				if let day = section.day { DayHeader(label: ThreadLayout.dayLabel(day, now: now)) }
 			}
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
-			activity(at: context.date)
+			activity(at: context.date, excluding: handoffSessions)
 		}
 	}
 
@@ -477,8 +492,9 @@ struct ThreadTranscript: View {
 	}
 
 	@ViewBuilder
-	private func activity(at date: Date) -> some View {
-		let live = store.liveSessions(at: date)
+	private func activity(at date: Date, excluding handoffSessions: Set<String>) -> some View {
+		// A handed-off session is drawn in place, after the message that handed it over.
+		let live = store.liveSessions(at: date).filter { !handoffSessions.contains($0.id) }
 		if live.isEmpty {
 			ForEach(store.workingAgents(at: date)) { agent in
 				WorkingIndicator(agent: agent).transition(.opacity)
@@ -504,19 +520,22 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
-		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage]
+		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage],
+		handoffs: [Int: [ChatHandoff]], handoffSessions: Set<String>
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
 		case .system(let message):
-			ThreadDivider(label: message.content)
+			ThreadDivider(label: message.content, ruled: false)
 		case .unreadDivider(let count):
 			ThreadDivider(
 				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.accentStrong)
 		case .message(let message, let showsAuthor):
 			let run = runs[message.id] ?? ThreadLayout.Run()
-			if let id = message.serverID, let turn = anchors.aboveReply[id] {
+			if let id = message.serverID, let turn = anchors.aboveReply[id],
+				!handoffSessions.contains(turn.sessionID)
+			{
 				FinishedTraceView(turn: turn)
 			}
 			MessageRow(
@@ -535,8 +554,17 @@ struct ThreadTranscript: View {
 				matchIDs.contains(message.id)
 					? (message.id == currentMatchID ? MaskinColor.accentTint : MaskinColor.accentTint2) : Color.clear,
 				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
-			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
+			if let id = message.serverID, let turn = anchors.afterTrigger[id],
+				!handoffSessions.contains(turn.sessionID)
+			{
 				FinishedTraceView(turn: turn)
+			}
+			if let id = message.serverID {
+				ForEach(handoffs[id] ?? []) { handoff in
+					HandoffRow(
+						handoff: handoff, agent: store.participant(for: handoff.agentID),
+						turn: store.trace?.turnsBySession[handoff.sessionID]?.last)
+				}
 			}
 		}
 	}
