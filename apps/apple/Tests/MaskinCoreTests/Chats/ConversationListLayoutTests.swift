@@ -81,34 +81,6 @@ import Testing
 	}
 }
 
-@Suite("Chat handoffs") struct ChatHandoffTests {
-	@Test func anAgentHandingWorkToAnotherAgentIsAHandoff() {
-		let messages = [
-			chatMsg(1, by: "me", "Please draft the brief"),
-			chatMsg(2, by: "cos", name: "Chief", agent: true, "**Handing off** the draft to Relay\nDetails"),
-		]
-		let sessions = [
-			ChatAgentSession(id: "s1", actorID: "cos", status: .completed, messageID: 1),
-			ChatAgentSession(id: "s2", actorID: "relay", status: .running, messageID: 2),
-		]
-		let handoffs = ChatHandoffs.handoffs(sessions: sessions, messages: messages)
-		#expect(handoffs.map(\.sessionID) == ["s2"])
-		#expect(handoffs.first?.title == "Handing off the draft to Relay")
-		#expect(handoffs.first?.triggerMessageID == 2)
-	}
-
-	@Test func anAgentAnsweringItsOwnMessageIsNot() {
-		let messages = [chatMsg(1, by: "cos", name: "Chief", agent: true, "On it")]
-		let sessions = [ChatAgentSession(id: "s", actorID: "cos", status: .running, messageID: 1)]
-		#expect(ChatHandoffs.handoffs(sessions: sessions, messages: messages).isEmpty)
-	}
-
-	@Test func aSessionWithNoRecordedMessageIsNot() {
-		let sessions = [ChatAgentSession(id: "s", actorID: "relay", status: .running)]
-		#expect(ChatHandoffs.handoffs(sessions: sessions, messages: []).isEmpty)
-	}
-}
-
 @Suite("Group chat header") struct GroupChatSummaryTests {
 	private let people = [
 		chatMe, ChatParticipant(id: "s", name: "Sebastian", kind: .human), chatRelay,

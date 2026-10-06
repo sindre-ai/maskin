@@ -221,12 +221,12 @@ struct FinishedTraceView: View {
 				HStack(spacing: MaskinSpace.s3) {
 					if turn.failed {
 						Image(systemName: "exclamationmark.triangle.fill")
-							.foregroundStyle(MaskinColor.warning)
+							.foregroundStyle(MaskinColor.danger)
 							.accessibilityHidden(true)
 					}
 					Text(expanded && !turn.failed ? "Hide work" : turn.collapsedLabel)
 						.maskinText(.caption)
-						.foregroundStyle(turn.failed ? MaskinColor.warningStrong : MaskinColor.ink4)
+						.foregroundStyle(turn.failed ? MaskinColor.danger : MaskinColor.ink4)
 						.lineLimit(1)
 					Image(systemName: "chevron.down")
 						.font(.caption2)

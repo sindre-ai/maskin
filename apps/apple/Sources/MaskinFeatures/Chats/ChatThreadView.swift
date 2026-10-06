@@ -456,24 +456,19 @@ struct ThreadTranscript: View {
 		let sections = ThreadLayout.sections(for: items)
 		let runs = ThreadLayout.runs(in: items)
 		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-		let handoffs = ChatHandoffs.handoffs(sessions: store.agentSessions, messages: messages)
-		let handoffsByTrigger = Dictionary(grouping: handoffs, by: \.triggerMessageID)
-		let handoffSessions = Set(handoffs.map(\.sessionID))
 		// One section per day: its header stays pinned at the top while that day scrolls by (the thread's
 		// LazyVStack asks for pinned section headers).
 		ForEach(sections) { section in
 			Section {
 				ForEach(section.items) { item in
-					row(
-						item, answers: answers, anchors: anchors, runs: runs, byID: byID,
-						handoffs: handoffsByTrigger, handoffSessions: handoffSessions)
+					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID)
 				}
 			} header: {
 				if let day = section.day { DayHeader(label: ThreadLayout.dayLabel(day, now: now)) }
 			}
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
-			activity(at: context.date, excluding: handoffSessions)
+			activity(at: context.date)
 		}
 	}
 
@@ -492,9 +487,8 @@ struct ThreadTranscript: View {
 	}
 
 	@ViewBuilder
-	private func activity(at date: Date, excluding handoffSessions: Set<String>) -> some View {
-		// A handed-off session is drawn in place, after the message that handed it over.
-		let live = store.liveSessions(at: date).filter { !handoffSessions.contains($0.id) }
+	private func activity(at date: Date) -> some View {
+		let live = store.liveSessions(at: date)
 		if live.isEmpty {
 			ForEach(store.workingAgents(at: date)) { agent in
 				WorkingIndicator(agent: agent).transition(.opacity)
@@ -520,8 +514,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
-		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage],
-		handoffs: [Int: [ChatHandoff]], handoffSessions: Set<String>
+		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -533,9 +526,7 @@ struct ThreadTranscript: View {
 				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.accentStrong)
 		case .message(let message, let showsAuthor):
 			let run = runs[message.id] ?? ThreadLayout.Run()
-			if let id = message.serverID, let turn = anchors.aboveReply[id],
-				!handoffSessions.contains(turn.sessionID)
-			{
+			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
 			}
 			MessageRow(
@@ -554,17 +545,8 @@ struct ThreadTranscript: View {
 				matchIDs.contains(message.id)
 					? (message.id == currentMatchID ? MaskinColor.accentTint : MaskinColor.accentTint2) : Color.clear,
 				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
-			if let id = message.serverID, let turn = anchors.afterTrigger[id],
-				!handoffSessions.contains(turn.sessionID)
-			{
+			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
-			}
-			if let id = message.serverID {
-				ForEach(handoffs[id] ?? []) { handoff in
-					HandoffRow(
-						handoff: handoff, agent: store.participant(for: handoff.agentID),
-						turn: store.trace?.turnsBySession[handoff.sessionID]?.last)
-				}
 			}
 		}
 	}

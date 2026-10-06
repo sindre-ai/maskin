@@ -82,8 +82,7 @@ private struct ChatsContainer: View {
 		} detail: {
 			if let selection {
 				ChatThreadHost(
-					environment: environment, conversations: store, conversationID: selection,
-					onLeft: { self.selection = nil }
+					environment: environment, conversations: store, conversationID: selection
 				)
 				.id(selection)
 			} else {
@@ -153,26 +152,11 @@ private struct ChatThreadHost: View {
 	@State private var showParticipants = false
 	/// Opens the People sheet straight on its picker ("Invite people").
 	@State private var inviting = false
-	let onLeft: () -> Void
 
-	init(
-		environment: AppEnvironment, conversations: ConversationsStore, conversationID: String,
-		onLeft: @escaping () -> Void = {}
-	) {
+	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
 		self.environment = environment
 		self.conversations = conversations
 		self.conversationID = conversationID
-		self.onLeft = onLeft
-	}
-
-	/// Workspace roles of the people (agents have none), for the People sheet.
-	private func loadRoles() async -> [String: String] {
-		guard let workspaceID = environment.workspaceId else { return [:] }
-		let source: any MembersAPI = APISettingsSource(client: environment.client, workspaceID: workspaceID)
-		let members = (try? await source.list(workspaceId: workspaceID)) ?? []
-		return Dictionary(
-			members.filter { !$0.isAgent }.map { ($0.actorId, $0.role.rawValue) },
-			uniquingKeysWith: { first, _ in first })
 	}
 
 	@MainActor
@@ -223,10 +207,7 @@ private struct ChatThreadHost: View {
 			})
 			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
-				PeopleSheet(
-					chat: chat, conversations: conversations, startAdding: inviting, loadRoles: loadRoles,
-					onLeft: onLeft
-				)
+				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting)
 				.presentationDetents([.medium, .large])
 			}
 	}

@@ -38,32 +38,23 @@ struct GroupHeaderPill: View {
 	}
 }
 
-/// Who is in the conversation: each person with their role, adding more, and leaving. Roles come
-/// from the workspace members (people) and the agent's own description (agents).
+/// Who is in the conversation, with a role line, and adding more. An agent's role is its own
+/// description; people show as "Human" until member roles are available here.
 struct PeopleSheet: View {
 	let chat: ChatStore
 	let conversations: ConversationsStore
-	/// Role per person actor id ("owner", "member"), loaded when the sheet opens.
-	let loadRoles: () async -> [String: String]
-	/// Called after you have left, so the screen can drop the thread.
-	var onLeft: () -> Void = {}
 
 	@Environment(\.dismiss) private var dismiss
 	@State private var adding: Bool
 	@State private var selection: Set<String> = []
 	@State private var query = ""
 	@State private var removeTarget: ChatParticipant?
-	@State private var confirmLeave = false
-	@State private var roles: [String: String] = [:]
 
 	init(
-		chat: ChatStore, conversations: ConversationsStore, startAdding: Bool = false,
-		loadRoles: @escaping () async -> [String: String], onLeft: @escaping () -> Void = {}
+		chat: ChatStore, conversations: ConversationsStore, startAdding: Bool = false
 	) {
 		self.chat = chat
 		self.conversations = conversations
-		self.loadRoles = loadRoles
-		self.onLeft = onLeft
 		_adding = State(initialValue: startAdding)
 	}
 
@@ -83,9 +74,6 @@ struct PeopleSheet: View {
 							Label("Add someone", systemImage: "person.badge.plus")
 						}
 					}
-					Section {
-						Button("Leave chat", role: .destructive) { confirmLeave = true }
-					}
 				}
 			}
 			.confirmationDialog(
@@ -98,18 +86,6 @@ struct PeopleSheet: View {
 				}
 			} message: { person in
 				Text("\(person.name) will no longer see new messages here.")
-			}
-			.confirmationDialog("Leave this chat?", isPresented: $confirmLeave, titleVisibility: .visible) {
-				Button("Leave chat", role: .destructive) {
-					Task {
-						await chat.removeParticipant(chat.currentActorID)
-						await conversations.refresh()
-						dismiss()
-						onLeft()
-					}
-				}
-			} message: {
-				Text("You will no longer see new messages here.")
 			}
 			.searchable(text: $query, isPresented: .constant(adding), prompt: "Search people and agents")
 			.navigationTitle(adding ? "Add people" : "People · \(chat.participants.count)")
@@ -133,10 +109,7 @@ struct PeopleSheet: View {
 					}
 				}
 			}
-			.task {
-				await conversations.loadActors()
-				roles = await loadRoles()
-			}
+			.task { await conversations.loadActors() }
 		}
 	}
 
@@ -162,7 +135,7 @@ struct PeopleSheet: View {
 
 	private func roleLine(_ person: ChatParticipant) -> String {
 		PersonRoleLabel.label(
-			for: person, memberRole: roles[person.id],
+			for: person, memberRole: nil,
 			agentSummary: chat.workspaceActors.first { $0.id == person.id }?.summary)
 	}
 }

@@ -162,35 +162,6 @@ public struct ChatHandoff: Identifiable, Equatable, Sendable {
 	}
 }
 
-public enum ChatHandoffs {
-	static let maxTitleLength = 90
-
-	/// Sessions started by another agent's message. A session a person kicked off, or an agent
-	/// answering its own message, is an ordinary turn and stays out. The task title is the first
-	/// line of the handing-over message, as plain text.
-	public static func handoffs(sessions: [ChatAgentSession], messages: [ChatMessage]) -> [ChatHandoff] {
-		let byServerID = Dictionary(
-			messages.compactMap { m in m.serverID.map { ($0, m) } }, uniquingKeysWith: { first, _ in first })
-		return sessions.compactMap { session in
-			guard let id = session.messageID, let trigger = byServerID[id], trigger.author == .agent,
-				trigger.actorID != session.actorID
-			else { return nil }
-			return ChatHandoff(
-				sessionID: session.id, agentID: session.actorID, triggerMessageID: id,
-				title: title(from: trigger.content), status: session.status, startedAt: session.startedAt)
-		}
-		.sorted { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
-	}
-
-	static func title(from content: String) -> String {
-		let line =
-			content.split(whereSeparator: \.isNewline).map { String($0) }
-			.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? content
-		let plain = ChatPreviewText.plain(line)
-		return plain.count > maxTitleLength ? String(plain.prefix(maxTitleLength)) + "…" : plain
-	}
-}
-
 /// The group header pill under a thread's title: "You, Sebastian, Chief of Staff +2".
 public enum GroupChatSummary {
 	/// You first, then the others in order; past `limit` names the rest are counted.
