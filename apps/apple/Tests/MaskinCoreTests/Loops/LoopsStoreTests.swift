@@ -6,17 +6,16 @@ import Testing
 @MainActor
 @Suite("LoopsStore")
 struct LoopsStoreTests {
-	@Test("groups loops by what needs attention and drops empty sections")
-	func sections() async {
+	@Test("the list keeps the API order and flags loops that need you")
+	func flatList() async {
 		let api = FakeLoopsAPI([
 			loopRow("a", status: .paused), loopRow("b", status: .supervised, waiting: 2),
 			loopRow("c", status: .learning), loopRow("d", status: .draft),
 		])
 		let store = LoopsStore(api: api, events: nil)
 		await store.start()
-		let sections = store.sections()
-		#expect(sections.map(\.label) == ["Waiting on you", "Running", "Paused and drafts"])
-		#expect(sections.map { $0.items.map(\.id) } == [["b"], ["c"], ["a", "d"]])
+		#expect(store.filtered().map(\.id) == ["a", "b", "c", "d"])
+		#expect(store.filtered().filter(store.needsYou).map(\.id) == ["b"])
 		#expect(store.waitingCount == 2)
 	}
 
@@ -36,7 +35,7 @@ struct LoopsStoreTests {
 			api: FakeLoopsAPI([loopRow("a", name: "Sales rep"), loopRow("b", name: "Inbox triage")]),
 			events: nil)
 		await store.start()
-		#expect(store.sections(query: "triage").flatMap(\.items).map(\.id) == ["b"])
+		#expect(store.filtered(query: "triage").map(\.id) == ["b"])
 	}
 
 	@Test("an untitled loop gets a plain name")

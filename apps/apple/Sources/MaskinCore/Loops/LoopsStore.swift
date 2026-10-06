@@ -11,12 +11,6 @@ public final class LoopsStore {
 		case failed(String)
 	}
 
-	public struct Section: Identifiable, Equatable, Sendable {
-		public var id: String { label }
-		public var label: String
-		public var items: [LoopSummary]
-	}
-
 	public private(set) var loops: [LoopSummary] = []
 	public private(set) var phase: Phase = .idle
 	public private(set) var directory = ActorDirectory()
@@ -83,18 +77,10 @@ public final class LoopsStore {
 		loop.agentIDs.compactMap { directory.name($0) }
 	}
 
-	/// Waiting on you first, then running loops, then drafts and paused ones.
-	public func sections(query: String = "") -> [Section] {
+	/// Every loop, as the API ordered them, narrowed by the search text.
+	public func filtered(query: String = "") -> [LoopSummary] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		let matching = loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
-		let waiting = matching.filter(needsYou)
-		let live = matching.filter { $0.pill.isLive && !needsYou($0) }
-		let idle = matching.filter { !$0.pill.isLive && !needsYou($0) }
-		return [
-			Section(label: "Waiting on you", items: waiting),
-			Section(label: "Running", items: live),
-			Section(label: "Paused and drafts", items: idle),
-		].filter { !$0.items.isEmpty }
+		return loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }
