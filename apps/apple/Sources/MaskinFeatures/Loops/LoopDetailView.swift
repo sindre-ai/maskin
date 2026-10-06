@@ -12,10 +12,12 @@ struct LoopDetailView: View {
 
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmDelete = false
+	@State private var underTheHood = false
 
 	var body: some View {
 		ScrollView {
-			LoopDetailContent(store: store, install: install, onOpenTrigger: onOpenTrigger)
+			LoopDetailContent(
+				store: store, install: install, underTheHood: underTheHood, onOpenTrigger: onOpenTrigger)
 				.padding(MaskinSpace.s9)
 				.frame(maxWidth: 720, alignment: .leading)
 				.frame(maxWidth: .infinity)
@@ -41,6 +43,7 @@ struct LoopDetailView: View {
 			}
 			ToolbarItem(placement: .primaryAction) {
 				Menu {
+					Toggle("Under the hood", systemImage: "wrench.and.screwdriver", isOn: $underTheHood)
 					Button {
 						runtime?.buildInChat("I'd like to change the loop \(store.loop.displayName). ")
 					} label: { Label("Change in chat", systemImage: "bubble.left") }
@@ -66,37 +69,91 @@ struct LoopDetailView: View {
 
 }
 
-/// The loop detail body without its scroll view (so it can be rendered offscreen in tests).
+/// The loop page's three tabs.
+enum LoopDetailTab: String, CaseIterable, Identifiable {
+	case outcomes = "Outcomes"
+	case actions = "Actions"
+	case activity = "Activity"
+	var id: String { rawValue }
+}
+
+/// The loop detail body without its scroll view (so it can be rendered offscreen in tests): a
+/// header, then Outcomes / Actions / Activity. "Under the hood" swaps the tabs for the loop's
+/// plumbing (flow, conditions, stats, steps).
 struct LoopDetailContent: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
+	var underTheHood = false
 	var onOpenTrigger: (String) -> Void = { _ in }
+	@State private var tab: LoopDetailTab
+
+	init(
+		store: LoopDetailStore, install: LoopInstall? = nil, underTheHood: Bool = false,
+		initialTab: LoopDetailTab = .outcomes, onOpenTrigger: @escaping (String) -> Void = { _ in }
+	) {
+		self.store = store
+		self.install = install
+		self.underTheHood = underTheHood
+		self.onOpenTrigger = onOpenTrigger
+		_tab = State(initialValue: initialTab)
+	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 			header
-			OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName)
-			LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
-			LoopFlowSection(store: store, onOpenTrigger: onOpenTrigger)
-			stats
-			pipeline
-			activity
+			if underTheHood {
+				conditions
+				LoopFlowSection(store: store, onOpenTrigger: onOpenTrigger)
+				stats
+				pipeline
+			} else {
+				Picker("Show", selection: $tab) {
+					ForEach(LoopDetailTab.allCases) { Text($0.rawValue).tag($0) }
+				}
+				.pickerStyle(.segmented)
+				switch tab {
+				case .outcomes:
+					OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName)
+					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this loop makes land here.") }
+				case .actions:
+					LoopActionsSection(store: store)
+				case .activity:
+					LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
+					activity
+				}
+			}
 		}
+	}
+
+	private func emptyNote(_ text: String) -> some View {
+		Text(text)
+			.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			.loopNote()
 	}
 
 	// MARK: Sections
 
 	private var header: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			HStack(spacing: MaskinSpace.s4) {
-				LoopPillView(pill: store.loop.pill)
-				RelativeTime(store.loop.updatedAt)
-					.maskinText(.caption)
-					.foregroundStyle(MaskinColor.ink5)
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			HStack(alignment: .top, spacing: MaskinSpace.s8) {
+				LoopProgressRing(
+					loop: store.loop, size: MaskinSpace.s14 * 2 + MaskinSpace.s4, lineWidth: MaskinSpace.s3)
+				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+					Text(store.loop.displayName).maskinText(.title).foregroundStyle(MaskinColor.ink)
+					Text("\(store.loop.cycleLabel) · \(store.loop.pill.label)")
+						.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					HStack(spacing: MaskinSpace.s4) {
+						LoopPillView(pill: store.loop.pill)
+						RelativeTime(store.loop.updatedAt)
+							.maskinText(.caption)
+							.foregroundStyle(MaskinColor.ink5)
+					}
+					.padding(.top, MaskinSpace.s2)
+				}
 			}
-			Text(store.verdict).maskinText(.headline).foregroundStyle(MaskinColor.ink)
+			Text(store.verdict).maskinText(.body).foregroundStyle(MaskinColor.ink2)
 			if let content = store.loop.content, !content.isEmpty {
-				Text(content).maskinText(.body).foregroundStyle(MaskinColor.ink2)
+				Text(content).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			}
 			if let notice = store.notice {
 				FormError(notice).onTapGesture { store.notice = nil }
@@ -113,7 +170,6 @@ struct LoopDetailContent: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
 			}
-			conditions
 		}
 	}
 

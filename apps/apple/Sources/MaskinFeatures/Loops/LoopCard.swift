@@ -53,21 +53,7 @@ struct LoopCard: View {
 	}
 
 	private var ring: some View {
-		ZStack {
-			Circle().stroke(MaskinSurface.fillStrong, lineWidth: MaskinSpace.s2)
-			Circle()
-				.trim(from: 0, to: loop.progress)
-				.stroke(
-					loop.pill.isLive ? MaskinColor.accent : MaskinColor.ink5,
-					style: StrokeStyle(lineWidth: MaskinSpace.s2, lineCap: .round)
-				)
-				.rotationEffect(.degrees(-90))
-			Text("\(Int((loop.progress * 100).rounded()))")
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink3)
-		}
-		.frame(width: Self.ringSize, height: Self.ringSize)
-		.accessibilityHidden(true)
+		LoopProgressRing(loop: loop, size: Self.ringSize, lineWidth: MaskinSpace.s2)
 	}
 
 	private var needsPill: some View {
@@ -123,4 +109,30 @@ extension LoopSummary {
 
 	/// "Cycle 3": the cycle now running, one past those already closed.
 	var cycleLabel: String { "Cycle \(closedCount + 1)" }
+}
+
+/// The loop's progress as a ring with the percentage inside: the card's 40pt and the page
+/// header's larger one are the same view.
+struct LoopProgressRing: View {
+	let loop: LoopSummary
+	let size: CGFloat
+	let lineWidth: CGFloat
+
+	var body: some View {
+		ZStack {
+			Circle().stroke(MaskinSurface.fillStrong, lineWidth: lineWidth)
+			Circle()
+				.trim(from: 0, to: loop.progress)
+				.stroke(
+					loop.pill.isLive ? MaskinColor.accent : MaskinColor.ink5,
+					style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+				)
+				.rotationEffect(.degrees(-90))
+			Text("\(Int((loop.progress * 100).rounded()))")
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink3)
+		}
+		.frame(width: size, height: size)
+		.accessibilityHidden(true)
+	}
 }

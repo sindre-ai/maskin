@@ -3,6 +3,11 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+extension View {
+	/// A quiet one-line note on a card (empty states).
+	func loopNote() -> some View { loopCard() }
+}
+
 private extension View {
 	func loopCard() -> some View {
 		padding(MaskinSpace.s8)
@@ -48,7 +53,7 @@ struct OutcomesSection: View {
 	}
 }
 
-/// What the agents said on the loop's timeline, newest first.
+/// What the agents said on the loop's timeline, newest first, in one grouped card.
 struct LoopPostsSection: View {
 	let posts: [LoopPost]
 	let directory: ActorDirectory
@@ -62,11 +67,15 @@ struct LoopPostsSection: View {
 				SectionHeader("From the agents") {
 					Text("\(posts.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
 				}
-				ForEach(showAll ? posts : Array(posts.prefix(3))) { post in
-					Button { runtime?.openObject(loopID) } label: { card(post) }
-						.buttonStyle(.plain)
-						.accessibilityHint("Opens the loop's timeline")
+				let shown = showAll ? posts : Array(posts.prefix(3))
+				VStack(spacing: 0) {
+					ForEach(Array(shown.enumerated()), id: \.element.id) { index, post in
+						row(post)
+						if index < shown.count - 1 { Divider().overlay(MaskinSurface.separator) }
+					}
 				}
+				.padding(.horizontal, MaskinSpace.s8)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
 				if posts.count > 3 {
 					Button(showAll ? "Show fewer" : "Show all \(posts.count)") { showAll.toggle() }
 						.buttonStyle(.plain)
@@ -76,14 +85,15 @@ struct LoopPostsSection: View {
 		}
 	}
 
-	private func card(_ post: LoopPost) -> some View {
+	private func row(_ post: LoopPost) -> some View {
 		let actor = directory.actor(post.actorID)
+		let name = actor?.name ?? "Someone"
 		return VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			HStack(spacing: MaskinSpace.s4) {
 				ActorAvatar(
-					name: actor?.name ?? "Someone", kind: actor?.isAgent == true ? .agent : .human,
+					name: name, kind: actor?.isAgent == true ? .agent : .human,
 					size: MaskinSpace.s11, seed: post.actorID)
-				Text(actor?.name ?? "Someone").maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+				Text(name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 				Spacer(minLength: MaskinSpace.s3)
 				if post.isDecision {
 					Text("Asks you").maskinText(.caption).foregroundStyle(MaskinColor.warningStrong)
@@ -91,17 +101,31 @@ struct LoopPostsSection: View {
 				RelativeTime(post.date, style: .compact)
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 			}
-			Text(post.text)
-				.maskinText(.body).foregroundStyle(MaskinColor.ink)
-				.lineLimit(6)
-				.frame(maxWidth: .infinity, alignment: .leading)
-			if post.replyCount > 0 {
-				Text("\(post.replyCount) \(post.replyCount == 1 ? "reply" : "replies")")
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+			Button { runtime?.openObject(loopID) } label: {
+				Text(post.text)
+					.maskinText(.body).foregroundStyle(MaskinColor.ink)
+					.lineLimit(6)
+					.multilineTextAlignment(.leading)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			.buttonStyle(.plain)
+			.accessibilityHint("Opens the loop's timeline")
+			HStack(spacing: MaskinSpace.s6) {
+				Button {
+					runtime?.buildInChat("About \(name)'s update on this loop: ")
+				} label: {
+					Label("Discuss", systemImage: "bubble.left")
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink3)
+				}
+				.buttonStyle(.plain)
+				if post.replyCount > 0 {
+					Text("\(post.replyCount) \(post.replyCount == 1 ? "reply" : "replies")")
+						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+				}
 			}
 		}
-		.loopCard()
-		.contentShape(Rectangle())
+		.padding(.vertical, MaskinSpace.s7)
 	}
 }
 
@@ -204,5 +228,132 @@ struct LoopFlowSection: View {
 			}
 		}
 		.loopCard()
+	}
+}
+
+/// What the loop wants from you and what it is doing: decisions waiting, objects in motion, and
+/// what runs next, all from the loop's own posts, members and steps.
+struct LoopActionsSection: View {
+	let store: LoopDetailStore
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+			needsYou
+			inMotion
+			comingUp
+		}
+	}
+
+	private var decisions: [LoopPost] { store.posts.filter(\.isDecision) }
+
+	private var needsYou: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			SectionHeader("Needs you")
+			if decisions.isEmpty {
+				Text("Nothing needs you on this loop right now.")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.loopNote()
+			} else {
+				ForEach(decisions) { post in
+					Button { runtime?.openObject(store.loop.id) } label: {
+						VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+							HStack {
+								MonoLabel("Decision")
+								Spacer(minLength: MaskinSpace.s3)
+								RelativeTime(post.date, style: .compact)
+									.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+							}
+							Text(post.text)
+								.maskinText(.body).foregroundStyle(MaskinColor.ink)
+								.lineLimit(5)
+								.frame(maxWidth: .infinity, alignment: .leading)
+							Text("Decide ›")
+								.maskinText(.subhead).fontWeight(.semibold)
+								.foregroundStyle(MaskinColor.ink3)
+								.frame(maxWidth: .infinity, alignment: .trailing)
+						}
+						.loopCard()
+						.contentShape(Rectangle())
+					}
+					.buttonStyle(.plain)
+					.accessibilityHint("Opens the loop's timeline")
+				}
+			}
+		}
+	}
+
+	/// Members still on their way: everything but those in the workflow's last status.
+	private var movingMembers: [LoopMember] {
+		let done = store.overview.statusOrder.last
+		return store.overview.members.filter { $0.status != done }
+	}
+
+	private var inMotion: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			SectionHeader("In motion") {
+				Text("\(movingMembers.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+			}
+			if movingMembers.isEmpty {
+				Text("Nothing is in flight.")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.loopNote()
+			} else {
+				VStack(spacing: 0) {
+					let shown = Array(movingMembers.prefix(8))
+					ForEach(Array(shown.enumerated()), id: \.element.id) { index, member in
+						Button { runtime?.openObject(member.id) } label: {
+							HStack(spacing: MaskinSpace.s5) {
+								Text(member.title).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+									.lineLimit(2)
+								Spacer(minLength: MaskinSpace.s3)
+								Text(MaskinStatus.label(for: member.status))
+									.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+							}
+							.padding(.vertical, MaskinSpace.s5)
+							.contentShape(Rectangle())
+						}
+						.buttonStyle(.plain)
+						if index < shown.count - 1 { Divider().overlay(MaskinSurface.separator) }
+					}
+					if movingMembers.count > 8 {
+						Text("+\(movingMembers.count - 8) more")
+							.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.vertical, MaskinSpace.s3)
+					}
+				}
+				.padding(.horizontal, MaskinSpace.s8)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+			}
+		}
+	}
+
+	private var comingUp: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			SectionHeader("Coming up")
+			if store.steps.isEmpty {
+				Text("This loop runs on its triggers.")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.loopNote()
+			} else {
+				VStack(spacing: 0) {
+					ForEach(Array(store.steps.enumerated()), id: \.element.id) { index, step in
+						HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s6) {
+							Text(step.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+							Spacer(minLength: MaskinSpace.s3)
+							Text(step.firesSummary)
+								.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+								.multilineTextAlignment(.trailing)
+						}
+						.padding(.vertical, MaskinSpace.s5)
+						.accessibilityElement(children: .combine)
+						if index < store.steps.count - 1 { Divider().overlay(MaskinSurface.separator) }
+					}
+				}
+				.padding(.horizontal, MaskinSpace.s8)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+			}
+		}
 	}
 }
