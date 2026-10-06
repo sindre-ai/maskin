@@ -1,5 +1,5 @@
-import { integrations } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { events, integrations } from '@maskin/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -45,6 +45,19 @@ async function insertDriveRow(
 		})
 		.returning()
 	return row
+}
+
+async function stopEvents(workspaceId: string) {
+	return db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityType, 'integration'),
+				eq(events.action, 'updated'),
+			),
+		)
 }
 
 async function storedConfig(id: string) {
@@ -226,6 +239,11 @@ describe('DELETE /api/integrations/google-drive/watched-folders/:folderId (integ
 		expect(config.drive?.channelId).toBe('chan-1')
 		expect(config.system_actor_id).toBe('keep-me')
 
+		// The stop is audited against the Drive row it changed.
+		const audit = await stopEvents(workspaceId)
+		expect(audit).toHaveLength(1)
+		expect(audit[0]).toMatchObject({ entityId: row.id, data: { drive_watch_stopped: 'f-two' } })
+
 		const list = await app().request(BASE, { headers: headers(workspaceId) })
 		const ids = ((await list.json()) as { folderId: string }[]).map((w) => w.folderId)
 		expect(ids).toEqual(['f-one', 'f-three'])
@@ -245,6 +263,8 @@ describe('DELETE /api/integrations/google-drive/watched-folders/:folderId (integ
 		expect(res.status).toBe(404)
 		expect(((await res.json()) as { error: { code: string } }).error.code).toBe('NOT_FOUND')
 		expect((await storedConfig(row.id)).drive?.watchedFolders).toHaveLength(1)
+		// Nothing changed, so nothing is audited.
+		expect(await stopEvents(workspaceId)).toHaveLength(0)
 	})
 
 	it('a folder id from another workspace is a 404 and that workspace keeps its watch', async () => {
@@ -280,6 +300,9 @@ describe('DELETE /api/integrations/google-drive/watched-folders/:folderId (integ
 			'f-a-only',
 		])
 		expect((await storedConfig(b.id)).drive?.watchedFolders).toEqual([])
+		// One audit event per Drive row that held the folder.
+		const audit = await stopEvents(workspaceId)
+		expect(audit.map((e) => e.entityId).sort()).toEqual([a.id, b.id].sort())
 	})
 
 	it('rejects a folder id with characters Drive never issues', async () => {

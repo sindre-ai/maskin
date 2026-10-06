@@ -1,6 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import {
 	listDriveWatches,
 	stopDriveWatch,
@@ -93,11 +94,28 @@ const stopWatchedFolderRoute = createRoute({
 
 app.openapi(stopWatchedFolderRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { folderId } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const stopped = await stopDriveWatch(db, workspaceId, folderId)
-	if (stopped === 0) return c.json(createApiError('NOT_FOUND', 'Folder watch not found'), 404)
+	// The audit event rides in the same commit as the rewrite, one per Drive row
+	// that held the folder.
+	const stopped = await db.transaction(async (tx) => {
+		const integrationIds = await stopDriveWatch(tx, workspaceId, folderId)
+		for (const integrationId of integrationIds) {
+			await recordEvent(tx, {
+				workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: integrationId,
+				data: { drive_watch_stopped: folderId },
+			})
+		}
+		return integrationIds
+	})
+	if (stopped.length === 0)
+		return c.json(createApiError('NOT_FOUND', 'Folder watch not found'), 404)
 	return c.json({ ok: true as const, folderId })
 }) as RouteHandler<typeof stopWatchedFolderRoute, Env>)
 

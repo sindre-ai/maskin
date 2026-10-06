@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { integrations, triggers } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -123,18 +123,18 @@ export async function listDriveWatches(db: Database, workspaceId: string): Promi
  * Remove the folder from config.drive.watchedFolders on every Drive row in the
  * workspace that holds it. One UPDATE, so the filter and the write cannot
  * interleave with another writer touching a different part of the same row, and
- * the row count is the not-found signal. Returns the number of rows changed; 0
- * means the workspace has no such watch.
+ * the returned ids are the not-found signal. Returns the ids of the rows changed;
+ * empty means the workspace has no such watch.
  *
  * The inner reference is written as literal "integrations.config": a Drizzle
  * column object inside a correlated subquery renders unqualified (see
  * known-pitfalls.md).
  */
 export async function stopDriveWatch(
-	db: Database,
+	db: Database | Transaction,
 	workspaceId: string,
 	folderId: string,
-): Promise<number> {
+): Promise<string[]> {
 	const containsFolder = JSON.stringify([{ folderId }])
 	const rows = await db
 		.update(integrations)
@@ -160,5 +160,5 @@ export async function stopDriveWatch(
 			),
 		)
 		.returning({ id: integrations.id })
-	return rows.length
+	return rows.map((r) => r.id)
 }
