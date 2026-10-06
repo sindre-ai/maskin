@@ -11,6 +11,8 @@ public struct RootView: View {
 	@State private var runtime: AppRuntime
 	/// Names and kinds for the in-app links that appear in markdown (chat messages, comments).
 	@State private var links: InternalLinkDirectory
+	/// Thumbnails for the photos attached to chat messages.
+	@State private var chatImages: ChatImageLoader
 private let onRuntimeReady: (AppRuntime) -> Void
 	/// Resolves the seeded Chief of Staff conversation's id for the signed-in workspace, if one
 	/// exists. The first-use screen offers "Open the welcome chat" only when this returns an id.
@@ -34,6 +36,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		self.welcomeConversationId = welcomeConversationId
 		self.onRuntimeReady = onRuntimeReady
 		_runtime = State(initialValue: AppRuntime(environment: environment, push: push))
+		_chatImages = State(
+			initialValue: ChatImageLoader(
+				files: APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)))
 		_links = State(
 			initialValue: InternalLinkDirectory(
 				remote: APIObjectsRemote(client: environment.client, credentials: environment.auth.credentialsProvider)))
@@ -62,6 +67,13 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.handlesDeepLinks(runtime.router) { runtime.present($0) }
 		.environment(\.markdownInternalLinkHandler, { @MainActor [runtime] url in runtime.open(url) })
 		.environment(\.markdownInternalLinkInfo, { @MainActor [links] url in links.info(for: url) })
+		.environment(
+			\.attachmentImages,
+			AttachmentImages(
+				cached: { [chatImages] id in chatImages.cachedImage(for: id) },
+				load: { [chatImages] id in await chatImages.image(for: id) })
+		)
+		.environment(\.openAttachment, { @MainActor [runtime] id in runtime.openFile(id) })
 		.task { onRuntimeReady(runtime) }
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }
 		.task(id: auth.credentials) { environment.syncEvents() }

@@ -30,35 +30,29 @@ struct ThreadDivider: View {
 	}
 }
 
-/// Files a message cites (read-only chips: name and size, never an id).
+/// What a message attaches: photos as pictures (one large, several as tiles) and every other file
+/// as a chip. Each opens the file.
 struct MessageAttachments: View {
 	let attachments: [ChatAttachmentRef]
 	var alignment: HorizontalAlignment = .leading
 
 	var body: some View {
 		if !attachments.isEmpty {
-			ChipFlow {
-				ForEach(attachments) { file in
-					HStack(spacing: MaskinSpace.s3) {
-						Image(systemName: (file.mimeType ?? "").hasPrefix("image/") ? "photo" : "doc")
-							.foregroundStyle(MaskinColor.ink3).accessibilityHidden(true)
-						Text(file.name ?? "Attachment").maskinText(.caption).foregroundStyle(MaskinColor.ink)
-							.lineLimit(1).truncationMode(.middle)
-						if let size = ChatByteFormat.string(file.sizeBytes) {
-							Text(size).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-						}
+			let photos = attachments.filter(\.isImage)
+			let files = attachments.filter { !$0.isImage }
+			VStack(alignment: alignment, spacing: MaskinSpace.s3) {
+				if photos.count == 1, let photo = photos.first {
+					AttachmentThumbnail(file: photo, style: .large)
+				} else if photos.count > 1 {
+					ChipFlow {
+						ForEach(photos) { AttachmentThumbnail(file: $0, style: .tile) }
 					}
-					.padding(.horizontal, MaskinSpace.s5)
-					.frame(minHeight: MaskinSpace.s12 + MaskinSpace.s4, alignment: .leading)
-					.frame(maxWidth: 260, alignment: .leading)
-					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
-					.overlay(
-						RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
-							.strokeBorder(MaskinSurface.line, lineWidth: 1))
-					.accessibilityElement(children: .combine)
-					.accessibilityLabel("Attachment \(file.name ?? "file")")
+				}
+				if !files.isEmpty {
+					ChipFlow { ForEach(files) { MessageFileChip(file: $0) } }
 				}
 			}
+			.frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
 		}
 	}
 }

@@ -82,6 +82,18 @@ private let richReply = """
 	See [the report](https://maskin.io/report) for detail.
 	"""
 
+/// A stand-in photo: a diagonal blue-to-violet gradient, so scaling and cropping are visible.
+private let samplePhoto: DecodedImage = {
+	let width = 600, height = 400
+	let context = CGContext(
+		data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+		space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+	let colors = [CGColor(red: 0.18, green: 0.45, blue: 0.95, alpha: 1), CGColor(red: 0.62, green: 0.22, blue: 0.85, alpha: 1)]
+	let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1])!
+	context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: width, y: height), options: [])
+	return DecodedImage(context.makeImage()!)
+}()
+
 @MainActor
 private func richStore() async -> ChatStore {
 	var edited4 = message(4, me, "Send it to legal too: https://maskin.io/report", minutesAgo: 6)
@@ -102,6 +114,19 @@ private func richStore() async -> ChatStore {
 			"Blocked by https://maskin.io/ws1/objects/obj2 and tracked in [the launch plan](https://maskin.io/ws1/objects/obj1), see [the docs](https://example.com).",
 			minutesAgo: 2),
 		message(10, me, "https://maskin.io/ws1/objects/obj1", minutesAgo: 1),
+		message(
+			11, sam, "Here's the kickoff photo and the brief.", minutesAgo: 1,
+			metadata: ChatSendMetadata(attachments: [
+				ChatAttachmentRef(fileID: "p1", name: "kickoff.jpg", mimeType: "image/jpeg", sizeBytes: 2_400_000),
+				ChatAttachmentRef(fileID: "d1", name: "Launch brief.pdf", mimeType: "application/pdf", sizeBytes: 380_000),
+			]).jsonValue),
+		message(
+			12, me, "Three from the site visit", minutesAgo: 0,
+			metadata: ChatSendMetadata(attachments: [
+				ChatAttachmentRef(fileID: "p2", name: "a.jpg", mimeType: "image/jpeg", sizeBytes: 900_000),
+				ChatAttachmentRef(fileID: "p3", name: "b.jpg", mimeType: "image/jpeg", sizeBytes: 900_000),
+				ChatAttachmentRef(fileID: "p4", name: "c.jpg", mimeType: "image/jpeg", sizeBytes: 900_000),
+			]).jsonValue),
 	]
 	// Read up to Relay's reply: Sam's later message is "new".
 	let api = FixtureAPI(rows, lastRead: 2)
@@ -205,6 +230,7 @@ struct ChatSnapshotTests {
 			// Ample height: `ImageRenderer` sizes a tall transcript before its text wraps and then squeezes
 						// paragraphs to one line. The app lays this out in a scroll view with no height limit.
 						let content = ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9)
+							.environment(\.attachmentImages, AttachmentImages(cached: { _ in samplePhoto }, load: { _ in samplePhoto }))
 							.environment(\.markdownInternalLinkInfo, { url in
 								guard let link = DeepLink(url: url), case .object(_, let id) = link else { return nil }
 								// obj1 has been looked up; obj2 has not, so it shows its kind only.
@@ -212,10 +238,10 @@ struct ChatSnapshotTests {
 									? MarkdownLinkInfo(symbol: "scope", kindLabel: "Bet", title: "Launch video campaign")
 									: MarkdownLinkInfo(symbol: "checkmark.square", kindLabel: "Task")
 							})
-							.frame(height: 1700, alignment: .top)
+							.frame(height: 2200, alignment: .top)
 						_ = try render(content, width: width, dark: dark, name: "thread-rich")
 		}
-		#expect(store.messages.count == 10)
+		#expect(store.messages.count == 12)
 	}
 
 	@Test("conversation list rows render grouped", arguments: [false, true])
