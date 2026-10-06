@@ -84,19 +84,28 @@ struct ObjectRow: View {
 	}
 }
 
-/// Section header for a status group.
+/// Section header for a group: a type (colour square, mono label, count) or a status.
 struct ObjectGroupHeader: View {
 	let group: ObjectGroup
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			if let status = Optional(group.id), !status.isEmpty {
-				StatusBadge(status, style: .dotWord)
+			if group.isType {
+				RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+					.fill(MaskinObjectType.colors(for: group.id).fg)
+					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+					.accessibilityHidden(true)
+				Text((group.title ?? group.id).uppercased())
+					.maskinText(.mono)
+					.foregroundStyle(MaskinColor.ink3)
+			} else if !group.id.isEmpty {
+				StatusBadge(group.id, style: .dotWord)
 			}
 			Text("\(group.objects.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
 			Spacer()
 		}
 		.textCase(nil)
+		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}
 }

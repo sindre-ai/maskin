@@ -23,6 +23,11 @@ public final class LoopsStore {
 	/// Loop object id → install info (only loops installed from the marketplace).
 	public private(set) var installs: [String: LoopInstall] = [:]
 	public var notice: String?
+	/// Per-loop card extras (stage, latest update), loaded lazily by `loadDigests`.
+	public private(set) var digests: [String: LoopDigest] = [:]
+	@ObservationIgnored private var digestStamps: [String: Date?] = [:]
+	/// Each digest is a graph read, so only this many of the newest loops get one per pass.
+	static let digestLimit = 10
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
 	public private(set) var freshness = Freshness()
 
@@ -87,9 +92,9 @@ public final class LoopsStore {
 	public func sections(query: String = "") -> [Section] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
 		let matching = loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
-		let waiting = matching.filter { $0.pill == .waitingOnYou }
-		let live = matching.filter { $0.pill.isLive && $0.pill != .waitingOnYou }
-		let idle = matching.filter { !$0.pill.isLive }
+		let waiting = matching.filter(needsYou)
+		let live = matching.filter { $0.pill.isLive && !needsYou($0) }
+		let idle = matching.filter { !$0.pill.isLive && !needsYou($0) }
 		return [
 			Section(label: "Waiting on you", items: waiting),
 			Section(label: "Running", items: live),
@@ -98,6 +103,36 @@ public final class LoopsStore {
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }
+
+	/// A loop needs the viewer when it is blocked on them or has a decision waiting.
+	public func needsYou(_ loop: LoopSummary) -> Bool {
+		loop.pill == .waitingOnYou || loop.waitingCount > 0 || digests[loop.id]?.hasDecision == true
+	}
+
+	/// Running loops that need the viewer (a paused loop is not in motion, so it is not counted).
+	public var needYouCount: Int { loops.filter { $0.status.isLive && needsYou($0) }.count }
+
+	/// "3 outcomes in motion. 2 need you." Nil when no loop is running.
+	public var summaryLine: String? {
+		let running = loops.filter { $0.status.isLive }
+		guard !running.isEmpty else { return nil }
+		let moving = "\(running.count) \(running.count == 1 ? "outcome" : "outcomes") in motion."
+		let needs = needYouCount
+		guard needs > 0 else { return moving }
+		return moving + " \(needs) \(needs == 1 ? "needs" : "need") you."
+	}
+
+	/// Fills in card extras for the newest live loops, skipping ones already current.
+	public func loadDigests() async {
+		let candidates = loops.filter { $0.status != .draft }
+			.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+			.prefix(Self.digestLimit)
+		for loop in candidates where digestStamps[loop.id] != .some(loop.updatedAt) {
+			guard let overview = try? await api.digestSource(loopID: loop.id) else { continue }
+			digests[loop.id] = LoopDigest.build(from: overview)
+			digestStamps[loop.id] = .some(loop.updatedAt)
+		}
+	}
 
 	// MARK: Loading
 

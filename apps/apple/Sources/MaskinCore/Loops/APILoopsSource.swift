@@ -57,6 +57,21 @@ public struct APILoopsSource: LoopsAPI {
 			statusOrder: order)
 	}
 
+	public func digestSource(loopID: String) async throws -> LoopOverview {
+		guard let objects else { return .empty }
+		let graph = try await objects.graph(objectId: loopID)
+		let members = LoopOverviewBuilder.members(from: graph)
+		var order: [String] = []
+		if let type = LoopPhases.primaryType(of: members),
+			let schema = try? await objects.schema(workspaceId: workspaceID)
+		{
+			order = schema.statuses(for: type)
+		}
+		return LoopOverview(
+			members: members, posts: LoopOverviewBuilder.posts(from: graph.events), outputs: [],
+			statusOrder: order)
+	}
+
 	public func loops() async throws -> [LoopSummary] {
 		let output = try await client.get_sol_api_sol_loops(
 			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))

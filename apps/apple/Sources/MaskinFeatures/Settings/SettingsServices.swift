@@ -1,7 +1,8 @@
 import MaskinCore
 import SwiftUI
 
-enum SettingsRoute: Hashable {
+enum SettingsRoute: Hashable, Identifiable {
+	var id: Self { self }
 	case profile, workspace, members, integrations, apiKey, skills, billing, objectTypes, mcp
 }
 

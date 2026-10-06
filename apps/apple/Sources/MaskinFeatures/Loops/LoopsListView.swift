@@ -27,16 +27,31 @@ struct LoopsListView: View {
 					.listRowBackground(Color.clear)
 					.onTapGesture { store.notice = nil }
 			}
+			if search.isEmpty, let summary = store.summaryLine {
+				Text(summary)
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
+			}
 			ForEach(sections) { section in
 				Section {
 					ForEach(section.items) { loop in
-						LoopRow(
-							loop: loop, agentNames: store.agentNames(for: loop),
+						let digest = store.digests[loop.id]
+						LoopCard(
+							loop: loop, digest: digest,
+							authorName: store.directory.name(digest?.latestAuthorID),
+							agentCount: loop.agentIDs.count, needsYou: store.needsYou(loop),
 							hasUpdate: store.installs[loop.id]?.hasUpdate == true
 						)
 						.tag(loop.id)
 						.zoomSource(id: loop.id, in: zoomNamespace)
 						.listRowSeparator(.hidden)
+						.listRowBackground(Color.clear)
+						.listRowInsets(
+							EdgeInsets(
+								top: MaskinSpace.s3, leading: MaskinSpace.s7, bottom: MaskinSpace.s3,
+								trailing: MaskinSpace.s7))
 						.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 							if loop.status != .draft {
 								Button {
@@ -56,6 +71,10 @@ struct LoopsListView: View {
 			}
 		}
 		.listStyle(.plain)
+		.background(MaskinSurface.grouped)
+		.task(id: store.loops.map { "\($0.id)\($0.updatedAt?.timeIntervalSince1970 ?? 0)" }) {
+			await store.loadDigests()
+		}
 		.overlay { overlay(isEmpty: sections.isEmpty) }
 		.refreshable { await store.refresh() }
 	}

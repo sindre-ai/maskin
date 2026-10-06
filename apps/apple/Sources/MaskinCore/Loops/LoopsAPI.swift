@@ -21,8 +21,13 @@ public protocol LoopsAPI: Sendable {
 	/// Members, agent posts and produced files, from the loop's object graph. Best effort: a
 	/// source with no graph access returns `.empty`.
 	func overview(loopID: String) async throws -> LoopOverview
+	/// The cheaper cut of `overview` a list card needs: members, posts and status order, no files.
+	func digestSource(loopID: String) async throws -> LoopOverview
 }
 
 extension LoopsAPI {
 	public func overview(loopID: String) async throws -> LoopOverview { .empty }
+	public func digestSource(loopID: String) async throws -> LoopOverview {
+		try await overview(loopID: loopID)
+	}
 }
