@@ -238,7 +238,7 @@ struct ChatSnapshotTests {
 									? MarkdownLinkInfo(symbol: "scope", kindLabel: "Bet", title: "Launch video campaign")
 									: MarkdownLinkInfo(symbol: "checkmark.square", kindLabel: "Task")
 							})
-							.frame(height: 2200, alignment: .top)
+							.frame(height: 3200, alignment: .top)
 						_ = try render(content, width: width, dark: dark, name: "thread-rich")
 		}
 		#expect(store.messages.count == 12)

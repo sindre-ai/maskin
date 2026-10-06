@@ -505,10 +505,10 @@ struct ThreadTranscript: View {
 			let run = runs[message.id] ?? ThreadLayout.Run()
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
+				.padding(.leading, ThreadMetrics.textIndent)
 			}
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
-				endsRun: run.endsRun,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
 				questionAnswers: message.serverID.flatMap { answers[$0] },
 				onRetrySend: { store.retrySend(message.id) },
@@ -524,6 +524,7 @@ struct ThreadTranscript: View {
 				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
+				.padding(.leading, ThreadMetrics.textIndent)
 			}
 		}
 	}

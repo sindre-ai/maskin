@@ -15,7 +15,6 @@ enum ThreadWarmup {
 			_ = MarkdownParser.parse("# a\n\n- b\n\n| a |\n|---|\n| 1 |\n\n```swift\nlet x = 1\n```")
 			_ = MarkdownStandaloneLink.match("[a](https://maskin.io/x)")
 			_ = SyntaxHighlighter.attributed("let x = \"a\" // b", language: "swift")
-			_ = ChatLinks.attributed("see https://maskin.io", color: .primary)
 			_ = ChatPreviewText.plain("**a** [b](https://x.io)")
 			_ = MaskinTypeface.isAvailable(MaskinTypeface.sansFamily)
 			_ = MaskinTypeface.isAvailable(MaskinTypeface.monoFamily)

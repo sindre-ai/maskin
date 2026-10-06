@@ -76,15 +76,30 @@ struct MentionLine: View {
 	}
 }
 
-/// One message. Own messages are a right-aligned inverse plate; everyone else's (people and
-/// agents) sit left on the page with an avatar, agents rendered as markdown. An agent's question
-/// renders as tappable options under its text.
+private struct MessageHeightKey: PreferenceKey {
+	static let defaultValue: CGFloat = 0
+	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// Measurements shared by everything that sits in the thread's message column, so avatars, text,
+/// activity traces and the working indicator all line up on the same left edge.
+enum ThreadMetrics {
+	/// Avatar diameter, and so the width of the left gutter.
+	static let avatar = MaskinSpace.s14 + MaskinSpace.s2
+	static let gutterGap = MaskinSpace.s6
+	/// Where message text starts: past the gutter.
+	static var textIndent: CGFloat { avatar + gutterGap }
+}
+
+/// One message, laid out the same for you and for everyone else: an avatar in a left gutter on the
+/// first message of a run, the name, an agent tag and the time on one line, and the text beneath,
+/// full width, with no bubbles. Follow-up messages from the same author keep the gutter empty and
+/// show their time when tapped. People's and agents' words are both rendered as markdown. An
+/// agent's question renders as tappable options under its text.
 struct MessageRow: View {
 	let message: ChatMessage
 	let isOwn: Bool
 	let showsAuthor: Bool
-	/// Nothing from the same author follows directly: this bubble carries the tail and the time.
-	var endsRun = true
 	var mentionNames: [String] = []
 	/// What the human picked, once this question has been answered.
 	var questionAnswers: [ChatQuestionAnswer.Answer]?
@@ -95,14 +110,25 @@ struct MessageRow: View {
 	var onEdit: (() -> Void)?
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	@State private var selectingText = false
-	@Environment(\.markdownInternalLinkInfo) private var linkInfo
-	@Environment(\.markdownInternalLinkHandler) private var internalLinkHandler
+	/// Tapping a row shows its time (in the gutter, for a follow-up) and an action bar: Copy for the
+	/// whole message first. Text itself is selectable in place, so long-press there picks words.
+	@State private var showsActions = false
+	@State private var copied = false
+	/// The message's full height once laid out, and whether the reader has opened a long one.
+	@State private var fullHeight: CGFloat = 0
+	@State private var expanded = false
 
 	var body: some View {
-		Group {
-			if isOwn { own } else { other }
+		HStack(alignment: .top, spacing: ThreadMetrics.gutterGap) {
+			gutter
+			column
+		}
+		.contentShape(Rectangle())
+		.onTapGesture {
+			withAnimation(MaskinMotion.quick) { showsActions.toggle() }
 		}
 		.sheet(isPresented: $selectingText) { SelectTextSheet(text: message.content) }
+		.accessibilityElement(children: .contain)
 		.accessibilityActions {
 			if let onEdit { Button("Edit message", action: onEdit) }
 			if !message.content.isEmpty {
@@ -162,79 +188,195 @@ struct MessageRow: View {
 		}
 	}
 
-	// MARK: Own
+	// MARK: Layout
 
-	private var own: some View {
-		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			ownContent
-			MessageAttachments(attachments: message.attachments, alignment: .trailing)
-			MentionLine(names: mentionNames, isOwn: true)
-			statusLine
+	/// The avatar on the first message of a run; for a follow-up, empty until tapped, then the time.
+	private var gutter: some View {
+		Group {
+			if showsAuthor {
+				ActorAvatar(
+					name: message.actorName, kind: message.author == .agent ? .agent : .human,
+					size: ThreadMetrics.avatar, seed: message.actorID)
+					.accessibilityHidden(true)
+					.contentShape(Rectangle())
+					.contextMenu { actions }
+			} else if showsActions {
+				RelativeTime(message.createdAt, style: .clock)
+					.maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
+					.padding(.top, MaskinSpace.s2)
+					.transition(.opacity)
+			} else {
+				// Fixed height: a bare `Color` fills whatever height it is offered and would stretch the row.
+				Color.clear.frame(height: 0)
+			}
 		}
-		.frame(maxWidth: .infinity, alignment: .trailing)
-		// A long message can run nearly edge to edge; a short one still hugs its text.
-		.padding(.leading, MaskinSpace.s9)
-		.accessibilityElement(children: .contain)
-		.accessibilityLabel("You: \(message.content)")
+		.frame(width: ThreadMetrics.avatar, alignment: showsAuthor ? .center : .trailing)
 	}
 
-	/// Your words: a dark plate whose corner squares off only on the last bubble of a run (the
-	/// "tail"), links tappable, and a lone emoji or two shown large with no plate.
-	@ViewBuilder
-	private var ownContent: some View {
-		if message.isEmojiOnly {
-			Text(message.content)
-				.font(.system(size: Self.emojiSize))
-				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
-				.contextMenu { actions }
-		} else if let link = MarkdownStandaloneLink.match(message.content), linkInfo?(link.url) != nil {
-			// Your message is just a link into Maskin: show what it opens, not the address.
-			MarkdownLinkCard(url: link.url, title: link.title)
-				.frame(maxWidth: 360)
-				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
-				.contextMenu { actions }
-		} else {
-			Text(ChatLinks.attributed(message.content, color: MaskinSurface.onInverse))
-				// Links into Maskin open in the app, not the browser.
-				.environment(\.openURL, OpenURLAction { url in
-					internalLinkHandler?(url) == true ? .handled : .systemAction
-				})
-				.maskinText(.body)
-				.foregroundStyle(MaskinSurface.onInverse)
-				.multilineTextAlignment(.leading)
-				.padding(.horizontal, MaskinSpace.s8)
-				.padding(.vertical, MaskinSpace.s6)
-				.background(MaskinSurface.inverse, in: ownShape)
-				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
-				.overlay(alignment: .topLeading) {
-					if message.isFailed { ownShape.strokeBorder(MaskinColor.danger, lineWidth: 1.5) }
+	private var column: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			if showsAuthor { header }
+			content
+			if !message.questions.isEmpty {
+				QuestionOptionsView(
+					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
+			}
+			MessageAttachments(attachments: message.attachments)
+			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
+			MentionLine(names: mentionNames, isOwn: isOwn)
+			if message.isErrorReply {
+				Button {
+					onRetryAgent()
+				} label: {
+					Label("Try again", systemImage: "arrow.clockwise")
 				}
-				// A long-press opens the message menu; "Select text" there covers picking words.
-				.contextMenu { actions }
+				.buttonStyle(SecondaryActionButtonStyle())
+				.fixedSize(horizontal: true, vertical: false)
+				.padding(.top, MaskinSpace.s2)
+			}
+			if isOwn { statusLine }
 		}
+		// Fill the row: nothing is reserved on the trailing side.
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	/// Name, an agent tag and the time, on one baseline. Long-press for message actions.
+	private var header: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+			Text(message.actorName).maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink).lineLimit(1)
+			if message.author == .agent {
+				Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
+					.accessibilityHidden(true)
+			}
+			RelativeTime(message.createdAt, style: .clock)
+				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+		}
+		.contentShape(Rectangle())
+		.contextMenu { actions }
+	}
+
+	// MARK: Action bar
+
+	private func copyWholeMessage() {
+		Clipboard.copy(message.content)
+		MaskinHaptics.play(.success)
+		copied = true
+		Task {
+			try? await Task.sleep(for: .seconds(1.6))
+			copied = false
+		}
+	}
+
+	/// What a tap on the row offers: copy the whole message, select across paragraphs, share, edit.
+	private var actionBar: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			if !message.content.isEmpty {
+				Button(action: copyWholeMessage) {
+					barLabel(copied ? "Copied" : "Copy", copied ? "checkmark" : "doc.on.doc")
+				}
+				.buttonStyle(.plain)
+				Button { selectingText = true } label: { barLabel("Select", "selection.pin.in.out") }
+					.buttonStyle(.plain)
+				ShareLink(item: message.content) { barLabel("Share", "square.and.arrow.up") }
+					.buttonStyle(.plain)
+			}
+			if let onEdit {
+				Button(action: onEdit) { barLabel("Edit", "pencil") }.buttonStyle(.plain)
+			}
+		}
+		.padding(.top, MaskinSpace.s2)
+		.transition(.opacity)
+	}
+
+	private func barLabel(_ title: String, _ symbol: String) -> some View {
+		Label(title, systemImage: symbol)
+			.maskinText(.caption).fontWeight(.semibold)
+			.foregroundStyle(MaskinColor.ink3)
+			.padding(.horizontal, MaskinSpace.s6)
+			.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s2)
+			.background(MaskinSurface.fill, in: Capsule())
+			.contentShape(Capsule())
 	}
 
 	private static let emojiSize: CGFloat = 44
+	/// A long message shows this much, then "Show more". It only collapses if opening it would reveal
+	/// at least `collapseSlack` more, so a message a few lines over the line is never hidden.
+	private static let collapsedHeight: CGFloat = 300
+	private static let collapseSlack: CGFloat = 120
 
-	private var ownShape: UnevenRoundedRectangle {
-		UnevenRoundedRectangle(
-			topLeadingRadius: MaskinRadius.hero, bottomLeadingRadius: MaskinRadius.hero,
-			bottomTrailingRadius: endsRun ? MaskinRadius.tag2 : MaskinRadius.hero,
-			topTrailingRadius: MaskinRadius.hero, style: .continuous)
+	/// Until the message has been measured, a long text is assumed tall, so it starts collapsed
+	/// instead of drawing full height and then shrinking.
+	private var isCollapsible: Bool {
+		guard !message.isEmojiOnly, message.questions.isEmpty else { return false }
+		if fullHeight > 0 { return fullHeight > Self.collapsedHeight + Self.collapseSlack }
+		return message.content.count > 900 || message.content.filter { $0 == "\n" }.count > 16
 	}
 
+	private var isCollapsed: Bool { isCollapsible && !expanded }
+
+	/// Every message goes through the markdown renderer, as on the web. A person's line breaks are
+	/// kept (they pressed Return); an agent's soft breaks are wrapped prose. A long-press opens the
+	/// message menu; "Select text" there covers picking words.
+	@ViewBuilder
+	private var content: some View {
+		let dimmed = message.isPending && !message.isFailed
+		Group {
+			if message.isEmojiOnly {
+				Text(message.content).font(.system(size: Self.emojiSize))
+			} else {
+				MarkdownContent(message.content, style: .chat, hardBreaks: message.author == .human)
+			}
+		}
+		// Words and sentences can be selected and copied in place (long-press, then drag the handles).
+		// The whole-message actions live on the row's tap bar and the avatar/name long-press menu.
+		.textSelection(.enabled)
+		// Measured at its natural height (not squeezed by the frame below), then cropped.
+		.fixedSize(horizontal: false, vertical: true)
+		.background(
+			GeometryReader { proxy in
+				Color.clear.preference(key: MessageHeightKey.self, value: proxy.size.height)
+			}
+		)
+		.onPreferenceChange(MessageHeightKey.self) { fullHeight = $0 }
+		.frame(maxHeight: isCollapsed ? Self.collapsedHeight : nil, alignment: .top)
+		.clipped()
+		.overlay(alignment: .bottom) {
+			if isCollapsed {
+				LinearGradient(
+					colors: [MaskinSurface.grouped.opacity(0), MaskinSurface.grouped], startPoint: .top,
+					endPoint: .bottom
+				)
+				.frame(height: MaskinSpace.s14 * 2)
+				.allowsHitTesting(false)
+			}
+		}
+		.opacity(dimmed ? 0.6 : 1)
+		if isCollapsible {
+			Button {
+				withAnimation(MaskinMotion.standard) { expanded.toggle() }
+				MaskinHaptics.play(.selection)
+			} label: {
+				Label(expanded ? "Show less" : "Show more", systemImage: expanded ? "chevron.up" : "chevron.down")
+					.maskinText(.subhead).fontWeight(.semibold)
+					.foregroundStyle(MaskinColor.accentStrong)
+					.padding(.vertical, MaskinSpace.s3)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.accessibilityLabel(expanded ? "Show less of this message" : "Show the full message")
+		}
+		if message.editedAt != nil {
+			Text("edited").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+		}
+	}
+
+	/// Where your own message stands: on its way, held back, or not sent.
 	@ViewBuilder
 	private var statusLine: some View {
 		switch message.status {
 		case .sent:
-			if endsRun || message.editedAt != nil {
-				HStack(spacing: MaskinSpace.s2) {
-					if message.editedAt != nil { Text("Edited") }
-					if message.editedAt != nil, endsRun { Text("\u{00B7}").accessibilityHidden(true) }
-					if endsRun { RelativeTime(message.createdAt, style: .clock) }
-				}
-				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-			}
+			EmptyView()
 		case .sending:
 			Text("Sending…").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 		case .waiting(let reason):
@@ -244,7 +386,7 @@ struct MessageRow: View {
 			}
 			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 		case .failed(let reason):
-			VStack(alignment: .trailing, spacing: 0) {
+			VStack(alignment: .leading, spacing: 0) {
 				HStack(spacing: MaskinSpace.s4) {
 					Image(systemName: "exclamationmark.circle.fill").foregroundStyle(MaskinColor.danger)
 						.accessibilityHidden(true)
@@ -260,97 +402,9 @@ struct MessageRow: View {
 						.contentShape(Rectangle())
 				}
 				Text(reason).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-					.multilineTextAlignment(.trailing)
 			}
 			.maskinText(.caption)
 		}
-	}
-
-	// MARK: Others
-
-	private var other: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s6) {
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				if showsAuthor {
-					HStack(alignment: .center, spacing: MaskinSpace.s3) {
-						// Inline, not in a gutter: the text below keeps the whole row.
-						ActorAvatar(
-							name: message.actorName, kind: message.author == .agent ? .agent : .human,
-							size: MaskinSpace.s11, seed: message.actorID)
-							.accessibilityHidden(true)
-						Text(message.actorName).maskinText(.subhead).fontWeight(.semibold)
-							.foregroundStyle(MaskinColor.ink)
-						if message.author == .agent {
-							Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
-								.accessibilityHidden(true)
-						}
-						RelativeTime(message.createdAt, style: .clock)
-							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-					}
-					// Long-press the name for message actions. The text itself is left alone so a
-					// long-press there selects a word instead of opening a menu.
-					.contentShape(Rectangle())
-					.contextMenu { actions }
-				}
-				content
-				if !message.questions.isEmpty {
-					QuestionOptionsView(
-						questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
-				}
-				MessageAttachments(attachments: message.attachments)
-				MentionLine(names: mentionNames, isOwn: false)
-				if message.isErrorReply {
-					Button {
-						onRetryAgent()
-					} label: {
-						Label("Try again", systemImage: "arrow.clockwise")
-					}
-					.buttonStyle(SecondaryActionButtonStyle())
-					.fixedSize(horizontal: true, vertical: false)
-					.padding(.top, MaskinSpace.s2)
-				}
-			}
-			// Fill the row: nothing is reserved on the trailing side.
-			.frame(maxWidth: .infinity, alignment: .leading)
-		}
-		.accessibilityElement(children: .contain)
-	}
-
-	/// Everyone else's words go through the markdown renderer, as on the web. A person's line
-	/// breaks are kept (they pressed Return); an agent's soft breaks are wrapped prose.
-	@ViewBuilder
-	private var content: some View {
-		if message.isEmojiOnly {
-			Text(message.content).font(.system(size: Self.emojiSize)).contextMenu { actions }
-		} else {
-			MarkdownContent(message.content, style: .chat, hardBreaks: message.author == .human)
-				.contextMenu { actions }
-		}
-		if message.editedAt != nil {
-			Text("edited").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-		}
-	}
-}
-
-/// Makes the web addresses and email addresses in your own message tappable. Your text is
-/// otherwise shown as typed, with no markdown.
-enum ChatLinks {
-	private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-
-	static func attributed(_ text: String, color: Color) -> AttributedString {
-		var result = AttributedString(text)
-		guard let detector else { return result }
-		let whole = NSRange(text.startIndex..., in: text)
-		for match in detector.matches(in: text, options: [], range: whole) {
-			guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? ""),
-				let stringRange = Range(match.range, in: text),
-				let range = Range(stringRange, in: result)
-			else { continue }
-			result[range].link = url
-			result[range].underlineStyle = .single
-			result[range].foregroundColor = color
-		}
-		return result
 	}
 }
 
@@ -374,8 +428,8 @@ struct WorkingIndicator: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s5) {
-			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12 + MaskinSpace.s4, seed: agent.id, working: true)
+		HStack(spacing: ThreadMetrics.gutterGap) {
+			ActorAvatar(name: agent.name, kind: .agent, size: ThreadMetrics.avatar, seed: agent.id, working: true)
 			VStack(alignment: .leading, spacing: 0) {
 				HStack(spacing: MaskinSpace.s4) {
 					Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
