@@ -4632,6 +4632,12 @@
 													]
 												},
 												"default": {}
+											},
+											"envFrom": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
 											}
 										}
 									},
@@ -5587,6 +5593,12 @@
 													]
 												},
 												"default": {}
+											},
+											"envFrom": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
 											}
 										}
 									},
@@ -10844,7 +10856,11 @@
 										"format": "uuid"
 									},
 									"role": {
-										"type": "string"
+										"type": "string",
+										"enum": [
+											"admin",
+											"member"
+										]
 									}
 								},
 								"required": [
@@ -10873,8 +10889,65 @@
 							}
 						}
 					},
+					"400": {
+						"description": "Invalid body (role must be admin or member)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"403": {
-						"description": "Caller is not a workspace member, or the workspace has reached its seat cap",
+						"description": "Caller is a member but not a human admin or owner, or the workspace has reached its seat cap",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -10931,7 +11004,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace or actor not found",
+						"description": "Workspace not found, caller is not a member of it, or actor not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -18984,6 +19057,192 @@
 						}
 					}
 				}
+			},
+			"patch": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Update integration settings",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"expose_to_agent_sessions": {
+										"type": "boolean",
+										"description": "When false, agent sessions get neither this integration token nor its MCP server; server-side use of the credential is unaffected"
+									}
+								},
+								"required": [
+									"expose_to_agent_sessions"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Integration updated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"provider": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string"
+										},
+										"externalId": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"actorId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"missingScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
+										"needsReconnect": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"provider",
+										"status",
+										"externalId",
+										"config",
+										"actorId",
+										"createdBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
 			}
 		},
 		"/api/integrations/{id}/complete": {
@@ -23918,10 +24177,6 @@
 														"recommended": {
 															"type": "boolean",
 															"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
-														},
-														"destructive": {
-															"type": "boolean",
-															"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 														}
 													},
 													"required": [
@@ -24591,7 +24846,10 @@
 				"parameters": [
 					{
 						"schema": {
-							"type": "boolean"
+							"type": [
+								"boolean",
+								"null"
+							]
 						},
 						"required": false,
 						"name": "pinned",
@@ -24599,7 +24857,10 @@
 					},
 					{
 						"schema": {
-							"type": "boolean",
+							"type": [
+								"boolean",
+								"null"
+							],
 							"default": false
 						},
 						"required": false,
@@ -24608,7 +24869,10 @@
 					},
 					{
 						"schema": {
-							"type": "boolean"
+							"type": [
+								"boolean",
+								"null"
+							]
 						},
 						"required": false,
 						"name": "unread_only",
@@ -29913,285 +30177,6 @@
 				}
 			}
 		},
-		"/api/sessions/{id}/activity": {
-			"get": {
-				"tags": [
-					"Sessions"
-				],
-				"summary": "Get the agent activity trace (steps) per conversation message",
-				"description": "Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most 2000 of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.",
-				"parameters": [
-					{
-						"schema": {
-							"type": "string",
-							"format": "uuid"
-						},
-						"required": true,
-						"name": "id",
-						"in": "path"
-					},
-					{
-						"schema": {
-							"type": "integer",
-							"minimum": 1,
-							"maximum": 20,
-							"default": 5
-						},
-						"required": false,
-						"name": "limit_turns",
-						"in": "query"
-					},
-					{
-						"schema": {
-							"type": "integer",
-							"exclusiveMinimum": 0
-						},
-						"required": false,
-						"name": "message_id",
-						"in": "query"
-					},
-					{
-						"schema": {
-							"type": "integer",
-							"exclusiveMinimum": 0
-						},
-						"required": false,
-						"name": "before_log_id",
-						"in": "query"
-					},
-					{
-						"schema": {
-							"type": "string",
-							"format": "uuid"
-						},
-						"required": true,
-						"name": "x-workspace-id",
-						"in": "header"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "Activity turns, oldest to newest",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"session_id": {
-											"type": "string",
-											"format": "uuid"
-										},
-										"turns": {
-											"type": "array",
-											"items": {
-												"type": "object",
-												"properties": {
-													"message_id": {
-														"type": "integer"
-													},
-													"started_at": {
-														"type": [
-															"string",
-															"null"
-														]
-													},
-													"finished_at": {
-														"type": [
-															"string",
-															"null"
-														]
-													},
-													"status": {
-														"type": "string",
-														"enum": [
-															"running",
-															"completed",
-															"failed"
-														]
-													},
-													"contains_reply": {
-														"type": "boolean"
-													},
-													"result": {
-														"type": [
-															"object",
-															"null"
-														],
-														"properties": {
-															"text": {
-																"type": "string",
-																"maxLength": 8000
-															},
-															"is_error": {
-																"type": "boolean"
-															},
-															"log_id": {
-																"type": "integer"
-															}
-														},
-														"required": [
-															"text",
-															"is_error",
-															"log_id"
-														]
-													},
-													"steps": {
-														"type": "array",
-														"items": {
-															"type": "object",
-															"properties": {
-																"id": {
-																	"type": "string"
-																},
-																"kind": {
-																	"type": "string",
-																	"enum": [
-																		"tool_use",
-																		"thinking",
-																		"text",
-																		"error"
-																	]
-																},
-																"label": {
-																	"type": "string",
-																	"maxLength": 120
-																},
-																"detail": {
-																	"type": "string",
-																	"maxLength": 300
-																},
-																"started_at": {
-																	"type": [
-																		"string",
-																		"null"
-																	]
-																},
-																"finished_at": {
-																	"type": [
-																		"string",
-																		"null"
-																	]
-																},
-																"status": {
-																	"type": "string",
-																	"enum": [
-																		"running",
-																		"completed",
-																		"failed"
-																	]
-																}
-															},
-															"required": [
-																"id",
-																"kind",
-																"label",
-																"started_at",
-																"finished_at",
-																"status"
-															]
-														},
-														"maxItems": 100
-													},
-													"steps_truncated": {
-														"type": "boolean"
-													},
-													"partial": {
-														"type": "boolean"
-													}
-												},
-												"required": [
-													"message_id",
-													"started_at",
-													"finished_at",
-													"status",
-													"contains_reply",
-													"result",
-													"steps",
-													"steps_truncated",
-													"partial"
-												]
-											}
-										},
-										"oldest_log_id": {
-											"type": [
-												"integer",
-												"null"
-											]
-										},
-										"has_older": {
-											"type": "boolean"
-										}
-									},
-									"required": [
-										"session_id",
-										"turns",
-										"oldest_log_id",
-										"has_older"
-									]
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "Session not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					}
-				}
-			}
-		},
 		"/api/sessions/{id}/logs/deep": {
 			"get": {
 				"tags": [
@@ -30815,19 +30800,6 @@
 						},
 						"required": false,
 						"name": "offset",
-						"in": "query"
-					},
-					{
-						"schema": {
-							"type": "string",
-							"enum": [
-								"asc",
-								"desc"
-							],
-							"default": "asc"
-						},
-						"required": false,
-						"name": "order",
 						"in": "query"
 					},
 					{
@@ -31839,574 +31811,6 @@
 				}
 			}
 		},
-		"/api/devices": {
-			"post": {
-				"tags": [
-					"Devices"
-				],
-				"summary": "Register (or refresh) a push device for the current actor",
-				"description": "Upserts on (apns_token, environment). Re-registering a token that belongs to another actor moves it to the caller.",
-				"requestBody": {
-					"content": {
-						"application/json": {
-							"schema": {
-								"type": "object",
-								"properties": {
-									"platform": {
-										"type": "string",
-										"enum": [
-											"ios",
-											"macos",
-											"watchos",
-											"tvos"
-										]
-									},
-									"apns_token": {
-										"type": "string",
-										"minLength": 32,
-										"maxLength": 512,
-										"pattern": "^[0-9a-fA-F]+$"
-									},
-									"environment": {
-										"type": "string",
-										"enum": [
-											"sandbox",
-											"production"
-										]
-									},
-									"app_version": {
-										"type": "string",
-										"minLength": 1,
-										"maxLength": 64
-									}
-								},
-								"required": [
-									"platform",
-									"apns_token",
-									"environment"
-								]
-							}
-						}
-					}
-				},
-				"responses": {
-					"200": {
-						"description": "Device registered",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"id": {
-											"type": "string",
-											"format": "uuid"
-										},
-										"actor_id": {
-											"type": "string",
-											"format": "uuid"
-										},
-										"platform": {
-											"type": "string",
-											"enum": [
-												"ios",
-												"macos",
-												"watchos",
-												"tvos"
-											]
-										},
-										"environment": {
-											"type": "string",
-											"enum": [
-												"sandbox",
-												"production"
-											]
-										},
-										"app_version": {
-											"type": [
-												"string",
-												"null"
-											]
-										},
-										"created_at": {
-											"type": "string"
-										},
-										"last_seen_at": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"id",
-										"actor_id",
-										"platform",
-										"environment",
-										"app_version",
-										"created_at",
-										"last_seen_at"
-									]
-								}
-							}
-						}
-					},
-					"400": {
-						"description": "Invalid request",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					}
-				}
-			}
-		},
-		"/api/devices/{id_or_token}": {
-			"delete": {
-				"tags": [
-					"Devices"
-				],
-				"summary": "Unregister one of the current actor’s push devices",
-				"description": "Prefer the device id (uuid) returned by POST /api/devices. The raw APNs token is also accepted for compatibility, but it is a credential in a URL path — clients should delete by id. Only the owner can delete.",
-				"parameters": [
-					{
-						"schema": {
-							"type": "string",
-							"minLength": 1,
-							"maxLength": 512
-						},
-						"required": true,
-						"name": "id_or_token",
-						"in": "path"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "Device removed",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"deleted": {
-											"type": "boolean"
-										}
-									},
-									"required": [
-										"deleted"
-									]
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "Device not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					}
-				}
-			}
-		},
-		"/api/live-activities/tokens": {
-			"post": {
-				"tags": [
-					"Devices"
-				],
-				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
-				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
-				"requestBody": {
-					"content": {
-						"application/json": {
-							"schema": {
-								"type": "object",
-								"properties": {
-									"kind": {
-										"type": "string",
-										"enum": [
-											"push_to_start",
-											"update"
-										]
-									},
-									"device_id": {
-										"type": "string",
-										"format": "uuid"
-									},
-									"token": {
-										"type": "string",
-										"minLength": 16,
-										"maxLength": 512,
-										"pattern": "^[0-9a-fA-F]+$"
-									},
-									"session_id": {
-										"type": "string",
-										"format": "uuid"
-									}
-								},
-								"required": [
-									"kind",
-									"device_id",
-									"token"
-								]
-							}
-						}
-					}
-				},
-				"responses": {
-					"200": {
-						"description": "Token registered",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"id": {
-											"type": "string",
-											"format": "uuid"
-										},
-										"kind": {
-											"type": "string",
-											"enum": [
-												"push_to_start",
-												"update"
-											]
-										},
-										"device_id": {
-											"type": "string",
-											"format": "uuid"
-										},
-										"session_id": {
-											"type": [
-												"string",
-												"null"
-											],
-											"format": "uuid"
-										},
-										"updated_at": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"id",
-										"kind",
-										"device_id",
-										"session_id",
-										"updated_at"
-									]
-								}
-							}
-						}
-					},
-					"400": {
-						"description": "Invalid request",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "Device or session not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					}
-				}
-			}
-		},
-		"/api/live-activities/tokens/{id}": {
-			"delete": {
-				"tags": [
-					"Devices"
-				],
-				"summary": "Unregister one of the caller’s ActivityKit tokens (e.g. the activity ended on-device)",
-				"parameters": [
-					{
-						"schema": {
-							"type": "string",
-							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-						},
-						"required": true,
-						"name": "id",
-						"in": "path"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "Token removed",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"deleted": {
-											"type": "boolean"
-										}
-									},
-									"required": [
-										"deleted"
-									]
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "Not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					}
-				}
-			}
-		},
 		"/api/subscriptions": {
 			"post": {
 				"tags": [
@@ -33242,10 +32646,6 @@
 																				"recommended": {
 																					"type": "boolean",
 																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
-																				},
-																				"destructive": {
-																					"type": "boolean",
-																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 																				}
 																			},
 																			"required": [

@@ -294,6 +294,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/integrations/{provider}/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/{provider}/connect/post`.
     func post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output
+    /// Update integration settings
+    ///
+    /// - Remark: HTTP `PATCH /api/integrations/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/patch`.
+    func patch_sol_api_sol_integrations_sol__lcub_id_rcub_(_ input: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input) async throws -> Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output
     /// Disconnect an integration
     ///
     /// - Remark: HTTP `DELETE /api/integrations/{id}`.
@@ -469,20 +474,6 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/notifications/{id}/respond`.
     /// - Remark: Generated from `#/paths//api/notifications/{id}/respond/post`.
     func post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond(_ input: Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Input) async throws -> Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Output
-    /// Register (or refresh) a push device for the current actor
-    ///
-    /// Upserts on (apns_token, environment). Re-registering a token that belongs to another actor moves it to the caller.
-    ///
-    /// - Remark: HTTP `POST /api/devices`.
-    /// - Remark: Generated from `#/paths//api/devices/post`.
-    func post_sol_api_sol_devices(_ input: Operations.post_sol_api_sol_devices.Input) async throws -> Operations.post_sol_api_sol_devices.Output
-    /// Unregister one of the current actor’s push devices
-    ///
-    /// Prefer the device id (uuid) returned by POST /api/devices. The raw APNs token is also accepted for compatibility, but it is a credential in a URL path — clients should delete by id. Only the owner can delete.
-    ///
-    /// - Remark: HTTP `DELETE /api/devices/{id_or_token}`.
-    /// - Remark: Generated from `#/paths//api/devices/{id_or_token}/delete`.
-    func delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_(_ input: Operations.delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_.Input) async throws -> Operations.delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_.Output
     /// Subscribe current actor to an entity
     ///
     /// - Remark: HTTP `POST /api/subscriptions`.
@@ -1285,6 +1276,21 @@ extension APIProtocol {
             headers: headers
         ))
     }
+    /// Update integration settings
+    ///
+    /// - Remark: HTTP `PATCH /api/integrations/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/patch`.
+    public func patch_sol_api_sol_integrations_sol__lcub_id_rcub_(
+        path: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Headers,
+        body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Body? = nil
+    ) async throws -> Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output {
+        try await patch_sol_api_sol_integrations_sol__lcub_id_rcub_(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
     /// Disconnect an integration
     ///
     /// - Remark: HTTP `DELETE /api/integrations/{id}`.
@@ -1760,36 +1766,6 @@ extension APIProtocol {
             path: path,
             headers: headers,
             body: body
-        ))
-    }
-    /// Register (or refresh) a push device for the current actor
-    ///
-    /// Upserts on (apns_token, environment). Re-registering a token that belongs to another actor moves it to the caller.
-    ///
-    /// - Remark: HTTP `POST /api/devices`.
-    /// - Remark: Generated from `#/paths//api/devices/post`.
-    public func post_sol_api_sol_devices(
-        headers: Operations.post_sol_api_sol_devices.Input.Headers = .init(),
-        body: Operations.post_sol_api_sol_devices.Input.Body? = nil
-    ) async throws -> Operations.post_sol_api_sol_devices.Output {
-        try await post_sol_api_sol_devices(Operations.post_sol_api_sol_devices.Input(
-            headers: headers,
-            body: body
-        ))
-    }
-    /// Unregister one of the current actor’s push devices
-    ///
-    /// Prefer the device id (uuid) returned by POST /api/devices. The raw APNs token is also accepted for compatibility, but it is a credential in a URL path — clients should delete by id. Only the owner can delete.
-    ///
-    /// - Remark: HTTP `DELETE /api/devices/{id_or_token}`.
-    /// - Remark: Generated from `#/paths//api/devices/{id_or_token}/delete`.
-    public func delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_(
-        path: Operations.delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_.Input.Path,
-        headers: Operations.delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_.Input.Headers = .init()
-    ) async throws -> Operations.delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_.Output {
-        try await delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_(Operations.delete_sol_api_sol_devices_sol__lcub_id_or_token_rcub_.Input(
-            path: path,
-            headers: headers
         ))
     }
     /// Subscribe current actor to an entity

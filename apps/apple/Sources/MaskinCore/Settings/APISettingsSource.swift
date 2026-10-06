@@ -125,9 +125,14 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	public func add(workspaceId: String, actorId: String, role: MemberRole, idempotencyKey: String)
 		async throws
 	{
+		// The server only accepts admin | member here; an owner is never added through this route.
+		guard
+			let serverRole = Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Input.Body
+				.jsonPayload.rolePayload(rawValue: role.rawValue)
+		else { throw SettingsError("People can only be added as an admin or a member.") }
 		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
 			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
-				.init(path: .init(id: workspaceId), body: .json(.init(actor_id: actorId, role: role.rawValue))))
+				.init(path: .init(id: workspaceId), body: .json(.init(actor_id: actorId, role: serverRole))))
 		}
 		switch output {
 		case .created: return

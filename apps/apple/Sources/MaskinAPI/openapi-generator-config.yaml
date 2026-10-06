@@ -44,8 +44,6 @@ filter:
     - /api/sessions/{id}
     - /api/loops
     - /api/installed-loops
-    - /api/devices
-    - /api/devices/{id_or_token}
     - /api/loops/{id}/activity
     - /api/loops/{id}/steps
     - /api/installed-loops/{id}
