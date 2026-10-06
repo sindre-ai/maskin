@@ -4,7 +4,6 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
-import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
@@ -16,9 +15,9 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
-import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
@@ -83,8 +82,6 @@ import type {
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
-import { LINKEDIN_IDENTITY_PROVIDER } from '../lib/linkedin-addon'
-import { syncLinkedInAddonQuantity } from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -1749,80 +1746,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
-	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
-	// credentials are still readable so the provider can call its remote API
-	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
-	// are responsible for swallowing errors so disconnect always proceeds.
-	//
-	// Credentials are decrypted lazily (only when a preDisconnect hook exists) and
-	// only for non-pending integrations — pending rows have credentials: '' because
-	// the OAuth flow was never completed and there is nothing to revoke at the provider.
-	try {
-		const resolved = getProvider(existing.provider)
-		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
-			await resolved.preDisconnect({
-				db,
-				integrationId: existing.id,
-				workspaceId: existing.workspaceId,
-				credentials,
-				externalId: existing.externalId,
-			})
-		}
-	} catch (err) {
-		logger.warn(`preDisconnect failed for provider ${existing.provider}`, {
-			integrationId: existing.id,
-			error: err instanceof Error ? err.message : String(err),
-		})
-	}
-
-	await db.transaction(async (tx) => {
-		await tx
-			.update(integrations)
-			.set({ status: 'revoked', updatedAt: new Date() })
-			.where(eq(integrations.id, id))
-
-		await recordEvent(tx, {
-			workspaceId: existing.workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'integration',
-			entityId: id,
-			data: { status: 'revoked', reason: 'user_disconnected' },
-		})
-	})
-
-	// Drop the disconnected identity off the $49 add-on. Runs after the status
-	// flip commits, because the sync recomputes quantity from the count of
-	// `active` rows — running it first would still count the row being
-	// revoked and leave the customer billed for it. Quantity changes carry
-	// `proration_behavior: 'none'`, so the identity stays paid for through the
-	// end of the period it was connected in.
-	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
-		await syncLinkedInAddonQuantity(db, existing.workspaceId)
-		// P3-C · Drop every fan-out MCP instance owned by this credential row
-		// from the in-process registry, so `tools/list` on the linkedin-unipile
-		// MCP endpoint no longer surfaces this integration's tools. Belt to the
-		// per-call `integrations.status` gate's braces (operations.ts preamble):
-		// the gate keeps a wrong (revoked) credential from reaching Unipile even
-		// on a race, while the deregister keeps a disconnected identity from
-		// appearing to still be there in the tool list. Uses the same code path
-		// R11-C wired for the Unipile-initiated `account.disconnect` webhook.
-		const dropped = deregisterLinkedInMcpInstancesForIntegration(existing.id)
-		if (dropped > 0) {
-			logger.info('Deregistered LinkedIn fan-out instances on disconnect', {
-				workspaceId: existing.workspaceId,
-				integrationId: existing.id,
-				dropped,
-			})
-		}
-	}
-
-	// Agents hold a copied snapshot of the provider's MCP server config, which
-	// outlives the credential behind it. Left in place, the agent boots with
-	// the server attached, advertises its tools, and fails every call — so it
-	// reports a broken platform instead of a missing connection.
-	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+	await disconnectIntegrationRow(db, existing, actorId)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)

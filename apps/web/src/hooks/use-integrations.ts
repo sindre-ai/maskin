@@ -126,6 +126,19 @@ export function useCompleteIntegration(workspaceId: string) {
 	})
 }
 
+/** Bulk disconnect of one human's Google rows, from the Drive disable modal.
+ *  No toast: the detail page shows its own inline callout on success. */
+export function useDisconnectGoogle(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { email: string; scope: 'drive' | 'drive-meet' | 'google' }) =>
+			api.integrations.disconnectGoogle(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 export function useDisconnectIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

@@ -521,6 +521,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		disconnectGoogle: (
+			workspaceId: string,
+			body: { email: string; scope: 'drive' | 'drive-meet' | 'google' },
+		) =>
+			request<{ disconnected: { id: string; provider: string }[] }>(
+				'/integrations/google/disconnect',
+				{ method: 'POST', body, workspaceId },
+			),
 		githubLinkable: (workspaceId: string) =>
 			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
 		githubLink: (workspaceId: string, installationId: string) =>

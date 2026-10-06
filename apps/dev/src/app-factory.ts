@@ -40,6 +40,7 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
 import integrationsGoogleDriveRoutes from './routes/integrations-google-drive'
 import integrationsGoogleDriveMcpRoutes from './routes/integrations-google-drive-mcp'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
@@ -389,6 +390,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
 	// google-drive MCP surface — same ordering constraint as google-meet's above.
 	app.route('/api/integrations/google-drive/mcp', integrationsGoogleDriveMcpRoutes)
+	app.route('/api/integrations/google', integrationsGoogleDisconnectRoutes)
 	// folder watches list + stop for the Drive detail page; its own prefix, so the
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)

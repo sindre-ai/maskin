@@ -3,12 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildDriveWatch, buildIntegrationResponse } from '../factories'
+import { installDialogPolyfill } from '../mocks/dialog'
+
+installDialogPolyfill()
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
 
 const mockUseIntegrations = vi.fn()
 const mockConnect = vi.fn()
 const mockDriveWatches = vi.fn()
+const mockDisconnect = vi.fn()
 const mockFlag = vi.fn<() => boolean>(() => true)
 
 vi.mock('@tanstack/react-router', async () => {
@@ -32,6 +36,12 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useConnectIntegration: () => ({ mutate: mockConnect, isPending: false }),
 	useDriveWatches: () => mockDriveWatches(),
 	useStopDriveWatch: () => ({ mutate: vi.fn(), isPending: false }),
+	useDisconnectGoogle: () => ({
+		mutate: mockDisconnect,
+		reset: vi.fn(),
+		isPending: false,
+		isError: false,
+	}),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -232,5 +242,133 @@ describe('Google Drive detail page', () => {
 			'data-state',
 			'is-missing',
 		)
+	})
+})
+
+describe('Google Drive detail page, disconnect flow', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mockFlag.mockReturnValue(true)
+	})
+
+	const kaiRows = () => [
+		googleRow('kai@acme.test', 'actor-kai', 'gmail'),
+		googleRow('kai@acme.test', 'actor-kai', 'google-calendar'),
+		googleRow('kai@acme.test', 'actor-kai', 'google-meet'),
+		driveRow('kai@acme.test', { actorId: 'actor-kai' }),
+	]
+
+	it('flag off: the page is unreachable, so is the modal', () => {
+		mockFlag.mockReturnValue(false)
+		setRows(kaiRows())
+		render(<DriveDetailPage />)
+		expect(screen.queryByRole('button', { name: 'Disconnect Drive' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+	})
+
+	it('only a human with a Drive row gets a Disconnect Drive action', () => {
+		setRows([googleRow('priya@acme.test', 'actor-priya'), ...kaiRows()])
+		render(<DriveDetailPage />)
+		const priya = screen.getByTestId('scope-row-priya@acme.test')
+		const kai = screen.getByTestId('scope-row-kai@acme.test')
+		expect(
+			within(priya).queryByRole('button', { name: 'Disconnect Drive' }),
+		).not.toBeInTheDocument()
+		expect(within(kai).getByRole('button', { name: 'Disconnect Drive' })).toBeInTheDocument()
+	})
+
+	it('opens a dialog titled for the human with Drive only preselected', async () => {
+		setRows(kaiRows())
+		render(<DriveDetailPage />)
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Disconnect Drive' }))
+
+		const dialog = screen.getByRole('dialog', { name: 'Disconnect Drive for Kai Ono?' })
+		expect(within(dialog).getByRole('radiogroup')).toBeInTheDocument()
+		expect(within(dialog).getAllByRole('radio')).toHaveLength(3)
+		expect(within(dialog).getByRole('radio', { name: /Just disconnect Drive/ })).toBeChecked()
+		expect(within(dialog).getByTestId('disconnect-stays-callout')).toHaveTextContent(
+			'Still connected: Gmail, Calendar and Meet.',
+		)
+	})
+
+	it.each([
+		[
+			'Disconnect Drive and Meet',
+			'drive-meet',
+			'Disconnect Drive + Meet',
+			'Still connected: Gmail and Calendar.',
+		],
+		[
+			"Disconnect Kai Ono's whole Google account",
+			'google',
+			'Disconnect Google account',
+			'Nothing else stays connected for this Google account.',
+		],
+	])(
+		'radio %s: label becomes %s and confirm sends scope %s',
+		async (radio, scope, label, stays) => {
+			setRows(kaiRows())
+			render(<DriveDetailPage />)
+			await userEvent.click(screen.getByRole('button', { name: 'Disconnect Drive' }))
+			const dialog = screen.getByRole('dialog')
+
+			await userEvent.click(within(dialog).getByRole('radio', { name: new RegExp(radio) }))
+			expect(within(dialog).getByRole('button', { name: label })).toBeInTheDocument()
+			expect(within(dialog).getByTestId('disconnect-stays-callout')).toHaveTextContent(stays)
+
+			await userEvent.click(within(dialog).getByRole('button', { name: label }))
+			expect(mockDisconnect).toHaveBeenCalledWith(
+				{ email: 'kai@acme.test', scope },
+				expect.objectContaining({ onSuccess: expect.any(Function) }),
+			)
+		},
+	)
+
+	it('after success the modal closes and the callout names what remains from the rows', async () => {
+		setRows(kaiRows())
+		mockDisconnect.mockImplementation((_input, opts) => opts.onSuccess())
+		render(<DriveDetailPage />)
+		await userEvent.click(screen.getByRole('button', { name: 'Disconnect Drive' }))
+
+		await userEvent.click(
+			within(screen.getByRole('dialog')).getByRole('button', { name: 'Disconnect Drive' }),
+		)
+
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+		const callout = screen.getByRole('status')
+		expect(callout).toBe(screen.getByTestId('post-disconnect-callout'))
+		expect(callout).toHaveAttribute('aria-live', 'polite')
+		expect(callout).toHaveTextContent(
+			'Drive disconnected for Kai Ono. Gmail, Calendar and Meet are still connected.',
+		)
+	})
+
+	it('names only the services that actually remain when the human had no Meet row', async () => {
+		setRows([
+			googleRow('kai@acme.test', 'actor-kai', 'gmail'),
+			driveRow('kai@acme.test', { actorId: 'actor-kai' }),
+		])
+		mockDisconnect.mockImplementation((_input, opts) => opts.onSuccess())
+		render(<DriveDetailPage />)
+		await userEvent.click(screen.getByRole('button', { name: 'Disconnect Drive' }))
+		await userEvent.click(
+			within(screen.getByRole('dialog')).getByRole('button', { name: 'Disconnect Drive' }),
+		)
+		expect(screen.getByTestId('post-disconnect-callout')).toHaveTextContent(
+			'Drive disconnected for Kai Ono. Gmail is still connected.',
+		)
+	})
+
+	it('Cancel closes the modal without calling the endpoint', async () => {
+		setRows(kaiRows())
+		render(<DriveDetailPage />)
+		await userEvent.click(screen.getByRole('button', { name: 'Disconnect Drive' }))
+		await userEvent.click(
+			within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }),
+		)
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+		expect(mockDisconnect).not.toHaveBeenCalled()
 	})
 })

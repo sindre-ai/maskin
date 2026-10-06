@@ -66,6 +66,8 @@ export function ScopeRow({
 	actionLabel,
 	onAction,
 	actionPending,
+	disconnectLabel,
+	onDisconnect,
 	children,
 }: {
 	id: string
@@ -77,6 +79,9 @@ export function ScopeRow({
 	actionLabel?: string
 	onAction?: () => void
 	actionPending?: boolean
+	/** Secondary action that opens the disconnect flow for this human. */
+	disconnectLabel?: string
+	onDisconnect?: () => void
 	children: React.ReactNode
 }) {
 	return (
@@ -102,17 +107,18 @@ export function ScopeRow({
 						{statusLine && <p className="text-xs text-muted-foreground">{statusLine}</p>}
 					</div>
 				</div>
-				{actionLabel && onAction && (
-					<Button
-						size="sm"
-						variant="outline"
-						className="shrink-0"
-						onClick={onAction}
-						disabled={actionPending}
-					>
-						{actionLabel}
-					</Button>
-				)}
+				<div className="flex shrink-0 flex-wrap gap-2">
+					{actionLabel && onAction && (
+						<Button size="sm" variant="outline" onClick={onAction} disabled={actionPending}>
+							{actionLabel}
+						</Button>
+					)}
+					{disconnectLabel && onDisconnect && (
+						<Button size="sm" variant="ghost" onClick={onDisconnect}>
+							{disconnectLabel}
+						</Button>
+					)}
+				</div>
 			</div>
 			<ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">{children}</ul>
 		</li>
