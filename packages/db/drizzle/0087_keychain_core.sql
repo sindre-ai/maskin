@@ -66,9 +66,14 @@ CREATE TABLE IF NOT EXISTS "credential_access_log" (
 	"source" text NOT NULL DEFAULT 'unknown',
 	"request_id" text NOT NULL,
 	"read_at" timestamp with time zone NOT NULL DEFAULT now(),
+	"detail" text,
 	"prev_row_hash" text NOT NULL DEFAULT '',
 	"row_hash" text NOT NULL DEFAULT '',
-	CONSTRAINT "credential_access_log_action_enum" CHECK ("action" IN ('read', 'create', 'undone', 'rotated', 'sweeper_activated'))
+	CONSTRAINT "credential_access_log_action_enum" CHECK ("action" IN ('read', 'create', 'undone', 'rotated', 'sweeper_activated')),
+	-- detail is free text, hashed as stored. No format check on purpose: the key
+	-- order inside it belongs to the writer, so keys can be added later with no
+	-- change to the hash formula. chr(31) is banned because it is the hash separator.
+	CONSTRAINT "credential_access_log_detail_check" CHECK ("detail" IS NULL OR (position(chr(31) in "detail") = 0 AND length("detail") <= 512))
 );
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cal_ws_read_at_idx" ON "credential_access_log" ("workspace_id", "read_at");
@@ -106,7 +111,7 @@ BEGIN
 	-- (apps/dev/src/lib/integrations/credential-audit.ts) uses the same one.
 	NEW.prev_row_hash := coalesce(head, encode(sha256(convert_to('maskin-credential-access-log-genesis-v1', 'UTF8')), 'hex'));
 	-- Fields joined by chr(31) (unit separator) so adjacent values cannot shift
-	-- into each other. NULL session_id, loop_id and outbound_target hash as ''.
+	-- into each other. NULL session_id, loop_id, outbound_target and detail hash as ''.
 	NEW.row_hash := encode(sha256(convert_to(concat_ws(chr(31),
 		NEW.prev_row_hash,
 		NEW.workspace_id::text,
@@ -118,7 +123,8 @@ BEGIN
 		NEW.action,
 		NEW.source,
 		NEW.request_id,
-		credential_access_log_ts_text(NEW.read_at)
+		credential_access_log_ts_text(NEW.read_at),
+		coalesce(NEW.detail, '')
 	), 'UTF8')), 'hex');
 	RETURN NEW;
 END

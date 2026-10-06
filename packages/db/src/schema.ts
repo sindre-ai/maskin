@@ -429,6 +429,7 @@ export const credentialAccessLog = pgTable(
 		source: text('source').notNull().default('unknown'),
 		requestId: text('request_id').notNull(),
 		readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+		detail: text('detail'),
 		prevRowHash: text('prev_row_hash').notNull().default(''),
 		rowHash: text('row_hash').notNull().default(''),
 	},

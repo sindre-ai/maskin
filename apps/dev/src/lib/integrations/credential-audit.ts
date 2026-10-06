@@ -40,6 +40,8 @@ export interface CredentialLogHashInput {
 	 * make every row fail verification.
 	 */
 	readAtText: string
+	/** Free text, hashed exactly as stored. NULL and '' hash the same. */
+	detail: string | null
 }
 
 export function computeRowHash(i: CredentialLogHashInput): string {
@@ -57,6 +59,7 @@ export function computeRowHash(i: CredentialLogHashInput): string {
 				i.source,
 				i.requestId,
 				i.readAtText,
+				i.detail ?? '',
 			].join(SEP),
 			'utf8',
 		)
@@ -73,6 +76,7 @@ export interface CredentialLogEntry {
 	action: CredentialAccessAction
 	source: string
 	requestId: string
+	detail?: string | null
 }
 
 /**
@@ -98,6 +102,7 @@ export async function insertCredentialAccessLog(
 		action: entry.action,
 		source: entry.source,
 		requestId: entry.requestId,
+		detail: entry.detail ?? null,
 	})
 	await tx.execute(sql.raw('RESET ROLE'))
 }
@@ -118,6 +123,7 @@ interface LogRow extends Record<string, unknown> {
 	source: string
 	request_id: string
 	read_at_text: string
+	detail: string | null
 	prev_row_hash: string
 	row_hash: string
 }
@@ -137,7 +143,7 @@ export async function verifyCredentialAccessChain(
 		SELECT id::text AS id, workspace_id::text AS workspace_id, integration_id::text AS integration_id,
 			actor_id::text AS actor_id, session_id::text AS session_id, loop_id::text AS loop_id,
 			outbound_target, action, source,
-			request_id, credential_access_log_ts_text(read_at) AS read_at_text, prev_row_hash, row_hash
+			request_id, credential_access_log_ts_text(read_at) AS read_at_text, detail, prev_row_hash, row_hash
 		FROM credential_access_log
 		WHERE workspace_id = ${workspaceId}
 		-- Qualified on purpose: a bare "id" binds to the id::text output column and sorts as text.
@@ -161,6 +167,7 @@ export async function verifyCredentialAccessChain(
 			source: row.source,
 			requestId: row.request_id,
 			readAtText: row.read_at_text,
+			detail: row.detail,
 		})
 		if (row.row_hash !== expected) {
 			return {

@@ -158,6 +158,7 @@ describe('credential_access_log (0087)', () => {
 			'actor_id',
 			'session_id',
 			'loop_id',
+			'detail',
 			'outbound_target',
 			'action',
 			'source',
@@ -198,14 +199,15 @@ describe('credential_access_log (0087)', () => {
 			readAt?: string
 			sessionId?: string | null
 			loopId?: string | null
+			detail?: string | null
 			prevRowHash?: string
 			rowHash?: string
 		} = {},
 	) => sql<{ id: string; prev_row_hash: string; row_hash: string }[]>`
 		INSERT INTO credential_access_log
-			(workspace_id, integration_id, actor_id, request_id, session_id, loop_id, read_at, prev_row_hash, row_hash)
+			(workspace_id, integration_id, actor_id, request_id, session_id, loop_id, detail, read_at, prev_row_hash, row_hash)
 		VALUES (${s.ws.id}, ${s.integrationId}, ${s.actorId}, ${extra.requestId ?? 'req-1'},
-			${extra.sessionId ?? null}, ${extra.loopId ?? null},
+			${extra.sessionId ?? null}, ${extra.loopId ?? null}, ${extra.detail ?? null},
 			coalesce(${extra.readAt ?? null}::text::timestamptz, now()),
 			${extra.prevRowHash ?? ''}, ${extra.rowHash ?? ''})
 		RETURNING id::text, prev_row_hash, row_hash
@@ -255,6 +257,7 @@ describe('credential_access_log (0087)', () => {
 			action: 'read',
 			source: 'unknown',
 			requestId: 'req-1',
+			detail: null,
 		}
 		// What Postgres stored: microsecond text.
 		expect(computeRowHash({ ...fields, readAtText: text.t })).toBe(row.row_hash)
@@ -304,6 +307,7 @@ describe('credential_access_log (0087)', () => {
 					source: 'unknown',
 					requestId: 'req-1',
 					readAtText: text.t,
+					detail: null,
 				}),
 			).toBe(row.row_hash)
 			prev = row.row_hash
@@ -343,6 +347,126 @@ describe('credential_access_log (0087)', () => {
 		})
 	})
 
+	it('TS computeRowHash equals the trigger hash, with detail NULL, a canonical string, and non-ASCII text', async () => {
+		const s = await seedLog()
+		const details = [
+			null,
+			'approver=5f0c2d1e-1a2b-4c3d-8e4f-5a6b7c8d9e0f;grant=7a1b2c3d-4e5f-4a6b-9c8d-0e1f2a3b4c5d;tier=1;ext=',
+			'approver=Søren Ærlig;note=日本語 ✓ café',
+		]
+		let prev = CREDENTIAL_LOG_GENESIS_HASH
+		for (const detail of details) {
+			const [row] = await insertRow(s, { detail, readAt: '2026-10-03 12:00:00.123456+00' })
+			const [text] = await sql<{ t: string }[]>`
+				SELECT credential_access_log_ts_text(read_at) AS t FROM credential_access_log WHERE id = ${row.id}
+			`
+			expect(row.prev_row_hash).toBe(prev)
+			expect(
+				computeRowHash({
+					prevRowHash: prev,
+					workspaceId: s.ws.id,
+					integrationId: s.integrationId,
+					actorId: s.actorId,
+					sessionId: null,
+					loopId: null,
+					outboundTarget: null,
+					action: 'read',
+					source: 'unknown',
+					requestId: 'req-1',
+					readAtText: text.t,
+					detail,
+				}),
+			).toBe(row.row_hash)
+			prev = row.row_hash
+		}
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 3 })
+	})
+
+	it('a row with detail NULL still verifies, and NULL and empty detail hash the same', async () => {
+		const s = await seedLog()
+		const [a] = await insertRow(s, { readAt: '2026-10-03 12:00:00.123456+00' })
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 1 })
+		const [b] = await sql<{ row_hash: string }[]>`
+			INSERT INTO credential_access_log
+				(workspace_id, integration_id, actor_id, request_id, detail, read_at)
+			VALUES (${s.ws.id}, ${s.integrationId}, ${s.actorId}, 'req-1', '', '2026-10-03 12:00:00.123456+00')
+			RETURNING row_hash
+		`
+		// b has detail '' and chains after a. Recomputing it with detail NULL gives the same hash.
+		expect(
+			computeRowHash({
+				prevRowHash: a.row_hash,
+				workspaceId: s.ws.id,
+				integrationId: s.integrationId,
+				actorId: s.actorId,
+				sessionId: null,
+				loopId: null,
+				outboundTarget: null,
+				action: 'read',
+				source: 'unknown',
+				requestId: 'req-1',
+				readAtText: '2026-10-03T12:00:00.123456Z',
+				detail: null,
+			}),
+		).toBe(b.row_hash)
+	})
+
+	it('setting detail on a row that had none breaks the chain at that row', async () => {
+		const s = await seedLog()
+		await insertRow(s)
+		const [b] = await insertRow(s)
+		await insertRow(s)
+		await sql`UPDATE credential_access_log SET detail = 'approver=x' WHERE id = ${b.id}`
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({
+			ok: false,
+			rows: 1,
+			brokenAtId: b.id,
+			reason: 'row_hash does not match contents',
+		})
+	})
+
+	it('changing detail on a row breaks the chain at that row', async () => {
+		const s = await seedLog()
+		await insertRow(s, { detail: 'approver=a;tier=1' })
+		const [b] = await insertRow(s, { detail: 'approver=a;tier=1' })
+		await insertRow(s)
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 3 })
+		await sql`UPDATE credential_access_log SET detail = 'approver=a;tier=2' WHERE id = ${b.id}`
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({
+			ok: false,
+			rows: 1,
+			brokenAtId: b.id,
+			reason: 'row_hash does not match contents',
+		})
+	})
+
+	it('setting detail back to NULL on a row that had a value breaks the chain at that row', async () => {
+		const s = await seedLog()
+		await insertRow(s)
+		const [b] = await insertRow(s, { detail: 'approver=a;tier=1' })
+		await insertRow(s)
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 3 })
+		await sql`UPDATE credential_access_log SET detail = NULL WHERE id = ${b.id}`
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({
+			ok: false,
+			rows: 1,
+			brokenAtId: b.id,
+			reason: 'row_hash does not match contents',
+		})
+	})
+
+	it('CHECK: detail may not contain the hash separator or exceed 512 characters', async () => {
+		const s = await seedLog()
+		await expect(insertRow(s, { detail: `a${String.fromCharCode(31)}b` })).rejects.toThrow(
+			/credential_access_log_detail_check/,
+		)
+		await expect(insertRow(s, { detail: 'x'.repeat(513) })).rejects.toThrow(
+			/credential_access_log_detail_check/,
+		)
+		await insertRow(s, { detail: 'x'.repeat(512) })
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 1 })
+	})
+
 	it('serialises concurrent inserts into one consistent chain', async () => {
 		const s = await seedLog()
 		await Promise.all(Array.from({ length: 20 }, (_, i) => insertRow(s, { requestId: `req-${i}` })))
@@ -362,6 +486,7 @@ describe('credential_access_log (0087)', () => {
 				integration_id: s.integrationId,
 				actor_id: s.actorId,
 				request_id: 'as-app-role',
+				detail: 'approver=as-app-role;tier=1',
 			})}`
 			const seen = await tx`SELECT count(*)::int AS n FROM credential_access_log`
 			expect(seen[0].n).toBe(1)
