@@ -257,7 +257,7 @@ struct PinnedTile: View {
 		}
 		.padding(.horizontal, MaskinSpace.s4)
 		.frame(maxWidth: .infinity)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous))
 		.overlay(alignment: .topTrailing) {
 			if conversation.isUnread {
 				UnreadBadge(count: conversation.unreadCount).padding(MaskinSpace.s4)

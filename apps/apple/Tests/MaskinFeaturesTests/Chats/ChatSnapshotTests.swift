@@ -278,7 +278,7 @@ struct ChatSnapshotTests {
 							Divider().overlay(MaskinSurface.separator)
 						}
 					}
-					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.card, style: .continuous))
 				}
 			}
 			.padding(MaskinSpace.s9)

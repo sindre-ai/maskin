@@ -59,7 +59,7 @@ struct ChatThreadView: View {
 			.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 			#endif
 			.toolbar {
-				ToolbarItem(placement: .principal) { header }
+				ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
 				// One trailing button with a flat menu: a second toolbar item makes iOS fold both into
 				// a "More" overflow.
 				ToolbarItem(placement: .primaryAction) {
@@ -134,34 +134,26 @@ struct ChatThreadView: View {
 			}
 	}
 
-	/// The navigation bar's centre: the agent's icon, its name, and the conversation title under
-	/// it. Not a menu: People, Pin and the rest live in the ellipsis menu.
-	private var header: some View {
-		let others = store.participants.filter { $0.id != store.currentActorID }
-		let shown = others.isEmpty ? store.participants : others
-		let agents = shown.filter { $0.kind == .agent }
-		let names = (agents.isEmpty ? shown : agents).map(\.name).joined(separator: ", ")
-		return HStack(spacing: MaskinSpace.s5) {
-			ConversationAvatar(
-				participants: shown, size: MaskinSpace.s14, working: !store.workingAgents().isEmpty)
-			VStack(alignment: .leading, spacing: 0) {
-				Text(names.isEmpty ? store.title : names)
-					.maskinText(.subhead).fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.ink).lineLimit(1)
-				if !names.isEmpty {
-					Text(store.title)
-						.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-				}
-			}
-		}
-		.accessibilityElement(children: .combine)
-		.accessibilityAddTraits(.isHeader)
+	/// The large title: the conversation's name, no subtitle. The back button and ··· menu stay in
+	/// the bar; the agent's page opens from the avatar or name on its messages.
+	private var titleView: some View {
+		Text(store.title)
+			.font(MaskinTypeface.threadTitle)
+			.foregroundStyle(MaskinColor.ink)
+			.lineLimit(2)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.horizontal, MaskinSpace.s9)
+			.padding(.top, MaskinSpace.s3)
+			.accessibilityAddTraits(.isHeader)
 	}
 
 	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
 	/// type-checks quickly).
 	private var observedContent: some View {
-		content
+		VStack(spacing: 0) {
+			titleView
+			content
+		}
 			.onChange(of: searchText) { _, _ in
 				refreshMatches()
 				matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1

@@ -18,7 +18,7 @@ private func ago(days: Double, hours: Double = 0) -> Date {
 
 @Suite("ConversationGrouping")
 struct ConversationGroupingTests {
-	@Test("pinned, today, yesterday, weekday names, last week, then months; empty groups dropped")
+	@Test("pinned, today, yesterday, this week, last week, then months; empty groups dropped")
 	func buckets() {
 		let items = [
 			chatConvo("old", last: ago(days: 40)),
@@ -29,21 +29,21 @@ struct ConversationGroupingTests {
 			chatConvo("last", last: ago(days: 9)),
 		]
 		let groups = ConversationGrouping.group(items, now: now, calendar: cal)
-		let weekday = cal.weekdaySymbols[cal.component(.weekday, from: ago(days: 5)) - 1]
 		let month = cal.monthSymbols[cal.component(.month, from: ago(days: 40)) - 1]
-		#expect(groups.map(\.label) == ["Pinned", "Today", "Yesterday", weekday, "Last week", month])
+		#expect(groups.map(\.label) == ["Pinned", "Today", "Yesterday", "This week", "Last week", month])
 		#expect(
 			groups.map { $0.items.map(\.id) } == [["pin"], ["today"], ["yday"], ["wk"], ["last"], ["old"]])
 	}
 
-	@Test("each day inside the past week is its own group")
+	@Test("days inside the past week share one This week group")
 	func separateDays() {
 		let groups = ConversationGrouping.group(
 			[chatConvo("a", last: ago(days: 3)), chatConvo("b", last: ago(days: 4))], now: now, calendar: cal)
-		#expect(groups.count == 2)
+		#expect(groups.count == 1)
+		#expect(groups[0].label == "This week")
 	}
 
-	@Test("6 days back is still a weekday, 7 is last week, 14 falls into a month")
+	@Test("6 days back is still this week, 7 is last week, 14 falls into a month")
 	func boundary() {
 		let groups = ConversationGrouping.group(
 			[
