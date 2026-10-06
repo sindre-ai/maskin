@@ -269,7 +269,6 @@ export async function resolveClaudeCredentialsWithFailover(
 			db,
 			workspaceId,
 			actorId,
-			headSlot: chain[0]?.id ?? failover.active_slot,
 			probe,
 			bufferMs,
 			now: now(),
@@ -451,12 +450,11 @@ async function attemptChainHeadRecovery(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
-	headSlot: OAuthSlotKind
 	probe: SubscriptionProbe
 	bufferMs: RefreshBuffer | undefined
 	now: number
 }): Promise<ClaudeCredentials | null> {
-	const { db, workspaceId, actorId, headSlot, probe, bufferMs, now } = params
+	const { db, workspaceId, actorId, probe, bufferMs, now } = params
 	let recoveredTokens: ClaudeOAuthTokens | null = null
 
 	const recovery = await attemptPrimaryRecovery({
