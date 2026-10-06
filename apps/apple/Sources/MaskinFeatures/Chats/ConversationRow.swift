@@ -36,7 +36,7 @@ struct ConversationRow: View {
 						.maskinText(.caption)
 						.foregroundStyle(conversation.isUnread ? MaskinColor.accent : MaskinColor.ink4)
 				}
-				Text(conversation.title)
+				Text(ChatPreviewText.plain(conversation.title))
 					.maskinText(.subhead)
 					.fontWeight(conversation.isUnread ? .semibold : .regular)
 					.foregroundStyle(conversation.isUnread ? MaskinColor.ink : MaskinColor.ink3)
@@ -76,15 +76,14 @@ struct ConversationRow: View {
 	/// The latest message, led by who wrote it ("Relay: Done, the PR is up"). Nil when the server
 	/// sent no snippet, in which case the row shows only the title.
 	private var preview: String? {
-		guard let text = conversation.snippet?.trimmingCharacters(in: .whitespacesAndNewlines),
-			!text.isEmpty
+		guard let text = conversation.snippet.map(ChatPreviewText.plain), !text.isEmpty
 		else { return nil }
 		guard let who = conversation.snippetActorName, !who.isEmpty else { return text }
 		return "\(who): \(text)"
 	}
 
 	private var accessibilityLabel: String {
-		var parts = [headline, conversation.title]
+		var parts = [headline, ChatPreviewText.plain(conversation.title)]
 		if let preview { parts.append(preview) }
 		if conversation.isUnread { parts.append("\(conversation.unreadCount) unread") }
 		if conversation.pinned { parts.append("pinned") }

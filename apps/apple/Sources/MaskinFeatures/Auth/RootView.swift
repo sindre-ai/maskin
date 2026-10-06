@@ -75,6 +75,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		)
 		.environment(\.openAttachment, { @MainActor [runtime] id in runtime.openFile(id) })
 		.task { onRuntimeReady(runtime) }
+		.task { ThreadWarmup.run() }
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }
 		.task(id: auth.credentials) { environment.syncEvents() }
 		.task(id: runtime.syncKey) { runtime.sync() }

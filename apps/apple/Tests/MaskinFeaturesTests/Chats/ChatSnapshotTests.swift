@@ -244,6 +244,13 @@ struct ChatSnapshotTests {
 		#expect(store.messages.count == 12)
 	}
 
+	@Test("the thread skeleton renders", arguments: [false, true])
+	func skeleton(dark: Bool) throws {
+		for width in Self.widths {
+			_ = try render(ThreadSkeleton().frame(height: 560), width: width, dark: dark, name: "thread-skeleton")
+		}
+	}
+
 	@Test("conversation list rows render grouped", arguments: [false, true])
 	func list(dark: Bool) throws {
 		let rows = [

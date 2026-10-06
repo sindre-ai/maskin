@@ -17,7 +17,11 @@ struct ChatThreadView: View {
 	/// Messages that arrived while the reader was scrolled up; the jump pill says how many.
 	@State private var unseenCount = 0
 	@State private var editing: ChatMessage?
-	/// True from opening the chat until the reader first scrolls it. While true the thread pins to
+	/// False from opening the thread until it has settled at the newest message. The thread is
+	/// drawn but hidden behind a skeleton meanwhile, so the reader never watches it hunt for its
+	/// position (the first layout estimates row heights and corrects them as rows render).
+	@State private var revealed = false
+/// True from opening the chat until the reader first scrolls it. While true the thread pins to
 	/// the newest message: a cached page that is topped up by a fresh one, or rows that settle
 	/// their height late, must not leave the reader somewhere above what the agent just said.
 	@State private var followingOpen = true
@@ -184,7 +188,7 @@ struct ChatThreadView: View {
 	private var content: some View {
 		switch store.phase {
 		case .idle, .loading:
-			ScrollView { LoadingSkeleton(rows: 3).padding(MaskinSpace.s9) }
+			ThreadSkeleton()
 		case .failed(let message):
 			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't open this chat", message: message) {
 				Button("Try again") { Task { await store.load() } }.buttonStyle(.secondaryAction)
@@ -215,7 +219,10 @@ struct ChatThreadView: View {
 					if store.hasEarlier {
 						ProgressView()
 							.frame(maxWidth: .infinity)
-							.onAppear { loadEarlier(proxy) }
+							// Only once the reader has scrolled: while the thread is still settling at the
+							// bottom this spinner can flash into view, and loading history then ends with
+							// a jump to the old boundary, leaving the newest messages below the fold.
+							.onAppear { if !followingOpen { loadEarlier(proxy) } }
 					}
 					ThreadTranscript(
 						store: store, onStop: { stopTarget = $0 }, onEdit: { editing = $0 }, matchIDs: matchSet,
@@ -232,8 +239,17 @@ struct ChatThreadView: View {
 				.frame(maxWidth: .infinity)
 			}
 			.defaultScrollAnchor(.bottom)
-			.onAppear { jumpToBottom(proxy) }
-			.simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in followingOpen = false })
+			.opacity(revealed ? 1 : 0)
+			.overlay {
+				if !revealed { ThreadSkeleton().allowsHitTesting(false).transition(.opacity) }
+			}
+			.animation(.easeOut(duration: 0.18), value: revealed)
+			.onAppear { settleOpen(proxy) }
+			.simultaneousGesture(
+				DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in
+					followingOpen = false
+					revealed = true
+				})
 			.trackingBottom { atBottom in
 				if atBottom { reachedBottom() } else { isAtBottom = false }
 			}
@@ -355,6 +371,16 @@ struct ChatThreadView: View {
 		case 0: "Latest"
 		case 1: "1 new message"
 		default: "\(unseen) new messages"
+		}
+	}
+
+	/// Pin to the newest message, again after the rows have measured, then show the thread.
+	private func settleOpen(_ proxy: ScrollViewProxy) {
+		jumpToBottom(proxy)
+		Task {
+			try? await Task.sleep(for: .milliseconds(320))
+			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+			revealed = true
 		}
 	}
 
@@ -552,5 +578,54 @@ struct StaleThreadBanner: View {
 			RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 				.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1))
 		.accessibilityElement(children: .contain)
+	}
+}
+
+/// Stands in for the thread while it loads or settles: the shape of a conversation (their messages
+/// as wide cards on the left, yours as short ones on the right), bottom-aligned because a thread
+/// opens at its newest message. Built on `SkeletonBlock`, whose faint fill only reads on a card.
+struct ThreadSkeleton: View {
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+			theirs([1, 0.85, 0.5])
+			mine(width: 150)
+			theirs([1, 0.92, 0.78, 0.35])
+			mine(width: 210)
+			theirs([0.95, 0.6])
+		}
+		.padding(.horizontal, MaskinSpace.s9)
+		.padding(.bottom, MaskinSpace.s9)
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+		.background(MaskinSurface.grouped)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("Loading messages")
+	}
+
+	private var bubble: RoundedRectangle {
+		RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+	}
+
+	/// A card of text lines; each is the given fraction of the card's width.
+	private func theirs(_ fractions: [CGFloat]) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			ForEach(Array(fractions.enumerated()), id: \.offset) { _, fraction in
+				GeometryReader { geometry in
+					SkeletonBlock(height: MaskinSpace.s7, cornerRadius: MaskinRadius.tag2)
+						.frame(width: geometry.size.width * fraction)
+				}
+				.frame(height: MaskinSpace.s7)
+			}
+		}
+		.padding(MaskinSpace.s7)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(MaskinSurface.card, in: bubble)
+	}
+
+	private func mine(width: CGFloat) -> some View {
+		SkeletonBlock(height: MaskinSpace.s7, cornerRadius: MaskinRadius.tag2)
+			.frame(width: width)
+			.padding(MaskinSpace.s7)
+			.background(MaskinSurface.card, in: bubble)
+			.frame(maxWidth: .infinity, alignment: .trailing)
 	}
 }
