@@ -3,28 +3,28 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Start a conversation: the "To" field is focused on open, so you can type a name straight away;
-/// pick one or more agents (recent ones first), write the message, send. Titles come later.
+/// Start a conversation: a "To" line of chosen actors (the Chief of Staff to begin with), an "Add
+/// someone" row of everyone else, and the first message. More than one actor makes a group chat.
 struct NewChatSheet: View {
 	let store: ConversationsStore
 	let currentActorID: String?
 	var prefill = ""
 	let onCreated: (ConversationSummary) -> Void
 
-	private enum Field { case to, message }
-
 	@Environment(\.dismiss) private var dismiss
-	@State private var selection: Set<String> = []
+	@State private var draft = NewConversationDraft()
 	@State private var message = ""
-	@State private var query = ""
 	@State private var isCreating = false
 	@State private var error: String?
-	@FocusState private var focus: Field?
+	@FocusState private var messageFocused: Bool
+	#if os(iOS)
+	@State private var dictation = Dictation()
+	@State private var dictationBase = ""
+	#endif
 
-	/// Chosen recipients in the order they were picked.
-	@State private var picked: [String] = []
-
-	private var recipients: [ChatActor] { picked.compactMap { id in store.actors.first { $0.id == id } } }
+	private var recipients: [ChatActor] {
+		draft.recipientIDs.compactMap { id in store.actors.first { $0.id == id } }
+	}
 
 	private var canSend: Bool {
 		!recipients.isEmpty && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -33,22 +33,18 @@ struct NewChatSheet: View {
 
 	var body: some View {
 		NavigationStack {
-			VStack(spacing: 0) {
-				toField
-				Divider()
-				List {
-					if let error { Section { FormError(error) } }
-					ActorPickerList(
-						actors: store.actors,
-						excluding: Set([currentActorID].compactMap { $0 }),
-						selection: $selection, query: query,
-						recent: store.recentCollaboratorIDs, includeSystem: true, showsRecent: true)
+			ScrollView {
+				VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+					section("To") { toRow }
+					let addable = draft.addable(from: store.actors, excluding: currentActorID)
+					if !addable.isEmpty { section("Add someone") { addRow(addable) } }
+					if let error { FormError(error) }
+					messageBox
 				}
-				.listStyle(.plain)
-				.scrollDismissesKeyboard(.interactively)
-				messageBar
+				.padding(MaskinSpace.s9)
 			}
-			.navigationTitle("New chat")
+			.scrollDismissesKeyboard(.interactively)
+			.navigationTitle("New conversation")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
@@ -56,97 +52,151 @@ struct NewChatSheet: View {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
 			}
 			.overlay { if isCreating { ProgressView() } }
-			.onChange(of: selection) { old, new in
-				picked = picked.filter(new.contains) + new.subtracting(picked).sorted()
-				if new.count > old.count {
-					query = ""
-					focus = .message
-				}
-			}
 			.task {
-				focus = .to
 				await store.loadActors()
+				draft.applyDefault(actors: store.actors, excluding: currentActorID)
 				if message.isEmpty { message = prefill }
+				messageFocused = true
+			}
+			.onDisappear {
+				#if os(iOS)
+				dictation.stop()
+				#endif
 			}
 		}
 	}
 
-	/// "To:" row — chips for who is in, then the search field.
-	private var toField: some View {
+	private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			Text(title.uppercased()).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+			content()
+		}
+	}
+
+	/// Chosen actors: avatar, name, and a cross to take them off.
+	private var toRow: some View {
 		ScrollView(.horizontal, showsIndicators: false) {
 			HStack(spacing: MaskinSpace.s4) {
-				Text("To").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				if recipients.isEmpty {
+					Text("Choose who to talk to").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				}
 				ForEach(recipients) { actor in
 					Button {
-						selection.remove(actor.id)
+						draft.remove(actor.id)
 						MaskinHaptics.play(.selection)
 					} label: {
 						HStack(spacing: MaskinSpace.s3) {
+							ActorAvatar(
+								name: actor.participant.name, kind: actor.participant.kind == .agent ? .agent : .human,
+								size: MaskinSpace.s12, seed: actor.id)
 							Text(actor.participant.name).maskinText(.subhead)
 							Image(systemName: "xmark").font(.caption2).accessibilityHidden(true)
 						}
-						.foregroundStyle(MaskinColor.accentFgStrong)
-						.padding(.horizontal, MaskinSpace.s5)
-						.padding(.vertical, MaskinSpace.s3)
+						.foregroundStyle(MaskinColor.accentStrong)
+						.padding(.leading, MaskinSpace.s2)
+						.padding(.trailing, MaskinSpace.s5)
+						.padding(.vertical, MaskinSpace.s2)
 						.background(MaskinColor.accentTint2, in: Capsule())
 					}
 					.buttonStyle(.plain)
 					.accessibilityLabel("Remove \(actor.participant.name)")
 				}
-				TextField(recipients.isEmpty ? "Search agents" : "Add more", text: $query)
-					.focused($focus, equals: .to)
-					.maskinText(.body)
-					.frame(minWidth: 140)
-					.submitLabel(.next)
-					.onSubmit { pickFirstMatch() }
-					#if os(iOS)
-					.textInputAutocapitalization(.never)
-					.autocorrectionDisabled()
-					#endif
 			}
-			.padding(.horizontal, MaskinSpace.s8)
-			.padding(.vertical, MaskinSpace.s5)
 		}
 	}
 
-	private var messageBar: some View {
-		HStack(alignment: .bottom, spacing: MaskinSpace.s5) {
+	/// Everyone else, one tap to add.
+	private func addRow(_ actors: [ChatActor]) -> some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s7) {
+				ForEach(actors) { actor in
+					Button {
+						draft.toggle(actor.id)
+						MaskinHaptics.play(.selection)
+					} label: {
+						VStack(spacing: MaskinSpace.s3) {
+							ActorAvatar(
+								name: actor.participant.name, kind: actor.participant.kind == .agent ? .agent : .human,
+								size: MaskinSpace.s14 + MaskinSpace.s11, seed: actor.id)
+							Text(actor.participant.name).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
+								.lineLimit(1)
+						}
+						.frame(width: MaskinSpace.s14 * 2 + MaskinSpace.s9)
+					}
+					.buttonStyle(.plain)
+					.accessibilityLabel("Add \(actor.participant.name)")
+				}
+			}
+		}
+	}
+
+	private var messageBox: some View {
+		VStack(spacing: MaskinSpace.s5) {
 			TextField(
 				recipients.isEmpty ? "Message" : "Message \(recipients.map(\.participant.name).joined(separator: ", "))",
 				text: $message, axis: .vertical
 			)
-			.focused($focus, equals: .message)
-			.maskinText(.body)
-			.lineLimit(1...5)
-			.padding(.horizontal, MaskinSpace.s7)
-			.padding(.vertical, MaskinSpace.s5)
-			.background(MaskinColor.surfaceAlt, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl))
-			Button {
-				Task { await create() }
-			} label: {
-				Image(systemName: "arrow.up.circle.fill").font(.title)
+			.focused($messageFocused)
+			.font(MaskinTypeface.sans(MaskinFontSize.t17))
+			.lineLimit(5...5)
+			.frame(maxWidth: .infinity, alignment: .topLeading)
+			HStack {
+				micButton
+				Spacer()
+				Button {
+					Task { await create() }
+				} label: {
+					Label("Send", systemImage: "arrow.up").labelStyle(.titleAndIcon)
+				}
+				.buttonStyle(.borderedProminent)
+				.tint(MaskinSurface.inverse)
+				.disabled(!canSend)
+				.keyboardShortcut(.return, modifiers: .command)
 			}
-			.foregroundStyle(canSend ? MaskinColor.accent : MaskinColor.ink5)
-			.disabled(!canSend)
-			.keyboardShortcut(.return, modifiers: .command)
-			.accessibilityLabel("Send")
 		}
-		.padding(MaskinSpace.s5)
-		.background(.bar)
+		.padding(MaskinSpace.s8)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 	}
 
-	/// Return in the search field takes the top match, like a mail client's "To" field.
-	private func pickFirstMatch() {
-		let match = store.actors.first {
-			$0.id != currentActorID && !selection.contains($0.id)
-				&& $0.participant.name.localizedCaseInsensitiveContains(query)
+	@ViewBuilder
+	private var micButton: some View {
+		#if os(iOS)
+		Button {
+			toggleDictation()
+		} label: {
+			Image(systemName: dictation.isListening ? "waveform" : "mic.fill")
+				.foregroundStyle(dictation.isListening ? MaskinColor.dangerMic : MaskinColor.ink3)
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.background(MaskinSurface.fill, in: Circle())
 		}
-		if let match, !query.isEmpty { selection.insert(match.id) } else { focus = .message }
+		.buttonStyle(.plain)
+		.accessibilityLabel(dictation.isListening ? "Stop dictating" : "Dictate")
+		#endif
 	}
+
+	#if os(iOS)
+	private func toggleDictation() {
+		if dictation.isListening {
+			dictation.stop()
+			return
+		}
+		dictationBase = message
+		Task {
+			await dictation.start { message = DictationText.merge(base: dictationBase, transcript: $0) }
+			if case .unavailable(let reason) = dictation.state {
+				error = reason
+				dictation.clearError()
+			}
+		}
+	}
+	#endif
 
 	private func create() async {
 		let people = recipients
 		guard !people.isEmpty else { return }
+		#if os(iOS)
+		dictation.stop()
+		#endif
 		isCreating = true
 		error = nil
 		defer { isCreating = false }
