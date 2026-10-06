@@ -15,6 +15,7 @@ struct MoreScreen: View {
 	@State private var showWorkspaces = false
 	@State private var showMarketplace = false
 	@State private var confirmSignOut = false
+	@State private var settingsRoute: SettingsRoute?
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	var body: some View {
@@ -22,7 +23,10 @@ struct MoreScreen: View {
 			ScrollView {
 				VStack(spacing: MaskinSpace.gapSection) {
 					profileCard
+					workspaceCard
+					groupLabel("Workspace")
 					placesCard
+					groupLabel("Settings")
 					settingsCard
 					signOutCard
 					versionFooter
@@ -34,8 +38,8 @@ struct MoreScreen: View {
 			.foregroundStyle(MaskinColor.ink)
 			.shellToolbar(environment: environment, title: "More")
 			// Signing out discards writes still waiting to send, so ask first (Settings does too).
-			.confirmationDialog("Sign out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-				Button("Sign out", role: .destructive) { Task { await runtime.signOut() } }
+			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+				Button("Log out", role: .destructive) { Task { await runtime.signOut() } }
 			} message: {
 				Text("Anything still waiting to send will be discarded.")
 			}
@@ -48,6 +52,9 @@ struct MoreScreen: View {
 							runtime.selectedTab = .loops
 						})
 				}
+			}
+			.sheet(item: $settingsRoute) { route in
+				SettingsScreen(environment: environment, initialRoute: route)
 			}
 			.sheet(isPresented: $showWorkspaces) {
 				WorkspaceSwitcher(environment: environment)
@@ -75,41 +82,39 @@ struct MoreScreen: View {
 				}
 				.padding(MaskinSpace.s9)
 				.accessibilityElement(children: .combine)
-				separator(inset: MaskinSpace.s9)
 			}
-			MoreRow(
-				title: environment.workspaces.selected?.name ?? "Choose workspace",
-				caption: "Workspace", symbol: "square.stack.3d.up",
-				tint: MaskinColor.warningTint, tone: MaskinColor.warningStrong
-			) { showWorkspaces = true }
 		}
 		.moreCard()
 	}
 
-	/// The destinations that don't have a tab of their own.
+	/// The workspace you are working in, with a way to change it.
+	private var workspaceCard: some View {
+		MoreRow(
+			title: environment.workspaces.selected?.name ?? "Choose workspace",
+			caption: "Workspace", symbol: "square.stack.3d.up",
+			tint: MaskinColor.warningTint, tone: MaskinColor.warningStrong
+		) { showWorkspaces = true }
+		.moreCard()
+	}
+
+	/// The workspace's places that don't have a tab of their own.
 	private var placesCard: some View {
 		VStack(spacing: 0) {
 			MoreRow(
-				title: "Notifications", symbol: "bell",
-				tint: MaskinColor.accentTint, tone: MaskinColor.accentFgStrong,
-				badge: runtime.notifications.unreadCount
-			) { runtime.showNotifications = true }
+				title: "Artefacts", subtitle: "Pages and PDFs your agents made", symbol: "doc.text",
+				tint: MaskinColor.infoTint, tone: MaskinColor.infoStrong
+			) { runtime.showFiles = true }
 			if sizeClass == .compact {
 				separator()
 				MoreRow(
-					title: "Agents", symbol: "person.2",
+					title: "Agents", subtitle: "Who works for you", symbol: "person.2",
 					tint: MaskinColor.agentRelayTint, tone: MaskinColor.agentRelayFg
 				) { runtime.showAgents = true }
 			}
-			separator()
-			MoreRow(
-				title: "Files", symbol: "doc.text",
-				tint: MaskinColor.infoTint, tone: MaskinColor.infoStrong
-			) { runtime.showFiles = true }
 			if environment.workspaceId != nil {
 				separator()
 				MoreRow(
-					title: "Marketplace", symbol: "square.grid.2x2",
+					title: "Marketplace", subtitle: "Loops to install", symbol: "square.grid.2x2",
 					tint: MaskinColor.successTint, tone: MaskinColor.successStrong
 				) { showMarketplace = true }
 			}
@@ -117,19 +122,60 @@ struct MoreScreen: View {
 		.moreCard()
 	}
 
+	/// Notifications, then the settings pages people reach for most; each opens that page with
+	/// Settings behind it.
 	private var settingsCard: some View {
-		MoreRow(
-			title: "Settings", symbol: "gearshape",
-			tint: MaskinColor.surfaceStrong, tone: MaskinColor.ink2
-		) { runtime.showSettings = true }
+		VStack(spacing: 0) {
+			MoreRow(
+				title: "Notifications", symbol: "bell",
+				tint: MaskinColor.accentTint, tone: MaskinColor.accentFgStrong,
+				badge: runtime.notifications.unreadCount
+			) { runtime.showNotifications = true }
+			if environment.workspaceId != nil {
+				separator()
+				MoreRow(
+					title: "Members", symbol: "person.2.circle",
+					tint: MaskinColor.surfaceStrong, tone: MaskinColor.ink2
+				) { settingsRoute = .members }
+				separator()
+				MoreRow(
+					title: "Integrations", symbol: "link",
+					tint: MaskinColor.surfaceStrong, tone: MaskinColor.ink2
+				) { settingsRoute = .integrations }
+				separator()
+				MoreRow(
+					title: "Billing", symbol: "creditcard",
+					tint: MaskinColor.surfaceStrong, tone: MaskinColor.ink2
+				) { settingsRoute = .billing }
+			}
+			separator()
+			MoreRow(
+				title: "Keys", symbol: "key",
+				tint: MaskinColor.surfaceStrong, tone: MaskinColor.ink2
+			) { settingsRoute = .apiKey }
+			separator()
+			MoreRow(
+				title: "All settings", symbol: "gearshape",
+				tint: MaskinColor.surfaceStrong, tone: MaskinColor.ink2
+			) { runtime.showSettings = true }
+		}
 		.moreCard()
+	}
+
+	private func groupLabel(_ text: String) -> some View {
+		Text(text)
+			.maskinText(.microLabel)
+			.foregroundStyle(MaskinColor.ink4)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.horizontal, MaskinSpace.s4)
+			.accessibilityAddTraits(.isHeader)
 	}
 
 	private var signOutCard: some View {
 		Button(role: .destructive) {
 			confirmSignOut = true
 		} label: {
-			Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+			Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
 				.maskinText(.body)
 				.foregroundStyle(MaskinColor.danger)
 				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
@@ -171,6 +217,7 @@ private struct MoreRow: View {
 
 	let title: String
 	var caption: String?
+	var subtitle: String?
 	let symbol: String
 	let tint: Color
 	let tone: Color
@@ -192,6 +239,9 @@ private struct MoreRow: View {
 					}
 					Text(title).maskinText(.body).foregroundStyle(MaskinColor.ink)
 						.lineLimit(1)
+					if let subtitle {
+						Text(subtitle).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+					}
 				}
 				Spacer(minLength: MaskinSpace.s4)
 				if badge > 0 {

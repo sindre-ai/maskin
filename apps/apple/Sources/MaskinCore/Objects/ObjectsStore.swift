@@ -16,7 +16,13 @@ public final class ObjectsStore {
 
 	public static let pageSize = 50
 
-	public private(set) var objects: [WorkObject] = []
+	public private(set) var objects: [WorkObject] = [] {
+		didSet {
+			// Remembered across type filters, so the type pills don't vanish once one is chosen.
+			if typeFilter == nil { seenTypes.formUnion(objects.map(\.type)) }
+		}
+	}
+	private var seenTypes: Set<String> = []
 	public private(set) var phase: Phase = .idle
 	public private(set) var isOffline = false
 	public private(set) var isLoadingMore = false
@@ -30,7 +36,7 @@ public final class ObjectsStore {
 	/// loaded; while it is on the list keeps paging until the starred ones surface.
 	public var starredOnly = false
 	public private(set) var searchText = ""
-	public var grouping: ObjectsGrouping = .status
+	public var grouping: ObjectsGrouping = .type
 
 	public let directory: ObjectsDirectory
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
@@ -81,6 +87,16 @@ public final class ObjectsStore {
 		starredOnly ? objects.filter(\.isStarred) : objects
 	}
 
+	/// The types the filter pills offer: those the workspace actually has objects of (schema
+	/// order first), or every configured type until something has loaded.
+	public var presentTypes: [String] {
+		let schemaTypes = directory.schema.types
+		var seen = seenTypes
+		if let typeFilter { seen.insert(typeFilter) }
+		if seen.isEmpty { return schemaTypes }
+		return schemaTypes.filter(seen.contains) + seen.subtracting(schemaTypes).sorted()
+	}
+
 	public var groups: [ObjectGroup] {
 		ObjectsGrouper.group(visibleObjects, by: grouping, schema: directory.schema, type: typeFilter)
 	}
@@ -116,6 +132,7 @@ public final class ObjectsStore {
 	public func reset() {
 		generation += 1
 		objects = []
+		seenTypes = []
 		phase = .idle
 		hasMore = false
 		isOffline = false

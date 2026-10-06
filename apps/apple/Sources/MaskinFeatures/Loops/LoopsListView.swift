@@ -14,7 +14,7 @@ struct LoopsListView: View {
 	var onBrowse: () -> Void = {}
 
 	var body: some View {
-		let sections = store.sections(query: search)
+		let loops = store.filtered(query: search)
 		List(selection: $selection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…")
@@ -27,36 +27,41 @@ struct LoopsListView: View {
 					.listRowBackground(Color.clear)
 					.onTapGesture { store.notice = nil }
 			}
-			ForEach(sections) { section in
-				Section {
-					ForEach(section.items) { loop in
-						LoopRow(
-							loop: loop, agentNames: store.agentNames(for: loop),
-							hasUpdate: store.installs[loop.id]?.hasUpdate == true
-						)
-						.tag(loop.id)
-						.zoomSource(id: loop.id, in: zoomNamespace)
-						.listRowSeparator(.hidden)
-						.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-							if loop.status != .draft {
-								Button {
-									Task { await store.togglePause(loop.id) }
-								} label: {
-									Label(loop.isPaused ? "Resume" : "Pause", systemImage: loop.isPaused ? "play.fill" : "pause.fill")
-								}
-								.tint(loop.isPaused ? MaskinColor.success : MaskinColor.ink4)
-							}
+			if search.isEmpty, let summary = store.summaryLine {
+				Text(summary)
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
+			}
+			ForEach(loops) { loop in
+				LoopCard(
+					loop: loop, agentCount: loop.agentIDs.count, needsYou: store.needsYou(loop),
+					hasUpdate: store.installs[loop.id]?.hasUpdate == true
+				)
+				.tag(loop.id)
+				.zoomSource(id: loop.id, in: zoomNamespace)
+				.listRowSeparator(.hidden)
+				.listRowBackground(Color.clear)
+				.listRowInsets(
+					EdgeInsets(
+						top: MaskinSpace.s3, leading: MaskinSpace.s7, bottom: MaskinSpace.s3,
+						trailing: MaskinSpace.s7))
+				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+					if loop.status != .draft {
+						Button {
+							Task { await store.togglePause(loop.id) }
+						} label: {
+							Label(loop.isPaused ? "Resume" : "Pause", systemImage: loop.isPaused ? "play.fill" : "pause.fill")
 						}
+						.tint(loop.isPaused ? MaskinColor.success : MaskinColor.ink4)
 					}
-				} header: {
-					Text(section.label)
-						.maskinText(.subhead).fontWeight(.semibold)
-						.foregroundStyle(MaskinColor.ink3).textCase(nil)
 				}
 			}
 		}
 		.listStyle(.plain)
-		.overlay { overlay(isEmpty: sections.isEmpty) }
+		.background(MaskinSurface.grouped)
+		.overlay { overlay(isEmpty: loops.isEmpty) }
 		.refreshable { await store.refresh() }
 	}
 

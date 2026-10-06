@@ -21,6 +21,7 @@ struct ObjectsStoreTests {
 		await store.load()
 		#expect(store.phase == .loaded)
 		#expect(store.objects.count == 5)
+		store.grouping = .status
 		let groups = store.groups
 		// Schema order across types: insight statuses, then bet, then task.
 		#expect(groups.map(\.id) == ["new", "active", "todo", "in_progress"])
@@ -28,6 +29,41 @@ struct ObjectsStoreTests {
 		store.grouping = .none
 		#expect(store.groups.count == 1)
 		#expect(store.groups[0].objects.map(\.id) == ["t1", "b1", "t2", "t3", "i1"])
+	}
+
+	@Test("groups by type by default, in schema order, with a title and the type flag")
+	func groupsByType() async {
+		let (store, _) = makeStore()
+		await store.load()
+		#expect(store.grouping == .type)
+		#expect(store.groups.map(\.id) == ["insight", "bet", "task"])
+		#expect(store.groups.map(\.title) == ["Insight", "Bet", "Task"])
+		#expect(store.groups.allSatisfy { $0.isType })
+	}
+
+	@Test("within a type: needs-you first, then blocked, then active, then done")
+	func typeGroupOrder() {
+		let objects = [
+			WorkObject(id: "done", type: "task", status: "done", updatedAt: Date(timeIntervalSince1970: 9)),
+			WorkObject(id: "active", type: "task", status: "in_progress", updatedAt: Date(timeIntervalSince1970: 8)),
+			WorkObject(id: "review", type: "task", status: "in_review", updatedAt: Date(timeIntervalSince1970: 1)),
+			WorkObject(id: "unread", type: "task", status: "todo", updatedAt: Date(timeIntervalSince1970: 0), unreadCount: 2),
+			WorkObject(id: "active2", type: "task", status: "todo", updatedAt: Date(timeIntervalSince1970: 7)),
+		]
+		let group = ObjectsGrouper.group(objects, by: .type, schema: .fallback, type: nil)
+		#expect(group.count == 1)
+		#expect(group[0].objects.map(\.id) == ["unread", "review", "active", "active2", "done"])
+	}
+
+	@Test("filter pills offer only the types present and keep them once one is chosen")
+	func presentTypes() async {
+		let remote = FakeObjectsRemote(objects: Fixtures.objects.filter { $0.type != "bet" })
+		let (store, _) = makeStore(remote)
+		#expect(store.presentTypes == ["insight", "bet", "task"])  // nothing loaded yet
+		await store.load()
+		#expect(store.presentTypes == ["insight", "task"])
+		await store.setType("task")
+		#expect(store.presentTypes == ["insight", "task"])
 	}
 
 	@Test("type filter is sent to the server and clears a status that no longer applies")

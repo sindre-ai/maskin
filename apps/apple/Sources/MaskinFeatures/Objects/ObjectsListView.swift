@@ -68,7 +68,7 @@ struct ObjectsListView: View {
 	/// Type tabs: a scrolling row of text tabs, the selected one on a quiet fill.
 	private var typePicker: some View {
 		let selected = store.typeFilter ?? ""
-		let types = [""] + store.directory.schema.types
+		let types = [""] + store.presentTypes
 		return ScrollView(.horizontal, showsIndicators: false) {
 			HStack(spacing: MaskinSpace.s2) {
 				ForEach(types, id: \.self) { type in
@@ -208,7 +208,7 @@ struct ObjectsListView: View {
 			object: object, typeName: store.directory.typeName(object.type),
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
-			showsStatus: store.grouping == .none)
+			showsStatus: store.grouping != .status)
 		Group {
 			if selection != nil {
 				content.tag(object.id)

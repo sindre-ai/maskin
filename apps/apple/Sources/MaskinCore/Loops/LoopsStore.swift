@@ -11,12 +11,6 @@ public final class LoopsStore {
 		case failed(String)
 	}
 
-	public struct Section: Identifiable, Equatable, Sendable {
-		public var id: String { label }
-		public var label: String
-		public var items: [LoopSummary]
-	}
-
 	public private(set) var loops: [LoopSummary] = []
 	public private(set) var phase: Phase = .idle
 	public private(set) var directory = ActorDirectory()
@@ -83,21 +77,32 @@ public final class LoopsStore {
 		loop.agentIDs.compactMap { directory.name($0) }
 	}
 
-	/// Waiting on you first, then running loops, then drafts and paused ones.
-	public func sections(query: String = "") -> [Section] {
+	/// Every loop, as the API ordered them, narrowed by the search text.
+	public func filtered(query: String = "") -> [LoopSummary] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		let matching = loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
-		let waiting = matching.filter { $0.pill == .waitingOnYou }
-		let live = matching.filter { $0.pill.isLive && $0.pill != .waitingOnYou }
-		let idle = matching.filter { !$0.pill.isLive }
-		return [
-			Section(label: "Waiting on you", items: waiting),
-			Section(label: "Running", items: live),
-			Section(label: "Paused and drafts", items: idle),
-		].filter { !$0.items.isEmpty }
+		return loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }
+
+	/// A loop needs the viewer when it is blocked on them .
+	public func needsYou(_ loop: LoopSummary) -> Bool {
+		loop.pill == .waitingOnYou || loop.waitingCount > 0
+	}
+
+	/// Running loops that need the viewer (a paused loop is not in motion, so it is not counted).
+	public var needYouCount: Int { loops.filter { $0.status.isLive && needsYou($0) }.count }
+
+	/// "3 outcomes in motion. 2 need you." Nil when no loop is running.
+	public var summaryLine: String? {
+		let running = loops.filter { $0.status.isLive }
+		guard !running.isEmpty else { return nil }
+		let moving = "\(running.count) \(running.count == 1 ? "outcome" : "outcomes") in motion."
+		let needs = needYouCount
+		guard needs > 0 else { return moving }
+		return moving + " \(needs) \(needs == 1 ? "needs" : "need") you."
+	}
+
 
 	// MARK: Loading
 

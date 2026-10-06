@@ -19,14 +19,20 @@ public struct SettingsScreen: View {
 	private let environment: AppEnvironment
 	@State private var services: SettingsServices
 	@State private var confirmSignOut = false
+	@State private var path: [SettingsRoute]
 
-	public init(environment: AppEnvironment) {
+	/// `initialRoute` opens straight onto one page (More's Members, Billing…), with Settings
+	/// behind it.
+	public init(environment: AppEnvironment) { self.init(environment: environment, initialRoute: nil) }
+
+	init(environment: AppEnvironment, initialRoute: SettingsRoute?) {
 		self.environment = environment
+		_path = State(initialValue: initialRoute.map { [$0] } ?? [])
 		_services = State(initialValue: SettingsServices(environment: environment))
 	}
 
 	public var body: some View {
-		NavigationStack {
+		NavigationStack(path: $path) {
 			List {
 				Section("Account") {
 					NavigationLink(value: SettingsRoute.profile) {
