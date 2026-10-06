@@ -1,3 +1,4 @@
+import { DisconnectDriveModal } from '@/components/integrations/drive/disconnect-modal'
 import { FolderWatches } from '@/components/integrations/drive/folder-watches'
 import { McpTag } from '@/components/integrations/drive/mcp-tag'
 import { ScopeDriftBanner } from '@/components/integrations/drive/scope-drift-banner'
@@ -9,8 +10,18 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
-import { useConnectIntegration, useIntegrations } from '@/hooks/use-integrations'
+import {
+	useConnectIntegration,
+	useDisconnectGoogle,
+	useIntegrations,
+} from '@/hooks/use-integrations'
 import { DRIVE_COPY } from '@/lib/drive-copy'
+import {
+	type DriveDisconnectScope,
+	connectedGoogleProviders,
+	remainingProviders,
+} from '@/lib/drive-disconnect'
+import { DRIVE_DISCONNECT_COPY } from '@/lib/drive-disconnect-copy'
 import {
 	DRIVE_PROVIDER,
 	DRIVE_SCOPES,
@@ -22,6 +33,7 @@ import {
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { ChevronLeft } from 'lucide-react'
+import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations_/google-drive')({
 	component: DriveDetailPage,
@@ -73,6 +85,13 @@ function DriveDetail() {
 	const { data: actors } = useActors(workspaceId)
 	const connect = useConnectIntegration(workspaceId)
 	const startConnect = () => connect.mutate({ provider: DRIVE_PROVIDER })
+	const disconnect = useDisconnectGoogle(workspaceId)
+	const [target, setTarget] = useState<{ email: string; name: string } | null>(null)
+	const [done, setDone] = useState<{
+		email: string
+		name: string
+		scope: DriveDisconnectScope
+	} | null>(null)
 
 	if (isLoading || !integrations) {
 		return (
@@ -122,6 +141,20 @@ function DriveDetail() {
 			</div>
 
 			<p className="text-sm text-muted-foreground">{DRIVE_COPY.pageDescription}</p>
+
+			{done && (
+				<output
+					className="block rounded-md border border-success/40 bg-success/10 p-3 text-sm text-foreground"
+					aria-live="polite"
+					data-testid="post-disconnect-callout"
+				>
+					{DRIVE_DISCONNECT_COPY.callout(
+						done.scope,
+						done.name,
+						remainingProviders(connectedGoogleProviders(integrations, done.email), done.scope),
+					)}
+				</output>
+			)}
 
 			{variant === 'all-disconnected' ? (
 				<EmptyState
@@ -176,6 +209,14 @@ function DriveDetail() {
 								}
 								onAction={startConnect}
 								actionPending={connect.isPending}
+								disconnectLabel={
+									human.driveIntegrationId ? DRIVE_DISCONNECT_COPY.disconnectCta : undefined
+								}
+								onDisconnect={() => {
+									disconnect.reset()
+									setDone(null)
+									setTarget({ email: human.email, name: displayName(human) })
+								}}
 							>
 								{DRIVE_SCOPES.map((s) => (
 									<ScopeChip
@@ -202,6 +243,26 @@ function DriveDetail() {
 						}}
 					/>
 				</>
+			)}
+			{target && (
+				<DisconnectDriveModal
+					name={target.name}
+					connected={connectedGoogleProviders(integrations, target.email)}
+					pending={disconnect.isPending}
+					failed={disconnect.isError}
+					onCancel={() => setTarget(null)}
+					onConfirm={(scope) =>
+						disconnect.mutate(
+							{ email: target.email, scope },
+							{
+								onSuccess: () => {
+									setDone({ email: target.email, name: target.name, scope })
+									setTarget(null)
+								},
+							},
+						)
+					}
+				/>
 			)}
 		</div>
 	)
