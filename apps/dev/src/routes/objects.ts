@@ -162,7 +162,20 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
  * on the same grid; `id` breaks the tie inside a millisecond.
  */
 function truncateToMs(column: Column): SQL {
+	// updatedAt is converted to UTC first so the expression is IMMUTABLE and
+	// matches objects_ws_updated_at_ms_idx (migration 0088). The ORDER BY, the
+	// snapshot filter and the seek must all go through this one function, and
+	// bind their value through `seekBound`, or the planner cannot use the index.
+	if (column === objects.updatedAt) {
+		return sql`date_trunc('milliseconds', ${column} AT TIME ZONE 'UTC')`
+	}
 	return sql`date_trunc('milliseconds', ${column})`
+}
+
+/** A cursor / snapshot timestamp, typed the same way `truncateToMs` types its column. */
+function seekBound(column: Column, iso: string): SQL {
+	if (column === objects.updatedAt) return sql`(${iso}::timestamptz AT TIME ZONE 'UTC')`
+	return sql`${iso}::timestamptz`
 }
 
 /**
@@ -269,17 +282,22 @@ function buildCursorConditions(
 	includeKeyset = true,
 ): SQL[] {
 	const conditions: SQL[] = []
-	const seekColumn = truncateToMs(resolveCursorSeekColumn(query.sort) ?? objects.createdAt)
+	const rawSeekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const seekColumn = truncateToMs(rawSeekColumn)
 	if (query.snapshot_at) {
-		conditions.push(sql`${seekColumn} <= ${new Date(query.snapshot_at).toISOString()}::timestamptz`)
+		const snapshot = seekBound(rawSeekColumn, new Date(query.snapshot_at).toISOString())
+		conditions.push(sql`${seekColumn} <= ${snapshot}`)
 	}
 	if (includeKeyset && isCursorSeekActive(query)) {
-		const lastCa = new Date(query.cursor_created_at as string).toISOString()
+		const lastCa = seekBound(
+			rawSeekColumn,
+			new Date(query.cursor_created_at as string).toISOString(),
+		)
 		const lastId = query.cursor_id as string
 		const past = query.order === 'asc' ? sql`>` : sql`<`
 		const seek = or(
-			sql`${seekColumn} ${past} ${lastCa}::timestamptz`,
-			and(sql`${seekColumn} = ${lastCa}::timestamptz`, gt(objects.id, lastId)),
+			sql`${seekColumn} ${past} ${lastCa}`,
+			and(sql`${seekColumn} = ${lastCa}`, gt(objects.id, lastId)),
 		)
 		if (seek) conditions.push(seek)
 	}
