@@ -88,6 +88,20 @@ interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * `events.id` of the comment that dispatched this agent session, when the
+	 * session was triggered by a comment. `create_comment` uses it as the
+	 * default `parent_event_id` unless the caller explicitly opts out via
+	 * `no_thread: true` — the tool-level guarantee that agents reply inside
+	 * their triggering thread without depending on a prompt rule each system
+	 * prompt has to remember (follow-up to PR #1709's rule-level fallback).
+	 *
+	 * Set by `routes/mcp.ts` from the `X-Maskin-Triggering-Event-Id` header
+	 * that session-manager stamps onto Maskin MCP entries when a session
+	 * carries `source_comment_event_id`. Absent otherwise, and always absent
+	 * on stdio and on external callers.
+	 */
+	triggeringEventId?: number
 }
 
 /**
@@ -4559,7 +4573,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
+			const { workspace_id, no_thread, ...body } = args as {
+				workspace_id?: string
+				no_thread?: boolean
+				parent_event_id?: number
+				[key: string]: unknown
+			}
+			// Thread defaulting: when the session was dispatched from a comment
+			// (config.triggeringEventId set by routes/mcp.ts) and the caller
+			// didn't already pick a parent, reply inside the triggering thread
+			// by default. `no_thread: true` is the explicit opt-out for cases
+			// where a fresh top-level comment is actually intended (a status
+			// update on a bet, opening a new topic, etc.). This turns the
+			// "reply in-thread" guarantee from a per-agent prompt rule (PR
+			// #1709) into a tool-level default covering every agent and
+			// dispatch path.
+			if (
+				body.parent_event_id === undefined &&
+				no_thread !== true &&
+				typeof config.triggeringEventId === 'number'
+			) {
+				body.parent_event_id = config.triggeringEventId
+			}
 			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
 			})
@@ -5702,8 +5737,11 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.actor_id) params.set('actor_id', args.actor_id)
+			if (args.trigger_id) params.set('trigger_id', args.trigger_id)
 			if (args.updated_before) params.set('updated_before', args.updated_before)
 			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.before) params.set('before', args.before)
+			if (args.verbose) params.set('verbose', 'true')
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -5747,14 +5785,18 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const session = (await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${args.id}`,
-				undefined,
-				wsOpts,
-			)) as SessionRow
-			const enriched = await enrichSessionActorName(config, wsId, session)
+			const params = new URLSearchParams()
+			if (args.include_logs) {
+				params.set('include_logs', 'true')
+				if (args.log_limit) params.set('log_limit', String(args.log_limit))
+			}
+			const query = params.toString()
+			const path = `/api/sessions/${args.id}${query ? `?${query}` : ''}`
+			const raw = (await apiCall(config, 'GET', path, undefined, wsOpts)) as SessionRow & {
+				logs?: unknown[]
+			}
+			const { logs, ...session } = raw
+			const enriched = await enrichSessionActorName(config, wsId, session as SessionRow)
 			const sessionWithUrl = wsId
 				? addUrl(enriched as Record<string, unknown>, config, wsId, {
 						kind: 'session',
@@ -5764,21 +5806,12 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 
 			if (args.include_logs) {
-				const params = new URLSearchParams()
-				if (args.log_limit) params.set('limit', String(args.log_limit))
-				const logs = await apiCall(
-					config,
-					'GET',
-					`/api/sessions/${args.id}/logs?${params}`,
-					undefined,
-					wsOpts,
-				)
 				return {
 					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ session: sessionWithUrl, logs }),
+							text: JSON.stringify({ session: sessionWithUrl, logs: logs ?? [] }),
 						},
 					],
 				}
@@ -5787,6 +5820,35 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(sessionWithUrl) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_session_logs',
+		{
+			description: tools.get_session_logs.description,
+			inputSchema: tools.get_session_logs.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			params.set('direction', args.direction)
+			params.set('limit', String(args.limit))
+			if (args.before_id !== undefined) params.set('before_id', String(args.before_id))
+			if (args.after_id !== undefined) params.set('after_id', String(args.after_id))
+			if (args.stream) params.set('stream', args.stream)
+			const logs = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}/logs/deep?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('get_session_logs', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(logs) }],
 			}
 		},
 	)
@@ -5897,18 +5959,28 @@ export function createMcpServer(config: McpConfig) {
 					action_prompt: args.action_prompt,
 					config: args.config,
 					auto_start: true,
+					spawned_by_message_id: args.spawned_by_message_id,
+					depends_on_session_ids: args.depends_on_session_ids,
 				},
 				wsOpts,
 			)) as { id: string; status: string }
 
-			const sessionId = session.id
+			let sessionId = session.id
 			const pollMs = (args.poll_interval_seconds ?? 5) * 1000
 			const timeoutMs = (args.timeout_seconds ?? 660) * 1000
 			const deadline = Date.now() + timeoutMs
 			const terminalStatuses = ['completed', 'failed', 'timeout']
+			// §17.6: when a session hits a subscription limit its terminal report
+			// carries retried_session_id — the id of the retry the scheduler
+			// enqueued. Follow the redirect so a caller waiting on run_agent
+			// sees the retry's outcome instead of an intermediate "failed",
+			// with the same cap (5) the scheduler enforces so a broken chain
+			// can't hold the polling loop for the full timeout.
+			const MAX_RETRY_FOLLOWS = 5
+			let retryFollows = 0
 
-			// 2. Poll until terminal
-			let current = session
+			// 2. Poll until terminal, following retried_session_id redirects
+			let current = session as typeof session & { retriedSessionId?: string | null }
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
 				current = (await apiCall(
@@ -5917,8 +5989,16 @@ export function createMcpServer(config: McpConfig) {
 					`/api/sessions/${sessionId}`,
 					undefined,
 					wsOpts,
-				)) as typeof session
-				if (terminalStatuses.includes(current.status)) break
+				)) as typeof current
+				if (terminalStatuses.includes(current.status)) {
+					const retryId = current.retriedSessionId
+					if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
+						retryFollows += 1
+						sessionId = retryId
+						continue
+					}
+					break
+				}
 			}
 
 			// 3. Fetch logs
@@ -5938,13 +6018,20 @@ export function createMcpServer(config: McpConfig) {
 						actorId: (current as { actorId?: string }).actorId,
 					})
 				: current
+			// Surface how many retry redirects the poll followed so callers can
+			// distinguish a straight-through completion from one that rode the
+			// subscription-limit retry chain.
+			const currentWithRetryMeta =
+				retryFollows > 0
+					? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
+					: currentWithUrl
 
 			return {
 				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithUrl, logs }),
+						text: JSON.stringify({ session: currentWithRetryMeta, logs }),
 					},
 				],
 			}

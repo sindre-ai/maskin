@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -163,6 +164,7 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
 
 function ObjectsRoute() {
+	useDocumentTitle('Objects')
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })

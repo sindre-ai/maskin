@@ -23,6 +23,14 @@ export type ClaudeFailureReason =
 export interface ClassifierDecision {
 	action: FailoverAction
 	reason: ClaudeFailureReason
+	/**
+	 * When the subscription will accept requests again. ISO-8601 UTC string.
+	 * §17.5: parsed by the classifier's call-site (companion-parser pattern) and
+	 * spread onto the decision so settleSession / the two completion paths can
+	 * copy it to sessions.retry_at. The classifier itself is pure and never
+	 * reads reset headers — this field is set by the caller, not `classifyClaudeFailure`.
+	 */
+	retryAt?: string
 }
 
 /** HTTP response observed from the Anthropic API call. */

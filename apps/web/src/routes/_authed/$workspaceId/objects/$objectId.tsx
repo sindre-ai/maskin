@@ -4,6 +4,7 @@ import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -26,6 +27,7 @@ function ObjectDetailPage() {
 	const getDefaultStatus = (type: string) =>
 		statusMap[type]?.[0] ?? getDefaultStatusForType(type) ?? 'new'
 	const { data: object, isLoading, error, refetch } = useObject(objectId)
+	useDocumentTitle(object?.title)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 	const isCreatedRef = useRef(false)

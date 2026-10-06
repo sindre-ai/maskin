@@ -3,18 +3,30 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * Settings left-rail six-section re-group (T5).
+ * Settings left-rail sections.
  *
- * Verifies the Settings rail exposes exactly the six mockup sections in the
- * approved order — General, Objects, Members, Integrations, Extensions,
- * Billing — that each section is deep-linkable via
- * /$workspaceId/settings/<section>, and that the rail retains its mobile
- * horizontal chip strip at 375px. Legacy Skills / LLM / MCP labels must no
- * longer appear in the rail.
+ * Verifies the Settings rail exposes the approved sections in order —
+ * General, Objects, Members, Integrations, Extensions, Skills, MCP, Billing —
+ * that each section is deep-linkable via /$workspaceId/settings/<section>, and
+ * that the rail retains its mobile horizontal chip strip at 375px.
+ *
+ * Skills and MCP were both re-added after the T5 six-section re-group removed
+ * them; both routes are agent-facing configuration surfaces that operators need
+ * discoverable from the settings sidebar. The retired-label guard now only
+ * covers LLM (which lives under the enterprise-only Keys route).
  */
 
-const SIX_SECTIONS = ['General', 'Objects', 'Members', 'Integrations', 'Extensions', 'Billing']
-const RETIRED_LABELS = ['Skills', 'LLM', 'MCP']
+const SETTINGS_SECTIONS = [
+	'General',
+	'Objects',
+	'Members',
+	'Integrations',
+	'Extensions',
+	'Skills',
+	'MCP',
+	'Billing',
+]
+const RETIRED_LABELS = ['LLM']
 
 const DEEP_LINKS: Array<{ label: string; path: string }> = [
 	{ label: 'General', path: '' },
@@ -22,6 +34,8 @@ const DEEP_LINKS: Array<{ label: string; path: string }> = [
 	{ label: 'Members', path: '/members' },
 	{ label: 'Integrations', path: '/integrations' },
 	{ label: 'Extensions', path: '/extensions' },
+	{ label: 'Skills', path: '/skills' },
+	{ label: 'MCP', path: '/mcp' },
 	{ label: 'Billing', path: '/billing' },
 ]
 
@@ -32,9 +46,9 @@ async function gotoSettings(page: Page, workspaceId: string, subPath = '') {
 	await page.waitForTimeout(300)
 }
 
-test.describe('Settings — six-section left rail', () => {
+test.describe('Settings — left rail', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`rail lists the six mockup sections in order at ${viewport.label}`, async ({
+		test(`rail lists the settings sections in order at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -45,7 +59,7 @@ test.describe('Settings — six-section left rail', () => {
 			await expect(nav).toBeVisible({ timeout: 10000 })
 
 			const labels = await nav.getByRole('link').allInnerTexts()
-			expect(labels.map((t) => t.trim())).toEqual(SIX_SECTIONS)
+			expect(labels.map((t) => t.trim())).toEqual(SETTINGS_SECTIONS)
 
 			for (const retired of RETIRED_LABELS) {
 				await expect(nav.getByRole('link', { name: retired, exact: true })).toHaveCount(0)

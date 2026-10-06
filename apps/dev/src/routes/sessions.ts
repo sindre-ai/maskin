@@ -1,12 +1,15 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
+import { sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
+	getSessionQuerySchema,
 	sessionAskSchema,
 	sessionInputSchema,
+	sessionLeanRowSchema,
 	sessionLogQuerySchema,
+	sessionLogsDeepQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
 	sessionUsageQuerySchema,
@@ -25,6 +28,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -80,7 +84,7 @@ const createSessionRoute = createRoute({
 })
 
 app.openapi(createSessionRoute, (async (c) => {
-	const sessionManager = c.get('sessionManager')
+	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -93,33 +97,76 @@ app.openapi(createSessionRoute, (async (c) => {
 		? { ...body.config, entry_agent_role: body.entry_agent_role }
 		: body.config
 
-	const session = await sessionManager.createSession(workspaceId, {
+	const handle = await startSession({
+		workspaceId,
 		actorId: body.actor_id,
+		callerKind: 'rest',
 		actionPrompt: body.action_prompt,
 		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,
-		sourceSessionId: body.source_session_id,
+		parentSessionId: body.source_session_id,
+		initiatedFromObjectId: body.initiated_from_object_id ?? null,
+		initiatedFromObjectType: body.initiated_from_object_type ?? null,
+		await: 'none',
+		spawnedByMessageId: body.spawned_by_message_id,
+		dependsOnSessionIds: body.depends_on_session_ids,
 	})
 
+	// startSession returns a lightweight handle plus the underlying row on a
+	// fresh insert. On an idempotency hit the row is absent — fetch it then.
+	let session = handle.session
+	if (!session) {
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, handle.sessionId)).limit(1)
+		if (!row) {
+			throw new Error(`Session ${handle.sessionId} vanished immediately after startSession`)
+		}
+		session = row
+	}
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
+
+/**
+ * Trim `actionPrompt` down to a scannable title for the lean-row shape.
+ * ~60 chars matches the sidebar row width in the v2 mockup; the ellipsis
+ * signals truncation for prompts that ran long.
+ */
+const SESSION_TITLE_MAX_CHARS = 60
+function synthesizeSessionTitle(row: {
+	id: string
+	triggerName: string | null
+	actionPrompt: string | null
+}): string {
+	if (row.triggerName && row.triggerName.trim().length > 0) return row.triggerName
+	const prompt = row.actionPrompt?.trim()
+	if (prompt && prompt.length > 0) {
+		return prompt.length > SESSION_TITLE_MAX_CHARS
+			? `${prompt.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`
+			: prompt
+	}
+	return `Session ${row.id.slice(0, 8)}`
+}
 
 // GET / - List sessions
 const listSessionsRoute = createRoute({
 	method: 'get',
 	path: '/',
 	tags: ['Sessions'],
-	summary: 'List sessions',
+	summary: 'List sessions (lean by default; pass verbose=true for the full shape)',
 	request: {
 		headers: workspaceIdHeader,
 		query: sessionQuerySchema,
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: z.array(sessionResponseSchema) } },
-			description: 'List of sessions',
+			content: {
+				'application/json': {
+					schema: z.union([z.array(sessionResponseSchema), z.array(sessionLeanRowSchema)]),
+				},
+			},
+			description:
+				'List of sessions. Lean rows { id, title, status, updated_at } by default; full session rows when verbose=true.',
 		},
 	},
 })
@@ -132,6 +179,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
+	if (query.trigger_id) conditions.push(eq(sessions.triggerId, query.trigger_id))
 	if (query.mention_object_id) {
 		// Match both @mention-triggered sessions and thread-reply auto-trigger
 		// sessions for this object so the UI can attach a live activity card
@@ -144,23 +192,63 @@ app.openapi(listSessionsRoute, (async (c) => {
 		// Conversation-triggered sessions (see conversation-responder.ts) —
 		// lets the UI show a "this agent is responding" indicator for a
 		// conversation the same way mention_object_id does for object comments.
-		conditions.push(
-			sql`${sessions.config}->'conversation'->>'conversation_id' = ${query.conversation_id}`,
-		)
+		//
+		// Filters on the denormalized `sessions.conversation_id` column (backfilled
+		// in 0053, written by createSession) so it hits sessions_conversation_actor_idx
+		// instead of scanning every row's JSONB path — an open chat polls this.
+		conditions.push(eq(sessions.conversationId, query.conversation_id))
 	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(sessions.updatedAt, new Date(query.updated_after)))
+	if (query.before) conditions.push(lt(sessions.updatedAt, new Date(query.before)))
 
-	const results = await db
-		.select()
+	if (query.verbose) {
+		const results = await db
+			.select()
+			.from(sessions)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(desc(sessions.createdAt))
+
+		return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
+	}
+
+	// Lean path: LEFT JOIN triggers for title synthesis (the trigger's name is
+	// preferred over the raw actionPrompt when the session was scheduled). Every
+	// column touched here is already indexed — sessions_ws_status_idx covers
+	// workspace filtering, triggerId is a FK, and the JOIN is one row per
+	// session because triggerId is a single uuid column.
+	const leanRows = await db
+		.select({
+			id: sessions.id,
+			status: sessions.status,
+			updatedAt: sessions.updatedAt,
+			actionPrompt: sessions.actionPrompt,
+			triggerName: triggers.name,
+		})
 		.from(sessions)
+		.leftJoin(triggers, eq(sessions.triggerId, triggers.id))
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(desc(sessions.createdAt))
+		// Ordered by updated_at (not created_at) because the `before` cursor filters
+		// on updated_at: any other sort order skips or repeats rows across pages.
+		.orderBy(desc(sessions.updatedAt), desc(sessions.id))
 
-	return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
+	const shaped = leanRows.map((row) => ({
+		id: row.id,
+		title: synthesizeSessionTitle({
+			id: row.id,
+			triggerName: row.triggerName,
+			actionPrompt: row.actionPrompt,
+		}),
+		status: row.status,
+		updated_at: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
+	}))
+
+	return c.json(shaped as z.infer<typeof sessionLeanRowSchema>[])
 }) as RouteHandler<typeof listSessionsRoute, Env>)
 
 // GET /usage - Aggregated cost & token usage for an agent over time
@@ -285,6 +373,12 @@ app.openapi(sessionUsageRoute, (async (c) => {
 }) as RouteHandler<typeof sessionUsageRoute, Env>)
 
 // GET /:id - Get session detail
+const getSessionResponseSchema = sessionResponseSchema.extend({
+	// Present only when the caller passed include_logs=true. Ordered newest-first
+	// (id DESC) so the ending — where a failure lives — is at index 0.
+	logs: z.array(sessionLogResponseSchema).optional(),
+})
+
 const getSessionRoute = createRoute({
 	method: 'get',
 	path: '/{id}',
@@ -293,10 +387,11 @@ const getSessionRoute = createRoute({
 	request: {
 		headers: workspaceIdHeader,
 		params: sessionParamsSchema,
+		query: getSessionQuerySchema,
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: sessionResponseSchema } },
+			content: { 'application/json': { schema: getSessionResponseSchema } },
 			description: 'Session details',
 		},
 		404: {
@@ -310,11 +405,32 @@ app.openapi(getSessionRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { include_logs, log_limit } = c.req.valid('query')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>)
+	const serialized = serialize(session) as z.infer<typeof sessionResponseSchema>
+
+	if (!include_logs) {
+		return c.json(serialized as z.infer<typeof getSessionResponseSchema>)
+	}
+
+	// Newest-first tail, honoring log_limit. Response order is id DESC (NOT
+	// reversed) so the failure lands at index 0. Serves the same slice as the
+	// dedicated /logs/deep endpoint, so callers who only want a peek at the
+	// tail can skip the second round trip.
+	const logRows = await db
+		.select()
+		.from(sessionLogs)
+		.where(eq(sessionLogs.sessionId, id))
+		.orderBy(desc(sessionLogs.id))
+		.limit(log_limit)
+
+	return c.json({
+		...serialized,
+		logs: serializeArray(logRows) as z.infer<typeof sessionLogResponseSchema>[],
+	} as z.infer<typeof getSessionResponseSchema>)
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
 // PATCH /:id - Update mutable session fields (agents call this to record active step)
@@ -766,6 +882,64 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
+
+// GET /:id/logs/deep - Cursor-paginated log read that mirrors the get_session_logs
+// MCP tool. Distinct from /:id/logs above: this route returns rows in the
+// requested direction (newest_first → id DESC) rather than always ascending.
+// The existing /:id/logs route KEEPS its ascending semantics for today's UI
+// callers (spec §8 rabbit hole 5 — do not break existing consumers).
+const getSessionLogsDeepRoute = createRoute({
+	method: 'get',
+	path: '/{id}/logs/deep',
+	tags: ['Sessions'],
+	summary: 'Deep-read session logs with cursor pagination (newest-first by default)',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		query: sessionLogsDeepQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(sessionLogResponseSchema) } },
+			description: 'Session logs in the requested direction',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(getSessionLogsDeepRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const conditions = [eq(sessionLogs.sessionId, id)]
+	if (query.before_id !== undefined) conditions.push(lt(sessionLogs.id, query.before_id))
+	if (query.after_id !== undefined) conditions.push(gt(sessionLogs.id, query.after_id))
+	if (query.stream) conditions.push(eq(sessionLogs.stream, query.stream))
+
+	// Rows returned in the requested direction, NOT reversed. This is the
+	// deliberate break from the /:id/logs route at 712-798 above: a caller
+	// asking for newest_first wants the failure at index 0.
+	//
+	// Uses composite index session_logs_session_id_id_idx on (session_id, id)
+	// at packages/db/src/schema.ts:439 — the index's own docstring names this
+	// exact query as the reason it exists. Verified via EXPLAIN.
+	const rows = await db
+		.select()
+		.from(sessionLogs)
+		.where(and(...conditions))
+		.limit(query.limit)
+		.orderBy(query.direction === 'newest_first' ? desc(sessionLogs.id) : asc(sessionLogs.id))
+
+	return c.json(serializeArray(rows) as z.infer<typeof sessionLogResponseSchema>[])
+}) as RouteHandler<typeof getSessionLogsDeepRoute, Env>)
 
 // GET /:id/logs/stream - SSE stream of live logs
 app.get('/:id/logs/stream', async (c) => {

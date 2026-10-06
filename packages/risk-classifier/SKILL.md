@@ -72,8 +72,8 @@ Sum the weights of every triggered signal. Cap the sum at 100.
 Floors override the additive sum. Apply in this order:
 
 - **Protected path** — any file matches a glob in `.maskin/protected-paths.yml` → score = 100, regardless of additive sum.
-- **Regex floor** — any line matches a pattern in `.maskin/risk-floors.yml` → score = max(additive_sum, 60).
-- **Squawk hot-table hit** — squawk flags a blocking lock against a table in `.maskin/hot-tables.yml` → score = max(additive_sum, 60).
+- **Regex floor** — any line matches a pattern in `.maskin/risk-floors.yml` → score = max(additive_sum, 80).
+- **Squawk hot-table hit** — squawk flags a blocking lock against a table in `.maskin/hot-tables.yml` → score = max(additive_sum, 80).
 
 The additive sum and the floors are independent computations; the final score is the maximum of all of them, capped at 100.
 
@@ -82,8 +82,8 @@ The additive sum and the floors are independent computations; the final score is
 Exactly one band. Not a range, not "around 30," not "depends." Pick.
 
 - **AUTO-APPROVE ELIGIBLE** — `score < 25`. The PR is eligible for `orchestrate-pr-review` to consume; it does not auto-approve here.
-- **AGENT RECOMMENDS HUMAN** — `25 ≤ score < 60`. Orchestrator runs perspectives but never submits APPROVE.
-- **HUMAN REVIEW REQUIRED** — `score ≥ 60`. Orchestrator stops and routes to humans.
+- **AGENT RECOMMENDS HUMAN** — `25 ≤ score < 80`. Orchestrator runs perspectives but never submits APPROVE.
+- **HUMAN REVIEW REQUIRED** — `score ≥ 80`. Orchestrator stops and routes to humans.
 
 ## Output
 

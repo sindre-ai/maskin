@@ -4,6 +4,7 @@ import { workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
+import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -152,10 +153,8 @@ const usageRoute = createRoute({
 	},
 })
 
-app.openapi(usageRoute, async (c) => {
-	const db = c.get('db')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-
+// The uncached usage read. Returns null when the workspace does not exist.
+async function readBillingUsage(db: Database, workspaceId: string, actorId: string) {
 	const [workspace] = await db
 		.select({
 			id: workspaces.id,
@@ -167,9 +166,7 @@ app.openapi(usageRoute, async (c) => {
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
 
-	if (!workspace) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
+	if (!workspace) return null
 
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
@@ -245,7 +242,7 @@ app.openapi(usageRoute, async (c) => {
 	// disagreeing.
 	const linkedinExempt = isEnterprise(workspace)
 	const linkedinFlagOn =
-		resolveFlags(c.get('actorId'), getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
+		resolveFlags(actorId, getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
 	const linkedinConnectedCount =
 		linkedinFlagOn && !linkedinExempt ? await getConnectedLinkedInIdentityCount(db, workspaceId) : 0
 	const linkedinIdentityAddon = resolveLinkedInIdentityAddon({
@@ -264,21 +261,32 @@ app.openapi(usageRoute, async (c) => {
 		linkedinIdentityCount: linkedinIdentityAddon?.count ?? 0,
 	})
 
-	return c.json(
-		{
-			plan,
-			status,
-			usd_cents_used: usdCentsUsed,
-			hard_cap_usd_cents: hardCapCents,
-			period_start: periodStartSec,
-			period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
-			stripe_customer_id: billing?.stripe_customer_id ?? null,
-			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
-			credit_balance_cents: creditBalanceCents,
-			linkedin_identity_addon: linkedinIdentityAddon,
-		},
-		200,
+	return {
+		plan,
+		status,
+		usd_cents_used: usdCentsUsed,
+		hard_cap_usd_cents: hardCapCents,
+		period_start: periodStartSec,
+		period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
+		stripe_customer_id: billing?.stripe_customer_id ?? null,
+		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
+		credit_balance_cents: creditBalanceCents,
+		linkedin_identity_addon: linkedinIdentityAddon,
+	}
+}
+
+app.openapi(usageRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const usage = await cachedBillingUsage(actorId, workspaceId, () =>
+		readBillingUsage(db, workspaceId, actorId),
 	)
+	if (!usage) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	return c.json(usage, 200)
 })
 
 app.openapi(checkoutRoute, async (c) => {
@@ -601,6 +609,9 @@ app.openapi(cancelRoute, async (c) => {
 			.update(workspaces)
 			.set({ settings: { ...settings, billing: downgraded }, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+		// The web app refetches usage as soon as this returns; a read cached within
+		// the cache TTL would still show the paid plan.
+		evictBillingUsage(workspaceId)
 
 		// Audit + real-time, per the "events logged on every mutation" rule.
 		// A cancellation is the single most disputable billing action; without

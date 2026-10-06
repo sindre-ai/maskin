@@ -7,6 +7,7 @@ import {
 	trackClaudeSubscriptionFailoverTriggered,
 } from './analytics/claude-failover-events'
 import {
+	type ClassifierDecision,
 	type ClassifierInput,
 	classifyClaudeFailure,
 	headersFrom,
@@ -33,6 +34,7 @@ import {
 } from './claude-oauth-slots'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
+import { parseSubscriptionLimitReset } from './subscription-limit-reset'
 
 /**
  * De-dup window (ms) for the `claude_subscription_failover_triggered` event.
@@ -240,7 +242,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			// workspace API key / system fallback routes llm-routing would
 			// otherwise fall through to. Classify it the same way the
 			// flag-on path does below instead of only checking expiry.
-			const decision = classifyClaudeFailure(refreshFailure)
+			const decision = classifyClaudeFailureWithReset(refreshFailure)
 			if (decision.action === 'failover' || tokens.expiresAt <= now()) {
 				onUnusable?.(unusableFromRefresh(decision))
 				return null
@@ -318,7 +320,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			return { slot: entry.id, tokens }
 		}
 
-		const decision = classifyClaudeFailure(probeInput)
+		const decision = classifyClaudeFailureWithReset(probeInput)
 		if (decision.action === 'retry_primary') {
 			if (refreshFailure && tokens.expiresAt <= now()) {
 				// The refresh itself failed transiently (network/5xx) AND the
@@ -472,14 +474,14 @@ async function attemptChainHeadRecovery(params: {
 				)
 				const probeResult = await runProbe(probe, tokens)
 				if (probeResult) {
-					const decision = classifyClaudeFailure(probeResult)
+					const decision = classifyClaudeFailureWithReset(probeResult)
 					return { healthy: false, reason: decision.reason }
 				}
 				recoveredTokens = tokens
 				recoveredNeedsPersist = refreshed
 				return { healthy: true }
 			} catch (err) {
-				const decision = classifyClaudeFailure(classifierInputFromError(err))
+				const decision = classifyClaudeFailureWithReset(classifierInputFromError(err))
 				return { healthy: false, reason: decision.reason }
 			}
 		},
@@ -814,6 +816,36 @@ function unusableFromRefresh(decision: { action: string; reason: string }): Unus
  */
 export function isTransientCredentialError(err: unknown): boolean {
 	return classifyClaudeFailure(classifierInputFromError(err)).action !== 'failover'
+}
+
+/**
+ * §7.3 / §17.5 companion parser at the failover call-sites (sources 1 + 2 in
+ * §17.2). The classifier is pure and never reads reset headers; this helper
+ * runs it, then spreads `parseSubscriptionLimitReset` over the same HTTP
+ * headers to stamp `retryAt` on the returned `ClassifierDecision`. Transport
+ * failures and any other input with no headers return the classifier's plain
+ * decision unchanged.
+ *
+ * `confidence` on the parser result determines pre-flight (authoritative) vs
+ * mid-session (advisory) provenance in downstream telemetry; the field is
+ * carried on the result but the classifier's decision only records the
+ * timestamp (`retryAt`) — source + confidence follow via `SettleOutcome`
+ * when the session eventually settles.
+ */
+function classifyClaudeFailureWithReset(input: ClassifierInput): ClassifierDecision {
+	const decision = classifyClaudeFailure(input)
+	if (input.kind !== 'http') return decision
+	const headerRecord: Record<string, string | undefined> = {}
+	// HeaderLookup is `get(name) => string | null`. Extract the two headers the
+	// parser actually reads so we don't force a full-record walk on every
+	// classifier call.
+	const unifiedReset = input.headers.get('anthropic-ratelimit-unified-reset')
+	if (unifiedReset) headerRecord['anthropic-ratelimit-unified-reset'] = unifiedReset
+	const retryAfter = input.headers.get('retry-after')
+	if (retryAfter) headerRecord['retry-after'] = retryAfter
+	const parsed = parseSubscriptionLimitReset({ anthropicHeaders: headerRecord })
+	if (!parsed) return decision
+	return { ...decision, retryAt: parsed.resetAt.toISOString() }
 }
 
 async function runProbe(
