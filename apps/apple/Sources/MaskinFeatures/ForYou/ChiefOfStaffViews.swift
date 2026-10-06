@@ -3,17 +3,13 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The amber "Co" tile that stands for the Chief of Staff on every card and in the pop-up.
+/// The Chief of Staff's avatar: the app's own agent avatar, so its initials and tint match
+/// everywhere else the agent appears.
 struct ChiefOfStaffTile: View {
 	var size: CGFloat = MaskinSpace.s12
 
 	var body: some View {
-		Text("Co")
-			.font(MaskinTypeface.sans(size * 0.42, weight: .bold))
-			.foregroundStyle(ForYouPalette.coTileText)
-			.frame(width: size, height: size)
-			.background(ForYouPalette.coTile, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-			.accessibilityHidden(true)
+		ActorAvatar(name: "Chief of Staff", kind: .agent, size: size)
 	}
 }
 
