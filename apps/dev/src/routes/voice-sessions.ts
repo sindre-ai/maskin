@@ -190,6 +190,44 @@ async function defaultRealtimeMint(input: {
 	}
 }
 
+// ── Insert-failure + cleanup helpers ─────────────────────────────────
+
+const PG_UNIQUE_VIOLATION = '23505'
+
+/**
+ * Drizzle wraps driver errors, so the Postgres code lives on err.cause.code
+ * rather than err.code. Walk the cause chain (bounded) and match either.
+ */
+function isUniqueViolation(err: unknown): boolean {
+	let current: unknown = err
+	for (let depth = 0; depth < 5 && current; depth++) {
+		if ((current as { code?: unknown }).code === PG_UNIQUE_VIOLATION) return true
+		current = (current as { cause?: unknown }).cause
+	}
+	return false
+}
+
+/**
+ * The pending row is inserted before the vendor call, so a failed or
+ * rate-limited mint must release it, otherwise the one-live-call-per-human
+ * partial unique index locks the caller out until timeout_at. Marked errored
+ * rather than deleted to keep the audit trail; no voice_session_ended fires
+ * because the call never began.
+ */
+async function releasePendingSession(db: Database, id: string): Promise<void> {
+	try {
+		await db
+			.update(voiceSessions)
+			.set({ status: 'errored', endedReason: 'vendor_error', endedAt: new Date() })
+			.where(and(eq(voiceSessions.id, id), eq(voiceSessions.status, 'pending')))
+	} catch (err) {
+		logger.error('Failed to release pending voice session after vendor mint failure', {
+			voice_session_id: id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
+
 // ── Route ────────────────────────────────────────────────────────────
 
 const postVoiceSessionRoute = createRoute({
@@ -228,7 +266,8 @@ const postVoiceSessionRoute = createRoute({
 			content: { 'application/json': { schema: rateLimitedResponse } },
 		},
 		500: {
-			description: 'Vendor mint failed (network, contract break) — DB row rolls back',
+			description:
+				'Vendor mint failed (network, contract break) — the pending row is marked errored so the caller can retry',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -382,11 +421,10 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 			.returning({ id: voiceSessions.id, vendorSessionIdCol: voiceSessions.vendorSessionId })
 		inserted = row ?? null
 	} catch (err) {
-		// Postgres unique_violation code is '23505'. On the partial unique
-		// index this only fires when the caller already has a pending/active
-		// row — the "one live call per human" invariant.
-		const pgCode = (err as { code?: string }).code
-		if (pgCode === '23505') {
+		// On the partial unique index a unique_violation only fires when the
+		// caller already has a pending/active row — the "one live call per
+		// human" invariant.
+		if (isUniqueViolation(err)) {
 			await captureVoiceSessionDenied(humanActorId, {
 				agent_id: agentActorId,
 				workspace_id: workspaceId,
@@ -416,6 +454,7 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 	})
 
 	if (outcome.kind === 'rate_limited') {
+		await releasePendingSession(db, inserted.id)
 		await captureVoiceSessionDenied(humanActorId, {
 			agent_id: agentActorId,
 			workspace_id: workspaceId,
@@ -434,6 +473,7 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 	}
 
 	if (outcome.kind === 'error') {
+		await releasePendingSession(db, inserted.id)
 		logger.error('Voice session mint failed at vendor', {
 			voice_session_id: inserted.id,
 			workspace_id: workspaceId,
