@@ -10,6 +10,7 @@ public struct ConversationGroup: Identifiable, Equatable, Sendable {
 		public static let pinned = Key(rawValue: "pinned")
 		public static let today = Key(rawValue: "today")
 		public static let yesterday = Key(rawValue: "yesterday")
+		public static let thisWeek = Key(rawValue: "thisWeek")
 		public static let lastWeek = Key(rawValue: "lastWeek")
 		public static let earlier = Key(rawValue: "earlier")
 		public static let results = Key(rawValue: "results")
@@ -21,8 +22,8 @@ public struct ConversationGroup: Identifiable, Equatable, Sendable {
 }
 
 public enum ConversationGrouping {
-	/// Pinned first, then by recency of `lastMessageAt ?? createdAt`: Today, Yesterday, a
-	/// weekday name for each of the days before that in the past week, Last week, then one
+	/// Pinned first, then by recency of `lastMessageAt ?? createdAt`: Today, Yesterday,
+	/// This week (the days before that), Last week, then one
 	/// bucket per month (with the year once it isn't the current one). Rows with no usable date
 	/// go to Earlier rather than vanishing. Empty buckets never exist; within one, most recent
 	/// first.
@@ -49,10 +50,7 @@ public enum ConversationGrouping {
 			switch days {
 			case ...0: append(c, key: .today, label: "Today")
 			case 1: append(c, key: .yesterday, label: "Yesterday")
-			case 2...6:
-				let weekday = calendar.component(.weekday, from: date)
-				append(
-					c, key: .init(rawValue: "day-\(days)"), label: calendar.weekdaySymbols[weekday - 1])
+			case 2...6: append(c, key: .thisWeek, label: "This week")
 			case 7...13: append(c, key: .lastWeek, label: "Last week")
 			default:
 				let parts = calendar.dateComponents([.year, .month], from: date)

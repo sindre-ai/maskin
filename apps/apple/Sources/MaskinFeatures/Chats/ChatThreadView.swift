@@ -10,6 +10,7 @@ struct ChatThreadView: View {
 	let composer: ChatComposerModel
 	var conversations: ConversationsStore?
 	var onShowParticipants: () -> Void = {}
+	var onInvite: () -> Void = {}
 
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(\.horizontalSizeClass) private var sizeClass
@@ -58,24 +59,25 @@ struct ChatThreadView: View {
 			.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 			#endif
 			.toolbar {
-				ToolbarItem(placement: .principal) { header }
+				ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
 				// One trailing button with a flat menu: a second toolbar item makes iOS fold both into
 				// a "More" overflow.
 				ToolbarItem(placement: .primaryAction) {
 					Menu {
-						Button {
-							searching.toggle()
-							if !searching { searchText = "" }
-						} label: {
-							Label("Search this chat", systemImage: "magnifyingglass")
-						}
-						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
 								Task { await conversations.setPinned(row.id, !row.pinned) }
 							} label: {
-								Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
+								Label(row.pinned ? "Unpin" : "Pin to top", systemImage: row.pinned ? "pin.slash" : "pin")
 							}
+						}
+						Button(action: onInvite) { Label("Invite people", systemImage: "person.badge.plus") }
+						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
+						Button {
+							searching.toggle()
+							if !searching { searchText = "" }
+						} label: {
+							Label("Search in chat", systemImage: "magnifyingglass")
 						}
 						Button {
 							newTitle = store.title
@@ -90,7 +92,7 @@ struct ChatThreadView: View {
 							Button {
 								Task { await conversations.setArchived(row.id, !row.archived) }
 							} label: {
-								Label(row.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
+								Label(row.archived ? "Unarchive chat" : "Archive chat", systemImage: "archivebox")
 							}
 						}
 					} label: {
@@ -132,34 +134,26 @@ struct ChatThreadView: View {
 			}
 	}
 
-	/// The navigation bar's centre: the agent's icon, its name, and the conversation title under
-	/// it. Not a menu: People, Pin and the rest live in the ellipsis menu.
-	private var header: some View {
-		let others = store.participants.filter { $0.id != store.currentActorID }
-		let shown = others.isEmpty ? store.participants : others
-		let agents = shown.filter { $0.kind == .agent }
-		let names = (agents.isEmpty ? shown : agents).map(\.name).joined(separator: ", ")
-		return HStack(spacing: MaskinSpace.s5) {
-			ConversationAvatar(
-				participants: shown, size: MaskinSpace.s14, working: !store.workingAgents().isEmpty)
-			VStack(alignment: .leading, spacing: 0) {
-				Text(names.isEmpty ? store.title : names)
-					.maskinText(.subhead).fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.ink).lineLimit(1)
-				if !names.isEmpty {
-					Text(store.title)
-						.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-				}
-			}
-		}
-		.accessibilityElement(children: .combine)
-		.accessibilityAddTraits(.isHeader)
+	/// The large title: the conversation's name, no subtitle. The back button and ··· menu stay in
+	/// the bar; the agent's page opens from the avatar or name on its messages.
+	private var titleView: some View {
+		Text(store.title)
+			.font(MaskinTypeface.threadTitle)
+			.foregroundStyle(MaskinColor.ink)
+			.lineLimit(2)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.horizontal, MaskinSpace.s9)
+			.padding(.top, MaskinSpace.s3)
+			.accessibilityAddTraits(.isHeader)
 	}
 
 	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
 	/// type-checks quickly).
 	private var observedContent: some View {
-		content
+		VStack(spacing: 0) {
+			titleView
+			content
+		}
 			.onChange(of: searchText) { _, _ in
 				refreshMatches()
 				matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1
@@ -200,6 +194,14 @@ struct ChatThreadView: View {
 					message: "Messages here reach everyone in the conversation, including agents.")
 			} else {
 				VStack(spacing: 0) {
+					if store.participants.filter({ $0.id != store.currentActorID }).count > 1 {
+						GroupHeaderPill(
+							participants: store.participants, selfID: store.currentActorID, action: onShowParticipants
+						)
+						.padding(.top, MaskinSpace.s3)
+						.padding(.horizontal, MaskinSpace.s9)
+						.frame(maxWidth: .infinity, alignment: .leading)
+					}
 					if let problem = store.syncProblem {
 						StaleThreadBanner(problem: problem) { Task { await store.refresh() } }
 							.padding(.horizontal, MaskinSpace.s9)
@@ -510,7 +512,7 @@ struct ThreadTranscript: View {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
 		case .system(let message):
-			ThreadDivider(label: message.content)
+			ThreadDivider(label: message.content, ruled: false)
 		case .unreadDivider(let count):
 			ThreadDivider(
 				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.accentStrong)

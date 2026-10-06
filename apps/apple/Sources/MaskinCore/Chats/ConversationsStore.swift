@@ -29,6 +29,8 @@ public final class ConversationsStore {
 	}
 	/// Narrows the loaded list to conversations an agent takes part in (client-side).
 	public var agentFilterID: String?
+	/// The Display menu's "Group by" (the screen remembers the choice).
+	public var groupBy: ConversationGroupBy = .recent
 	public var filter: Filter = .all {
 		didSet {
 			guard filter != oldValue else { return }
@@ -87,6 +89,19 @@ public final class ConversationsStore {
 			return [ConversationGroup(key: .results, label: label, items: filtered)]
 		}
 		return ConversationGrouping.group(filtered, now: now)
+	}
+
+	/// The list as the Chats screen draws it: pinned tiles, then groups. A search or the archive
+	/// has no tiles and one flat group, as in `groups`.
+	public func sections(query: String = "", currentActorID: String?, now: Date = Date())
+		-> ConversationListSections
+	{
+		let flat = groups(query: query, now: now)
+		let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
+		if scope == .archived || searching { return ConversationListSections(pinned: [], groups: flat) }
+		return ConversationGrouping.sections(
+			ConversationGrouping.filter(conversations, agentID: agentFilterID), by: groupBy,
+			currentActorID: currentActorID, now: now)
 	}
 
 	/// The filter menu only lists agents in the current list, so a filter on an agent that is no

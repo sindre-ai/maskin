@@ -251,25 +251,64 @@ struct ChatSnapshotTests {
 		}
 	}
 
-	@Test("conversation list rows render grouped", arguments: [false, true])
+	@Test("conversation list renders pinned tiles and inset day groups", arguments: [false, true])
 	func list(dark: Bool) throws {
+		let pinned = [
+			ConversationSummary(id: "1", title: "Q4 pipeline review", lastMessageAt: base.addingTimeInterval(-300), pinned: true, unreadCount: 3, snippet: "Two insights need a decision from you", snippetActorName: "Relay", participants: [me, relay, sam]),
+			ConversationSummary(id: "5", title: "Weekly brief for the board, draft two", lastMessageAt: base.addingTimeInterval(-900), pinned: true, snippet: "Draft is up", snippetActorName: "Relay", participants: [me, relay]),
+			ConversationSummary(id: "6", title: "Hiring plan", lastMessageAt: base.addingTimeInterval(-2000), pinned: true, snippet: "Ok", snippetActorName: "Sam Berg", participants: [me, sam]),
+		]
 		let rows = [
-			("Pinned", [ConversationSummary(id: "1", title: "Q4 pipeline review", lastMessageAt: base.addingTimeInterval(-300), pinned: true, unreadCount: 3, snippet: "Two insights need a decision from you", snippetActorName: "Relay", participants: [me, relay, sam])]),
 			("Today", [
-				ConversationSummary(id: "2", title: "Relay", lastMessageAt: base.addingTimeInterval(-3600), snippet: "Done. I merged the importer fix and re-ran the checks.", snippetActorName: "Relay", participants: [me, relay]),
-				ConversationSummary(id: "3", title: "Sam Berg", lastMessageAt: base.addingTimeInterval(-7200), unreadCount: 1, snippet: "Sounds good, talk tomorrow", snippetActorName: "Sam Berg", participants: [me, sam]),
+				ConversationSummary(id: "2", title: "Importer fix: can you confirm it is contained to the staging tenant before we tell the customer", lastMessageAt: base.addingTimeInterval(-3600), unreadCount: 2, snippet: "Done. I merged the importer fix and re-ran the checks, everything is green on the staging tenant.", snippetActorName: "Relay", participants: [me, relay]),
+				ConversationSummary(id: "3", title: "Sam Berg", lastMessageAt: base.addingTimeInterval(-7200), snippet: "Sounds good, talk tomorrow", snippetActorName: "Sam Berg", participants: [me, sam]),
 			]),
-			("Earlier", [ConversationSummary(id: "4", title: "Onboarding flow", lastMessageAt: base.addingTimeInterval(-86400 * 20), snippet: "No messages yet", participants: [me, relay])]),
+			("Yesterday", [ConversationSummary(id: "7", title: "Launch checklist", lastMessageAt: base.addingTimeInterval(-86400), snippet: "Added the legal step", snippetActorName: "Relay", participants: [me, relay, sam])]),
+			("Last week", [ConversationSummary(id: "4", title: "Onboarding flow", lastMessageAt: base.addingTimeInterval(-86400 * 10), snippet: "No messages yet", participants: [me, relay])]),
 		]
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				PinnedTiles(conversations: pinned, currentActorID: "me", selection: .constant(nil), onUnpin: { _ in })
 				ForEach(rows, id: \.0) { label, items in
 					MonoLabel(label)
-					ForEach(items) { ConversationRow(conversation: $0, currentActorID: "me") }
+					VStack(spacing: 0) {
+						ForEach(items) {
+							ConversationRow(conversation: $0, currentActorID: "me", now: base)
+								.padding(.horizontal, MaskinSpace.s9).padding(.vertical, MaskinSpace.s4)
+							Divider().overlay(MaskinSurface.separator)
+						}
+					}
+					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.card, style: .continuous))
 				}
 			}
 			.padding(MaskinSpace.s9)
 			_ = try render(view, width: width, dark: dark, name: "list")
+		}
+	}
+
+	@Test("handoff rows, the group pill and activity render", arguments: [false, true])
+	func handoffAndPeople(dark: Bool) throws {
+		let handoff = ChatHandoff(
+			sessionID: "s2", agentID: "relay", triggerMessageID: 2, title: "Draft the importer rollout note for the customer",
+			status: .running, startedAt: base)
+		let steps = [
+			ActivityStep(id: "1", kind: .thinking, label: "Thinking"),
+			ActivityStep(id: "2", kind: .toolUse, label: "Using Read", detail: "notes/importer.md"),
+			ActivityStep(id: "3", kind: .text, label: "Writing the note", status: .running),
+		]
+		let turn = ActivityTurn(sessionID: "s2", messageID: 2, startedAt: base, status: .running, steps: steps)
+		var done = handoff
+		done.status = .completed
+		for width in Self.widths {
+			let view = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+				GroupHeaderPill(participants: [me, relay, sam, ChatParticipant(id: "cpo", name: "CPO", kind: .agent), ChatParticipant(id: "dev", name: "Dev", kind: .agent)], selfID: "me", action: {})
+				HandoffRow(handoff: handoff, agent: relay, turn: turn)
+				HandoffRow(handoff: done, agent: relay, turn: ActivityTurn(sessionID: "s2", messageID: 2, status: .completed, steps: steps.map { var s = $0; s.status = .completed; return s }))
+				LiveActivityView(agent: relay, turn: turn, startedAt: base.addingTimeInterval(-42), onStop: {})
+				FinishedTraceView(turn: ActivityTurn(sessionID: "s3", messageID: 3, status: .failed, result: ActivityResult(text: "x", isError: true), steps: [ActivityStep(id: "9", kind: .error, label: "Credit balance too low", status: .failed)]))
+			}
+			.padding(MaskinSpace.s9)
+			_ = try render(view, width: width, dark: dark, name: "handoff")
 		}
 	}
 

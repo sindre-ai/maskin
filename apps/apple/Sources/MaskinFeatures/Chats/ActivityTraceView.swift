@@ -3,29 +3,40 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// SF Symbol per step kind.
-private extension ActivityStep.Kind {
-	var symbol: String {
-		switch self {
-		case .toolUse: "wrench.and.screwdriver"
-		case .thinking: "ellipsis.bubble"
-		case .text: "text.alignleft"
-		case .error: "exclamationmark.triangle"
+/// The mono label for a step, as the web's trace draws it (`message-activity.tsx`): what the agent
+/// thought, read (any tool call), wrote (its own words) or failed at.
+extension ActivityStep {
+	var traceLabel: String {
+		if status == .failed { return "FAILED" }
+		switch kind {
+		case .thinking: return "THOUGHT"
+		case .toolUse: return "READ"
+		case .text: return "WROTE"
+		case .error: return "FAILED"
 		}
 	}
+
+	fileprivate var isFailure: Bool { status == .failed || kind == .error }
 }
 
-/// One line of the trace. A running step is emphasized (ink, semibold, pulsing marker); finished
-/// ones are muted with a check; a failed one is danger-tinted. The detail (a path, a command)
-/// sits under the label in the mono role, never an id.
+/// One line of the trace: a 52pt mono label column, then the step. The step still going is in
+/// full ink, earlier ones grey; a failure takes the warning colour. The detail (a path, a
+/// command) sits under the label in the muted role, never an id.
 struct ActivityStepRow: View {
 	let step: ActivityStep
 	var emphasized = false
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	/// The kind column: wide enough for "THOUGHT".
+	static let labelWidth: CGFloat = MaskinSpace.s14 + MaskinSpace.s11
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			marker.frame(width: MaskinSpace.s8)
+			Text(step.traceLabel)
+				.maskinText(.microLabel).fontWeight(.bold)
+				.foregroundStyle(labelColor)
+				.lineLimit(1).minimumScaleFactor(0.8)
+				.frame(width: Self.labelWidth, alignment: .leading)
+				.accessibilityHidden(true)
 			VStack(alignment: .leading, spacing: 0) {
 				Text(step.label)
 					.maskinText(.subhead).fontWeight(emphasized ? .semibold : .regular)
@@ -43,29 +54,11 @@ struct ActivityStepRow: View {
 	}
 
 	private var color: Color {
-		switch step.status {
-		case .failed: MaskinColor.danger
-		case .running: MaskinColor.ink
-		case .completed: emphasized ? MaskinColor.ink2 : MaskinColor.ink4
-		}
+		if step.isFailure { return MaskinColor.warningStrong }
+		return emphasized ? MaskinColor.ink : MaskinColor.ink4
 	}
 
-	@ViewBuilder
-	private var marker: some View {
-		switch step.status {
-		case .running:
-			Image(systemName: step.kind.symbol).foregroundStyle(MaskinColor.accentFgStrong)
-				.symbolEffect(.pulse, isActive: !reduceMotion)
-				.accessibilityHidden(true)
-		case .failed:
-			Image(systemName: "xmark.circle.fill").foregroundStyle(MaskinColor.danger)
-				.accessibilityHidden(true)
-		case .completed:
-			Image(systemName: step.kind == .error ? step.kind.symbol : "checkmark")
-				.foregroundStyle(MaskinColor.ink5)
-				.accessibilityHidden(true)
-		}
-	}
+	private var labelColor: Color { step.isFailure ? MaskinColor.warning : MaskinColor.ink5 }
 
 	private var accessibilityText: String {
 		let state =
@@ -74,13 +67,26 @@ struct ActivityStepRow: View {
 			case .failed: "failed"
 			case .completed: "done"
 			}
-		return "\(step.label), \(state)"
+		return "\(step.traceLabel.capitalized), \(step.label), \(state)"
 	}
 }
 
-/// The agent's working row: avatar, "<name> is working", an elapsed timer and Stop, then the
-/// live step list with the current step emphasized. Without step data (older server, first poll)
-/// it degrades to the session's one-line activity, as before.
+/// Steps hung off a 1pt rule on the left.
+struct ActivitySteps<Content: View>: View {
+	@ViewBuilder var content: Content
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) { content }
+			.padding(.leading, MaskinSpace.s7)
+			.overlay(alignment: .leading) {
+				Rectangle().fill(MaskinSurface.line).frame(width: 1)
+			}
+	}
+}
+
+/// The agent's working row: avatar, name, pulsing dots and what it is doing, an elapsed time on
+/// the right, then the live steps with the current one in full ink, and Stop. Without step data
+/// (older server, first poll) it degrades to the session's one-line activity.
 struct LiveActivityView: View {
 	let agent: ChatParticipant
 	/// The session's own one-line status, used until steps arrive.
@@ -89,57 +95,87 @@ struct LiveActivityView: View {
 	/// Where the elapsed timer starts when the turn doesn't say.
 	var startedAt: Date?
 	var onStop: (() -> Void)?
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// Steps shown while live: the newest few, so the card doesn't grow without bound.
 	static let visibleSteps = 5
 
+	/// Indent of the steps: past the 26pt avatar.
+	static let stepIndent: CGFloat = MaskinSpace.s13 + MaskinSpace.s4
+
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			header
-			if let turn, !turn.steps.isEmpty {
-				let shown = Array(turn.steps.suffix(Self.visibleSteps))
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					if turn.steps.count > shown.count {
-						Text("\(turn.steps.count - shown.count) earlier")
-							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-							.padding(.leading, MaskinSpace.s8 + MaskinSpace.s4)
+			Group {
+				if let turn, !turn.steps.isEmpty {
+					let shown = Array(turn.steps.suffix(Self.visibleSteps))
+					ActivitySteps {
+						if turn.steps.count > shown.count {
+							Text("\(turn.steps.count - shown.count) earlier")
+								.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+						}
+						ForEach(shown) { step in
+							ActivityStepRow(step: step, emphasized: step.id == turn.currentStep?.id)
+						}
 					}
-					ForEach(shown) { step in
-						ActivityStepRow(step: step, emphasized: step.id == turn.currentStep?.id)
-					}
+				} else if let fallbackActivity, !fallbackActivity.isEmpty {
+					Text(fallbackActivity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
 				}
-				.padding(.leading, MaskinSpace.s12 + MaskinSpace.s5)
-			} else if let fallbackActivity, !fallbackActivity.isEmpty {
-				Text(fallbackActivity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
-					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s5)
+				if let onStop {
+					Button(action: onStop) {
+						Text("Stop").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
+							.padding(.trailing, MaskinSpace.s7)
+							.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+							.contentShape(Rectangle())
+					}
+					.buttonStyle(.plain)
+					.accessibilityLabel("Stop \(agent.name)")
+				}
 			}
+			.padding(.leading, Self.stepIndent)
 		}
 		.animation(MaskinMotion.quick, value: turn?.steps.map(\.id))
 		.accessibilityElement(children: .contain)
 	}
 
+	/// "is writing a reply" while the newest step is the agent's own words, else "is working on it".
+	private var verb: String {
+		turn?.currentStep?.kind == .text ? "is writing a reply" : "is working on it"
+	}
+
 	private var header: some View {
-		HStack(spacing: MaskinSpace.s5) {
+		HStack(spacing: MaskinSpace.s4) {
 			ActorAvatar(
-				name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id, working: true)
-			HStack(spacing: MaskinSpace.s4) {
-				Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-				if let start = turn?.startedAt ?? startedAt {
-					ElapsedLabel(since: start)
-				}
-			}
+				name: agent.name, kind: .agent, size: MaskinSpace.s13 - MaskinSpace.s1, seed: agent.id,
+				working: true)
+			Text(agent.name).maskinText(.subhead).fontWeight(.bold).foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+			PulsingDots()
+			Text(verb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			Spacer(minLength: 0)
-			if let onStop {
-				Button(action: onStop) {
-					Text("Stop").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-						.padding(.horizontal, MaskinSpace.s7)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.contentShape(Rectangle())
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Stop \(agent.name)")
+			if let start = turn?.startedAt ?? startedAt { ElapsedLabel(since: start) }
+		}
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel("\(agent.name) \(verb)")
+	}
+}
+
+/// Three small dots that pulse in turn (still under Reduce Motion).
+struct PulsingDots: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s1 + MaskinSpace.s1) {
+			ForEach(0..<3, id: \.self) { i in
+				Circle().fill(MaskinColor.ink5).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+					.phaseAnimator([0.3, 1.0], trigger: reduceMotion) { view, phase in
+						view.opacity(reduceMotion ? 0.7 : phase)
+					} animation: { _ in
+						.easeInOut(duration: 0.6).delay(Double(i) * 0.2)
+					}
 			}
 		}
+		.accessibilityHidden(true)
 	}
 }
 
@@ -162,18 +198,20 @@ struct ElapsedLabel: View {
 	}
 }
 
-/// A finished turn: one muted line (the last thing the agent did, "· 3 steps · 8s") that opens to
-/// the full trace. A failed turn
-/// says so and names the point it reached; the line stays quiet otherwise.
+/// A finished turn: one muted line (the last thing the agent did, "· 3 steps · 8s"), indented under
+/// the agent's avatar, that opens to the full trace ("Hide work" while open). A failed turn leads
+/// with a warning triangle in the warning colour and opens by itself so the reason is on screen.
 struct FinishedTraceView: View {
 	let turn: ActivityTurn
 	@State private var expanded = false
 
-	/// A failed turn opens by itself so the reason is on screen; otherwise the line stays closed.
 	init(turn: ActivityTurn, expanded: Bool? = nil) {
 		self.turn = turn
 		_expanded = State(initialValue: expanded ?? turn.failed)
 	}
+
+	/// 36pt: under the agent's name, past its avatar.
+	static let indent: CGFloat = MaskinSpace.s12 + MaskinSpace.s7
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
@@ -181,13 +219,20 @@ struct FinishedTraceView: View {
 				withAnimation(MaskinMotion.quick) { expanded.toggle() }
 			} label: {
 				HStack(spacing: MaskinSpace.s3) {
-					Image(systemName: turn.failed ? "exclamationmark.circle" : "chevron.right")
-						.rotationEffect(.degrees(expanded && !turn.failed ? 90 : 0))
-						.foregroundStyle(turn.failed ? MaskinColor.danger : MaskinColor.ink5)
-						.accessibilityHidden(true)
-					Text(turn.collapsedLabel).maskinText(.caption)
+					if turn.failed {
+						Image(systemName: "exclamationmark.triangle.fill")
+							.foregroundStyle(MaskinColor.danger)
+							.accessibilityHidden(true)
+					}
+					Text(expanded && !turn.failed ? "Hide work" : turn.collapsedLabel)
+						.maskinText(.caption)
 						.foregroundStyle(turn.failed ? MaskinColor.danger : MaskinColor.ink4)
 						.lineLimit(1)
+					Image(systemName: "chevron.down")
+						.font(.caption2)
+						.rotationEffect(.degrees(expanded ? 180 : 0))
+						.foregroundStyle(MaskinColor.ink5)
+						.accessibilityHidden(true)
 					Spacer(minLength: 0)
 				}
 				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s8, alignment: .leading)
@@ -200,15 +245,15 @@ struct FinishedTraceView: View {
 			.accessibilityAddTraits(.isButton)
 
 			if expanded {
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+				ActivitySteps {
 					ForEach(turn.steps) { ActivityStepRow(step: $0) }
 					if turn.stepsTruncated {
 						Text("Earlier steps not shown").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 					}
 				}
-				.padding(.leading, MaskinSpace.s5)
 				.transition(.opacity)
 			}
 		}
+		.padding(.leading, Self.indent)
 	}
 }

@@ -81,8 +81,10 @@ private struct ChatsContainer: View {
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {
-				ChatThreadHost(environment: environment, conversations: store, conversationID: selection)
-					.id(selection)
+				ChatThreadHost(
+					environment: environment, conversations: store, conversationID: selection
+				)
+				.id(selection)
 			} else {
 				EmptyState(
 					symbol: "bubble.left.and.bubble.right", title: "Select a conversation",
@@ -148,6 +150,8 @@ private struct ChatThreadHost: View {
 	/// disk-cache decode and a store each time before SwiftUI discarded the result.
 	@State private var holder = ThreadHolder()
 	@State private var showParticipants = false
+	/// Opens the People sheet straight on its picker ("Invite people").
+	@State private var inviting = false
 
 	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
 		self.environment = environment
@@ -195,11 +199,16 @@ private struct ChatThreadHost: View {
 		let _ = { holder.built = built }()
 		let chat = built.chat
 		let composer = built.composer
-		return ChatThreadView(store: chat, composer: composer, conversations: conversations, onShowParticipants: { showParticipants = true })
+		return ChatThreadView(store: chat, composer: composer, conversations: conversations,
+			onShowParticipants: { showParticipants = true },
+			onInvite: {
+				inviting = true
+				showParticipants = true
+			})
 			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
-			.sheet(isPresented: $showParticipants) {
-				ParticipantsSheet(chat: chat, conversations: conversations)
-					.presentationDetents([.medium, .large])
+			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
+				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting)
+				.presentationDetents([.medium, .large])
 			}
 	}
 }

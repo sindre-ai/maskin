@@ -3,55 +3,46 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One conversation in the list: the agent's icon, the agent's name over the conversation
-/// title and a two-line preview of the latest message, the time and unread state. An unread
-/// conversation reads louder at a glance: a leading dot, a bold title, a darker preview and a
-/// count pill, so it can't be mistaken for one that is already read.
+/// One conversation in the list: a 40pt avatar (two overlapped for a group chat), the title over
+/// "Agent · preview", the time in the Messages style and an unread count. An unread chat reads
+/// louder: a bold title, a darker preview and the count badge.
 struct ConversationRow: View {
 	let conversation: ConversationSummary
 	let currentActorID: String?
+	/// "Now" for the time label; fixed in snapshot tests.
+	var now = Date()
 
 	var body: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s5) {
-			Circle()
-				.fill(conversation.isUnread ? MaskinColor.accent : Color.clear)
-				.frame(width: MaskinSpace.s5, height: MaskinSpace.s5)
-				.accessibilityHidden(true)
-			ConversationAvatar(participants: others)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+		HStack(alignment: .top, spacing: MaskinSpace.s7) {
+			ConversationAvatar(participants: others, size: Self.avatarSize)
+				.frame(width: Self.clusterWidth, height: Self.avatarSize)
+			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Text(headline)
-						.maskinText(.headline)
+					Text(ChatPreviewText.plain(conversation.title))
+						.maskinText(.body)
 						.fontWeight(conversation.isUnread ? .bold : .semibold)
 						.foregroundStyle(MaskinColor.ink)
-						.lineLimit(1)
+						.lineLimit(2)
+					Spacer(minLength: MaskinSpace.s3)
 					if conversation.pinned {
 						Image(systemName: "pin.fill")
 							.font(.caption2)
 							.foregroundStyle(MaskinColor.ink5)
 							.accessibilityHidden(true)
 					}
-					Spacer(minLength: MaskinSpace.s3)
-					RelativeTime(conversation.activityDate, style: .compact)
-						.maskinText(.caption)
-						.foregroundStyle(conversation.isUnread ? MaskinColor.accent : MaskinColor.ink4)
+					if let date = conversation.activityDate {
+						Text(ChatListTime.label(for: date, now: now))
+							.maskinText(.caption)
+							.foregroundStyle(conversation.isUnread ? MaskinColor.accent : MaskinColor.ink4)
+					}
 				}
-				Text(ChatPreviewText.plain(conversation.title))
-					.maskinText(.subhead)
-					.fontWeight(conversation.isUnread ? .semibold : .regular)
-					.foregroundStyle(conversation.isUnread ? MaskinColor.ink : MaskinColor.ink3)
-					.lineLimit(1)
 				HStack(alignment: .top, spacing: MaskinSpace.s4) {
-					if let preview {
-						Text(preview)
-							.maskinText(.subhead)
-							.foregroundStyle(conversation.isUnread ? MaskinColor.ink2 : MaskinColor.ink4)
-							.lineLimit(2)
-					}
+					previewLine
+						.maskinText(.subhead)
+						.foregroundStyle(conversation.isUnread ? MaskinColor.ink2 : MaskinColor.ink4)
+						.lineLimit(2)
 					Spacer(minLength: 0)
-					if conversation.isUnread {
-						UnreadBadge(count: conversation.unreadCount)
-					}
+					if conversation.isUnread { UnreadBadge(count: conversation.unreadCount) }
 				}
 			}
 		}
@@ -61,30 +52,32 @@ struct ConversationRow: View {
 		.accessibilityLabel(accessibilityLabel)
 	}
 
-	private var others: [ChatParticipant] {
-		let rest = conversation.participants.filter { $0.id != currentActorID }
-		return rest.isEmpty ? conversation.participants : rest
+	static let avatarSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s4
+	/// A group chat's two avatars sit in a 44 x 40 cluster.
+	static let clusterWidth: CGFloat = MaskinSpace.s14 + MaskinSpace.s7
+
+	private var others: [ChatParticipant] { conversation.others(excluding: currentActorID) }
+
+	/// Whose words the preview shows: the last sender, else who the chat is with.
+	private var previewName: String {
+		if let who = conversation.snippetActorName, !who.isEmpty { return who }
+		return conversation.counterpartName(excluding: currentActorID)
 	}
 
-	/// The agents in the chat; with none, the other people.
-	private var headline: String {
-		let agents = others.filter { $0.kind == .agent }
-		let names = (agents.isEmpty ? others : agents).map(\.name)
-		return names.isEmpty ? conversation.title : names.joined(separator: ", ")
+	private var previewText: String? {
+		guard let text = conversation.snippet.map(ChatPreviewText.plain), !text.isEmpty else { return nil }
+		return text
 	}
 
-	/// The latest message, led by who wrote it ("Relay: Done, the PR is up"). Nil when the server
-	/// sent no snippet, in which case the row shows only the title.
-	private var preview: String? {
-		guard let text = conversation.snippet.map(ChatPreviewText.plain), !text.isEmpty
-		else { return nil }
-		guard let who = conversation.snippetActorName, !who.isEmpty else { return text }
-		return "\(who): \(text)"
+	/// "**Relay** · Done, the PR is up"; just the name when the server sent no snippet.
+	private var previewLine: Text {
+		guard let previewText else { return Text(previewName) }
+		return Text("\(Text(previewName).fontWeight(.semibold)) · \(previewText)")
 	}
 
 	private var accessibilityLabel: String {
-		var parts = [headline, ChatPreviewText.plain(conversation.title)]
-		if let preview { parts.append(preview) }
+		var parts = [ChatPreviewText.plain(conversation.title), previewName]
+		if let previewText { parts.append(previewText) }
 		if conversation.isUnread { parts.append("\(conversation.unreadCount) unread") }
 		if conversation.pinned { parts.append("pinned") }
 		return parts.joined(separator: ", ")
@@ -98,7 +91,7 @@ struct UnreadBadge: View {
 			.maskinText(.caption)
 			.foregroundStyle(MaskinSurface.onInverse)
 			.padding(.horizontal, MaskinSpace.s3)
-			.frame(minWidth: MaskinSpace.s9, minHeight: MaskinSpace.s9)
+			.frame(minWidth: MaskinSpace.s10, minHeight: MaskinSpace.s10)
 			.background(MaskinColor.accent, in: Capsule())
 			.accessibilityHidden(true)
 	}
@@ -117,14 +110,13 @@ struct ConversationAvatar: View {
 				name: only.name, kind: only.kind == .agent ? .agent : .human, size: size, seed: only.id,
 				working: working)
 		} else if participants.count >= 2 {
-			let small = size * 0.66
+			let small = size * 0.65
 			ZStack {
-				avatar(participants[0], small).offset(x: -size * 0.17, y: -size * 0.17)
+				avatar(participants[0], small).offset(x: -size * 0.225, y: -size * 0.175)
 				avatar(participants[1], small)
-					.overlay(Circle().strokeBorder(MaskinSurface.card, lineWidth: MaskinSpace.s1))
-					.offset(x: size * 0.17, y: size * 0.17)
+					.offset(x: size * 0.225, y: size * 0.175)
 			}
-			.frame(width: size, height: size)
+			.frame(width: size * 1.1, height: size)
 		} else {
 			Circle().fill(MaskinSurface.fill).frame(width: size, height: size)
 		}
