@@ -8,16 +8,24 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-/// The thread's composer: one calm card holding the attachments and the text field, with `+` below it
-/// on the left (attach, mention, emoji, formatting) and, on the right, a mic and a live button while
-/// there is nothing to send, a waveform and a checkmark while dictating, and Send once there is text.
-/// Live voice replaces the card with a panel. Typing `@` or `:` opens a suggestion list above it.
+/// The shared composer: a floating glass pill with `+` (attach, mention, emoji, formatting, live
+/// voice) on the left, the text field, a mic and Send on the right (Send turns dark once there is text).
+/// While dictating the buttons become Discard (puts back the text from before) and Done (keeps the
+/// text), with a red waveform and the editable transcript between them; dictation runs until one of
+/// them is tapped. Live voice replaces the pill with a panel. Typing `@` or `:` opens a suggestion
+/// list above it.
+///
+/// One view for every surface that composes a message (chat thread, object timeline, loop, For you
+/// reply, Chief of Staff): configure it, do not fork it. `placeholder` words the field, `roster` says
+/// whom `@` offers, `allowsAttach` shows or hides the file and photo items, `allowsLive` the live
+/// conversation item.
 struct ChatComposer: View {
 	@Bindable var model: ChatComposerModel
 	let placeholder: String
-	/// People and agents the `@` picker offers for a query.
-	let suggestions: (String) -> [ChatParticipant]
-	let inConversation: Set<String>
+	/// People and agents the `@` picker offers for a query. Ignored when `roster` is set.
+	var suggestions: (String) -> [ChatParticipant] = { _ in [] }
+	/// People already in the conversation: listed first by the `@` picker.
+	var inConversation: Set<String> = []
 	let onSend: () -> Void
 	/// Whom a live conversation is with, for the panel's wording.
 	var agentName = "Agent"
@@ -34,13 +42,24 @@ struct ChatComposer: View {
 	var previewVoice: ComposerVoiceState = .idle
 	/// The latest messages, so a live conversation can hear the agent's reply arrive.
 	var replies: [ChatMessage] = []
+	/// Everyone `@` can tag (workspace members and agents, with their roles). Nil falls back to
+	/// `suggestions`.
+	var roster: MentionRoster?
+	/// Photos, camera and files in the `+` menu.
+	var allowsAttach = true
+	/// "Start a live conversation" in the `+` menu (iOS only, and only with `showsVoiceControls`).
+	var allowsLive = true
+	/// Told when the field gains or loses focus (For you hides its quick-question chips while typing).
+	var onFocusChange: ((Bool) -> Void)?
 
 	/// Set once the reader acts; until then the preview state (idle in real use) stands.
 	@State var voiceChoice: ComposerVoiceState?
 	@State var muted = false
+	/// The text from before the mic opened, put back by Discard.
+	@State var textBeforeDictation = ""
+	@State var dictationBase = ""
 	#if os(iOS)
 	@State var dictation = Dictation()
-	@State var dictationBase = ""
 	@State var live: LiveVoiceController?
 	@State var showCamera = false
 	@Environment(\.openURL) var openURL
@@ -59,7 +78,9 @@ struct ChatComposer: View {
 		nonmutating set { voiceChoice = newValue }
 	}
 
-	private let shape = RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+	/// 26pt, the pill's corner: a single line reads as a capsule, a tall field stays a rounded card.
+	private let shape = RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous)
+	private let buttonSize = MaskinSpace.s14 + MaskinSpace.s3
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s4) {
@@ -71,7 +92,7 @@ struct ChatComposer: View {
 				)
 				.transition(.opacity.combined(with: .scale(scale: 0.98)))
 			} else {
-				card
+				pill
 			}
 			if let notice = model.notice {
 				Text(notice).maskinText(.caption).foregroundStyle(MaskinColor.danger)
@@ -84,6 +105,7 @@ struct ChatComposer: View {
 		.animation(MaskinMotion.quick, value: showsFormatting)
 		.animation(MaskinMotion.standard, value: voice)
 		.onChange(of: model.focusRequest) { _, _ in focused = true }
+		.onChange(of: focused) { _, now in onFocusChange?(now) }
 		.voiceLifecycle(self)
 		.photosPicker(
 			isPresented: $showPhotos, selection: $photoItems,
@@ -111,13 +133,23 @@ struct ChatComposer: View {
 
 	// MARK: Suggestions
 
+	private func mentionCandidates(for query: String) -> [MentionPerson] {
+		if let roster {
+			return roster.candidates(query: query, selfID: model.selfActorID, prioritizing: inConversation)
+				.filter { person in !model.mentions.contains { $0.id == person.id } }
+		}
+		return suggestions(query).prefix(MentionRoster.maxRows).map {
+			MentionPerson(id: $0.id, name: $0.name, kind: $0.kind)
+		}
+	}
+
 	@ViewBuilder
 	private var suggestionList: some View {
-		if let match = MentionTrigger.find(in: model.text) {
+		if voice != .dictating, let match = MentionTrigger.find(in: model.text) {
 			MentionSuggestions(
-				candidates: suggestions(match.query), inConversation: inConversation,
+				people: mentionCandidates(for: match.query),
 				onPick: { person in
-					model.pick(ChatMention(id: person.id, name: person.name, kind: person.kind))
+					model.pick(person.mention)
 					focused = true
 				}
 			)
@@ -131,34 +163,50 @@ struct ChatComposer: View {
 		}
 	}
 
-	// MARK: Card
+	// MARK: Pill
 
-	private var card: some View {
+	private var pill: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			if !model.attachments.isEmpty || !model.mentions.isEmpty {
 				ComposerChips(model: model)
-					.padding(.horizontal, MaskinSpace.s5)
+					.padding(.horizontal, MaskinSpace.s4)
 					.padding(.top, MaskinSpace.s5)
 			}
-			ComposerTextField(model: model, placeholder: placeholder, focused: $focused)
-				.maskinText(.body)
-				.foregroundStyle(MaskinColor.ink)
-				.padding(.horizontal, MaskinSpace.s8)
-				.padding(.top, MaskinSpace.s7)
-				.padding(.bottom, MaskinSpace.s4)
-			if showsFormatting {
+			HStack(alignment: .bottom, spacing: MaskinSpace.s2) {
+				if voice == .dictating { discardButton } else { plusMenu }
+				field
+				trailing
+			}
+			.padding(.leading, MaskinSpace.s4)
+			.padding(.trailing, MaskinSpace.s4)
+			.padding(.vertical, MaskinSpace.s4)
+			if showsFormatting && voice != .dictating {
 				ComposerFormatRow(apply: model.applyFormat)
+					.padding(.bottom, MaskinSpace.s3)
 					.transition(.opacity.combined(with: .move(edge: .bottom)))
 			}
-			toolRow
 		}
-		.background(MaskinSurface.card, in: shape)
-		.overlay(shape.strokeBorder(focused ? MaskinColor.ruleStrong : MaskinSurface.line, lineWidth: 1))
+		.maskinGlass(in: shape)
+		.overlay(shape.strokeBorder(focused ? MaskinColor.ruleStrong : Color.clear, lineWidth: 1))
 	}
 
-	private var toolRow: some View {
-		HStack(spacing: MaskinSpace.s1) {
-			Menu {
+	/// The field. While dictating a red waveform leads it and the transcript is editable in place.
+	private var field: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			if voice == .dictating {
+				VoiceWaveform(bars: 5, height: 22, tint: MaskinColor.dangerMic)
+			}
+			ComposerTextField(model: model, placeholder: voice == .dictating ? "Listening…" : placeholder, focused: $focused)
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink)
+		}
+		.padding(.horizontal, MaskinSpace.s3)
+		.frame(minHeight: buttonSize, alignment: .center)
+	}
+
+	private var plusMenu: some View {
+		Menu {
+			if allowsAttach {
 				Button { showPhotos = true } label: { Label("Photo library", systemImage: "photo") }
 				#if os(iOS)
 				if CameraPicker.isAvailable {
@@ -170,105 +218,111 @@ struct ChatComposer: View {
 				#endif
 				Button { showFiles = true } label: { Label("File", systemImage: "doc") }
 				Divider()
-				Button {
-					let needsSpace = !(model.text.isEmpty || model.text.last?.isWhitespace == true)
-					model.insert(needsSpace ? " @" : "@")
-					focused = true
-				} label: { Label("Mention an agent or person", systemImage: "at") }
-				Button { showEmojis = true } label: { Label("Emoji", systemImage: "face.smiling") }
-				Toggle(isOn: $showsFormatting) { Label("Formatting", systemImage: "textformat") }
-			} label: {
-				ComposerToolLabel("plus", outlined: true)
 			}
-			.menuIndicator(.hidden)
-			.buttonStyle(.plain)
-			.accessibilityLabel("Add a file, mention or emoji")
-			.popover(isPresented: $showEmojis) {
-				EmojiPickerGrid { emoji in
-					model.insert(emoji)
-					showEmojis = false
-					focused = true
-				}
-				.presentationCompactAdaptation(.popover)
-			}
-			Spacer(minLength: 0)
-			trailing
-		}
-		.padding(.horizontal, MaskinSpace.s3)
-		.padding(.bottom, MaskinSpace.s3)
-		.animation(MaskinMotion.quick, value: model.canSend)
-		.animation(MaskinMotion.quick, value: voice)
-	}
-
-	/// The right-hand side: Send once there is text; a waveform and checkmark while dictating; a mic and
-	/// a live button otherwise. The two voice buttons look different on purpose: the mic is a quiet glyph
-	/// that types for you, live is a filled button that starts a conversation.
-	@ViewBuilder
-	private var trailing: some View {
-		if voice == .dictating {
-			HStack(spacing: MaskinSpace.s5) {
-				VoiceWaveform(bars: 5, height: 22, tint: MaskinColor.accent)
-				Button {
-					MaskinHaptics.play(.selection)
-					finishDictation()
-				} label: {
-					Image(systemName: "checkmark")
-						.font(.system(size: MaskinFontSize.t15, weight: .bold))
-						.foregroundStyle(MaskinSurface.onInverse)
-						.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-						.background(MaskinColor.accent, in: Circle())
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Finish dictation")
-			}
-			.transition(.opacity)
-		} else if model.canSend {
 			Button {
-				MaskinHaptics.play(.light)
-				onSend()
-			} label: {
-				Image(systemName: "arrow.up")
-					.font(.system(size: MaskinFontSize.t15, weight: .bold))
-					.foregroundStyle(MaskinSurface.onInverse)
-					.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-					.background(MaskinColor.accent, in: Circle())
-			}
-			.buttonStyle(.plain)
-			.transition(.scale.combined(with: .opacity))
-			#if !os(watchOS)
-			.keyboardShortcut(.return, modifiers: .command)
-			#endif
-			.accessibilityLabel("Send")
-			.accessibilityHint(model.sendBlocker ?? "")
-		} else if showsVoiceControls {
-			HStack(spacing: MaskinSpace.s2) {
-				Button {
-					MaskinHaptics.play(.selection)
-					toggleDictation()
-				} label: {
-					Image(systemName: "mic")
-						.font(.system(size: MaskinFontSize.t16, weight: .medium))
-						.foregroundStyle(MaskinColor.ink3)
-						.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-						.contentShape(Circle())
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Dictate")
+				let needsSpace = !(model.text.isEmpty || model.text.last?.isWhitespace == true)
+				model.insert(needsSpace ? " @" : "@")
+				focused = true
+			} label: { Label("Mention an agent or person", systemImage: "at") }
+			Button { showEmojis = true } label: { Label("Emoji", systemImage: "face.smiling") }
+			Toggle(isOn: $showsFormatting) { Label("Formatting", systemImage: "textformat") }
+			if allowsLive && showsVoiceControls {
+				Divider()
 				Button {
 					MaskinHaptics.play(.medium)
 					startLive()
-				} label: {
-					Image(systemName: "waveform")
-						.font(.system(size: MaskinFontSize.t15, weight: .semibold))
-						.foregroundStyle(MaskinSurface.onInverse)
-						.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-						.background(MaskinSurface.inverse, in: Circle())
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Start a live conversation")
+				} label: { Label("Start a live conversation", systemImage: "waveform") }
 			}
-			.transition(.opacity)
+		} label: {
+			ComposerToolLabel("plus", outlined: true)
 		}
+		.menuIndicator(.hidden)
+		.buttonStyle(.plain)
+		.accessibilityLabel(allowsAttach ? "Add a file, mention or emoji" : "Add a mention or emoji")
+		.popover(isPresented: $showEmojis) {
+			EmojiPickerGrid { emoji in
+				model.insert(emoji)
+				showEmojis = false
+				focused = true
+			}
+			.presentationCompactAdaptation(.popover)
+		}
+	}
+
+	/// While dictating: put back what was in the field before the mic opened.
+	private var discardButton: some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			discardDictation()
+		} label: {
+			Image(systemName: "xmark")
+				.font(.system(size: MaskinFontSize.t15, weight: .semibold))
+				.foregroundStyle(MaskinColor.ink2)
+				.frame(width: buttonSize, height: buttonSize)
+				.background(MaskinSurface.fill, in: Circle())
+		}
+		.buttonStyle(.plain)
+		.accessibilityLabel("Discard dictation")
+	}
+
+	/// The right-hand side: Done while dictating; otherwise a mic and Send, which turns dark once
+	/// there is something to send.
+	@ViewBuilder
+	private var trailing: some View {
+		if voice == .dictating {
+			Button {
+				MaskinHaptics.play(.selection)
+				finishDictation()
+			} label: {
+				Image(systemName: "checkmark")
+					.font(.system(size: MaskinFontSize.t15, weight: .bold))
+					.foregroundStyle(MaskinSurface.onInverse)
+					.frame(width: buttonSize, height: buttonSize)
+					.background(MaskinSurface.inverse, in: Circle())
+			}
+			.buttonStyle(.plain)
+			.accessibilityLabel("Done dictating")
+			.transition(.opacity)
+		} else {
+			HStack(spacing: MaskinSpace.s1) {
+				if showsVoiceControls {
+					Button {
+						MaskinHaptics.play(.selection)
+						toggleDictation()
+					} label: {
+						Image(systemName: "mic")
+							.font(.system(size: MaskinFontSize.t16, weight: .medium))
+							.foregroundStyle(MaskinColor.ink3)
+							.frame(width: buttonSize, height: buttonSize)
+							.contentShape(Circle())
+					}
+					.buttonStyle(.plain)
+					.accessibilityLabel("Dictate")
+				}
+				sendButton
+			}
+		}
+	}
+
+	private var sendButton: some View {
+		Button {
+			MaskinHaptics.play(.light)
+			onSend()
+		} label: {
+			Image(systemName: "arrow.up")
+				.font(.system(size: MaskinFontSize.t15, weight: .bold))
+				.foregroundStyle(model.canSend ? MaskinSurface.onInverse : MaskinColor.ink5)
+				.frame(width: buttonSize, height: buttonSize)
+				.background(model.canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
+		}
+		.buttonStyle(.plain)
+		.disabled(!model.canSend)
+		#if !os(watchOS)
+		.keyboardShortcut(.return, modifiers: .command)
+		#endif
+		.animation(MaskinMotion.quick, value: model.canSend)
+		.accessibilityLabel("Send")
+		.accessibilityHint(model.sendBlocker ?? "")
 	}
 }
 
@@ -290,6 +344,7 @@ extension ChatComposer {
 			finishDictation()
 			return
 		}
+		textBeforeDictation = model.text
 		dictationBase = model.text
 		Task {
 			await dictation.start { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
@@ -304,10 +359,21 @@ extension ChatComposer {
 		#endif
 	}
 
+	/// Done: keep the text, ready to edit or send.
 	fileprivate func finishDictation() {
 		#if os(iOS)
 		dictation.stop()
 		#endif
+		voice = .idle
+		focused = true
+	}
+
+	/// Discard: stop and put back what was in the field before the mic opened.
+	fileprivate func discardDictation() {
+		#if os(iOS)
+		dictation.stop()
+		#endif
+		model.text = textBeforeDictation
 		voice = .idle
 	}
 

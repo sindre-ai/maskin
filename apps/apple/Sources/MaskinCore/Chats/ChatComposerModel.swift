@@ -75,7 +75,7 @@ public final class ChatComposerModel {
 
 	@ObservationIgnored private var selectionRequests = 0
 	@ObservationIgnored private let uploader: (any ChatFileUploading)?
-	@ObservationIgnored private let selfActorID: String
+	@ObservationIgnored public let selfActorID: String
 	@ObservationIgnored private var jobs: [String: Task<Void, Never>] = [:]
 	@ObservationIgnored private var retryLoaders: [String: @Sendable () async throws -> PreparedChatFile] = [:]
 
