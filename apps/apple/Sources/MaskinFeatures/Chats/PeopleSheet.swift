@@ -19,7 +19,6 @@ struct GroupHeaderPill: View {
 							name: p.name, kind: p.kind == .agent ? .agent : .human, size: MaskinSpace.s13 - MaskinSpace.s1,
 							seed: p.id
 						)
-						.overlay(Circle().strokeBorder(MaskinSurface.card, lineWidth: MaskinSpace.s1))
 					}
 				}
 				Text(GroupChatSummary.names(of: participants, selfID: selfID))

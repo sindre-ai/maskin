@@ -114,7 +114,6 @@ struct ConversationAvatar: View {
 			ZStack {
 				avatar(participants[0], small).offset(x: -size * 0.225, y: -size * 0.175)
 				avatar(participants[1], small)
-					.overlay(Circle().strokeBorder(MaskinSurface.card, lineWidth: MaskinSpace.s1))
 					.offset(x: size * 0.225, y: size * 0.175)
 			}
 			.frame(width: size * 1.1, height: size)
