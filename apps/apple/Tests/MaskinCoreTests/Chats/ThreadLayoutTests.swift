@@ -100,4 +100,34 @@ import Testing
 		system.kind = "system"
 		#expect(!system.canEdit(by: "me"))
 	}
+	// MARK: Day sections
+
+	@Test func sectionsSplitAtEachDayAndKeepTheirMessages() {
+		var calendar = Calendar(identifier: .gregorian)
+		calendar.timeZone = TimeZone(identifier: "UTC")!
+		let items = ThreadLayout.items(
+			for: [message(1, "a", at: 0), message(2, "b", at: 60), message(3, "a", at: 25 * 3600)], calendar: calendar)
+		let sections = ThreadLayout.sections(for: items)
+		#expect(sections.count == 2)
+		#expect(sections.map(\.items.count) == [2, 1])
+		#expect(sections.allSatisfy { $0.day != nil })
+		#expect(sections[0].id != sections[1].id)
+		// No separator is left inside a section: the header shows the day.
+		#expect(sections.flatMap(\.items).allSatisfy { if case .daySeparator = $0 { false } else { true } })
+	}
+
+	@Test func theUnreadDividerStaysInsideItsDay() {
+		let items = ThreadLayout.items(
+			for: [message(1, "a", at: 0), message(2, "a", at: 10)], unreadAfter: 1, currentActorID: "me")
+		let sections = ThreadLayout.sections(for: items)
+		#expect(sections.count == 1)
+		#expect(sections[0].items.contains { if case .unreadDivider = $0 { true } else { false } })
+	}
+
+	@Test func itemsBeforeAnyDayFormAnUndatedSection() {
+		let items: [ThreadItem] = [.message(message(1, "a", at: 0), showsAuthor: true)]
+		let sections = ThreadLayout.sections(for: items)
+		#expect(sections.count == 1 && sections[0].day == nil && sections[0].id == "undated")
+		#expect(ThreadLayout.sections(for: []).isEmpty)
+	}
 }

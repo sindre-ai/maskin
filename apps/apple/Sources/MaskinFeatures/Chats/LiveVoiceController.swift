@@ -38,6 +38,11 @@ final class LiveVoiceController {
 	@ObservationIgnored private var texts: [String: String] = [:]
 	@ObservationIgnored private var ticker: Task<Void, Never>?
 	@ObservationIgnored private var starting = false
+	/// When the recogniser had to be started again by itself. A recogniser that keeps dying (no input,
+	/// a route change that never settles) must end the conversation, not restart forever.
+	@ObservationIgnored private var restarts: [Date] = []
+	private static let restartLimit = 4
+	private static let restartWindow: TimeInterval = 15
 
 	init(ports: Ports, tickInterval: Duration = .milliseconds(250)) {
 		self.ports = ports
@@ -99,7 +104,16 @@ final class LiveVoiceController {
 		case .speaking:
 			if !ports.isSpeaking() { run(machine.speechFinished()) }
 		case .listening:
-			if !machine.isMuted, !starting, !ports.isListening() { run([.startListening]) }
+			if !machine.isMuted, !starting, !ports.isListening() {
+				let now = ports.now()
+				restarts = restarts.filter { now.timeIntervalSince($0) < Self.restartWindow } + [now]
+				if restarts.count > Self.restartLimit {
+					failure = "Couldn't keep listening. Check the microphone and try again."
+					end()
+					return
+				}
+				run([.startListening])
+			}
 		case .thinking:
 			break
 		}

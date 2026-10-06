@@ -108,10 +108,10 @@ struct LiveActivityView: View {
 						ActivityStepRow(step: step, emphasized: step.id == turn.currentStep?.id)
 					}
 				}
-				.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s5)
+				.padding(.leading, MaskinSpace.s12 + MaskinSpace.s5)
 			} else if let fallbackActivity, !fallbackActivity.isEmpty {
 				Text(fallbackActivity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
-					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s5)
+					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s5)
 			}
 		}
 		.animation(MaskinMotion.quick, value: turn?.steps.map(\.id))
@@ -121,8 +121,7 @@ struct LiveActivityView: View {
 	private var header: some View {
 		HStack(spacing: MaskinSpace.s5) {
 			ActorAvatar(
-				name: agent.name, kind: .agent, size: MaskinSpace.s12 + MaskinSpace.s4, seed: agent.id,
-				working: true)
+				name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id, working: true)
 			HStack(spacing: MaskinSpace.s4) {
 				Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				if let start = turn?.startedAt ?? startedAt {

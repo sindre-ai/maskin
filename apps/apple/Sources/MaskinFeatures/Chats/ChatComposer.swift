@@ -397,6 +397,13 @@ private struct VoiceLifecycle: ViewModifier {
 			.onChange(of: composer.dictation.isListening) { _, listening in
 				if !listening, composer.voice == .dictating { composer.voice = .idle }
 			}
+			// The recogniser can fail after it has started (no input, a dropped route). Dictating says so;
+			// a live conversation restarts it quietly and only speaks up if it gives up.
+			.onChange(of: composer.dictation.state) { _, state in
+				guard case .unavailable(let message) = state else { return }
+				composer.dictation.clearError()
+				if composer.live?.isActive != true { composer.voiceProblem = message }
+			}
 			.onChange(of: composer.live?.isActive) { _, active in
 				guard active == false, let live = composer.live else { return }
 				if let failure = live.failure { composer.voiceProblem = failure }

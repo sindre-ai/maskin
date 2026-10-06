@@ -19,7 +19,32 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 	}
 }
 
+/// One day of the thread: its date (for the header that stays pinned while the day scrolls by) and
+/// everything under it. Items before the first dated message (a thread of undated rows) form a
+/// section with no day.
+public struct ThreadSection: Identifiable, Equatable, Sendable {
+	public var day: Date?
+	public var items: [ThreadItem]
+	public var id: String { day.map { "day-\(Int($0.timeIntervalSince1970))" } ?? "undated" }
+}
+
 public enum ThreadLayout {
+	/// Groups `items` by the day separators in them. A separator is not repeated inside its section:
+	/// the section's `day` is what the header shows.
+	public static func sections(for items: [ThreadItem]) -> [ThreadSection] {
+		var sections: [ThreadSection] = []
+		for item in items {
+			if case .daySeparator(let day) = item {
+				sections.append(ThreadSection(day: day, items: []))
+			} else if sections.isEmpty {
+				sections.append(ThreadSection(day: nil, items: [item]))
+			} else {
+				sections[sections.count - 1].items.append(item)
+			}
+		}
+		return sections
+	}
+
 	/// A run of one author's messages breaks after this long a pause.
 	public static let runGap: TimeInterval = 5 * 60
 

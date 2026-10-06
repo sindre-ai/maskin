@@ -178,6 +178,35 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		#expect(room.starts == 2 && room.listening)
 	}
 
+	@Test("a recogniser that keeps dying ends the conversation instead of restarting forever")
+	func restartLoopEnds() async {
+		let (live, room) = make()
+		live.begin(existing: [])
+		await settle()
+		for _ in 0..<6 {
+			room.listening = false
+			room.advance(1)
+			live.tick()
+			await settle()
+		}
+		#expect(!live.isActive)
+		#expect(live.failure?.contains("keep listening") == true)
+	}
+
+	@Test("an occasional restart is fine")
+	func occasionalRestart() async {
+		let (live, room) = make()
+		live.begin(existing: [])
+		await settle()
+		for _ in 0..<3 {
+			room.listening = false
+			room.advance(20)
+			live.tick()
+			await settle()
+		}
+		#expect(live.isActive && room.listening)
+	}
+
 	@Test("if the microphone can't start the conversation ends and says why")
 	func startFailure() async {
 		let (live, room) = make()

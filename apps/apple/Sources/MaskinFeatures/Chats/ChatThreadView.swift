@@ -215,7 +215,7 @@ struct ChatThreadView: View {
 	private var thread: some View {
 		ScrollViewReader { proxy in
 			ScrollView {
-				LazyVStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				LazyVStack(alignment: .leading, spacing: MaskinSpace.s5, pinnedViews: [.sectionHeaders]) {
 					if store.hasEarlier {
 						ProgressView()
 							.frame(maxWidth: .infinity)
@@ -443,10 +443,19 @@ struct ThreadTranscript: View {
 			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID)
+		let sections = ThreadLayout.sections(for: items)
 		let runs = ThreadLayout.runs(in: items)
 		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-		ForEach(items) { item in
-			row(item, answers: answers, anchors: anchors, runs: runs, byID: byID)
+		// One section per day: its header stays pinned at the top while that day scrolls by (the thread's
+		// LazyVStack asks for pinned section headers).
+		ForEach(sections) { section in
+			Section {
+				ForEach(section.items) { item in
+					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID)
+				}
+			} header: {
+				if let day = section.day { DayHeader(label: ThreadLayout.dayLabel(day, now: now)) }
+			}
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
 			activity(at: context.date)
@@ -631,5 +640,23 @@ struct ThreadSkeleton: View {
 			.padding(MaskinSpace.s7)
 			.background(MaskinSurface.cardInset2, in: bubble)
 			.frame(maxWidth: .infinity, alignment: .trailing)
+	}
+}
+
+/// A day's header: a small pill, centred, that stays at the top while the day's messages scroll.
+struct DayHeader: View {
+	let label: String
+
+	var body: some View {
+		Text(label)
+			.maskinText(.caption).fontWeight(.semibold)
+			.foregroundStyle(MaskinColor.ink3)
+			.padding(.horizontal, MaskinSpace.s7)
+			.padding(.vertical, MaskinSpace.s3)
+			.background(MaskinSurface.card, in: Capsule())
+			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+			.frame(maxWidth: .infinity)
+			.padding(.vertical, MaskinSpace.s2)
+			.accessibilityAddTraits(.isHeader)
 	}
 }

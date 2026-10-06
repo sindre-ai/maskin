@@ -202,7 +202,14 @@ struct MessageRow: View {
 					.padding(.vertical, MaskinSpace.s6)
 					.background(
 						MaskinColor.accentTint2,
-						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+					)
+					.overlay {
+						if message.isFailed {
+							RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+								.strokeBorder(MaskinColor.danger, lineWidth: 1.5)
+						}
+					}
 			}
 			MessageAttachments(attachments: message.attachments, alignment: .trailing)
 			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
@@ -409,7 +416,7 @@ struct MessageRow: View {
 			}
 			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 		case .failed(let reason):
-			VStack(alignment: .leading, spacing: 0) {
+			VStack(alignment: .trailing, spacing: 0) {
 				HStack(spacing: MaskinSpace.s4) {
 					Image(systemName: "exclamationmark.circle.fill").foregroundStyle(MaskinColor.danger)
 						.accessibilityHidden(true)
@@ -425,6 +432,7 @@ struct MessageRow: View {
 						.contentShape(Rectangle())
 				}
 				Text(reason).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					.multilineTextAlignment(.trailing)
 			}
 			.maskinText(.caption)
 		}
@@ -452,7 +460,7 @@ struct WorkingIndicator: View {
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
-			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12 + MaskinSpace.s4, seed: agent.id, working: true)
+			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id, working: true)
 			VStack(alignment: .leading, spacing: 0) {
 				HStack(spacing: MaskinSpace.s4) {
 					Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
