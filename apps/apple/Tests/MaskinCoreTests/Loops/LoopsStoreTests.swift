@@ -20,6 +20,16 @@ struct LoopsStoreTests {
 		#expect(store.waitingCount == 2)
 	}
 
+	@Test("the subtitle counts running loops and those that need you")
+	func summaryLine() async {
+		let store = LoopsStore(
+			api: FakeLoopsAPI([
+				loopRow("a"), loopRow("b", status: .supervised, waiting: 1), loopRow("c", status: .paused),
+			]), events: nil)
+		await store.start()
+		#expect(store.summaryLine == "2 outcomes in motion. 1 needs you.")
+	}
+
 	@Test("search filters by name")
 	func search() async {
 		let store = LoopsStore(

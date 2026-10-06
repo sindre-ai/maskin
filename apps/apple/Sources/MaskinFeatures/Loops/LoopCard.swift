@@ -4,13 +4,9 @@ import MaskinUI
 import SwiftUI
 
 /// One loop in the list as a glanceable card: progress ring, name, "cycle · stage", an amber
-/// "Needs you" pill when the viewer is the blocker, the latest agent update as one sentence with
-/// its author in bold, and three stats. Pure values in, so it renders in previews and snapshots.
+/// "Needs you" pill when the viewer is the blocker, and three stats. Pure values in, so it renders in previews and snapshots.
 struct LoopCard: View {
 	let loop: LoopSummary
-	let digest: LoopDigest?
-	/// The latest update's author, resolved; the sentence shows without one when unresolved.
-	let authorName: String?
 	let agentCount: Int
 	let needsYou: Bool
 	var hasUpdate = false
@@ -20,10 +16,6 @@ struct LoopCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			header
-			if let sentence = digest?.latestSentence, !sentence.isEmpty {
-				Divider()
-				update(sentence)
-			}
 			Divider()
 			stats
 		}
@@ -88,20 +80,6 @@ struct LoopCard: View {
 			.fixedSize()
 	}
 
-	private func update(_ sentence: String) -> some View {
-		Group {
-			if let authorName {
-				Text("\(Text(authorName).fontWeight(.bold)) \(sentence)")
-			} else {
-				Text(sentence)
-			}
-		}
-		.maskinText(.subhead)
-		.foregroundStyle(MaskinColor.ink2)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.fixedSize(horizontal: false, vertical: true)
-	}
-
 	private var stats: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s7) {
 			stat("\(loop.inProgressCount)", "in progress")
@@ -124,16 +102,25 @@ struct LoopCard: View {
 
 	/// "Cycle 3 · Define", or the lifecycle rung while the stage is still unknown.
 	private var stageLine: String {
-		let stage = digest?.stage.map(MaskinStatus.label(for:)) ?? loop.pill.label
-		return "\(loop.cycleLabel) · \(stage)"
+		"\(loop.cycleLabel) · \(loop.pill.label)"
 	}
 
 	private var accessibilityLabel: String {
 		var parts = [loop.displayName, stageLine]
 		if needsYou { parts.append("Needs you") }
-		if let sentence = digest?.latestSentence { parts.append([authorName, sentence].compactMap { $0 }.joined(separator: " ")) }
 		parts.append("\(loop.inProgressCount) in progress, \(loop.closedCount) closed, \(agentCount) agents")
 		if hasUpdate { parts.append("update available") }
 		return parts.joined(separator: ". ")
 	}
+}
+
+extension LoopSummary {
+	/// The progress ring's fill: the share of the loop's work that has closed.
+	var progress: Double {
+		let total = inProgressCount + closedCount
+		return total == 0 ? 0 : Double(closedCount) / Double(total)
+	}
+
+	/// "Cycle 3": the cycle now running, one past those already closed.
+	var cycleLabel: String { "Cycle \(closedCount + 1)" }
 }

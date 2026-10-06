@@ -37,10 +37,8 @@ struct LoopsListView: View {
 			ForEach(sections) { section in
 				Section {
 					ForEach(section.items) { loop in
-						let digest = store.digests[loop.id]
 						LoopCard(
-							loop: loop, digest: digest,
-							authorName: store.directory.name(digest?.latestAuthorID),
+							loop: loop,
 							agentCount: loop.agentIDs.count, needsYou: store.needsYou(loop),
 							hasUpdate: store.installs[loop.id]?.hasUpdate == true
 						)
@@ -72,9 +70,6 @@ struct LoopsListView: View {
 		}
 		.listStyle(.plain)
 		.background(MaskinSurface.grouped)
-		.task(id: store.loops.map { "\($0.id)\($0.updatedAt?.timeIntervalSince1970 ?? 0)" }) {
-			await store.loadDigests()
-		}
 		.overlay { overlay(isEmpty: sections.isEmpty) }
 		.refreshable { await store.refresh() }
 	}
