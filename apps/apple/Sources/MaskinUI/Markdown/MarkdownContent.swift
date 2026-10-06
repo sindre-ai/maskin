@@ -21,6 +21,9 @@ public enum MarkdownStyle: Sendable { case document, chat }
 
 extension EnvironmentValues {
 	@Entry var markdownStyle: MarkdownStyle = .document
+	/// Lets rendered markdown be only as wide as its content (a short line in a chat bubble) instead of
+	/// filling the width it is offered. Blocks that need the width (code, tables) still take it.
+	@Entry public var markdownHugsContent: Bool = false
 }
 
 /// Parsed blocks, remembered by source text. A thread re-renders its rows whenever anything in
@@ -121,6 +124,7 @@ enum MarkdownLinkPolicy {
 struct MarkdownBlocksView: View {
 	let blocks: [MarkdownBlock]
 	@Environment(\.markdownStyle) private var style
+	@Environment(\.markdownHugsContent) private var hugsContent
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
@@ -129,7 +133,7 @@ struct MarkdownBlocksView: View {
 					.padding(.top, index == 0 ? 0 : Self.gap(after: blocks[index - 1], before: block, style: style))
 			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
+		.frame(maxWidth: hugsContent ? nil : .infinity, alignment: .leading)
 	}
 
 	/// Space between two neighbouring blocks. The reading scale is one even rhythm; in a chat

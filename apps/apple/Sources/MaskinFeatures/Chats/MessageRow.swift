@@ -81,26 +81,10 @@ private struct MessageHeightKey: PreferenceKey {
 	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// How a message is drawn. The thread uses the default (flat); the options exist to compare looks.
-struct MessageStyle: Equatable {
-	/// Diameter of the small avatar in the header.
-	var avatar: CGFloat = MaskinSpace.s11
-	/// The time sits at the right edge of the header instead of beside the name.
-	var timeTrailing = false
-	/// Your messages are a soft tinted bubble on the right, with no header; everyone else's stay flat.
-	var ownBubble = false
-	/// An agent's message is a card on the page, so a long answer reads as one object.
-	var agentCard = false
-}
-
-extension EnvironmentValues {
-	@Entry var messageStyle = MessageStyle()
-}
-
-/// One message, laid out the same for you and for everyone else: on the first message of a run a
-/// small avatar, the name, an agent tag and the time on one line, and the text beneath at the full
-/// width, with no bubbles. Follow-up messages from the same author are just text, and show their
-/// time (in the action bar) when tapped. People's and agents' words are both rendered as markdown. An
+/// One message. Everyone else's (people and agents) is flat at the full width: on the first message
+/// of a run a small avatar, the name, an agent tag and the time at the right edge, then the text.
+/// Follow-ups from the same author are just text. Yours is a soft tinted bubble on the right with no
+/// header, so who spoke is clear at a glance. A tap shows the time (in the action bar) and the actions. People's and agents' words are both rendered as markdown. An
 /// agent's question renders as tappable options under its text.
 struct MessageRow: View {
 	let message: ChatMessage
@@ -122,7 +106,7 @@ struct MessageRow: View {
 	/// whole message first. Text itself is selectable in place, so long-press there picks words.
 	@State private var showsActions = false
 	@State private var copied = false
-	@Environment(\.messageStyle) private var style
+	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// The message's full height once laid out, and whether the reader has opened a long one.
 	@State private var fullHeight: CGFloat = 0
 	@State private var expanded = false
@@ -201,35 +185,40 @@ struct MessageRow: View {
 
 	@ViewBuilder
 	private var layout: some View {
-		if style.ownBubble, isOwn {
-			ownBubble
-		} else if style.agentCard, message.author == .agent {
-			column
-				.padding(MaskinSpace.s8)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
-				.overlay(
-					RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
-						.strokeBorder(MaskinSurface.line, lineWidth: 1))
-		} else {
-			column
-		}
+		if isOwn { ownBubble } else { column }
 	}
 
 	/// Yours, as a soft bubble on the right that hugs a short message and fills most of the row for a long one.
 	private var ownBubble: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			content
-				.padding(.horizontal, MaskinSpace.s8)
-				.padding(.vertical, MaskinSpace.s6)
-				.background(
-					MaskinColor.accentTint2, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+			if hasOwnSurface {
+				// A bare card or a lone emoji needs no bubble around it.
+				VStack(alignment: .trailing, spacing: MaskinSpace.s1) { content }
+					.environment(\.markdownHugsContent, true)
+			} else {
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) { content }
+					.environment(\.markdownHugsContent, true)
+					.padding(.horizontal, MaskinSpace.s8)
+					.padding(.vertical, MaskinSpace.s6)
+					.background(
+						MaskinColor.accentTint2,
+						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+			}
 			MessageAttachments(attachments: message.attachments, alignment: .trailing)
 			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
 			MentionLine(names: mentionNames, isOwn: true)
 			statusLine
 		}
 		.frame(maxWidth: .infinity, alignment: .trailing)
-		.padding(.leading, MaskinSpace.s14 * 2)
+		// Leaves room on the left so a short message hugs the right edge and a long one still reads as a bubble.
+		.padding(.leading, MaskinSpace.s12 + MaskinSpace.s9)
+	}
+
+	/// Your message is only a link into Maskin (shown as a card) or only an emoji: no bubble.
+	private var hasOwnSurface: Bool {
+		if message.isEmojiOnly { return true }
+		if let link = MarkdownStandaloneLink.match(message.content), linkInfo?(link.url) != nil { return true }
+		return false
 	}
 
 	private var column: some View {
@@ -265,7 +254,7 @@ struct MessageRow: View {
 		HStack(alignment: .center, spacing: MaskinSpace.s3) {
 			ActorAvatar(
 				name: message.actorName, kind: message.author == .agent ? .agent : .human,
-				size: style.avatar, seed: message.actorID)
+				size: MaskinSpace.s12, seed: message.actorID)
 				.accessibilityHidden(true)
 			Text(message.actorName).maskinText(.subhead).fontWeight(.semibold)
 				.foregroundStyle(MaskinColor.ink).lineLimit(1)
@@ -273,7 +262,7 @@ struct MessageRow: View {
 				Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
 					.accessibilityHidden(true)
 			}
-			if style.timeTrailing { Spacer(minLength: 0) }
+			Spacer(minLength: 0)
 			RelativeTime(message.createdAt, style: .clock)
 				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 		}
@@ -297,8 +286,8 @@ struct MessageRow: View {
 	/// What a tap on the row offers: copy the whole message, select across paragraphs, share, edit.
 	private var actionBar: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			if !showsAuthor {
-				// A follow-up has no header, so the tap reveals its time here.
+			if !showsAuthor || isOwn {
+				// A follow-up, and your own bubble, have no header, so the tap reveals the time here.
 				RelativeTime(message.createdAt, style: .clock)
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 			}
@@ -378,7 +367,7 @@ struct MessageRow: View {
 		.overlay(alignment: .bottom) {
 			if isCollapsed {
 				LinearGradient(
-					colors: [MaskinSurface.grouped.opacity(0), MaskinSurface.grouped], startPoint: .top,
+					colors: [MaskinSurface.card.opacity(0), MaskinSurface.card], startPoint: .top,
 					endPoint: .bottom
 				)
 				.frame(height: MaskinSpace.s14 * 2)

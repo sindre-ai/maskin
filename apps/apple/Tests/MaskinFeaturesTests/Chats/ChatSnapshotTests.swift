@@ -173,11 +173,11 @@ private func threadStore(streaming: Bool) async -> ChatStore {
 
 @MainActor
 private func render<V: View>(
-	_ view: V, width: CGFloat, dark: Bool, name: String
+	_ view: V, width: CGFloat, dark: Bool, name: String, canvas: Color = MaskinSurface.grouped
 ) throws -> URL? {
 	let framed = view
 		.frame(width: width)
-		.background(MaskinSurface.grouped)
+		.background(canvas)
 		.environment(\.colorScheme, dark ? .dark : .light)
 	let renderer = ImageRenderer(content: framed)
 	renderer.scale = 2
@@ -209,7 +209,7 @@ struct ChatSnapshotTests {
 		for width in Self.widths {
 			let content = ThreadTranscript(store: store, lazy: false)
 				.padding(MaskinSpace.s9)
-			_ = try render(content, width: width, dark: dark, name: "thread-streaming")
+			_ = try render(content, width: width, dark: dark, name: "thread-streaming", canvas: MaskinSurface.card)
 		}
 		#expect(store.workingAgents().map(\.id) == ["relay"])
 	}
@@ -218,7 +218,7 @@ struct ChatSnapshotTests {
 	func failedReply(dark: Bool) async throws {
 		let store = await threadStore(streaming: false)
 		for width in Self.widths {
-			_ = try render(ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9), width: width, dark: dark, name: "thread-failed")
+			_ = try render(ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9), width: width, dark: dark, name: "thread-failed", canvas: MaskinSurface.card)
 		}
 		#expect(store.messages.last?.isErrorReply == true)
 	}
@@ -239,7 +239,7 @@ struct ChatSnapshotTests {
 									: MarkdownLinkInfo(symbol: "checkmark.square", kindLabel: "Task")
 							})
 							.frame(height: 3200, alignment: .top)
-						_ = try render(content, width: width, dark: dark, name: "thread-rich")
+						_ = try render(content, width: width, dark: dark, name: "thread-rich", canvas: MaskinSurface.card)
 		}
 		#expect(store.messages.count == 12)
 	}
@@ -247,7 +247,7 @@ struct ChatSnapshotTests {
 	@Test("the thread skeleton renders", arguments: [false, true])
 	func skeleton(dark: Bool) throws {
 		for width in Self.widths {
-			_ = try render(ThreadSkeleton().frame(height: 560), width: width, dark: dark, name: "thread-skeleton")
+			_ = try render(ThreadSkeleton().frame(height: 560), width: width, dark: dark, name: "thread-skeleton", canvas: MaskinSurface.card)
 		}
 	}
 

@@ -49,7 +49,7 @@ struct ChatThreadView: View {
 
 	var body: some View {
 		observedContent
-			.background(MaskinSurface.grouped)
+			.background(MaskinSurface.card)
 			.safeAreaInset(edge: .bottom, spacing: 0) { composerBar }
 			.navigationTitle(store.title)
 			#if os(iOS)
@@ -600,7 +600,7 @@ struct ThreadSkeleton: View {
 		.padding(.horizontal, MaskinSpace.s9)
 		.padding(.bottom, MaskinSpace.s9)
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-		.background(MaskinSurface.grouped)
+		.background(MaskinSurface.card)
 		.accessibilityElement(children: .ignore)
 		.accessibilityLabel("Loading messages")
 	}
@@ -622,14 +622,14 @@ struct ThreadSkeleton: View {
 		}
 		.padding(MaskinSpace.s7)
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.background(MaskinSurface.card, in: bubble)
+		.background(MaskinSurface.cardInset2, in: bubble)
 	}
 
 	private func mine(width: CGFloat) -> some View {
 		SkeletonBlock(height: MaskinSpace.s7, cornerRadius: MaskinRadius.tag2)
 			.frame(width: width)
 			.padding(MaskinSpace.s7)
-			.background(MaskinSurface.card, in: bubble)
+			.background(MaskinSurface.cardInset2, in: bubble)
 			.frame(maxWidth: .infinity, alignment: .trailing)
 	}
 }

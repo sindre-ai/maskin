@@ -42,7 +42,7 @@ private func composer(
 @MainActor
 private func save<V: View>(
 	_ view: V, name: String, dark: Bool, width: CGFloat = 402, height: CGFloat? = nil,
-	canvas: Color = MaskinSurface.grouped
+	canvas: Color = MaskinSurface.card
 ) throws {
 	#if canImport(AppKit)
 	// A hosting view draws the real controls (menus, scroll views, field text); ImageRenderer does not.
@@ -110,85 +110,6 @@ private func screen(_ text: String = "", voice: ComposerVoiceState = .idle) asyn
 		.frame(maxWidth: .infinity, alignment: .leading)
 		Spacer(minLength: 0)
 		bar
-	}
-}
-
-/// Only the conversation, for comparing message looks: header, a few turns, a long agent answer.
-@MainActor
-private func messagesScreen(style: MessageStyle) -> some View {
-	func message(_ id: Int, _ who: ChatParticipant, _ text: String, minutes: Double) -> ChatMessage {
-		.confirmed(
-			serverID: id, conversationID: "c", actorID: who.id, actorName: who.name, author: who.kind, content: text,
-			createdAt: Date().addingTimeInterval(-minutes * 60))
-	}
-	let answer = """
-		## Pipeline status
-
-		Three things moved since Friday. **Forge** shipped the importer fix and `pnpm test` is green.
-
-		- **3 bets** are blocked on legal review
-		- **Billing migration** is high risk
-		- Two insights need a decision from you
-
-		```swift
-		let risky = bets.filter(\\.isHigh)
-		```
-
-		Want me to draft the follow-ups?
-		"""
-	let rows: [(ChatMessage, Bool)] = [
-		(message(1, sam, "Can you pull together where the pipeline stands before Thursday?", minutes: 30), true),
-		(message(2, relay, answer, minutes: 27), true),
-		(message(3, me, "Yes please, and flag anything risky.", minutes: 8), true),
-		(message(4, me, "Also loop in @Sam on the legal blockers", minutes: 8), false),
-		(message(5, sam, "Thanks both, I'll review tonight.", minutes: 2), true),
-	]
-	return VStack(spacing: 0) {
-		HStack(spacing: MaskinSpace.s5) {
-			Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold)).foregroundStyle(MaskinColor.ink)
-			Spacer()
-			VStack(spacing: 0) {
-				Text("Relay").maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-				Text("Q4 pipeline review").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			}
-			Spacer()
-			Image(systemName: "ellipsis").foregroundStyle(MaskinColor.ink)
-		}
-		.padding(.horizontal, MaskinSpace.s9).padding(.vertical, MaskinSpace.s7)
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			ForEach(rows, id: \.0.id) { row in
-				MessageRow(
-					message: row.0, isOwn: row.0.actorID == "me", showsAuthor: row.1, onRetrySend: {}, onDiscard: {},
-					onRetryAgent: {}
-				)
-				.padding(.top, row.1 ? MaskinSpace.s6 : -MaskinSpace.s3)
-			}
-		}
-		.padding(.horizontal, MaskinSpace.s9)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.environment(\.messageStyle, style)
-		Spacer(minLength: 0)
-	}
-}
-
-@Suite("Message design variants", .enabled(if: ProcessInfo.processInfo.environment["COMPOSER_DESIGN_DIR"] != nil, "design-review renders; set COMPOSER_DESIGN_DIR to run"))
-@MainActor
-struct MessageDesignSnapshotTests {
-	@Test("message variants render", arguments: [false, true])
-	func variants(dark: Bool) throws {
-		let card = MaskinSurface.card
-		// A: today's flat layout with crisper ink, a larger avatar and the time at the right edge.
-		try save(
-			messagesScreen(style: MessageStyle(avatar: MaskinSpace.s12, timeTrailing: true)), name: "m-a-crisp-flat",
-			dark: dark, height: 874, canvas: card)
-		// B: A, with your messages as a soft bubble on the right.
-		try save(
-			messagesScreen(style: MessageStyle(avatar: MaskinSpace.s12, timeTrailing: true, ownBubble: true)),
-			name: "m-b-yours-bubble", dark: dark, height: 874, canvas: card)
-		// C: agent answers as cards on the grey page, people flat.
-		try save(
-			messagesScreen(style: MessageStyle(avatar: MaskinSpace.s12, timeTrailing: true, ownBubble: true, agentCard: true)),
-			name: "m-c-agent-cards", dark: dark, height: 874)
 	}
 }
 
