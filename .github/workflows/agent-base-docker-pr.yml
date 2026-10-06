@@ -1,0 +1,33 @@
+name: Build agent-base Docker image (PR check)
+
+on:
+  pull_request:
+    paths:
+      - 'docker/agent-base/**'
+      - '.github/workflows/agent-base-docker-pr.yml'
+
+concurrency:
+  group: agent-base-docker-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build only: no registry login, no push, no agent-server restart.
+      # RUN lines in the Dockerfile (e.g. `<tool> --version`) execute here,
+      # so a missing or broken binary fails the PR instead of the rollout.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          push: false
+          cache-from: type=gha
