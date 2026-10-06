@@ -19,6 +19,7 @@ import {
 	type RefreshBuffer,
 	decryptOAuthData,
 	refreshSlotSingleFlight,
+	reportClaudeRefreshFailure,
 } from './claude-oauth'
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
@@ -268,6 +269,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			db,
 			workspaceId,
 			actorId,
+			headSlot: chain[0]?.id ?? failover.active_slot,
 			probe,
 			bufferMs,
 			now: now(),
@@ -425,6 +427,7 @@ async function loadAndRefreshSlot(
 		const result = await refreshSlotSingleFlight(db, workspaceId, slot, encrypted, bufferMs)
 		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
+		reportClaudeRefreshFailure({ workspaceId, slot, caller: 'session_start', error: err })
 		logger.warn('Failed to refresh Claude OAuth slot', {
 			workspaceId,
 			slot,
@@ -448,11 +451,12 @@ async function attemptChainHeadRecovery(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
+	headSlot: OAuthSlotKind
 	probe: SubscriptionProbe
 	bufferMs: RefreshBuffer | undefined
 	now: number
 }): Promise<ClaudeCredentials | null> {
-	const { db, workspaceId, actorId, probe, bufferMs, now } = params
+	const { db, workspaceId, actorId, headSlot, probe, bufferMs, now } = params
 	let recoveredTokens: ClaudeOAuthTokens | null = null
 
 	const recovery = await attemptPrimaryRecovery({
@@ -475,6 +479,12 @@ async function attemptChainHeadRecovery(params: {
 				recoveredTokens = tokens
 				return { healthy: true }
 			} catch (err) {
+				reportClaudeRefreshFailure({
+					workspaceId,
+					slot: headSlot,
+					caller: 'failover_recovery',
+					error: err,
+				})
 				const decision = classifyClaudeFailureWithReset(classifierInputFromError(err))
 				return { healthy: false, reason: decision.reason }
 			}
