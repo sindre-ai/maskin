@@ -368,3 +368,212 @@ test.describe('Settings — Google Drive detail page', () => {
 		}
 	}
 })
+
+/**
+ * Folder watches section on the Drive detail page. The list and stop endpoints
+ * are stubbed with a small in-memory store because a watch row only exists once
+ * a real Drive connection has an agent watching a folder; their real behaviour
+ * (jsonb rewrite, workspace scoping, 404s) is covered against Postgres in
+ * apps/dev's google-drive-watched-folders integration test.
+ */
+const WATCHES_PATH = '/api/integrations/google-drive/watched-folders'
+
+type WatchStub = {
+	folderId: string
+	name: string
+	path: string | null
+	addedAt: string | null
+	lastFiredAt: string | null
+	integrationId: string
+	account: string | null
+	triggers: { id: string; name: string }[]
+}
+
+function watchStub(folderId: string, overrides: Partial<WatchStub> = {}): WatchStub {
+	return {
+		folderId,
+		name: `Folder ${folderId}`,
+		path: null,
+		addedAt: '2026-10-01T09:00:00.000Z',
+		lastFiredAt: null,
+		integrationId: '00000000-0000-4000-8000-0000000000aa',
+		account: 'priya@acme.test',
+		triggers: [],
+		...overrides,
+	}
+}
+
+async function stubWatches(page: Page, initial: WatchStub[]) {
+	let watches = [...initial]
+	const stopped: string[] = []
+	await page.route(
+		(url) => url.pathname.startsWith(WATCHES_PATH),
+		(route) => {
+			const { pathname } = new URL(route.request().url())
+			if (route.request().method() === 'GET') {
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify(watches),
+				})
+			}
+			const folderId = decodeURIComponent(pathname.slice(WATCHES_PATH.length + 1))
+			if (!watches.some((w) => w.folderId === folderId)) {
+				return route.fulfill({
+					status: 404,
+					contentType: 'application/json',
+					body: JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Folder watch not found' } }),
+				})
+			}
+			stopped.push(folderId)
+			watches = watches.filter((w) => w.folderId !== folderId)
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ ok: true, folderId }),
+			})
+		},
+	)
+	return { stopped }
+}
+
+const LONG_PATH = 'My Drive/Customers/Acme Studio/Quarterly business reviews/2026/Board materials'
+
+test.describe('Settings — Google Drive folder watches', () => {
+	test('lists one row per watch in the folder-row format, with only sourced segments', async ({
+		page,
+		account,
+	}) => {
+		const ws = account.workspaceId
+		await setFlag(page, 'on')
+		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
+		await stubWatches(page, [
+			watchStub('f-rec', {
+				name: 'Meet Recordings',
+				path: 'My Drive',
+				lastFiredAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+				triggers: [{ id: '00000000-0000-4000-8000-0000000000bb', name: 'Post-call recap' }],
+			}),
+			watchStub('f-brief', { name: 'Customer briefs' }),
+		])
+		await openDetail(page, ws)
+
+		await expect(page.getByRole('heading', { name: 'Folder watches' })).toBeVisible()
+		await expect(page.getByTestId('folder-watch-list').getByRole('listitem')).toHaveCount(2)
+
+		const rec = page.getByTestId('folder-watch-f-rec')
+		await expect(rec).toContainText('My Drive/Meet Recordings')
+		await expect(rec.getByTestId('folder-watch-meta')).toHaveText(
+			'priya · triggers Post-call recap · last fired 2h ago',
+		)
+		// Nothing sources a trigger or a fire time for this one, so neither shows.
+		await expect(
+			page.getByTestId('folder-watch-f-brief').getByTestId('folder-watch-meta'),
+		).toHaveText('priya')
+		// Read and stop only: no add-a-watch control anywhere in the section.
+		await expect(
+			page.getByTestId('folder-watches').getByRole('button', { name: /add|new|create/i }),
+		).toHaveCount(0)
+	})
+
+	test('Stop sends a DELETE for that folder and the row disappears', async ({ page, account }) => {
+		const ws = account.workspaceId
+		await setFlag(page, 'on')
+		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
+		const { stopped } = await stubWatches(page, [
+			watchStub('f-a', { name: 'Meet Recordings' }),
+			watchStub('f-b', { name: 'Customer briefs' }),
+		])
+		await openDetail(page, ws)
+
+		const stop = page.getByRole('button', { name: 'Stop watch for Customer briefs' })
+		await expect(stop).toBeVisible()
+		const request = page.waitForRequest(
+			(req) => req.method() === 'DELETE' && new URL(req.url()).pathname === `${WATCHES_PATH}/f-b`,
+		)
+		await stop.click()
+		await request
+
+		await expect(page.getByTestId('folder-watch-f-b')).toHaveCount(0)
+		await expect(page.getByTestId('folder-watch-f-a')).toBeVisible()
+		expect(stopped).toEqual(['f-b'])
+	})
+
+	test('stopping the last watch leaves the empty state, not a blank card', async ({
+		page,
+		account,
+	}) => {
+		const ws = account.workspaceId
+		await setFlag(page, 'on')
+		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
+		await stubWatches(page, [watchStub('f-only', { name: 'Meet Recordings' })])
+		await openDetail(page, ws)
+
+		await page.getByRole('button', { name: 'Stop watch for Meet Recordings' }).click()
+		await expect(page.getByText('No folders are being watched')).toBeVisible()
+		await expect(page.getByTestId('folder-watch-list')).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /Stop watch/ })).toHaveCount(0)
+	})
+
+	test('with the flag off the section is unreachable and its endpoint is never called', async ({
+		page,
+		account,
+	}) => {
+		let called = false
+		await page.route(
+			(url) => url.pathname.startsWith(WATCHES_PATH),
+			(route) => {
+				called = true
+				return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+			},
+		)
+		await setFlag(page, 'off')
+		await stubIntegrations(page, [driveRow(account.workspaceId, 'priya@acme.test')])
+		await openDetail(page, account.workspaceId)
+
+		await expect(page.getByText('Google Drive is not available yet')).toBeVisible()
+		await expect(page.getByTestId('folder-watches')).toHaveCount(0)
+		expect(called).toBe(false)
+	})
+
+	for (const viewport of WIDTHS) {
+		for (const scheme of ['light', 'dark'] as const) {
+			test(`folder watches fit at ${viewport.label}px in ${scheme} mode`, async ({
+				page,
+				account,
+			}) => {
+				const ws = account.workspaceId
+				await setFlag(page, 'on')
+				await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
+				await stubWatches(page, [
+					watchStub('f-long', { name: 'Q3 briefs', path: LONG_PATH }),
+					watchStub('f-short', { name: 'Meet Recordings' }),
+				])
+				await setTheme(page, scheme)
+				await page.setViewportSize({ width: viewport.width, height: viewport.height })
+				await openDetail(page, ws)
+
+				if (scheme === 'dark') {
+					await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+				} else {
+					await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+				}
+
+				// The long path is shortened at a folder boundary, never mid-name, and the
+				// full path stays available to assistive tech and as the tooltip.
+				const long = page.getByTestId('folder-watch-f-long')
+				await expect(long).toContainText(
+					'…/Quarterly business reviews/2026/Board materials/Q3 briefs',
+				)
+				await expect(long.locator('p[title]')).toHaveAttribute('title', `${LONG_PATH}/Q3 briefs`)
+
+				for (const folder of ['Q3 briefs', 'Meet Recordings']) {
+					await expect(
+						page.getByRole('button', { name: new RegExp(`^Stop watch for .*${folder}$`) }),
+					).toBeVisible()
+				}
+				await expectNoSidewaysScroll(page)
+			})
+		}
+	}
+})
