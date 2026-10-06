@@ -81,20 +81,26 @@ private struct MessageHeightKey: PreferenceKey {
 	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// Measurements shared by everything that sits in the thread's message column, so avatars, text,
-/// activity traces and the working indicator all line up on the same left edge.
-enum ThreadMetrics {
-	/// Avatar diameter, and so the width of the left gutter.
-	static let avatar = MaskinSpace.s14 + MaskinSpace.s2
-	static let gutterGap = MaskinSpace.s6
-	/// Where message text starts: past the gutter.
-	static var textIndent: CGFloat { avatar + gutterGap }
+/// How a message is drawn. The thread uses the default (flat); the options exist to compare looks.
+struct MessageStyle: Equatable {
+	/// Diameter of the small avatar in the header.
+	var avatar: CGFloat = MaskinSpace.s11
+	/// The time sits at the right edge of the header instead of beside the name.
+	var timeTrailing = false
+	/// Your messages are a soft tinted bubble on the right, with no header; everyone else's stay flat.
+	var ownBubble = false
+	/// An agent's message is a card on the page, so a long answer reads as one object.
+	var agentCard = false
 }
 
-/// One message, laid out the same for you and for everyone else: an avatar in a left gutter on the
-/// first message of a run, the name, an agent tag and the time on one line, and the text beneath,
-/// full width, with no bubbles. Follow-up messages from the same author keep the gutter empty and
-/// show their time when tapped. People's and agents' words are both rendered as markdown. An
+extension EnvironmentValues {
+	@Entry var messageStyle = MessageStyle()
+}
+
+/// One message, laid out the same for you and for everyone else: on the first message of a run a
+/// small avatar, the name, an agent tag and the time on one line, and the text beneath at the full
+/// width, with no bubbles. Follow-up messages from the same author are just text, and show their
+/// time (in the action bar) when tapped. People's and agents' words are both rendered as markdown. An
 /// agent's question renders as tappable options under its text.
 struct MessageRow: View {
 	let message: ChatMessage
@@ -108,21 +114,21 @@ struct MessageRow: View {
 	let onRetryAgent: () -> Void
 	/// Present only for a message the reader may edit.
 	var onEdit: (() -> Void)?
+	/// Quote this message into the composer; nil when there is no text to quote.
+	var onQuote: (() -> Void)?
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	@State private var selectingText = false
 	/// Tapping a row shows its time (in the gutter, for a follow-up) and an action bar: Copy for the
 	/// whole message first. Text itself is selectable in place, so long-press there picks words.
 	@State private var showsActions = false
 	@State private var copied = false
+	@Environment(\.messageStyle) private var style
 	/// The message's full height once laid out, and whether the reader has opened a long one.
 	@State private var fullHeight: CGFloat = 0
 	@State private var expanded = false
 
 	var body: some View {
-		HStack(alignment: .top, spacing: ThreadMetrics.gutterGap) {
-			gutter
-			column
-		}
+		layout
 		.contentShape(Rectangle())
 		.onTapGesture {
 			withAnimation(MaskinMotion.quick) { showsActions.toggle() }
@@ -164,6 +170,9 @@ struct MessageRow: View {
 		if let onEdit {
 			Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
 		}
+		if let onQuote {
+			Button(action: onQuote) { Label("Quote", systemImage: "arrowshape.turn.up.left") }
+		}
 		if !message.content.isEmpty {
 			Button {
 				Clipboard.copy(message.content)
@@ -190,31 +199,41 @@ struct MessageRow: View {
 
 	// MARK: Layout
 
-	/// The avatar on the first message of a run; for a follow-up, empty until tapped, then the time.
-	private var gutter: some View {
-		Group {
-			if showsAuthor {
-				ActorAvatar(
-					name: message.actorName, kind: message.author == .agent ? .agent : .human,
-					size: ThreadMetrics.avatar, seed: message.actorID)
-					.accessibilityHidden(true)
-					.contentShape(Rectangle())
-					.contextMenu { actions }
-			} else if showsActions {
-				RelativeTime(message.createdAt, style: .clock)
-					.maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
-					.padding(.top, MaskinSpace.s2)
-					.transition(.opacity)
-			} else {
-				// Fixed height: a bare `Color` fills whatever height it is offered and would stretch the row.
-				Color.clear.frame(height: 0)
-			}
+	@ViewBuilder
+	private var layout: some View {
+		if style.ownBubble, isOwn {
+			ownBubble
+		} else if style.agentCard, message.author == .agent {
+			column
+				.padding(MaskinSpace.s8)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+				.overlay(
+					RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+						.strokeBorder(MaskinSurface.line, lineWidth: 1))
+		} else {
+			column
 		}
-		.frame(width: ThreadMetrics.avatar, alignment: showsAuthor ? .center : .trailing)
+	}
+
+	/// Yours, as a soft bubble on the right that hugs a short message and fills most of the row for a long one.
+	private var ownBubble: some View {
+		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
+			content
+				.padding(.horizontal, MaskinSpace.s8)
+				.padding(.vertical, MaskinSpace.s6)
+				.background(
+					MaskinColor.accentTint2, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+			MessageAttachments(attachments: message.attachments, alignment: .trailing)
+			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
+			MentionLine(names: mentionNames, isOwn: true)
+			statusLine
+		}
+		.frame(maxWidth: .infinity, alignment: .trailing)
+		.padding(.leading, MaskinSpace.s14 * 2)
 	}
 
 	private var column: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			if showsAuthor { header }
 			content
 			if !message.questions.isEmpty {
@@ -240,18 +259,25 @@ struct MessageRow: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
-	/// Name, an agent tag and the time, on one baseline. Long-press for message actions.
+	/// Avatar, name, an agent tag and the time on one line: the avatar is small and inline so the text
+	/// below keeps the whole width. Long-press for message actions.
 	private var header: some View {
-		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+		HStack(alignment: .center, spacing: MaskinSpace.s3) {
+			ActorAvatar(
+				name: message.actorName, kind: message.author == .agent ? .agent : .human,
+				size: style.avatar, seed: message.actorID)
+				.accessibilityHidden(true)
 			Text(message.actorName).maskinText(.subhead).fontWeight(.semibold)
 				.foregroundStyle(MaskinColor.ink).lineLimit(1)
 			if message.author == .agent {
 				Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
 					.accessibilityHidden(true)
 			}
+			if style.timeTrailing { Spacer(minLength: 0) }
 			RelativeTime(message.createdAt, style: .clock)
 				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
 		.contextMenu { actions }
 	}
@@ -271,11 +297,19 @@ struct MessageRow: View {
 	/// What a tap on the row offers: copy the whole message, select across paragraphs, share, edit.
 	private var actionBar: some View {
 		HStack(spacing: MaskinSpace.s4) {
+			if !showsAuthor {
+				// A follow-up has no header, so the tap reveals its time here.
+				RelativeTime(message.createdAt, style: .clock)
+					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+			}
 			if !message.content.isEmpty {
 				Button(action: copyWholeMessage) {
 					barLabel(copied ? "Copied" : "Copy", copied ? "checkmark" : "doc.on.doc")
 				}
 				.buttonStyle(.plain)
+				if let onQuote {
+					Button(action: onQuote) { barLabel("Quote", "arrowshape.turn.up.left") }.buttonStyle(.plain)
+				}
 				Button { selectingText = true } label: { barLabel("Select", "selection.pin.in.out") }
 					.buttonStyle(.plain)
 				ShareLink(item: message.content) { barLabel("Share", "square.and.arrow.up") }
@@ -428,8 +462,8 @@ struct WorkingIndicator: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
-		HStack(spacing: ThreadMetrics.gutterGap) {
-			ActorAvatar(name: agent.name, kind: .agent, size: ThreadMetrics.avatar, seed: agent.id, working: true)
+		HStack(spacing: MaskinSpace.s5) {
+			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12 + MaskinSpace.s4, seed: agent.id, working: true)
 			VStack(alignment: .leading, spacing: 0) {
 				HStack(spacing: MaskinSpace.s4) {
 					Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)

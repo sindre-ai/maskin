@@ -55,11 +55,25 @@ public struct PreparedChatFile: Sendable {
 @Observable
 public final class ChatComposerModel {
 	public var text = ""
+	/// The caret or selection as character offsets, kept by the text field. Nil until the field
+	/// reports one, in which case edits act at the end of the text.
+	public var selection: Range<Int>?
+	/// A selection the text field should adopt after an edit made here (a format, an inserted
+	/// emoji). `id` changes on every request so the same range can be asked for twice.
+	public private(set) var selectionRequest: SelectionRequest?
+	/// Bumped when something outside the field (quoting a message) wants the keyboard up.
+	public private(set) var focusRequest = 0
 	public private(set) var mentions: [ChatMention] = []
 	public private(set) var attachments: [ChatAttachmentDraft] = []
 	/// A rule the last action ran into ("That file is over 10 MB."), shown once then cleared.
 	public var notice: String?
 
+	public struct SelectionRequest: Equatable, Sendable {
+		public var id: Int
+		public var range: Range<Int>
+	}
+
+	@ObservationIgnored private var selectionRequests = 0
 	@ObservationIgnored private let uploader: (any ChatFileUploading)?
 	@ObservationIgnored private let selfActorID: String
 	@ObservationIgnored private var jobs: [String: Task<Void, Never>] = [:]
@@ -101,18 +115,70 @@ public final class ChatComposerModel {
 			attachments: attachments.compactMap(\.ref),
 			mentions: Array(
 				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)))
-		let result = (trimmedText, metadata.isEmpty ? nil : metadata)
+		let result = (EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
 		clear()
 		return result
 	}
 
 	public func clear() {
 		text = ""
+		selection = nil
+		selectionRequest = nil
 		mentions = []
 		attachments = []
 		for job in jobs.values { job.cancel() }
 		jobs = [:]
 		retryLoaders = [:]
+	}
+
+	// MARK: Editing
+
+	private var caret: Range<Int> { selection ?? text.count..<text.count }
+
+	private func setText(_ new: String, selecting range: Range<Int>) {
+		text = new
+		selection = range
+		selectionRequests += 1
+		selectionRequest = SelectionRequest(id: selectionRequests, range: range)
+	}
+
+	/// Bold, a list, a code block, and so on, applied to the selection (or the caret).
+	public func applyFormat(_ format: MarkdownFormat) {
+		let edit = MarkdownFormatting.apply(format, to: text, selection: caret)
+		setText(edit.text, selecting: edit.selection)
+	}
+
+	/// Put `string` at the caret, replacing any selection, and leave the caret after it.
+	public func insert(_ string: String) {
+		var chars = Array(text)
+		let range = caret
+		let lower = min(range.lowerBound, chars.count)
+		let upper = min(range.upperBound, chars.count)
+		chars.replaceSubrange(lower..<upper, with: Array(string))
+		let end = lower + string.count
+		setText(String(chars), selecting: end..<end)
+	}
+
+	/// Complete the `:query` being typed with the chosen emoji.
+	public func pickEmoji(_ emoji: String) {
+		guard let trigger = EmojiTrigger.find(in: text) else {
+			insert(emoji)
+			return
+		}
+		var new = text
+		new.replaceSubrange(trigger.range, with: emoji)
+		let end = new.count
+		setText(new, selecting: end..<end)
+	}
+
+	/// Start a reply to a message: it is quoted above whatever is already typed.
+	public func quote(author: String, content: String) {
+		let quoted = ChatQuote.make(author: author, content: content)
+		guard !quoted.isEmpty else { return }
+		let new = quoted + text
+		let end = new.count
+		setText(new, selecting: end..<end)
+		focusRequest += 1
 	}
 
 	// MARK: Mentions

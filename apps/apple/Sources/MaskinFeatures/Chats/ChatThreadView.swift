@@ -225,7 +225,8 @@ struct ChatThreadView: View {
 							.onAppear { if !followingOpen { loadEarlier(proxy) } }
 					}
 					ThreadTranscript(
-						store: store, onStop: { stopTarget = $0 }, onEdit: { editing = $0 }, matchIDs: matchSet,
+						store: store, onStop: { stopTarget = $0 }, onEdit: { editing = $0 },
+						onQuote: { composer.quote(author: $0.actorName, content: $0.content) }, matchIDs: matchSet,
 						currentMatchID: currentMatchID)
 					Color.clear.frame(height: 1).id(Self.bottomID)
 						.onAppear { if !usesGeometryTracking { reachedBottom() } }
@@ -342,7 +343,9 @@ struct ChatThreadView: View {
 					query: query, participants: store.participants, workspace: store.workspaceActors,
 					selfID: store.currentActorID, excluding: Set(composer.mentions.map(\.id)))
 			},
-			inConversation: Set(store.participants.map(\.id)), onSend: send
+			inConversation: Set(store.participants.map(\.id)), onSend: send,
+			agentName: store.participants.first { $0.kind == .agent }?.name ?? "Agent",
+			replies: Array(store.messages.suffix(12))
 		)
 	}
 
@@ -418,6 +421,7 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onStop: (ChatAgentSession) -> Void = { _ in }
 	var onEdit: (ChatMessage) -> Void = { _ in }
+	var onQuote: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 
@@ -505,7 +509,6 @@ struct ThreadTranscript: View {
 			let run = runs[message.id] ?? ThreadLayout.Run()
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
-				.padding(.leading, ThreadMetrics.textIndent)
 			}
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
@@ -515,6 +518,7 @@ struct ThreadTranscript: View {
 				onDiscard: { store.discard(message.id) },
 				onRetryAgent: { Task { await store.retryAgent(for: message) } },
 				onEdit: message.canEdit(by: store.currentActorID) ? { onEdit(message) } : nil,
+				onQuote: message.content.isEmpty ? nil : { onQuote(message) },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
 			.padding(.top, Self.topPadding(for: message, showsAuthor: showsAuthor, run: run, anchors: anchors, byID: byID))
@@ -524,7 +528,6 @@ struct ThreadTranscript: View {
 				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
-				.padding(.leading, ThreadMetrics.textIndent)
 			}
 		}
 	}

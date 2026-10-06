@@ -3,6 +3,8 @@ import Foundation
 /// A formatting action on markdown source, applied to a selection (or a caret when it is empty).
 public enum MarkdownFormat: Sendable, CaseIterable {
 	case bold, italic, heading, bullet, link
+	// Chat formatting (the object editor's toolbar lists its own buttons and does not offer these).
+	case strikethrough, code, numbered, quote, codeBlock
 }
 
 /// The result of a format: the new text and where the selection should land, as character offsets.
@@ -24,7 +26,34 @@ public enum MarkdownFormatting {
 		case .link: return link(chars, lower, upper)
 		case .heading: return prefixLines(chars, lower, upper, prefix: "## ")
 		case .bullet: return prefixLines(chars, lower, upper, prefix: "- ")
+		case .strikethrough: return wrap(chars, lower, upper, marker: "~~")
+		case .code: return wrap(chars, lower, upper, marker: "`")
+		case .numbered: return prefixLines(chars, lower, upper, prefix: "1. ")
+		case .quote: return prefixLines(chars, lower, upper, prefix: "> ")
+		case .codeBlock: return codeBlock(chars, lower, upper)
 		}
+	}
+
+	/// Fences the selection on lines of its own, or removes fences that already surround it. With
+	/// nothing selected it opens an empty block and leaves the caret inside.
+	private static func codeBlock(_ chars: [Character], _ lower: Int, _ upper: Int) -> MarkdownEdit {
+		let open = Array("```\n")
+		let close = Array("\n```")
+		if lower >= open.count, upper + close.count <= chars.count,
+			Array(chars[(lower - open.count)..<lower]) == open, Array(chars[upper..<(upper + close.count)]) == close
+		{
+			var out = chars
+			out.removeSubrange(upper..<(upper + close.count))
+			out.removeSubrange((lower - open.count)..<lower)
+			return make(out, lower - open.count, upper - open.count)
+		}
+		var out = chars
+		let lead: [Character] = lower > 0 && chars[lower - 1] != "\n" ? ["\n"] : []
+		let tail: [Character] = upper < chars.count && chars[upper] != "\n" ? ["\n"] : []
+		out.insert(contentsOf: close + tail, at: upper)
+		out.insert(contentsOf: lead + open, at: lower)
+		let shift = lead.count + open.count
+		return make(out, lower + shift, upper + shift)
 	}
 
 	private static func make(_ chars: [Character], _ lower: Int, _ upper: Int) -> MarkdownEdit {

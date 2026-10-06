@@ -165,7 +165,8 @@ private struct MarkdownBlockView: View {
 			} else {
 				inline(text, base: MaskinTextRole.body.font)
 					.maskinText(.body)
-					.foregroundStyle(MaskinColor.ink2)
+					// A message is read, so its body is full ink; documents keep the softer reading grey.
+					.foregroundStyle(style == .chat ? MaskinColor.ink : MaskinColor.ink2)
 					.lineSpacing(MaskinSpace.s2)
 			}
 		case .bulletList(let items):

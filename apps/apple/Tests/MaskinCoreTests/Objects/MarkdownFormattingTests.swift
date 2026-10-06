@@ -59,3 +59,38 @@ import Testing
 		#expect(edit.text == "hi****")
 	}
 }
+
+@Suite("MarkdownFormatting chat formats") struct MarkdownChatFormattingTests {
+	private func apply(_ format: MarkdownFormat, _ text: String, _ selection: Range<Int>) -> (String, Range<Int>) {
+		let edit = MarkdownFormatting.apply(format, to: text, selection: selection)
+		return (edit.text, edit.selection)
+	}
+
+	@Test func strikethroughAndInlineCodeToggle() {
+		#expect(apply(.strikethrough, "old text", 0..<3) == ("~~old~~ text", 2..<5))
+		#expect(apply(.strikethrough, "~~old~~ text", 2..<5) == ("old text", 0..<3))
+		#expect(apply(.code, "run make now", 4..<8) == ("run `make` now", 5..<9))
+		#expect(apply(.code, "run `make` now", 5..<9) == ("run make now", 4..<8))
+	}
+
+	@Test func aCaretWithNothingSelectedLeavesEmptyMarkers() {
+		#expect(apply(.code, "", 0..<0) == ("``", 1..<1))
+	}
+
+	@Test func numberedListAndQuotePrefixEachSelectedLine() {
+		#expect(apply(.numbered, "one\ntwo", 0..<7) == ("1. one\n1. two", 3..<13))
+		#expect(apply(.quote, "said this", 0..<9) == ("> said this", 2..<11))
+		#expect(apply(.quote, "> said this", 2..<11) == ("said this", 0..<9))
+	}
+
+	@Test func codeBlockFencesTheSelectionOnItsOwnLines() {
+		#expect(apply(.codeBlock, "let x = 1", 0..<9) == ("```\nlet x = 1\n```", 4..<13))
+		// Mid-line: the fences start and end on their own lines.
+		#expect(apply(.codeBlock, "see x here", 4..<5) == ("see \n```\nx\n```\n here", 9..<10))
+	}
+
+	@Test func codeBlockWithNothingSelectedOpensAnEmptyBlockAndRemovesFences() {
+		#expect(apply(.codeBlock, "", 0..<0) == ("```\n\n```", 4..<4))
+		#expect(apply(.codeBlock, "```\nlet x = 1\n```", 4..<13) == ("let x = 1", 0..<9))
+	}
+}
