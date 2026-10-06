@@ -179,3 +179,21 @@ export function useLinkedInIdentities(workspaceId: string) {
 		staleTime: FIVE_MINUTES,
 	})
 }
+
+/** Folder watches on the workspace Drive connections, for the Drive detail page. */
+export function useDriveWatches(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.driveWatches(workspaceId),
+		queryFn: () => api.integrations.driveWatches(workspaceId),
+	})
+}
+
+export function useStopDriveWatch(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (folderId: string) => api.integrations.stopDriveWatch(workspaceId, folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.driveWatches(workspaceId) })
+		},
+	})
+}
