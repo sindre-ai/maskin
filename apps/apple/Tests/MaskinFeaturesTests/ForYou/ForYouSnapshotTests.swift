@@ -211,4 +211,20 @@ struct ForYouSnapshotTests {
 			DecisionCardView.suggestedLine(
 				for: DecisionPrompt(title: "t", summary: "s", ask: "a", options: [DecisionOption(label: "Hold")])) == nil)
 	}
+
+	@Test("story cards render unseen and seen", arguments: [false, true])
+	func storyCards(dark: Bool) throws {
+		let card = StoryCard(
+			id: "a", unit: "Market & Competitors", headline: "1 of 10 paying orgs, and at risk",
+			updatedAt: nil, content: .briefing(headline: "h", script: "s"))
+		for width in Self.widths {
+			try render(
+				page {
+					HStack {
+						StoryCardView(card: card, isSeen: false) {}
+						StoryCardView(card: card, isSeen: true) {}
+					}
+				}, width: width, dark: dark, name: "story-cards")
+		}
+	}
 }
