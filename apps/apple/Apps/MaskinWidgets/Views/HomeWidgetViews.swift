@@ -109,14 +109,14 @@ private struct OptionChip: View {
 		Text(label)
 			.font(.caption2.weight(.medium))
 			.lineLimit(1)
-			.foregroundStyle(recommended ? MaskinColor.accentFgStrong : MaskinColor.ink3)
+			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
 			.padding(.horizontal, MaskinSpace.s4)
 			.padding(.vertical, MaskinSpace.s1 + 1)
 			// Tinted modes (iOS 18) recolour accentable content with the user's tint: the custom
 			// fills would fight it, so the recommended chip becomes an accentable outline.
 			.background {
 				if renderingMode == .fullColor {
-					shape.fill(recommended ? MaskinColor.accentTint2 : MaskinSurface.fill)
+					shape.fill(recommended ? MaskinSurface.inverse : MaskinSurface.fill)
 				} else if recommended {
 					shape.stroke(lineWidth: 1)
 				}
@@ -160,7 +160,7 @@ private struct SmallView: View {
 			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s2) {
 				Text("\(snapshot.needsCount)")
 					.font(.system(size: 40, weight: .bold, design: .rounded))
-					.foregroundStyle(MaskinColor.accent)
+					.foregroundStyle(MaskinColor.sigInk)
 					.widgetAccentable()
 					.contentTransition(.numericText())
 				Text(snapshot.needsCount == 1 ? "decision" : "decisions")
@@ -231,7 +231,7 @@ private struct MediumView: View {
 			HeaderLabel()
 			Text("\(snapshot.needsCount)")
 				.font(.system(size: 44, weight: .bold, design: .rounded))
-				.foregroundStyle(MaskinColor.accent)
+				.foregroundStyle(MaskinColor.sigInk)
 				.widgetAccentable()
 				.minimumScaleFactor(0.5)
 				.lineLimit(1)
@@ -292,10 +292,10 @@ private struct LargeView: View {
 				Spacer()
 				Text("\(snapshot.needsCount)")
 					.font(.system(.subheadline, design: .rounded).weight(.bold))
-					.foregroundStyle(MaskinColor.accentFgStrong)
+					.foregroundStyle(MaskinColor.sigInk)
 					.padding(.horizontal, MaskinSpace.s4)
 					.padding(.vertical, MaskinSpace.s1)
-					.background(MaskinColor.accentTint2, in: Capsule())
+					.background(MaskinColor.sigTint, in: Capsule())
 					.widgetAccentable()
 			}
 			VStack(spacing: 0) {

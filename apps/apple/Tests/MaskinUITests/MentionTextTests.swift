@@ -1,3 +1,4 @@
+import MaskinDesign
 import SwiftUI
 import Testing
 
@@ -48,5 +49,14 @@ struct MentionTextTests {
 		let md = MentionText.markdown("ask @Ida and @CPO", mentions: [("i", "Ida Berg"), ("c", "CPO")])
 		#expect(md == "ask [@Ida](mention:i) and [@CPO](mention:c)")
 		#expect(MentionText.markdown("hi @Sam", mentions: [("i", "Ida Berg")]) == "hi @Sam")
+	}
+}
+
+@Suite("MentionText colours")
+struct MentionTextColourTests {
+	@Test("a mention is Patina text on a plain surface and soft grey in your own ink bubble")
+	func styleColours() {
+		#expect(MentionText.Style.plain.color == MaskinColor.sigInk)
+		#expect(MentionText.Style.ownBubble.color == MaskinPatina.mentionOnInverse)
 	}
 }

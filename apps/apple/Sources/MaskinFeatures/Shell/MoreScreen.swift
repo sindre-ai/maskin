@@ -34,7 +34,7 @@ struct MoreScreen: View {
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s9)
 			}
-			.background(MaskinSurface.grouped)
+			.ambientBackground()
 			.foregroundStyle(MaskinColor.ink)
 			.shellToolbar(environment: environment, title: "More")
 			// Signing out discards writes still waiting to send, so ask first (Settings does too).
@@ -128,7 +128,7 @@ struct MoreScreen: View {
 		VStack(spacing: 0) {
 			MoreRow(
 				title: "Notifications", symbol: "bell",
-				tint: MaskinColor.accentTint, tone: MaskinColor.accentFgStrong,
+				tint: MaskinSurface.fill, tone: MaskinColor.ink2,
 				badge: runtime.notifications.unreadCount
 			) { runtime.showNotifications = true }
 			if environment.workspaceId != nil {
@@ -245,13 +245,7 @@ private struct MoreRow: View {
 				}
 				Spacer(minLength: MaskinSpace.s4)
 				if badge > 0 {
-					Text("\(badge)")
-						.maskinText(.caption)
-						.foregroundStyle(MaskinColor.accentFgStrong)
-						.padding(.horizontal, MaskinSpace.s4)
-						.padding(.vertical, MaskinSpace.s1)
-						.background(MaskinColor.accentTint, in: Capsule())
-						.accessibilityLabel("\(badge) unread")
+					UnreadBadge(count: badge)
 				}
 				Image(systemName: "chevron.right")
 					.font(.system(size: MaskinSpace.s7, weight: .semibold))

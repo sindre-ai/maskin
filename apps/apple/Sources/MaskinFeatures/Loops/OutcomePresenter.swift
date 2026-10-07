@@ -25,7 +25,7 @@ struct OutcomePresenter: View {
 	var body: some View {
 		NavigationStack {
 			content
-				.background(MaskinSurface.grouped)
+				.ambientBackground()
 				.navigationTitle(output.name)
 				#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)

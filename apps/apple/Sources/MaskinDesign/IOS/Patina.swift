@@ -86,6 +86,15 @@ public enum MaskinGradient {
 
 /// Patina colours that are fixed in both modes and have no `colors.css` counterpart.
 public enum MaskinPatina {
+	/// An @mention inside your own ink bubble: #d4d4d8 on the light-mode ink, flipped on the dark-mode
+	/// (light) bubble so it still reads.
+	public static let mentionOnInverse = Color(light: RGBA(0xD4D4D8), dark: RGBA(0x52525B))
+	/// A brief card's resting shadow (the card has no ring or border).
+	public static let cardShadow = Color(
+		light: RGBA(red: 18, green: 48, blue: 44, alpha: 0.06), dark: RGBA(red: 0, green: 0, blue: 0, alpha: 0.3))
+	/// The recommended decision button's shadow.
+	public static let decisionShadow = Color(
+		light: RGBA(red: 18, green: 48, blue: 44, alpha: 0.22), dark: RGBA(red: 0, green: 0, blue: 0, alpha: 0.4))
 	/// Full-screen brief viewer accent.
 	public static let viewerAccent = Color(light: RGBA(0x92D6CA), dark: RGBA(0x92D6CA))
 	/// Brief viewer progress ring, start and end.
@@ -103,5 +112,73 @@ public enum MaskinPatina {
 				.init(color: Color(light: RGBA(a), dark: RGBA(a)), location: 0),
 				.init(color: Color(light: RGBA(b), dark: RGBA(b)), location: 1),
 			])
+	}
+}
+
+/// The ambient wash behind every root screen and sheet: three soft Patina radial glows over the
+/// canvas, so Liquid Glass bars have colour to refract. Fixed (it never scrolls). Drawn as plain
+/// canvas when Reduce Transparency is on.
+public struct AmbientBackground: View {
+	/// One radial glow, in CSS terms: radii as a fraction of the canvas width / height, centre as a
+	/// fraction of both, fading to clear at `fade` of the radius.
+	struct Layer: Equatable {
+		var radiusX: Double
+		var radiusY: Double
+		var centerX: Double
+		var centerY: Double
+		var fade: Double
+	}
+
+	/// Bottom (behind the tab bar), top-leading, top-trailing: the prototype's three layers.
+	static let bottom = Layer(radiusX: 0.90, radiusY: 0.22, centerX: 0.5, centerY: 1.04, fade: 0.75)
+	static let topLeading = Layer(radiusX: 0.95, radiusY: 0.34, centerX: 0.12, centerY: 0, fade: 0.72)
+	static let topTrailing = Layer(radiusX: 0.70, radiusY: 0.26, centerX: 1, centerY: 0.06, fade: 0.70)
+
+	/// Sheets drop the bottom layer.
+	let showsBottom: Bool
+	@Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+	public init(showsBottom: Bool = true) { self.showsBottom = showsBottom }
+
+	public var body: some View {
+		ZStack {
+			MaskinSurface.grouped
+			if !reduceTransparency {
+				GeometryReader { proxy in
+					ZStack {
+						if showsBottom { glow(Self.bottom, MaskinColor.wash3, in: proxy.size) }
+						glow(Self.topLeading, MaskinColor.wash, in: proxy.size)
+						glow(Self.topTrailing, MaskinColor.wash2, in: proxy.size)
+					}
+				}
+			}
+		}
+		.ignoresSafeArea()
+		.accessibilityHidden(true)
+		.allowsHitTesting(false)
+	}
+
+	private func glow(_ layer: Layer, _ color: Color, in size: CGSize) -> some View {
+		let rx = layer.radiusX * size.width
+		let ry = layer.radiusY * size.height
+		return Rectangle()
+			.fill(
+				RadialGradient(
+					stops: [
+						.init(color: color, location: 0),
+						.init(color: color.opacity(0), location: layer.fade),
+					], center: .center, startRadius: 0, endRadius: max(rx, 1))
+			)
+			.frame(width: rx * 2, height: rx * 2)
+			.scaleEffect(x: 1, y: ry / max(rx, 1))
+			.position(x: layer.centerX * size.width, y: layer.centerY * size.height)
+	}
+}
+
+extension View {
+	/// The ambient wash as this view's fixed backdrop. Use it where a screen used to set
+	/// `MaskinSurface.grouped`; pass `showsBottom: false` on a sheet.
+	public func ambientBackground(showsBottom: Bool = true) -> some View {
+		background(AmbientBackground(showsBottom: showsBottom))
 	}
 }

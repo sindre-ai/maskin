@@ -24,7 +24,7 @@ struct LoopRow: View {
 					if hasUpdate {
 						Image(systemName: "arrow.up.circle.fill")
 							.font(.caption)
-							.foregroundStyle(MaskinColor.accentFgStrong)
+							.foregroundStyle(MaskinColor.sigInk)
 							.accessibilityLabel("Update available")
 					}
 					Spacer(minLength: MaskinSpace.s3)

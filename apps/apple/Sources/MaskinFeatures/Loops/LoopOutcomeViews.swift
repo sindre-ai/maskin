@@ -53,7 +53,7 @@ struct OutcomeRow: View {
 		HStack(spacing: MaskinSpace.s6) {
 			Image(systemName: output.isHTML ? "rectangle.on.rectangle.angled" : "doc.richtext")
 				.font(.title3)
-				.foregroundStyle(output.isHTML ? MaskinColor.accent : MaskinColor.ink4)
+				.foregroundStyle(output.isHTML ? MaskinColor.ink : MaskinColor.ink4)
 				.frame(width: MaskinSpace.s14)
 				.accessibilityHidden(true)
 			OutcomeCaption(output: output)

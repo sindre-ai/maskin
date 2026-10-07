@@ -74,7 +74,7 @@ struct MentionLine: View {
 					.lineLimit(2)
 			}
 			.maskinText(.caption)
-			.foregroundStyle(MaskinColor.accentFgStrong)
+			.foregroundStyle(MaskinColor.sigInk)
 			.accessibilityElement(children: .combine)
 		}
 	}
@@ -206,10 +206,11 @@ struct MessageRow: View {
 			} else {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) { content }
 					.environment(\.markdownHugsContent, true)
+					.environment(\.markdownOnInverse, true)
 					.padding(.horizontal, MaskinSpace.s8)
 					.padding(.vertical, MaskinSpace.s6)
 					.background(
-						MaskinColor.accentTint2,
+						MaskinSurface.inverse,
 						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
 					)
 					.overlay {
@@ -428,7 +429,7 @@ struct MessageRow: View {
 			} label: {
 				Label(expanded ? "Show less" : "Show more", systemImage: expanded ? "chevron.up" : "chevron.down")
 					.maskinText(.subhead).fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.accentStrong)
+					.foregroundStyle(MaskinColor.ink)
 					.padding(.vertical, MaskinSpace.s3)
 					.contentShape(Rectangle())
 			}
@@ -461,7 +462,7 @@ struct MessageRow: View {
 						.accessibilityHidden(true)
 					Text("Not sent").foregroundStyle(MaskinColor.danger)
 					Button("Retry", action: onRetrySend).buttonStyle(.plain)
-						.foregroundStyle(MaskinColor.accentFgStrong)
+						.foregroundStyle(MaskinColor.ink)
 						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 						.accessibilityHint(reason)

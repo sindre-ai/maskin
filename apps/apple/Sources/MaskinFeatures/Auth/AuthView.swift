@@ -49,7 +49,7 @@ public struct AuthView: View {
 				}
 			}
 		}
-		.background(MaskinSurface.grouped.ignoresSafeArea())
+		.ambientBackground()
 		.onAppear { focus = model.fields.first }
 		.onChange(of: auth.lastError) { _, new in if new != nil { MaskinHaptics.play(.error) } }
 		.onChange(of: auth.lastSignUpError) { _, new in if new != nil { MaskinHaptics.play(.error) } }

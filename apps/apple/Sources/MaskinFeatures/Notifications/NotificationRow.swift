@@ -72,7 +72,7 @@ struct NotificationRow: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.gapDefault) {
 				if notification.isUnread {
-					Circle().fill(MaskinColor.accent).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+					Circle().fill(MaskinGradient.badge).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 						.accessibilityHidden(true)
 				}
 				Text(notification.title)
@@ -176,7 +176,7 @@ struct NotificationRow: View {
 
 	static func tint(for kind: AppNotification.Kind) -> Color {
 		switch kind {
-		case .needsInput: MaskinColor.accent
+		case .needsInput: MaskinColor.sigInk
 		case .recommendation: MaskinColor.warning
 		case .goodNews: MaskinColor.success
 		case .alert: MaskinColor.danger

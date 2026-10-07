@@ -49,7 +49,7 @@ struct ConversationListView: View {
 								} label: {
 									Label(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin")
 								}
-								.tint(MaskinColor.accent)
+								.tint(MaskinColor.ink)
 							}
 							.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 								Button {
@@ -82,7 +82,7 @@ struct ConversationListView: View {
 		.listStyle(.inset)
 		#endif
 		.scrollContentBackground(.hidden)
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.overlay { overlay(isEmpty: sections.isEmpty) }
 		.refreshable { await store.refresh() }
 		.chatSearch(store: store, text: $search)

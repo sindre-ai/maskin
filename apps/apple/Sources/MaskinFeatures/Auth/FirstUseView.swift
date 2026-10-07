@@ -111,7 +111,7 @@ struct FirstUseView: View {
 				.frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
 			}
 		}
-		.background(MaskinSurface.grouped.ignoresSafeArea())
+		.ambientBackground()
 		.animation(reduceMotion ? nil : MaskinMotion.fade, value: readiness)
 	}
 

@@ -31,7 +31,7 @@ struct MarketplaceLoopDetailView: View {
 			.frame(maxWidth: 720, alignment: .leading)
 			.frame(maxWidth: .infinity)
 		}
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif

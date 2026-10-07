@@ -61,17 +61,10 @@ public enum ActorIdentity {
 		return AgentShape.allCases[Int((h / UInt32(agentPalette.count)) % UInt32(AgentShape.allCases.count))]
 	}
 
-	static func colors(seed: String, kind: ActorAvatar.Kind) -> MaskinColorPair {
-		let i = paletteIndex(seed: seed, kind: kind)
-		switch kind {
-		case .agent: return agentPalette[i]
-		case .human: return MaskinStatus.colors(for: humanPaletteKeys[i])
-		}
-	}
 }
 
-/// Avatar showing initials on a stable per-actor tint. People are circles in the web's ten-colour
-/// palette; agents are characters: their own geometry in one of the `agent-*` swatches.
+/// Avatar showing initials on the Patina avatar gradient. People are circles; agents are characters:
+/// their own geometry (and glyph) per identity, all in the one brand colour.
 public struct ActorAvatar: View {
 	public enum Kind: Sendable { case human, agent }
 
@@ -83,7 +76,7 @@ public struct ActorAvatar: View {
 
 	/// - Parameters:
 	///   - seed: stable id for colour selection (defaults to the name).
-	///   - working: show the violet "agent is running" ring.
+	///   - working: show the Patina "agent is running" ring.
 	public init(
 		name: String, kind: Kind = .human, size: CGFloat = MaskinSpace.s12 + MaskinSpace.s3 + MaskinSpace.s3,
 		seed: String? = nil, working: Bool = false, mood: AgentMood? = nil
@@ -112,22 +105,21 @@ public struct ActorAvatar: View {
 	@State private var swaying = false
 
 	public var body: some View {
-		let colors = ActorIdentity.colors(seed: seed, kind: kind)
 		let shape = shape
 		Text(ActorIdentity.initials(for: name))
 			.font(MaskinTypeface.sans(size * (shape == .circle ? 0.4 : 0.36), weight: .semibold, relativeTo: .caption))
 			.minimumScaleFactor(0.6)
-			.foregroundStyle(colors.fg)
+			.foregroundStyle(MaskinColor.avFg)
 			.frame(width: size, height: size)
 			.background {
 				// A touch of depth so a character reads as an object, not a flat chip.
-				shape.fill(colors.bg)
+				shape.fill(MaskinGradient.avatar)
 					.overlay(
 						shape.fill(
 							LinearGradient(
 								colors: [Color.white.opacity(0.22), .clear], startPoint: .top, endPoint: .center))
 					)
-					.overlay(shape.strokeBorder(colors.fg.opacity(0.12), lineWidth: 1))
+					.overlay(shape.strokeBorder(MaskinColor.avFg.opacity(0.12), lineWidth: 1))
 			}
 			.opacity(mood == .paused ? 0.55 : 1)
 			.overlay {
@@ -198,10 +190,10 @@ struct WorkingRing: View {
 
 	var body: some View {
 		ZStack {
-			shape.strokeBorder(MaskinColor.accent, lineWidth: MaskinSpace.s1)
+			shape.strokeBorder(MaskinColor.sig, lineWidth: MaskinSpace.s1)
 			if !reduceMotion {
 				shape
-					.strokeBorder(MaskinColor.accent.opacity(0.35), lineWidth: MaskinSpace.s1)
+					.strokeBorder(MaskinColor.sig.opacity(0.35), lineWidth: MaskinSpace.s1)
 					.scaleEffect(breathing ? 1.3 : 1)
 					.opacity(breathing ? 0 : 1)
 			}

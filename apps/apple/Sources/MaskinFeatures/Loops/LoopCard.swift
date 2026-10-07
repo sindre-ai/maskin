@@ -38,7 +38,7 @@ struct LoopCard: View {
 					if hasUpdate {
 						Image(systemName: "arrow.up.circle.fill")
 							.font(.caption)
-							.foregroundStyle(MaskinColor.accentFgStrong)
+							.foregroundStyle(MaskinColor.sigInk)
 							.accessibilityLabel("Update available")
 					}
 				}
@@ -124,7 +124,7 @@ struct LoopProgressRing: View {
 			Circle()
 				.trim(from: 0, to: loop.progress)
 				.stroke(
-					loop.pill.isLive ? MaskinColor.accent : MaskinColor.ink5,
+					loop.pill.isLive ? AnyShapeStyle(MaskinGradient.ring) : AnyShapeStyle(MaskinGradient.ringPaused),
 					style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
 				)
 				.rotationEffect(.degrees(-90))

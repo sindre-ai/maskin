@@ -27,13 +27,13 @@ struct ObjectRow: View {
 					Spacer(minLength: MaskinSpace.s3)
 					RelativeTime(object.updatedAt, style: .compact)
 						.maskinText(.caption)
-						.foregroundStyle(object.unreadCount > 0 ? MaskinColor.accent : MaskinColor.ink4)
+						.foregroundStyle(object.unreadCount > 0 ? MaskinColor.sigInk : MaskinColor.ink4)
 				}
 				HStack(alignment: .center, spacing: MaskinSpace.s4) {
 					if let activity = object.activeActivity, !activity.isEmpty {
 						Label(activity, systemImage: "sparkles")
 							.maskinText(.subhead)
-							.foregroundStyle(MaskinColor.accentFgStrong)
+							.foregroundStyle(MaskinColor.sigInk)
 							.lineLimit(1)
 					} else {
 						Text(subtitle)
@@ -55,7 +55,7 @@ struct ObjectRow: View {
 	/// The type's glyph on its tint, the size of a chat avatar so the lists line up. A starred
 	/// object shows a star in that slot instead, so the title doesn't need a star of its own.
 	private var typeGlyph: some View {
-		let colors = object.isStarred ? MaskinColorPair(bg: MaskinColor.accentTint2, fg: MaskinColor.accent) : MaskinObjectType.colors(for: object.type)
+		let colors = object.isStarred ? MaskinColorPair(bg: MaskinSurface.fill, fg: MaskinColor.ink) : MaskinObjectType.colors(for: object.type)
 		let size = MaskinSpace.s14 + MaskinSpace.s4
 		return Circle()
 			.fill(colors.bg)

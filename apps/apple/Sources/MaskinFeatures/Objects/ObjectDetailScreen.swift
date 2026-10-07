@@ -103,7 +103,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				.refreshable { await store.refresh() }
 			}
 		}
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.safeAreaInset(edge: .bottom) {
 			// Commenting lives on the Activity page, where the thread is.
 			if store.object != nil, page == .activity {
@@ -268,7 +268,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 								Text("\(count)").foregroundStyle(MaskinColor.ink5)
 							}
 							if item.needsYou {
-								Circle().fill(MaskinColor.accent)
+								Circle().fill(MaskinColor.sig)
 									.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
 									.accessibilityLabel("Needs you")
 							}

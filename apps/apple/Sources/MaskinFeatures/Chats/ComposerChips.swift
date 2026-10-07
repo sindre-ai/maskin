@@ -66,7 +66,7 @@ struct AttachmentChip: View {
 			}
 			if case .failed = draft.state {
 				Button("Retry", action: onRetry).maskinText(.caption).buttonStyle(.plain)
-					.foregroundStyle(MaskinColor.accentFgStrong)
+					.foregroundStyle(MaskinColor.ink)
 			}
 			Button(action: onRemove) {
 				Image(systemName: "xmark.circle.fill").foregroundStyle(MaskinColor.ink5)
@@ -139,11 +139,11 @@ struct MentionChip: View {
 				.accessibilityLabel("Remove mention of \(mention.name)")
 			}
 		}
-		.foregroundStyle(MaskinColor.accentFgStrong)
+		.foregroundStyle(MaskinColor.sigInk)
 		.padding(.leading, MaskinSpace.s4)
 		.padding(.trailing, onRemove == nil ? MaskinSpace.s4 : 0)
 		.frame(minHeight: MaskinSpace.s12 + MaskinSpace.s2)
-		.background(MaskinColor.accentTint2, in: Capsule())
+		.background(MaskinColor.sigTint, in: Capsule())
 	}
 }
 

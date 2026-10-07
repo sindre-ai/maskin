@@ -84,7 +84,7 @@ struct NotificationsContent: View {
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.alert(
 			"Couldn't complete that",
 			isPresented: Binding(
@@ -119,14 +119,14 @@ struct NotificationsContent: View {
 						} label: {
 							Label("Read", systemImage: "envelope.open")
 						}
-						.tint(MaskinColor.accent)
+						.tint(MaskinColor.ink)
 					} else if n.status == .seen {
 						Button {
 							Task { await store.markUnread(n.id) }
 						} label: {
 							Label("Unread", systemImage: "envelope.badge")
 						}
-						.tint(MaskinColor.accent)
+						.tint(MaskinColor.ink)
 					}
 				}
 				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -144,7 +144,7 @@ struct NotificationsContent: View {
 					}
 					Button("Delete", role: .destructive) { Task { await store.delete(n.id) } }
 				}
-				.listRowBackground(MaskinSurface.grouped)
+				.listRowBackground(Color.clear)
 			}
 		}
 		.listStyle(.plain)

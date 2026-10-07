@@ -41,7 +41,7 @@ struct AgentDetailView: View {
 			.frame(maxWidth: 720, alignment: .leading)
 			.frame(maxWidth: .infinity)
 		}
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.navigationTitle(store.profile?.name ?? "")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)

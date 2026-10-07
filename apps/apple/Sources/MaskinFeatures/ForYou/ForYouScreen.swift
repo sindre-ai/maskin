@@ -134,7 +134,7 @@ struct ForYouFeedView: View {
 		}
 		.listStyle(.plain)
 		.scrollContentBackground(.hidden)
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.refreshable { await store.refresh() }
 		.animation(store.isFetching ? nil : MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
 		.onChange(of: scenePhase) { _, phase in

@@ -469,7 +469,7 @@ struct DecisionCardView: View {
 
 // MARK: - Option pill
 
-/// The recommended option is the dark (inverse) pill; the others are tinted.
+/// The recommended option is the ink-gradient pill; the others are glass.
 private struct OptionPillStyle: ButtonStyle {
 	let recommended: Bool
 	var destructive = false
@@ -478,11 +478,12 @@ private struct OptionPillStyle: ButtonStyle {
 	func makeBody(configuration: Configuration) -> some View {
 		configuration.label
 			.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
-			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink)
+			.foregroundStyle(recommended ? Color.white : MaskinColor.ink)
 			.padding(.horizontal, MaskinSpace.s8)
 			.padding(.vertical, MaskinSpace.s5)
 			.frame(minHeight: MaskinSpace.touchMin)
-			.background(recommended ? MaskinSurface.inverse : MaskinSurface.fill, in: Capsule())
+			.background(recommended ? AnyShapeStyle(MaskinGradient.decisionInk) : AnyShapeStyle(MaskinSurface.fill), in: Capsule())
+			.shadow(color: recommended ? MaskinPatina.decisionShadow : .clear, radius: 8, y: 6)
 			.overlay(
 				Capsule().strokeBorder(destructive ? ForYouPalette.failureBorder : Color.clear, lineWidth: 1))
 			.opacity(isEnabled ? 1 : 0.4)

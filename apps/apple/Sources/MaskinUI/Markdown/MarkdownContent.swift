@@ -24,6 +24,9 @@ extension EnvironmentValues {
 	/// Lets rendered markdown be only as wide as its content (a short line in a chat bubble) instead of
 	/// filling the width it is offered. Blocks that need the width (code, tables) still take it.
 	@Entry public var markdownHugsContent: Bool = false
+	/// The markdown sits on an ink surface (your own chat bubble), so text, links and mentions flip
+	/// to the on-ink colours instead of ink.
+	@Entry public var markdownOnInverse: Bool = false
 }
 
 /// Parsed blocks, remembered by source text. A thread re-renders its rows whenever anything in
@@ -153,13 +156,16 @@ private struct MarkdownBlockView: View {
 	let block: MarkdownBlock
 	@Environment(\.markdownStyle) private var style
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
+	@Environment(\.markdownOnInverse) private var onInverse
+
+	private var primary: Color { onInverse ? MaskinSurface.onInverse : MaskinColor.ink }
 
 	var body: some View {
 		switch block {
 		case .heading(let level, let text):
 			inline(text, base: headingFont(level))
 				.font(headingFont(level))
-				.foregroundStyle(MaskinColor.ink)
+				.foregroundStyle(primary)
 				.padding(.top, level <= 2 && style == .document ? MaskinSpace.s2 : 0)
 				.accessibilityAddTraits(.isHeader)
 		case .paragraph(let text):
@@ -170,7 +176,7 @@ private struct MarkdownBlockView: View {
 				inline(text, base: MaskinTextRole.body.font)
 					.maskinText(.body)
 					// A message is read, so its body is full ink; documents keep the softer reading grey.
-					.foregroundStyle(style == .chat ? MaskinColor.ink : MaskinColor.ink2)
+					.foregroundStyle(onInverse || style == .chat ? primary : MaskinColor.ink2)
 					.lineSpacing(MaskinSpace.s2)
 			}
 		case .bulletList(let items):
@@ -190,7 +196,7 @@ private struct MarkdownBlockView: View {
 				RoundedRectangle(cornerRadius: MaskinRadius.tag, style: .continuous)
 					.fill(MaskinColor.ruleStrong)
 					.frame(width: MaskinSpace.s2)
-				MarkdownBlocksView(blocks: inner).foregroundStyle(MaskinColor.ink3)
+				MarkdownBlocksView(blocks: inner).foregroundStyle(onInverse ? primary.opacity(0.8) : MaskinColor.ink3)
 			}
 		case .codeBlock(let language, let code):
 			MarkdownCodeBlock(language: language, code: code, showsHeader: style == .chat)
@@ -207,11 +213,11 @@ private struct MarkdownBlockView: View {
 			if let task {
 				Image(systemName: task.checked ? "checkmark.square.fill" : "square")
 					.maskinText(.body)
-					.foregroundStyle(task.checked ? MaskinColor.accentStrong : MaskinColor.ink4)
+					.foregroundStyle(task.checked ? primary : MaskinColor.ink4)
 					.frame(minWidth: MaskinSpace.s8, alignment: .trailing)
 					.accessibilityLabel(task.checked ? "Done" : "Not done")
 			} else {
-				Text(marker).maskinText(.body).foregroundStyle(MaskinColor.ink4)
+				Text(marker).maskinText(.body).foregroundStyle(onInverse ? primary.opacity(0.7) : MaskinColor.ink4)
 					.frame(minWidth: MaskinSpace.s8, alignment: .trailing)
 			}
 			MarkdownBlocksView(blocks: task?.blocks ?? item)
@@ -236,7 +242,9 @@ private struct MarkdownBlockView: View {
 	}
 
 	private func inline(_ markdown: String, base: Font) -> Text {
-		Text(MarkdownInline.attributed(markdown, base: base, linkInfo: linkInfo.map { info in { info($0) } }))
+		Text(
+			MarkdownInline.attributed(
+				markdown, base: base, linkInfo: linkInfo.map { info in { info($0) } }, onInverse: onInverse))
 	}
 }
 
@@ -323,7 +331,7 @@ private struct MarkdownCodeBlock: View {
 			} label: {
 				Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
 					.maskinText(.caption)
-					.foregroundStyle(copied ? MaskinColor.accentStrong : MaskinColor.ink3)
+					.foregroundStyle(copied ? MaskinColor.ink : MaskinColor.ink3)
 					.padding(.horizontal, MaskinSpace.s4)
 					.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s2)
 					.contentShape(Rectangle())
@@ -497,8 +505,10 @@ enum MarkdownInline {
 	/// - Parameter linkInfo: describes a URL that points inside the app (nil for an outside one), so
 	///   an internal link can be drawn as a chip carrying the thing's name.
 	static func attributed(
-		_ markdown: String, base: Font, linkInfo: ((URL) -> MarkdownLinkInfo?)? = nil
+		_ markdown: String, base: Font, linkInfo: ((URL) -> MarkdownLinkInfo?)? = nil,
+		onInverse: Bool = false
 	) -> AttributedString {
+		let linkColor = onInverse ? MaskinSurface.onInverse : MaskinColor.ink
 		guard
 			var attr = try? AttributedString(
 				markdown: markdown,
@@ -521,12 +531,12 @@ enum MarkdownInline {
 			if run.link?.scheme == MarkdownMention.scheme {
 				// An @mention: emphasised, never tappable.
 				attr[run.range].link = nil
-				attr[run.range].foregroundColor = MaskinColor.accentStrong
+				attr[run.range].foregroundColor = onInverse ? MaskinPatina.mentionOnInverse : MaskinColor.sigInk
 				attr[run.range].font = base.weight(.semibold)
 			} else if let link = run.link, let info = linkInfo?(link) {
 				// A link into the app: a tinted chip, no underline, opened in the app.
-				attr[run.range].foregroundColor = MaskinColor.accentStrong
-				attr[run.range].backgroundColor = MaskinColor.accentTint
+				attr[run.range].foregroundColor = linkColor
+				attr[run.range].backgroundColor = onInverse ? MaskinSurface.onInverse.opacity(0.16) : MaskinSurface.fill
 				attr[run.range].font = base.weight(.semibold)
 				attr[run.range].underlineStyle = nil
 				let visible = String(attr[run.range].characters).trimmingCharacters(in: .whitespaces)
@@ -537,7 +547,7 @@ enum MarkdownInline {
 				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
 				attr[run.range].link = nil
 			} else if run.link != nil {
-				attr[run.range].foregroundColor = MaskinColor.accentStrong
+				attr[run.range].foregroundColor = linkColor
 				attr[run.range].underlineStyle = .single
 			}
 		}

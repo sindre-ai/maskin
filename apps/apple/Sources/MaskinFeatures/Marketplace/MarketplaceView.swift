@@ -48,7 +48,7 @@ struct MarketplaceContent: View {
 	var body: some View {
 		NavigationStack(path: $path) {
 			catalogList
-				.background(MaskinSurface.grouped)
+				.ambientBackground()
 				.navigationTitle("Marketplace")
 				#if os(iOS)
 				.toolbarTitleDisplayMode(.inlineLarge)

@@ -30,7 +30,7 @@ struct EditMessageSheet: View {
 				.scrollContentBackground(.hidden)
 				.padding(.horizontal, MaskinSpace.s8)
 				.padding(.vertical, MaskinSpace.s5)
-				.background(MaskinSurface.grouped)
+				.ambientBackground(showsBottom: false)
 				.navigationTitle("Edit message")
 				#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
@@ -70,7 +70,7 @@ struct SelectTextSheet: View {
 					.frame(maxWidth: .infinity, alignment: .leading)
 					.padding(MaskinSpace.s9)
 			}
-			.background(MaskinSurface.grouped)
+			.ambientBackground(showsBottom: false)
 			.navigationTitle("Select text")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)

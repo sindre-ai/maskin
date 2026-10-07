@@ -50,7 +50,7 @@ extension View {
 	func settingsListStyle() -> some View {
 		let styled = self
 			.scrollContentBackground(.hidden)
-			.background(MaskinSurface.grouped)
+			.ambientBackground()
 			.listRowBackground(MaskinSurface.card)
 		#if os(iOS)
 			return styled.listSectionSpacing(.custom(MaskinSpace.s12))

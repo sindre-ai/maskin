@@ -14,7 +14,7 @@ struct TriggerRow: View {
 		HStack(spacing: MaskinSpace.s5) {
 			Image(systemName: trigger.kind.symbol)
 				.font(.system(size: MaskinSpace.s8, weight: .semibold))
-				.foregroundStyle(trigger.enabled ? MaskinColor.accentFgStrong : MaskinColor.ink5)
+				.foregroundStyle(trigger.enabled ? MaskinColor.ink : MaskinColor.ink5)
 				.frame(width: MaskinSpace.s9)
 				.accessibilityHidden(true)
 			Text(trigger.name)
