@@ -296,23 +296,70 @@ public final class ObjectsStore {
 	// MARK: Writes
 
 	/// Optimistic star toggle with rollback.
-	public func toggleStar(_ id: String) async {
-		guard let index = objects.firstIndex(where: { $0.id == id }) else { return }
+	@discardableResult
+	public func toggleStar(_ id: String) async -> Bool {
+		guard let index = objects.firstIndex(where: { $0.id == id }) else { return false }
 		let starred = !objects[index].isStarred
 		objects[index].isStarred = starred
 		do {
 			try await remote.setStarred(objectId: id, starred: starred)
 			actionError = nil
+			return true
 		} catch {
 			if let i = objects.firstIndex(where: { $0.id == id }) { objects[i].isStarred = !starred }
 			actionError = Self.message(error)
+			return false
 		}
 	}
 
+	/// Sets the star on each object (bulk). Objects already in that state are skipped, not counted.
+	@discardableResult
+	public func setStarred(_ ids: [String], _ starred: Bool) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			guard let object = objects.first(where: { $0.id == id }), object.isStarred != starred else { continue }
+			if await toggleStar(id) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		finish(result, action: starred ? "star" : "unstar", past: starred ? "starred" : "unstarred")
+		return result
+	}
+
+	/// Moves each object to `status` (bulk). Statuses are per type, so objects whose type does not
+	/// offer it are left alone and not counted.
+	@discardableResult
+	public func setStatus(_ ids: [String], to status: String) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			guard let object = objects.first(where: { $0.id == id }),
+				directory.schema.statuses(for: object.type).contains(status)
+			else { continue }
+			if await setStatus(id, status) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		finish(result, action: "update", past: "updated")
+		return result
+	}
+
+	/// Deletes each object (bulk), each rolled back to its position on its own failure.
+	@discardableResult
+	public func delete(_ ids: [String]) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			guard objects.contains(where: { $0.id == id }) else { continue }
+			if await delete(id) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		finish(result, action: "delete", past: "deleted")
+		return result
+	}
+
+	private func finish(_ result: BulkResult, action: String, past: String) {
+		if let text = result.failureNotice(action: action, past: past, noun: "object") { actionError = text }
+	}
+
 	/// Optimistic status change with rollback.
-	public func setStatus(_ id: String, _ status: String) async {
+	@discardableResult
+	public func setStatus(_ id: String, _ status: String) async -> Bool {
 		guard let index = objects.firstIndex(where: { $0.id == id }), objects[index].status != status
-		else { return }
+		else { return false }
 		let previous = objects[index]
 		objects[index].status = status
 		do {
@@ -322,22 +369,27 @@ public final class ObjectsStore {
 			if let now = objects.first(where: { $0.id == id }) { merged.isStarred = now.isStarred }
 			apply(merged)
 			actionError = nil
+			return true
 		} catch {
 			if let i = objects.firstIndex(where: { $0.id == id }) { objects[i] = previous }
 			actionError = Self.message(error)
+			return false
 		}
 	}
 
 	/// Optimistic removal with rollback to the same position.
-	public func delete(_ id: String) async {
-		guard let index = objects.firstIndex(where: { $0.id == id }) else { return }
+	@discardableResult
+	public func delete(_ id: String) async -> Bool {
+		guard let index = objects.firstIndex(where: { $0.id == id }) else { return false }
 		let removed = objects.remove(at: index)
 		do {
 			try await remote.delete(objectId: id)
 			actionError = nil
+			return true
 		} catch {
 			objects.insert(removed, at: min(index, objects.count))
 			actionError = Self.message(error)
+			return false
 		}
 	}
 

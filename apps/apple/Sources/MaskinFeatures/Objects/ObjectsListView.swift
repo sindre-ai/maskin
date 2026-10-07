@@ -15,6 +15,8 @@ struct ObjectsListView: View {
 	@State private var searchPresented = false
 	@State private var pendingDelete: WorkObject?
 	@State private var statusTarget: WorkObject?
+	@State private var picking = SelectionModel()
+	@State private var confirmBulkDelete = false
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -25,6 +27,21 @@ struct ObjectsListView: View {
 			content
 		}
 		.ambientBackground()
+		.animation(.snappy, value: picking.isActive)
+		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
+		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
+		.confirmationDialog(
+			"Delete \(picking.count) \(picking.count == 1 ? "object" : "objects")?",
+			isPresented: $confirmBulkDelete, titleVisibility: .visible
+		) {
+			Button("Delete", role: .destructive) {
+				let ids = picking.ordered(in: allIDs)
+				picking.exit()
+				Task { await store.delete(ids) }
+			}
+		} message: {
+			Text("This can't be undone.")
+		}
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
@@ -58,6 +75,34 @@ struct ObjectsListView: View {
 		} message: { _ in
 			Text("This can't be undone.")
 		}
+	}
+
+	// MARK: Selection
+
+	private var allIDs: [String] { store.groups.flatMap { $0.objects.map(\.id) } }
+
+	/// Status, star and delete over the picked objects, as text in the selection bar.
+	@ViewBuilder private var bulkActions: some View {
+		let ids = picking.ordered(in: allIDs)
+		Menu("More") {
+			Menu("Status", systemImage: "circle.dashed") {
+				ForEach(store.statusOptions, id: \.self) { status in
+					Button(MaskinStatus.label(for: status)) { run { await store.setStatus(ids, to: status) } }
+				}
+			}
+			Button("Star", systemImage: "star") { run { await store.setStarred(ids, true) } }
+			Button("Unstar", systemImage: "star.slash") { run { await store.setStarred(ids, false) } }
+		}
+		.disabled(picking.isEmpty)
+		Button("Delete", role: .destructive) { confirmBulkDelete = true }
+			.fontWeight(.semibold)
+			.disabled(picking.isEmpty)
+	}
+
+	private func run(_ action: @escaping () async -> BulkResult) {
+		MaskinHaptics.play(.selection)
+		picking.exit()
+		Task { _ = await action() }
 	}
 
 	// MARK: Pieces
@@ -135,7 +180,16 @@ struct ObjectsListView: View {
 	}
 
 	private var list: some View {
-		List(selection: selection ?? .constant(nil)) {
+		let rowSelection = Binding<String?>(
+			get: { picking.isActive ? nil : selection?.wrappedValue },
+			set: { id in
+				if picking.isActive {
+					if let id { picking.toggle(id) }
+				} else {
+					selection?.wrappedValue = id
+				}
+			})
+		return List(selection: (selection != nil || picking.isActive) ? rowSelection : .constant(nil)) {
 			if let error = store.actionError {
 				FormError(error)
 					.onTapGesture { store.clearActionError() }
@@ -171,7 +225,16 @@ struct ObjectsListView: View {
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsStatus: store.grouping != .status)
 		Group {
-			if selection != nil {
+			if picking.isActive {
+				HStack(spacing: MaskinSpace.s5) {
+					SelectionCheckbox(isPicked: picking.contains(object.id))
+					content
+				}
+				.contentShape(Rectangle())
+				.onTapGesture { picking.toggle(object.id) }
+				.selectionRowAccessibility(isActive: true, isPicked: picking.contains(object.id))
+				.accessibilityAddTraits(.isButton)
+			} else if selection != nil {
 				content.tag(object.id)
 			} else {
 				NavigationLink(value: ObjectRoute(id: object.id)) { content }
@@ -180,15 +243,16 @@ struct ObjectsListView: View {
 		}
 		.listRowSeparator(.hidden)
 		.swipeActions(edge: .leading) {
-			Button {
+			if !picking.isActive { Button {
 				MaskinHaptics.play(.selection)
 				Task { await store.toggleStar(object.id) }
 			} label: {
 				Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.slash" : "star")
 			}
-			.tint(MaskinColor.ink)
+			.tint(MaskinColor.ink) }
 		}
 		.swipeActions(edge: .trailing) {
+			if !picking.isActive {
 			Button(role: .destructive) {
 				pendingDelete = object
 			} label: {
@@ -200,8 +264,11 @@ struct ObjectsListView: View {
 				Label("Status", systemImage: "circle.dashed")
 			}
 			.tint(MaskinColor.ink3)
+			}
 		}
 		.contextMenu {
+			if !picking.isActive {
+			Button("Select", systemImage: "checkmark.circle") { picking.enter(selecting: object.id) }
 			Button {
 				statusTarget = object
 			} label: {
@@ -216,6 +283,7 @@ struct ObjectsListView: View {
 				pendingDelete = object
 			} label: {
 				Label("Delete", systemImage: "trash")
+			}
 			}
 		}
 	}
