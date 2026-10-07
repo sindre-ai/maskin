@@ -66,7 +66,7 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 		}
 		.buttonStyle(.plain)
 		.disabled(!canSend)
-		#if !os(watchOS)
+		#if !os(watchOS) && !os(tvOS)
 		.keyboardShortcut(.return, modifiers: .command)
 		#endif
 		.accessibilityLabel("Send")
