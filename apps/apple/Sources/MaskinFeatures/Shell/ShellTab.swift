@@ -1,21 +1,18 @@
 import Foundation
-#if os(iOS)
-	import UIKit
-#endif
 
-/// The top-level destinations. Search is the system search tab (a detached button on iOS 26).
+/// The top-level destinations: four tabs, plus Search as the system search tab (the trailing glass
+/// button on iOS 26). Account, workspace, Agents, Files, Marketplace and Settings live in the
+/// profile sheet behind the avatar on every root screen; there is no More tab.
 enum ShellTab: String, CaseIterable, Hashable, Identifiable {
-	case forYou, chats, objects, loops, agents, more, search
+	case forYou, chats, loops, objects, search
 
 	var id: String { rawValue }
 
-	/// Search is its own tab only where there is room for it: iPad (iOS 26+, as the system `.search`
-	/// role) and the Mac sidebar. On iPhone it is a toolbar button. The phone's bar already holds five
-	/// tabs, and a sixth makes iOS fold the overflow into its own "More" list, which would nest our
-	/// More tab (and Search) one level deeper. Below iOS 26 it is a toolbar button everywhere.
+	/// Search is the system `.search` tab role on iOS 26+ (the detached trailing button on iPhone, a
+	/// sidebar entry on iPad) and a sidebar entry on the Mac. Below iOS 26 the role doesn't exist, so
+	/// Search falls back to a toolbar button.
 	static var searchIsTab: Bool {
 		#if os(iOS)
-			if UIDevice.current.userInterfaceIdiom == .phone { return false }
 			if #available(iOS 26, *) { return true }
 			return false
 		#else
@@ -31,11 +28,9 @@ enum ShellTab: String, CaseIterable, Hashable, Identifiable {
 	var title: String {
 		switch self {
 		case .forYou: "For you"
-		case .chats: "Chats"
+		case .chats: "Team"
+		case .loops: "Flows"
 		case .objects: "Objects"
-		case .loops: "Loops"
-		case .agents: "Agents"
-		case .more: "More"
 		case .search: "Search"
 		}
 	}
@@ -46,8 +41,6 @@ enum ShellTab: String, CaseIterable, Hashable, Identifiable {
 		case .chats: "bubble.left.and.bubble.right"
 		case .objects: "square.stack.3d.up"
 		case .loops: "arrow.triangle.2.circlepath"
-		case .agents: "person.2"
-		case .more: "ellipsis"
 		case .search: "magnifyingglass"
 		}
 	}

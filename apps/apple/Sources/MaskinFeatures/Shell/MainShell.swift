@@ -5,9 +5,9 @@ import SwiftUI
 /// declaration (`.sidebarAdaptable`).
 ///
 /// CONTRACT FOR SCREENS. Each tab hosts a screen taking `AppEnvironment`:
-/// `ForYouScreen`, `ChatsScreen`, `ObjectsScreen`, `LoopsScreen`, `AgentsScreen`, `SearchScreen`. A screen OWNS its `NavigationStack` (or split
-/// view) and applies `.shellToolbar(environment:)` to its root content so the account menu
-/// (notifications, workspace switcher, sign out) appears on every tab.
+/// `ForYouScreen`, `ChatsScreen`, `LoopsScreen`, `ObjectsScreen`, `SearchScreen`. A screen OWNS its `NavigationStack` (or split
+/// view) and applies `.shellToolbar(environment:)` to its root content so the profile avatar
+/// (profile sheet: workspace switcher, Agents, Files, Settings, sign out) appears on every tab.
 public struct MainShell: View {
 	private let environment: AppEnvironment
 	@Bindable private var runtime: AppRuntime
@@ -56,13 +56,10 @@ public struct MainShell: View {
 private struct AdaptiveTabs: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
-	@Environment(\.horizontalSizeClass) private var sizeClass
-	/// iPhone's tab bar holds five; Agents then lives in More rather than behind a system "More".
-	private var isCompact: Bool { sizeClass == .compact }
 
 	var body: some View {
 		TabView(selection: $runtime.selectedTab) {
-			ForEach(ShellTab.allCases.filter { $0 != .search && ($0 != .agents || !isCompact) }) { tab in
+			ForEach(ShellTab.allCases.filter { $0 != .search }) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
@@ -100,6 +97,8 @@ private struct PresentationContent: View {
 			FilesListScreen(environment: environment, onDone: { runtime.showFiles = false })
 		case .agents:
 			AgentsScreen(environment: environment)
+		case .profile:
+			MoreScreen(environment: environment, runtime: runtime)
 		case .settings:
 			SettingsScreen(environment: environment)
 				.environment(runtime)
@@ -121,8 +120,6 @@ private struct ShellTabContent: View {
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
 		case .objects: ObjectsScreen(environment: environment)
 		case .loops: LoopsScreen(environment: environment)
-		case .agents: AgentsScreen(environment: environment)
-		case .more: MoreScreen(environment: environment, runtime: runtime)
 		case .search:
 			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
 		}

@@ -3,8 +3,9 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The More tab: who is signed in, the workspace, the places that don't have a tab, settings and
-/// sign out. Replaces the account button that used to sit in every screen's toolbar.
+/// The profile sheet, opened from the avatar on every root screen: who is signed in, the workspace,
+/// the places that don't have a tab (Agents, Files, Marketplace), settings and sign out. There is
+/// no More tab.
 ///
 /// Laid out as grouped cards on the iOS canvas: a profile card (with the workspace switcher
 /// inside it), a card for the places you go to, a card for settings, and sign out on its own so
@@ -15,7 +16,6 @@ struct MoreScreen: View {
 	@State private var showWorkspaces = false
 	@State private var showMarketplace = false
 	@State private var confirmSignOut = false
-	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	var body: some View {
 		NavigationStack {
@@ -32,7 +32,15 @@ struct MoreScreen: View {
 			}
 			.background(MaskinSurface.grouped)
 			.foregroundStyle(MaskinColor.ink)
-			.shellToolbar(environment: environment, title: "More")
+			.navigationTitle("Profile")
+			#if os(iOS)
+				.navigationBarTitleDisplayMode(.inline)
+			#endif
+			.toolbar {
+				ToolbarItem(placement: .confirmationAction) {
+					Button("Done") { runtime.showProfile = false }
+				}
+			}
 			// Signing out discards writes still waiting to send, so ask first (Settings does too).
 			.confirmationDialog("Sign out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
 				Button("Sign out", role: .destructive) { Task { await runtime.signOut() } }
@@ -45,6 +53,7 @@ struct MoreScreen: View {
 						environment: environment, workspaceID: workspaceID,
 						onOpenLoop: { _ in
 							showMarketplace = false
+							runtime.showProfile = false
 							runtime.selectedTab = .loops
 						})
 				}
@@ -89,13 +98,11 @@ struct MoreScreen: View {
 	/// The destinations that don't have a tab of their own.
 	private var placesCard: some View {
 		VStack(spacing: 0) {
-			if sizeClass == .compact {
-				MoreRow(
-					title: "Agents", symbol: "person.2",
-					tint: MaskinColor.agentRelayTint, tone: MaskinColor.agentRelayFg
-				) { runtime.showAgents = true }
-				separator()
-			}
+			MoreRow(
+				title: "Agents", symbol: "person.2",
+				tint: MaskinColor.agentRelayTint, tone: MaskinColor.agentRelayFg
+			) { runtime.showAgents = true }
+			separator()
 			MoreRow(
 				title: "Files", symbol: "doc.text",
 				tint: MaskinColor.infoTint, tone: MaskinColor.infoStrong

@@ -22,14 +22,14 @@ public struct LoopsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "arrow.triangle.2.circlepath", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Loops")
+					.shellToolbar(environment: environment, title: "Flows")
 			}
 		}
 	}
 }
 
 enum AutomationMode: String, CaseIterable, Identifiable {
-	case loops = "Loops"
+	case loops = "Flows"
 	case triggers = "Triggers"
 	var id: String { rawValue }
 }

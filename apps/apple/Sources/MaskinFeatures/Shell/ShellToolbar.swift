@@ -1,18 +1,20 @@
 import MaskinCore
 import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 extension View {
-	/// Gives the screen its large, collapsing title.
-	/// Where search isn't a tab (below iOS 26) it also adds a search button. Account, workspace,
-	/// settings and sign-out live on the More tab, not here. Apply to a screen's root content,
-	/// inside its `NavigationStack`, and don't also set `.navigationTitle` on it.
+	/// Gives the screen its large, collapsing title and the profile avatar, which opens the profile
+	/// sheet (account, workspace, Agents, Files, Settings, sign out). Where search isn't a tab (below
+	/// iOS 26) it also adds a search button. Apply to a screen's root content, inside its
+	/// `NavigationStack`, and don't also set `.navigationTitle` on it.
 	public func shellToolbar(environment: AppEnvironment, title: String? = nil) -> some View {
-		modifier(ShellToolbarModifier(title: title))
+		modifier(ShellToolbarModifier(environment: environment, title: title))
 	}
 }
 
 private struct ShellToolbarModifier: ViewModifier {
+	let environment: AppEnvironment
 	var title: String?
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -27,6 +29,16 @@ private struct ShellToolbarModifier: ViewModifier {
 						} label: {
 							Label("Search", systemImage: "magnifyingglass")
 						}
+					}
+				}
+				if let runtime, let session = environment.auth.session {
+					ToolbarItem(placement: .primaryAction) {
+						Button {
+							runtime.showProfile = true
+						} label: {
+							ActorAvatar(name: session.name, kind: .human, size: MaskinSpace.s14)
+						}
+						.accessibilityLabel("Profile")
 					}
 				}
 			}

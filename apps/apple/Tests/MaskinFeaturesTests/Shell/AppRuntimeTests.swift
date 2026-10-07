@@ -449,10 +449,19 @@ struct AppRuntimeSearchRoutingTests {
 		#expect(runtime.presentation == nil)
 	}
 
-	@Test("the tab bar has the five destinations, More and search")
+	@Test("the tab bar has four destinations and search, and no More tab")
 	func tabs() {
-		#expect(
-			ShellTab.allCases == [.forYou, .chats, .objects, .loops, .agents, .more, .search])
+		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search])
+	}
+
+	@Test("the profile sheet replaces More and is replaced by the sheet a row opens")
+	func profileSheet() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.showProfile = true
+		#expect(runtime.presentation == .profile)
+		runtime.showAgents = true  // a row in the profile sheet
+		#expect(runtime.presentation == .agents)
+		#expect(runtime.showProfile == false)
 	}
 }
 
@@ -521,7 +530,7 @@ struct AppRuntimePresentationTests {
 	@Test("a session the server ended also resets the selected tab")
 	func sessionEndedResetsTab() async {
 		let (runtime, _) = await makeRuntime()
-		runtime.selectedTab = .agents
+		runtime.selectedTab = .objects
 		runtime.sessionEnded()
 		#expect(runtime.selectedTab == .forYou)
 	}
