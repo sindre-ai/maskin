@@ -358,8 +358,8 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
-		regenerateApiKey: (id: string) =>
-			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
+		regenerateApiKey: (id: string, workspaceId: string) =>
+			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST', workspaceId }),
 		reset: (id: string, workspaceId: string) =>
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
 		pause: (id: string, workspaceId: string) =>

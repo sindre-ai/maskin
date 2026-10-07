@@ -54,6 +54,9 @@ describe('Actors Integration — GET /:id', () => {
 			.values(buildWorkspaceSkill({ workspaceId: ws.id, createdBy: getTestActorId() }))
 			.returning()
 		await db.insert(agentSkills).values({ actorId: agent.id, workspaceSkillId: skill.id })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
 
 		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
 		expect(res.status).toBe(200)
@@ -63,7 +66,11 @@ describe('Actors Integration — GET /:id', () => {
 
 	it('returns an empty skills array when no skills are attached', async () => {
 		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
 		const agent = await insertActor(db, { type: 'agent', name: 'Skill-less Agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
 
 		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
 		expect(res.status).toBe(200)

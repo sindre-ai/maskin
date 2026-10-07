@@ -111,6 +111,7 @@ describe('auth cache revocation — real Postgres', () => {
 		const rotated = await app.request(
 			jsonRequest('POST', `/api/actors/${victimId}/api-keys`, undefined, {
 				Authorization: `Bearer ${TEST_API_KEY}`,
+				'X-Workspace-Id': workspaceId,
 			}),
 		)
 		expect(rotated.status).toBe(200)

@@ -354,10 +354,11 @@ export class TestAPI {
 			llm_provider?: string | null
 			llm_config?: Record<string, unknown> | null
 		},
+		workspaceId?: string,
 	): Promise<ActorResponse> {
 		const res = await fetch(`${this.baseURL}/api/actors/${id}`, {
 			method: 'PATCH',
-			headers: this.headers(),
+			headers: this.headers(workspaceId),
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`updateActor failed: ${res.status}`)

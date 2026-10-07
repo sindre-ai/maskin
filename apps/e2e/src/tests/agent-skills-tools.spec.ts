@@ -35,23 +35,27 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 			}
 
 			// Seed two MCP servers so the Tools section has both glyphs and both scopes.
-			await account.api.updateActor(agent.id, {
-				tools: {
-					mcpServers: {
-						linear: {
-							type: 'http',
-							url: 'https://mcp.linear.app/mcp',
-							headers: {},
-						},
-						github: {
-							type: 'stdio',
-							command: 'npx',
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							env: {},
+			await account.api.updateActor(
+				agent.id,
+				{
+					tools: {
+						mcpServers: {
+							linear: {
+								type: 'http',
+								url: 'https://mcp.linear.app/mcp',
+								headers: {},
+							},
+							github: {
+								type: 'stdio',
+								command: 'npx',
+								args: ['-y', '@modelcontextprotocol/server-github'],
+								env: {},
+							},
 						},
 					},
 				},
-			})
+				account.workspaceId,
+			)
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 

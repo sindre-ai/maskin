@@ -16,9 +16,13 @@ test.describe('Agent detail — header and Usage block', () => {
 			// PATCH goes through the same schema the UI reads back from useActor.
 			await (
 				account.api as unknown as {
-					updateActor(id: string, data: { description: string }): Promise<unknown>
+					updateActor(
+						id: string,
+						data: { description: string },
+						workspaceId: string,
+					): Promise<unknown>
 				}
-			).updateActor(agent.id, { description: outcome })
+			).updateActor(agent.id, { description: outcome }, account.workspaceId)
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 

@@ -11,7 +11,7 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 
 			const agent = await account.api.createAgentActor('Ivy Instructor')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await account.api.updateActor(agent.id, { system_prompt: original })
+			await account.api.updateActor(agent.id, { system_prompt: original }, account.workspaceId)
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
@@ -81,7 +81,7 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 			const original = 'Hold the line.'
 			const agent = await account.api.createAgentActor('Cass Cancel')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await account.api.updateActor(agent.id, { system_prompt: original })
+			await account.api.updateActor(agent.id, { system_prompt: original }, account.workspaceId)
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 			const section = page.getByRole('region', { name: 'Instructions' })
@@ -109,7 +109,11 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 			]
 			const agent = await account.api.createAgentActor('Lon Longprompt')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await account.api.updateActor(agent.id, { system_prompt: paragraphs.join('\n\n') })
+			await account.api.updateActor(
+				agent.id,
+				{ system_prompt: paragraphs.join('\n\n') },
+				account.workspaceId,
+			)
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 			const section = page.getByRole('region', { name: 'Instructions' })
