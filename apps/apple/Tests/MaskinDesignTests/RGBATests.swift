@@ -9,7 +9,7 @@ struct RGBATests {
 		#expect(RGBA(0x4F46E5) == RGBA(red: 79, green: 70, blue: 229))
 	}
 
-	@Test("generated tokens keep the web accent in light mode")
+	@Test("generated tokens map onto the Patina brand")
 	func accentTokenExists() {
 		// Compiles only if the generator emitted `accent`; the value itself is
 		// pinned by the gen-tokens --check drift gate, not re-asserted here.
