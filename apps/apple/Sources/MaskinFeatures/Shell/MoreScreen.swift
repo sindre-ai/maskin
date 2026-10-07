@@ -36,7 +36,7 @@ struct MoreScreen: View {
 			}
 			.ambientBackground()
 			.foregroundStyle(MaskinColor.ink)
-			.shellToolbar(environment: environment, title: "More")
+			.shellToolbar(environment: environment, title: "More", actions: ShellActions(search: false))
 			// Signing out discards writes still waiting to send, so ask first (Settings does too).
 			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
 				Button("Log out", role: .destructive) { Task { await runtime.signOut() } }

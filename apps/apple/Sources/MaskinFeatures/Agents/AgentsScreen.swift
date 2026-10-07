@@ -21,7 +21,7 @@ public struct AgentsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "person.2", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Agents")
+					.shellToolbar(environment: environment, title: "Agents", actions: ShellActions(search: false))
 			}
 		}
 	}
@@ -51,7 +51,6 @@ private struct AgentsContainer: View {
 	@State private var selection: String?
 	@State private var search = ""
 	@Namespace private var zoom
-	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
@@ -67,15 +66,7 @@ private struct AgentsContainer: View {
 				store: store, selection: $selection, search: $search,
 				isLive: environment.events.connection != .failed, zoomNamespace: zoom
 			)
-			.toolbar {
-				ToolbarItem(placement: .primaryAction) {
-					Button {
-						runtime?.buildInChat("I'd like to build a new agent. ")
-					} label: { Image(systemName: "plus.bubble") }
-						.accessibilityLabel("Build an agent in chat")
-				}
-			}
-			.shellToolbar(environment: environment, title: "Agents")
+			.shellToolbar(environment: environment, title: "Agents", actions: ShellActions(search: false))
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {

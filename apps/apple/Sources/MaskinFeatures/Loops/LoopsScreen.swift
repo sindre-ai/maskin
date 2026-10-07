@@ -131,7 +131,7 @@ private struct LoopsContainer: View {
 		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
 		.shellToolbar(
 			environment: environment, title: mode.rawValue,
-			actions: ShellActions(new: mode == .triggers ? { showNewTrigger = true } : buildLoopInChat))
+			actions: ShellActions(new: mode == .triggers ? { showNewTrigger = true } : nil, search: false))
 	}
 
 	@ViewBuilder
