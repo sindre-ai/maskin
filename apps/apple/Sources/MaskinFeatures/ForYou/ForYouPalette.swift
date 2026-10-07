@@ -19,6 +19,12 @@ enum ForYouPalette {
 	static let failureBorder = Color(light: RGBA(0xFECACA), dark: RGBA(0x5C2326))
 	static let failureForeground = Color(light: RGBA(0xB91C1C), dark: RGBA(0xFCA5A5))
 
+	/// A briefing card nobody has opened yet: the Patina tint (signal, not chrome). Opened ones fall
+	/// back to the plain card colours.
+	static let storyUnseenBackground = Color(light: RGBA(0xE3F1EE), dark: RGBA(0x16302C))
+	static let storyUnseenTitle = Color(light: RGBA(0x12403A), dark: RGBA(0xD3EEE8))
+	static let storyUnseenLabel = Color(light: RGBA(0x3F7F74), dark: RGBA(0x7DBCB0))
+
 	static let heldNote = Color(light: RGBA(0xB45309), dark: RGBA(0xFBBF24))
 
 }

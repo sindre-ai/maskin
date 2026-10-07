@@ -25,10 +25,13 @@ public struct ForYouScreen: View {
 		NavigationStack {
 			ForYouFeedView(
 				store: runtime.store, outbox: runtime.outbox,
-				openObject: openObject
+				openObject: openObject, firstName: environment.auth.session?.name
 			)
 			.shellToolbar(environment: environment, title: "For you")
-			.task(id: environment.workspaceId) { await runtime.store.load() }
+			.task(id: environment.workspaceId) {
+				await runtime.store.load()
+				await runtime.store.loadBrief()
+			}
 		}
 	}
 
@@ -42,10 +45,15 @@ struct ForYouFeedView: View {
 	var openObject: ((String) -> Void)?
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
+	/// The reader's name, for "Good morning, {first name}" on the daily briefing card.
+	var firstName: String?
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
 	@State private var showFilters = false
+	@State private var reading: BriefingCard?
+	@State private var seenRevision = 0
+	private let briefingSeen = BriefingSeen()
 	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
@@ -53,6 +61,7 @@ struct ForYouFeedView: View {
 	var body: some View {
 		let entries = store.entries
 		List {
+			briefingRow
 			if showFilters && !store.typeCounts.isEmpty { filterPills }
 			headerRows(entries: entries)
 			feedRows(entries: entries)
@@ -71,6 +80,24 @@ struct ForYouFeedView: View {
 		}
 		.toolbar {
 			if !store.typeCounts.isEmpty { ToolbarItem(placement: .primaryAction) { filterToggle } }
+		}
+	}
+
+	// MARK: Briefings
+
+	@ViewBuilder
+	private var briefingRow: some View {
+		let cards = BriefingCards.cards(brief: store.brief, firstName: firstName, now: fixedNow ?? Date())
+		if !cards.isEmpty {
+			BriefingRow(cards: cards, seen: briefingSeen, refresh: seenRevision) { card in
+				briefingSeen.markSeen(card.id)
+				seenRevision += 1
+				reading = card
+			}
+			.listRowInsets(EdgeInsets())
+			.listRowSeparator(.hidden)
+			.listRowBackground(Color.clear)
+			.sheet(item: $reading) { card in BriefingReader(card: card) }
 		}
 	}
 
