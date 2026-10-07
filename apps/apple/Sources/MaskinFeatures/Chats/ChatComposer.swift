@@ -251,18 +251,7 @@ struct ChatComposer: View {
 
 	/// While dictating: put back what was in the field before the mic opened.
 	private var discardButton: some View {
-		Button {
-			MaskinHaptics.play(.selection)
-			discardDictation()
-		} label: {
-			Image(systemName: "xmark")
-				.font(.system(size: MaskinFontSize.t15, weight: .semibold))
-				.foregroundStyle(MaskinColor.ink2)
-				.frame(width: buttonSize, height: buttonSize)
-				.background(MaskinSurface.fill, in: Circle())
-		}
-		.buttonStyle(.plain)
-		.accessibilityLabel("Discard dictation")
+		DictationDiscardButton(size: buttonSize) { discardDictation() }
 	}
 
 	/// The right-hand side: Done while dictating; otherwise a mic and Send, which turns dark once
@@ -270,18 +259,7 @@ struct ChatComposer: View {
 	@ViewBuilder
 	private var trailing: some View {
 		if voice == .dictating {
-			Button {
-				MaskinHaptics.play(.selection)
-				finishDictation()
-			} label: {
-				Image(systemName: "checkmark")
-					.font(.system(size: MaskinFontSize.t15, weight: .bold))
-					.foregroundStyle(MaskinSurface.onInverse)
-					.frame(width: buttonSize, height: buttonSize)
-					.background(MaskinSurface.inverse, in: Circle())
-			}
-			.buttonStyle(.plain)
-			.accessibilityLabel("Done dictating")
+			DictationDoneButton(size: buttonSize) { finishDictation() }
 			.transition(.opacity)
 		} else {
 			HStack(spacing: MaskinSpace.s1) {
@@ -347,7 +325,7 @@ extension ChatComposer {
 		textBeforeDictation = model.text
 		dictationBase = model.text
 		Task {
-			await dictation.start { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
+			await dictation.start(continuous: true) { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
 			if case .unavailable(let message) = dictation.state {
 				voiceProblem = message
 				dictation.clearError()

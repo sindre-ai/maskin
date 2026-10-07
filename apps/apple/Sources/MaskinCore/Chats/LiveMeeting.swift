@@ -97,3 +97,19 @@ extension ChatActor {
 		isSystem && participant.kind == .agent && participant.name == "Chief of Staff"
 	}
 }
+
+/// Which existing chat a Live call with the Chief of Staff, started from the Chats list, belongs in.
+public enum ChiefOfStaffLiveChat {
+	/// The newest live one-to-one chat with the Chief of Staff, leaving out the daily briefing's own
+	/// chat. Nil when there is none, and the caller creates one.
+	public static func pick(
+		from conversations: [ConversationSummary], chiefID: String, excludingTitle: String
+	) -> ConversationSummary? {
+		conversations
+			.filter {
+				!$0.archived && $0.title != excludingTitle && $0.participants.count <= 2
+					&& $0.participants.contains { $0.id == chiefID }
+			}
+			.max { ($0.lastMessageAt ?? .distantPast) < ($1.lastMessageAt ?? .distantPast) }
+	}
+}

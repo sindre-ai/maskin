@@ -53,12 +53,15 @@ struct LiveMeetingScreen: View {
 				LiveMeetingSession(
 					kind: .adHoc, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
 				ownsChat: false)
-		case .dailyBriefing:
+		case .dailyBriefing, .chiefOfStaff:
+			let kind: LiveMeetingKind
+			if case .chiefOfStaff = request { kind = .adHoc } else { kind = .dailyBriefing }
 			do {
-				let (chat, lead) = try await BriefingChat.open(environment: environment)
+				let (chat, lead) = try await BriefingChat.open(
+					environment: environment, oneToOne: kind == .adHoc)
 				phase = .ready(
 					LiveMeetingSession(
-						kind: .dailyBriefing, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
+						kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
 					ownsChat: true)
 			} catch {
 				phase = .failed((error as? BriefingChat.Failure)?.message ?? error.localizedDescription)
@@ -77,7 +80,8 @@ enum BriefingChat {
 		let message: String
 	}
 
-	static func open(environment: AppEnvironment) async throws -> (ChatStore, ChatParticipant) {
+	/// `oneToOne` finds (or starts) the Chief of Staff's ordinary chat instead of the briefing's own.
+	static func open(environment: AppEnvironment, oneToOne: Bool = false) async throws -> (ChatStore, ChatParticipant) {
 		guard let workspaceID = environment.workspaceId, let session = environment.auth.session else {
 			throw Failure(message: "Choose a workspace first.")
 		}
@@ -88,15 +92,19 @@ enum BriefingChat {
 			throw Failure(message: "This workspace has no Chief of Staff to brief you.")
 		}
 		await list.refresh()
-		let existing = list.conversations.first {
-			$0.title == title && $0.participants.contains { $0.id == chief.id }
-		}
+		let existing =
+			oneToOne
+			? ChiefOfStaffLiveChat.pick(
+				from: list.conversations, chiefID: chief.id, excludingTitle: title)
+			: list.conversations.first {
+				$0.title == title && $0.participants.contains { $0.id == chief.id }
+			}
 		let conversationID: String
 		if let existing {
 			conversationID = existing.id
 		} else {
 			conversationID = try await list.create(
-				title: title, participantIDs: [chief.id], firstMessage: nil
+				title: oneToOne ? ThreadLayout.defaultTitle(for: [chief.participant.name]) : title, participantIDs: [chief.id], firstMessage: nil
 			).id
 		}
 		let chat = ChatStore(

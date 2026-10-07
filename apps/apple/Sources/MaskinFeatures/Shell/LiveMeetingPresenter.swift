@@ -5,14 +5,24 @@ import SwiftUI
 public enum LiveMeetingRequest: Identifiable {
 	/// The For you "Live" button: the daily briefing with the Chief of Staff. Ending just closes.
 	case dailyBriefing
+	/// The Chats "Live" button: an ad hoc call with the Chief of Staff, in its chat. Ending posts a note.
+	case chiefOfStaff
 	/// An ad hoc call with `lead`, inside the thread `chat` shows. Ending posts a note into it.
 	case thread(chat: ChatStore, lead: ChatParticipant)
 
 	public var id: String {
 		switch self {
 		case .dailyBriefing: "briefing"
+		case .chiefOfStaff: "chief-of-staff"
 		case .thread(let chat, _): "thread:\(MainActor.assumeIsolated { chat.conversationID })"
 		}
+	}
+}
+
+extension LiveMeetingRequest {
+	/// The Live button's accessibility label.
+	var buttonLabel: String {
+		if case .dailyBriefing = self { "Live briefing" } else { "Live" }
 	}
 }
 
