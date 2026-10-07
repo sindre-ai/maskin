@@ -41,6 +41,7 @@ const WORKSPACE_ID = 'workspace-launch'
 const ACTOR_ID = 'actor-1'
 const FAILOVER_ON = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' }
 const LAUNCH_3H = { launchMs: 3 * HOUR }
+const FLAG_ON = { MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED: 'true' }
 
 function slot(overrides?: Partial<EncryptedOAuthData>): EncryptedOAuthData {
 	return {
@@ -134,13 +135,14 @@ afterEach(() => {
 })
 
 describe('launch buffer settings', () => {
-	it('is on unless the kill-switch is the literal string false', () => {
-		expect(isClaudePlatformRefreshEnabled({})).toBe(true)
-		expect(isClaudePlatformRefreshEnabled({ [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: 'true' })).toBe(
-			true,
-		)
-		expect(isClaudePlatformRefreshEnabled({ [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: ' False ' })).toBe(
+	it('is off unless the flag is the literal string true', () => {
+		expect(isClaudePlatformRefreshEnabled({})).toBe(false)
+		expect(isClaudePlatformRefreshEnabled({ [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: 'false' })).toBe(
 			false,
+		)
+		expect(isClaudePlatformRefreshEnabled({ [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: '1' })).toBe(false)
+		expect(isClaudePlatformRefreshEnabled({ [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: ' True ' })).toBe(
+			true,
 		)
 	})
 
@@ -327,7 +329,7 @@ describe('resolveLlmRoute env for the container', () => {
 		})
 		vi.stubGlobal('fetch', tokenEndpoint(8 * 3600))
 
-		const result = await route(db, {})
+		const result = await route(db, FLAG_ON)
 
 		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('access-2')
 		expect(Object.keys(result?.envVars ?? {})).not.toContain('CLAUDE_OAUTH_REFRESH_TOKEN')
@@ -341,45 +343,51 @@ describe('resolveLlmRoute env for the container', () => {
 		})
 		const fetchMock = tokenEndpoint(8 * 3600)
 		vi.stubGlobal('fetch', fetchMock)
-		await route(db, {}) // learns the 8 h lifetime, token now has about 8 h left
+		await route(db, FLAG_ON) // learns the 8 h lifetime, token now has about 8 h left
 
 		// 1 h buffer: 8 h left is outside it. 9 h buffer is capped at half of 8 h = 4 h, still outside.
-		await route(db, { [CLAUDE_LAUNCH_BUFFER_ENV]: String(HOUR) })
-		await route(db, { [CLAUDE_LAUNCH_BUFFER_ENV]: String(9 * HOUR) })
+		await route(db, { ...FLAG_ON, [CLAUDE_LAUNCH_BUFFER_ENV]: String(HOUR) })
+		await route(db, { ...FLAG_ON, [CLAUDE_LAUNCH_BUFFER_ENV]: String(9 * HOUR) })
 		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 
-	it('flag off: env is exactly today (refresh token present, no refresh, no expiry stamp)', async () => {
-		const expiresAt = Date.now() + HOUR
-		const { db } = createMockDb({
-			settings: {
-				claude_oauth: {
-					primary: slot({ expiresAt, scopes: ['read'], subscriptionType: 'pro' }),
-				} satisfies OAuthSlotStorage,
-			},
-		})
-		const fetchMock = vi.fn()
-		vi.stubGlobal('fetch', fetchMock)
+	it.each([
+		['unset (the default)', {}],
+		['false', { [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: 'false' }],
+	])(
+		'flag off, %s: env is exactly today (refresh token present, no refresh, no expiry stamp)',
+		async (_label, flagEnv) => {
+			const expiresAt = Date.now() + HOUR
+			const { db } = createMockDb({
+				settings: {
+					claude_oauth: {
+						primary: slot({ expiresAt, scopes: ['read'], subscriptionType: 'pro' }),
+					} satisfies OAuthSlotStorage,
+				},
+			})
+			const fetchMock = vi.fn()
+			vi.stubGlobal('fetch', fetchMock)
 
-		const result = await route(db, { [CLAUDE_PLATFORM_REFRESH_FLAG_ENV]: 'false' })
+			const result = await route(db, flagEnv)
 
-		expect(fetchMock).not.toHaveBeenCalled()
-		expect(result?.envVars).toEqual({
-			CLAUDE_OAUTH_ACCESS_TOKEN: 'access-1',
-			CLAUDE_OAUTH_REFRESH_TOKEN: 'refresh-1',
-			CLAUDE_OAUTH_EXPIRES_AT: String(expiresAt),
-			CLAUDE_OAUTH_SCOPES: '["read"]',
-			CLAUDE_OAUTH_SUBSCRIPTION_TYPE: 'pro',
-			ANTHROPIC_MODEL: expect.any(String),
-			MASKIN_CLAUDE_EFFORT: expect.any(String),
-		})
-		expect(Object.keys(result?.envVars ?? {}).slice(0, 3)).toEqual([
-			'CLAUDE_OAUTH_ACCESS_TOKEN',
-			'CLAUDE_OAUTH_REFRESH_TOKEN',
-			'CLAUDE_OAUTH_EXPIRES_AT',
-		])
-		expect(result?.oauthExpiresAt).toBeUndefined()
-	})
+			expect(fetchMock).not.toHaveBeenCalled()
+			expect(result?.envVars).toEqual({
+				CLAUDE_OAUTH_ACCESS_TOKEN: 'access-1',
+				CLAUDE_OAUTH_REFRESH_TOKEN: 'refresh-1',
+				CLAUDE_OAUTH_EXPIRES_AT: String(expiresAt),
+				CLAUDE_OAUTH_SCOPES: '["read"]',
+				CLAUDE_OAUTH_SUBSCRIPTION_TYPE: 'pro',
+				ANTHROPIC_MODEL: expect.any(String),
+				MASKIN_CLAUDE_EFFORT: expect.any(String),
+			})
+			expect(Object.keys(result?.envVars ?? {}).slice(0, 3)).toEqual([
+				'CLAUDE_OAUTH_ACCESS_TOKEN',
+				'CLAUDE_OAUTH_REFRESH_TOKEN',
+				'CLAUDE_OAUTH_EXPIRES_AT',
+			])
+			expect(result?.oauthExpiresAt).toBeUndefined()
+		},
+	)
 })
 
 describe('isAuthErrorAtAccessTokenExpiry', () => {

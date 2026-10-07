@@ -549,9 +549,10 @@ export async function resolveLlmRoute(params: {
 		try {
 			/** Set by the resolver when a configured slot yields nothing usable. */
 			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
-			// On (default): the platform refreshes at launch with a session-sized
-			// buffer and the container never sees the refresh token. Off: today's
-			// behaviour exactly (10 minute buffer, refresh token in the env).
+			// On (only when the env is the literal "true"): the platform refreshes at
+			// launch with a session-sized buffer and the container never sees the
+			// refresh token. Off (default): today's behaviour exactly (10 minute
+			// buffer, refresh token in the env).
 			const platformRefresh = isClaudePlatformRefreshEnabled(params.env)
 			const oauthResult = await resolveClaudeCredentialsWithFailover({
 				db,

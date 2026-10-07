@@ -22,8 +22,9 @@ export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
 
 /**
  * Runtime kill-switch for keeping the Claude refresh token out of agent
- * containers. Default is ON: only the literal string `false` disables it, the
- * same pattern as MASKIN_CLAUDE_FAILOVER_ENABLED. On, the platform refreshes at
+ * containers. Default is OFF: only the literal string `true` enables it, until
+ * the launch check (one real session start in the real image with no refresh
+ * token) has passed, so a missing env keeps today's behaviour. On, the platform refreshes at
  * session launch with a session-sized buffer and the container is handed an
  * access token only. Off restores today's behaviour exactly: the container gets
  * the refresh token and the default 10 minute buffer.
@@ -40,7 +41,7 @@ export const CLAUDE_LAUNCH_BUFFER_ENV = 'CLAUDE_LAUNCH_BUFFER_MS'
 export const DEFAULT_CLAUDE_LAUNCH_BUFFER_MS = 3 * 60 * 60 * 1000
 
 export function isClaudePlatformRefreshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return (env[CLAUDE_PLATFORM_REFRESH_FLAG_ENV] ?? '').trim().toLowerCase() !== 'false'
+	return (env[CLAUDE_PLATFORM_REFRESH_FLAG_ENV] ?? '').trim().toLowerCase() === 'true'
 }
 
 /** The launch buffer setting; anything that is not a positive number falls back to the default. */
