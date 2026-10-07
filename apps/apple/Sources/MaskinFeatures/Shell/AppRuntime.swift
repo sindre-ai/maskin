@@ -28,7 +28,7 @@ public final class AppRuntime {
 		case object(String)
 		case agent(String)
 		case file(String)
-		case search
+		case profile
 		case files
 		case agents
 		case settings
@@ -39,7 +39,7 @@ public final class AppRuntime {
 			case .object(let id): "object:\(id)"
 			case .agent(let id): "agent:\(id)"
 			case .file(let id): "file:\(id)"
-			case .search: "search"
+			case .profile: "profile"
 			case .files: "files"
 			case .agents: "agents"
 			case .settings: "settings"
@@ -88,18 +88,18 @@ public final class AppRuntime {
 		get { presentation == .files }
 		set { presentation = newValue ? .files : clearing(.files) }
 	}
-	public var showSearch: Bool {
-		get { presentation == .search }
-		set { presentation = newValue ? .search : clearing(.search) }
+	public var showProfile: Bool {
+		get { presentation == .profile }
+		set { presentation = newValue ? .profile : clearing(.profile) }
 	}
 
-	private enum Kind { case object, agent, file, files, agents, settings, notifications, search }
+	private enum Kind { case object, agent, file, files, agents, settings, notifications, profile }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
 		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
-			(.notifications, .notifications), (.search, .search), (.files, .files), (.agents, .agents):
+			(.notifications, .notifications), (.profile, .profile), (.files, .files), (.agents, .agents):
 			return nil
 		default:
 			return presentation
@@ -226,10 +226,13 @@ public final class AppRuntime {
 		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
 		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
 			switch presentation {
-			case .object, .agent, .file: presentation = nil
+			case .object, .agent, .file, .profile: presentation = nil
 			default: break
 			}
 			requestedConversationId = nil
+			// Switching workspace starts over on For you; a link that caused the switch then
+			// selects its own tab (`handlePendingLink` below).
+			selectedTab = .forYou
 		}
 		lastSyncedWorkspaceId = environment.workspaceId
 		notifications.activate(workspaceId: environment.workspaceId, events: environment.events)

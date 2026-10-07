@@ -21,7 +21,7 @@ public struct AgentsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "person.2", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Agents", actions: ShellActions(search: false))
+					.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 			}
 		}
 	}
@@ -66,7 +66,7 @@ private struct AgentsContainer: View {
 				store: store, selection: $selection, search: $search,
 				isLive: environment.events.connection != .failed, zoomNamespace: zoom
 			)
-			.shellToolbar(environment: environment, title: "Agents", actions: ShellActions(search: false))
+			.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {

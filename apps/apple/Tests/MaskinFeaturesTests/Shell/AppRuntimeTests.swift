@@ -482,10 +482,9 @@ struct AppRuntimeSearchRoutingTests {
 		#expect(runtime.presentation == nil)
 	}
 
-	@Test("the tab bar has the five destinations, More and search")
+	@Test("the tab bar has four tabs and search, no More")
 	func tabs() {
-		#expect(
-			ShellTab.allCases == [.forYou, .chats, .objects, .loops, .agents, .more, .search])
+		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search])
 	}
 }
 
@@ -539,6 +538,30 @@ struct AppRuntimePresentationTests {
 		#expect(runtime.requestedConversationId == nil)
 	}
 
+	@Test("switching workspace returns to For you and closes the profile sheet")
+	func workspaceSwitchResetsToForYou() async {
+		let (runtime, environment) = await makeRuntime()
+		runtime.sync()
+		runtime.selectedTab = .objects
+		runtime.showProfile = true
+
+		environment.auth.selectWorkspace("ws-2")
+		runtime.sync()
+
+		#expect(runtime.selectedTab == .forYou)
+		#expect(!runtime.showProfile)
+	}
+
+	@Test("the profile sheet is one presentation: asking for another replaces it")
+	func profileIsOneSheet() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.showProfile = true
+		runtime.showNotifications = true
+		#expect(!runtime.showProfile)
+		runtime.showProfile = false  // stale dismissal of a sheet that is no longer showing
+		#expect(runtime.showNotifications)
+	}
+
 	@Test("switching workspace leaves the settings sheet open (it rebuilds itself)")
 	func workspaceSwitchKeepsSettings() async {
 		let (runtime, environment) = await makeRuntime()
@@ -554,7 +577,7 @@ struct AppRuntimePresentationTests {
 	@Test("a session the server ended also resets the selected tab")
 	func sessionEndedResetsTab() async {
 		let (runtime, _) = await makeRuntime()
-		runtime.selectedTab = .agents
+		runtime.selectedTab = .objects
 		runtime.sessionEnded()
 		#expect(runtime.selectedTab == .forYou)
 	}
@@ -571,11 +594,10 @@ struct AppRuntimePresentationTests {
 		#expect(recents.load(workspaceId: "ws-1").isEmpty)
 	}
 
-	@Test("the visible tabs hide Search where it isn't a tab")
-	func visibleTabs() {
-		let visible = ShellTab.visible
-		#expect(visible.contains(.search) == ShellTab.searchIsTab)
-		#expect(visible.first == .forYou)
+	@Test("Search is the last tab, and the first is For you")
+	func tabOrder() {
+		#expect(ShellTab.allCases.first == .forYou)
+		#expect(ShellTab.allCases.last == .search)
 	}
 }
 

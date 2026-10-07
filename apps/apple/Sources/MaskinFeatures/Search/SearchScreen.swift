@@ -57,10 +57,7 @@ private struct SearchScreenContent: View {
 				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
 				onSelect: select
 			)
-				.navigationTitle("Search")
-				#if os(iOS)
-				.navigationBarTitleDisplayMode(.inline)
-				#endif
+				.shellToolbar(environment: environment, title: "Search")
 				.searchable(
 					text: Binding(get: { store.query }, set: { store.setQuery($0) }),
 					prompt: "Search or ask Chief of Staff"

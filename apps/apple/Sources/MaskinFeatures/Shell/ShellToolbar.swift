@@ -3,70 +3,38 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// What a screen puts in the floating pill at the top right, besides its title.
+/// What a screen puts in the floating pill at the top right, besides its title and the profile
+/// avatar (which every root screen gets).
 ///
 ///     .shellToolbar(
 ///         environment: environment, title: "Objects",
 ///         actions: ShellActions(
-///             new: { showCreate = true },
 ///             display: ShellDisplayMenu {
 ///                 Picker("Sort", selection: $sort) { ... }
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Live, Compose, New, Search, Display. While the content is scrolled New and Search
-/// fold away (Display stays). Search shows only where search is not already a tab
-/// (`ShellTab.searchIsTab`); pass `search: false` for a screen that has none.
+/// Order in the pill is Live, New, Display, then the avatar in a capsule of its own. The per-tab
+/// sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
+/// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
-	/// The "+" button. Only the Loops Triggers segment uses it (a form with no chat path). Nil hides it.
+	/// The "+" button (Team: New conversation). Nil hides it.
 	public var new: (() -> Void)?
-	/// The pencil Compose button (Chats only): tap starts a chat, long-press lists starters.
-	public var compose: ShellCompose?
-	/// The dark Live button (For you and Chats only).
+	/// The "+" button's accessibility label.
+	public var newLabel: String
+	/// The dark Live button that opens the live daily briefing (For you only).
 	public var live: Bool
-	/// What the Live button opens. For you keeps the daily briefing; Chats starts a call with the Chief of Staff.
-	public var liveRequest: LiveMeetingRequest
-	/// The magnifier, on screens where search is a button rather than a tab.
-	public var search: Bool
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
 
 	public init(
-		new: (() -> Void)? = nil, compose: ShellCompose? = nil, live: Bool = false, liveRequest: LiveMeetingRequest = .dailyBriefing,
-		search: Bool = true,
+		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil
 	) {
 		self.new = new
-		self.compose = compose
+		self.newLabel = newLabel
 		self.live = live
-		self.liveRequest = liveRequest
-		self.search = search
 		self.display = display
-	}
-}
-
-/// A Compose button's long-press starters: each opens a pre-filled chat with the Chief of Staff.
-public struct ShellCompose {
-	public struct Starter: Identifiable, Equatable, Sendable {
-		public let title: String
-		public let symbol: String
-		public let prompt: String
-		public var id: String { title }
-	}
-
-	/// New loop, New bet, Hire an agent: the creations that go through the Chief of Staff.
-	public static let starters: [Starter] = [
-		Starter(title: "New flow", symbol: "arrow.triangle.2.circlepath", prompt: "I'd like to build a new flow. "),
-		Starter(title: "New bet", symbol: "target", prompt: "I'd like to create a new bet. "),
-		Starter(title: "Hire an agent", symbol: "person.badge.plus", prompt: "I'd like to build a new agent. "),
-	]
-
-	public var action: () -> Void
-	public var starter: (Starter) -> Void
-
-	public init(action: @escaping () -> Void, starter: @escaping (Starter) -> Void) {
-		self.action = action
-		self.starter = starter
 	}
 }
 
@@ -81,10 +49,10 @@ public struct ShellDisplayMenu {
 }
 
 extension View {
-	/// Gives the screen its large, collapsing title and its pill of actions.
-	/// Where search isn't a tab (below iOS 26, and on iPhone) it adds a search button. Account,
-	/// workspace, settings and sign-out live on the More tab, not here. Apply to a screen's root
-	/// content, inside its `NavigationStack`, and don't also set `.navigationTitle` on it.
+	/// Gives the screen its large, collapsing title, its pill of actions and the profile avatar.
+	/// Account, workspace, settings and sign-out live in the profile sheet the avatar opens. Apply to
+	/// a screen's root content, inside its `NavigationStack`, and don't also set `.navigationTitle`
+	/// on it.
 	public func shellToolbar(
 		environment: AppEnvironment, title: String? = nil, actions: ShellActions = ShellActions()
 	) -> some View {
@@ -98,16 +66,14 @@ private struct ShellToolbarModifier: ViewModifier {
 	var actions: ShellActions
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
-	/// True once the content has scrolled away from the top: New and Search fold away.
+	@Environment(\.shellShowsAvatar) private var avatarAllowed
+	/// True once the content has scrolled away from the top: New folds away.
 	@State private var scrolled = false
 
-	/// The avatar opens the profile/account entry that exists today: the More tab. Not shown on it.
+	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it).
 	private var showsAvatar: Bool {
-		guard let runtime, environment.auth.session != nil else { return false }
-		return runtime.selectedTab != .more
+		runtime != nil && avatarAllowed && environment.auth.session != nil
 	}
-
-	private var showsSearch: Bool { actions.search && !ShellTab.searchIsTab && runtime != nil }
 
 	func body(content: Content) -> some View {
 		content
@@ -117,34 +83,15 @@ private struct ShellToolbarModifier: ViewModifier {
 				ToolbarItemGroup(placement: .primaryAction) {
 					if actions.live {
 						Button {
-							liveMeeting.present(actions.liveRequest)
+							liveMeeting.present(.dailyBriefing)
 						} label: {
-							Label(actions.liveRequest.buttonLabel, systemImage: "waveform")
+							Label(LiveMeetingRequest.dailyBriefing.buttonLabel, systemImage: "waveform")
 						}
 						.shellLiveButton()
 					}
-					if let compose = actions.compose, !scrolled {
-						Menu {
-							ForEach(ShellCompose.starters) { starter in
-								Button(starter.title, systemImage: starter.symbol) { compose.starter(starter) }
-							}
-						} label: {
-							Label("Compose", systemImage: "pencil")
-						} primaryAction: {
-							compose.action()
-						}
-						.keyboardShortcut("n", modifiers: .command)
-					}
 					if let new = actions.new, !scrolled {
-						Button(action: new) { Label("New", systemImage: "plus") }
+						Button(action: new) { Label(actions.newLabel, systemImage: "plus") }
 							.keyboardShortcut("n", modifiers: .command)
-					}
-					if showsSearch, !scrolled {
-						Button {
-							runtime?.showSearch = true
-						} label: {
-							Label("Search", systemImage: "magnifyingglass")
-						}
 					}
 					if let display = actions.display {
 						Menu {
@@ -156,7 +103,7 @@ private struct ShellToolbarModifier: ViewModifier {
 				}
 				if showsAvatar {
 					AvatarToolbarItem(name: environment.auth.session?.name ?? "") {
-						runtime?.selectedTab = .more
+						runtime?.showProfile = true
 					}
 				}
 			}
@@ -180,6 +127,18 @@ private struct AvatarToolbarItem: ToolbarContent {
 			}
 			.accessibilityLabel("Account")
 		}
+	}
+}
+
+private struct ShellShowsAvatarKey: EnvironmentKey {
+	static let defaultValue = true
+}
+
+extension EnvironmentValues {
+	/// False inside a sheet, where a root screen's avatar would open a profile sheet over it.
+	var shellShowsAvatar: Bool {
+		get { self[ShellShowsAvatarKey.self] }
+		set { self[ShellShowsAvatarKey.self] = newValue }
 	}
 }
 

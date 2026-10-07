@@ -4,7 +4,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The Chats tab. A `NavigationSplitView`: list + thread side by side on iPad and Mac, a
+/// The Team tab. A `NavigationSplitView`: list + thread side by side on iPad and Mac, a
 /// push stack on iPhone. Owns its navigation and applies the shell toolbar.
 ///
 /// `requestedConversationId` is the entry point for deep links: when it becomes non-nil the
@@ -79,10 +79,8 @@ private struct ChatsContainer: View {
 			.shellToolbar(
 				environment: environment, title: store.scope == .archived ? "Archived" : "Team",
 				actions: ShellActions(
-					compose: ShellCompose(
-						action: { showNewChat = true },
-						starter: { runtime?.buildInChat($0.prompt) }),
-					live: true, liveRequest: .chiefOfStaff, search: false))
+					new: { showNewChat = true }, newLabel: "New conversation",
+					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) }))
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {
