@@ -6,8 +6,8 @@ import {
 } from '../../lib/claude-failover'
 import type { ClassifierInput } from '../../lib/claude-failure-classifier'
 import { headersFrom } from '../../lib/claude-failure-classifier'
-import type { EncryptedOAuthData } from '../../lib/claude-oauth'
-import { encrypt } from '../../lib/crypto'
+import { type EncryptedOAuthData, resetClaudeSlotLifetimes } from '../../lib/claude-oauth'
+import { decrypt, encrypt } from '../../lib/crypto'
 import { insertActor, insertWorkspace } from '../factories'
 import { db } from './global-setup'
 
@@ -298,5 +298,72 @@ describe('Claude failover — session-start credential resolver against Postgres
 
 		expect(result?.slot).toBe('primary')
 		expect(await countFailoverEvents(ws.id)).toBe(0)
+	})
+
+	// The launch buffer path: a slot whose token is nowhere near expiry is still
+	// refreshed once (unknown lifetime), under the per-slot lock, and the rotated
+	// refresh token is what ends up in the row. Real Postgres, stubbed token endpoint.
+	describe('platform refresh at launch', () => {
+		afterEach(() => {
+			vi.unstubAllGlobals()
+		})
+
+		it('refreshes once for two parallel launches, persists the rotated token, and skips the next launch', async () => {
+			resetClaudeSlotLifetimes()
+			const actor = await insertActor(db)
+			const ws = await insertWorkspace(db, actor.id, {
+				settings: {
+					enabled_modules: ['work'],
+					claude_oauth: {
+						primary: futureBlob({
+							encryptedRefreshToken: encrypt('refresh-1'),
+							expiresAt: Date.now() + 7 * 60 * 60 * 1000,
+						}),
+					},
+				},
+			})
+			let current = 'refresh-1'
+			const fetchMock = vi.fn(async (_url: string, init: { body: string }) => {
+				const { refresh_token } = JSON.parse(init.body)
+				await new Promise((resolve) => setTimeout(resolve, 20))
+				if (refresh_token !== current) {
+					return { ok: false, status: 400, text: async () => 'invalid_grant' }
+				}
+				current = 'refresh-2'
+				return {
+					ok: true,
+					json: async () => ({
+						access_token: 'access-2',
+						refresh_token: 'refresh-2',
+						expires_in: 8 * 3600,
+					}),
+				}
+			})
+			vi.stubGlobal('fetch', fetchMock)
+
+			const launch = () =>
+				resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: ws.id,
+					actorId: actor.id,
+					probe: async () => null,
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+					bufferMs: { launchMs: 3 * 60 * 60 * 1000 },
+				})
+			const [a, b] = await Promise.all([launch(), launch()])
+
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(a?.tokens.accessToken).toBe('access-2')
+			expect(b?.tokens.accessToken).toBe('access-2')
+			const [row] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id)).limit(1)
+			const stored = (row.settings as { claude_oauth: { primary: EncryptedOAuthData } })
+				.claude_oauth.primary
+			expect(decrypt(stored.encryptedRefreshToken)).toBe('refresh-2')
+			expect(stored.expiresAt).toBeGreaterThan(Date.now() + 7 * 60 * 60 * 1000)
+
+			// Lifetime is known now and 8 h is left, so a third launch spends nothing.
+			await launch()
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+		})
 	})
 })
