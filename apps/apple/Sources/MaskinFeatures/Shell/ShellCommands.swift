@@ -1,3 +1,4 @@
+import MaskinCore
 import SwiftUI
 
 /// Keyboard shortcuts and menu-bar commands for iPad (hold ⌘ for the shortcut sheet) and Mac.
@@ -6,7 +7,7 @@ public struct ShellCommands: Commands {
 	@FocusedValue(\.appRuntime) private var runtime
 
 	/// Tabs reachable by ⌘1…⌘n, in order. Search has its own ⌘K.
-	static let shortcutTabs: [ShellTab] = ShellTab.allCases.filter { $0 != .search }
+	static let shortcutTabs: [ShellTab] = ShellTab.primary
 
 	public init() {}
 
@@ -27,10 +28,8 @@ public struct ShellCommands: Commands {
 }
 
 extension AppRuntime {
-	/// Search is a tab where the system gives it one (iOS 26+, Mac); otherwise a sheet.
-	fileprivate func focusSearch() {
-		if ShellTab.searchIsTab { selectedTab = .search } else { showSearch = true }
-	}
+	/// Search is the trailing tab everywhere.
+	fileprivate func focusSearch() { selectedTab = .search }
 }
 
 private struct AppRuntimeKey: FocusedValueKey {

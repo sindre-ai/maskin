@@ -87,22 +87,7 @@ struct ConversationListView: View {
 							}
 					}
 				} header: {
-					HStack {
-						MonoLabel(group.label)
-						Spacer()
-						// Group by lives in the list, not the bar: on the first section's header.
-						if group.id == sections.groups.first?.id {
-							Menu {
-								ChatsDisplayMenu(store: store)
-							} label: {
-								Label("Group by", systemImage: "line.3.horizontal.decrease")
-									.labelStyle(.titleOnly)
-									.font(.footnote)
-									.foregroundStyle(MaskinColor.ink3)
-							}
-							.textCase(nil)
-						}
-					}
+					MonoLabel(group.label)
 				}
 			}
 			if search.isEmpty, !store.conversations.isEmpty || store.scope == .archived {

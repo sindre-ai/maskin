@@ -4,10 +4,13 @@ import SwiftUI
 /// The signed-in app: a tab bar on iPhone that becomes a sidebar on iPad and Mac, from one
 /// declaration (`.sidebarAdaptable`).
 ///
+/// Four tabs (For you, Team, Flows, Objects) and the trailing system search tab. No More tab: the
+/// avatar on every root screen opens the profile sheet (`ProfileSheet`).
+///
 /// CONTRACT FOR SCREENS. Each tab hosts a screen taking `AppEnvironment`:
-/// `ForYouScreen`, `ChatsScreen`, `ObjectsScreen`, `LoopsScreen`, `AgentsScreen`, `SearchScreen`. A screen OWNS its `NavigationStack` (or split
-/// view) and applies `.shellToolbar(environment:)` to its root content so the account menu
-/// (notifications, workspace switcher, sign out) appears on every tab.
+/// `ForYouScreen`, `ChatsScreen`, `LoopsScreen`, `ObjectsScreen`, `SearchScreen`. A screen OWNS its
+/// `NavigationStack` (or split view) and applies `.shellToolbar(environment:)` to its root content
+/// so its bar items and the profile avatar appear.
 public struct MainShell: View {
 	private let environment: AppEnvironment
 	@Bindable private var runtime: AppRuntime
@@ -26,7 +29,7 @@ public struct MainShell: View {
 				AdaptiveTabs(environment: environment, runtime: runtime, badges: badges)
 			} else {
 				TabView(selection: $runtime.selectedTab) {
-					ForEach(ShellTab.visible) { tab in
+					ForEach(ShellTab.allCases) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
 							.badge(tab.badge(runtime: runtime, badges: badges))
@@ -68,24 +71,19 @@ private struct AdaptiveTabs: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
 	let badges: ShellBadges
-	@Environment(\.horizontalSizeClass) private var sizeClass
-	/// iPhone's tab bar holds five; Agents then lives in More rather than behind a system "More".
-	private var isCompact: Bool { sizeClass == .compact }
 
 	var body: some View {
 		TabView(selection: $runtime.selectedTab) {
-			ForEach(ShellTab.allCases.filter { $0 != .search && ($0 != .agents || !isCompact) }) { tab in
+			ForEach(ShellTab.primary) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
 				.badge(tab.badge(runtime: runtime, badges: badges))
 			}
-			// The system search role: a detached search button on iOS 26 (and a sidebar entry on the
-			// Mac). Below iOS 26 search is a toolbar button instead — see `ShellTab.searchIsTab`.
-			if ShellTab.searchIsTab {
-				Tab(value: ShellTab.search, role: .search) {
-					ShellTabContent(tab: .search, environment: environment, runtime: runtime)
-				}
+			// The system search role: a detached search button on iOS 26 (a plain trailing tab
+			// before that, a sidebar entry on iPad and the Mac). The only search entry point.
+			Tab(value: ShellTab.search, role: .search) {
+				ShellTabContent(tab: .search, environment: environment, runtime: runtime)
 			}
 		}
 		.tabViewStyle(.sidebarAdaptable)
@@ -100,6 +98,12 @@ private struct PresentationContent: View {
 	@Bindable var runtime: AppRuntime
 
 	var body: some View {
+		content
+			// Inside a sheet the avatar would open a profile sheet over the sheet.
+			.environment(\.shellShowsAvatar, false)
+	}
+
+	@ViewBuilder private var content: some View {
 		switch presentation {
 		case .object(let id):
 			ObjectSheet(environment: environment, runtime: runtime, objectId: id)
@@ -107,8 +111,8 @@ private struct PresentationContent: View {
 			DetailSheet { AgentDetailScreen(environment: environment, agentId: id) }
 		case .file(let id):
 			DetailSheet { FileScreen(environment: environment, fileId: id) }
-		case .search:
-			DetailSheet { SearchScreen(environment: environment) { runtime.openSearchResult($0) } }
+		case .profile:
+			ProfileSheet(environment: environment, runtime: runtime)
 		case .files:
 			FilesListScreen(environment: environment, onDone: { runtime.showFiles = false })
 		case .agents:
@@ -135,10 +139,8 @@ private struct ShellTabContent: View {
 		case .chats:
 			ChatsScreen(
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
-		case .objects: ObjectsScreen(environment: environment)
 		case .loops: LoopsScreen(environment: environment)
-		case .agents: AgentsScreen(environment: environment)
-		case .more: MoreScreen(environment: environment, runtime: runtime)
+		case .objects: ObjectsScreen(environment: environment)
 		case .search:
 			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
 		}
@@ -146,7 +148,7 @@ private struct ShellTabContent: View {
 }
 
 extension ShellTab {
-	/// The count on the tab: open decisions on For you, unread chats on Chats. Zero shows nothing.
+	/// The count on the tab: open decisions on For you, unread conversations on Team. Zero shows nothing.
 	@MainActor
 	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> Int {
 		switch self {

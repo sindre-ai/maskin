@@ -1,3 +1,4 @@
+import MaskinCore
 import Testing
 
 @testable import MaskinFeatures
@@ -5,7 +6,7 @@ import Testing
 @Suite("ShellCommands")
 struct ShellCommandsTests {
 	@Test func numberShortcutsCoverEveryTabExceptSearchInOrder() {
-		#expect(ShellCommands.shortcutTabs == [.forYou, .chats, .objects, .loops, .agents, .more])
+		#expect(ShellCommands.shortcutTabs == [.forYou, .chats, .loops, .objects])
 	}
 
 	@Test func numberShortcutsStayWithinSingleDigits() {
