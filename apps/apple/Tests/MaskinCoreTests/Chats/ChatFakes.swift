@@ -190,6 +190,9 @@ actor FakeListAPI: ConversationsAPI {
 	}
 
 	func actors() async throws -> [ChatActor] { [ChatActor(participant: chatRelay)] }
+
+	var latestIDs: [String: Int] = [:]
+	func latestMessageID(conversationID: String) async throws -> Int? { latestIDs[conversationID] ?? 100 }
 }
 
 /// A hub fed by scripted SSE bodies; each open() takes the next body, then holds open.

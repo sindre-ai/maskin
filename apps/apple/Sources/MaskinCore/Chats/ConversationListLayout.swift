@@ -1,15 +1,15 @@
 import Foundation
 
-/// How the Chats list is bucketed (the Display menu's "Group by"). Grouping by loop needs a loop
-/// on the conversation, which the API doesn't send yet, so it isn't offered.
+/// How the Team list is laid out (the Display menu): one row per person or agent under UNREAD and
+/// PEOPLE & AGENTS, or every conversation on its own row, newest first, in day groups.
 public enum ConversationGroupBy: String, CaseIterable, Sendable, Identifiable {
-	case recent, agent
+	case person, recent
 
 	public var id: String { rawValue }
 	public var title: String {
 		switch self {
-		case .recent: "Recent"
-		case .agent: "Agent"
+		case .person: "By person"
+		case .recent: "One list"
 		}
 	}
 }
@@ -23,44 +23,15 @@ public struct ConversationListSections: Equatable, Sendable {
 }
 
 extension ConversationGrouping {
-	/// Pinned chats separated out (most recent first), everything else grouped by `by`.
+	/// Pinned chats separated out (most recent first), everything else in day groups: the flat
+	/// list. The person view is `teamSections`.
 	public static func sections(
-		_ conversations: [ConversationSummary], by: ConversationGroupBy, currentActorID: String?,
-		now: Date = Date(), calendar: Calendar = .current
+		_ conversations: [ConversationSummary], now: Date = Date(), calendar: Calendar = .current
 	) -> ConversationListSections {
 		let pinned = conversations.filter(\.pinned)
 			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
 		let rest = conversations.filter { !$0.pinned }
-		switch by {
-		case .recent:
-			return ConversationListSections(
-				pinned: pinned, groups: group(rest, now: now, calendar: calendar))
-		case .agent:
-			return ConversationListSections(
-				pinned: pinned, groups: groupByAgent(rest, currentActorID: currentActorID))
-		}
-	}
-
-	/// One group per agent, groups ordered by their newest chat. Chats with no agent in them go
-	/// under "People".
-	static func groupByAgent(_ conversations: [ConversationSummary], currentActorID: String?)
-		-> [ConversationGroup]
-	{
-		let sorted = conversations.sorted {
-			($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast)
-		}
-		var order: [ConversationGroup.Key] = []
-		var buckets: [ConversationGroup.Key: ConversationGroup] = [:]
-		for c in sorted {
-			let agent = c.primaryAgent(excluding: currentActorID)
-			let key = ConversationGroup.Key(rawValue: "agent-\(agent?.id ?? "people")")
-			if buckets[key] == nil {
-				order.append(key)
-				buckets[key] = ConversationGroup(key: key, label: agent?.name ?? "People", items: [])
-			}
-			buckets[key]?.items.append(c)
-		}
-		return order.compactMap { buckets[$0] }
+		return ConversationListSections(pinned: pinned, groups: group(rest, now: now, calendar: calendar))
 	}
 }
 

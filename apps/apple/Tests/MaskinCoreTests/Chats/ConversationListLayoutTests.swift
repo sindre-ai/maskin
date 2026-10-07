@@ -39,25 +39,9 @@ import Testing
 		let all = [
 			chatConvo("pin", last: ago(days: 5), pinned: true), chatConvo("a", last: ago(days: 0, hours: 1)),
 		]
-		let sections = ConversationGrouping.sections(
-			all, by: .recent, currentActorID: "me", now: now, calendar: calendar)
+		let sections = ConversationGrouping.sections(all, now: now, calendar: calendar)
 		#expect(sections.pinned.map(\.id) == ["pin"])
 		#expect(sections.groups.flatMap(\.items).map(\.id) == ["a"])
-	}
-
-	@Test func groupByAgentOrdersGroupsByNewestChat() {
-		let cpo = ChatParticipant(id: "cpo", name: "CPO", kind: .agent)
-		let all = [
-			chatConvo("1", last: ago(days: 4), participants: [chatMe, cpo]),
-			chatConvo("2", last: ago(days: 1), participants: [chatMe, chatRelay]),
-			chatConvo("3", last: ago(days: 3), participants: [chatMe, chatSam]),
-			chatConvo("4", last: ago(days: 2), participants: [chatMe, cpo]),
-		]
-		let groups = ConversationGrouping.sections(
-			all, by: .agent, currentActorID: "me", now: now, calendar: calendar
-		).groups
-		#expect(groups.map(\.label) == ["Relay", "CPO", "People"])
-		#expect(groups[1].items.map(\.id) == ["4", "1"])
 	}
 
 	@Test func groupChatNeedsMoreThanOneOtherParty() {
@@ -106,19 +90,11 @@ import Testing
 		let api = FakeListAPI([chatConvo("pin", pinned: true), chatConvo("a", title: "Roadmap"), chatConvo("b")])
 		let store = ConversationsStore(api: api, events: nil)
 		await store.refresh()
-		var sections = store.sections(currentActorID: "me", now: chatT0)
+		var sections = store.sections(now: chatT0)
 		#expect(sections.pinned.map(\.id) == ["pin"])
 		#expect(sections.groups.flatMap(\.items).map(\.id).sorted() == ["a", "b"])
-		sections = store.sections(query: "road", currentActorID: "me", now: chatT0)
+		sections = store.sections(query: "road", now: chatT0)
 		#expect(sections.pinned.isEmpty)
 		#expect(sections.groups.flatMap(\.items).map(\.id) == ["a"])
-	}
-
-	@Test func groupByAgentUsesTheStoresChoice() async {
-		let api = FakeListAPI([chatConvo("a")])
-		let store = ConversationsStore(api: api, events: nil)
-		await store.refresh()
-		store.groupBy = .agent
-		#expect(store.sections(currentActorID: "me", now: chatT0).groups.map(\.label) == ["Relay"])
 	}
 }

@@ -134,6 +134,11 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		}
 	}
 
+	public func latestMessageID(conversationID: String) async throws -> Int? {
+		try await messages(conversationID: conversationID, beforeID: nil, afterID: nil, limit: 1)
+			.messages.last?.serverID
+	}
+
 	public func messages(
 		conversationID: String, beforeID: Int?, afterID: Int?, limit: Int
 	) async throws -> MessagePage {

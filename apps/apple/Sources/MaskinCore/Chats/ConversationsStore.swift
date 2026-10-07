@@ -29,8 +29,8 @@ public final class ConversationsStore {
 	}
 	/// Narrows the loaded list to conversations an agent takes part in (client-side).
 	public var agentFilterID: String?
-	/// The Display menu's "Group by" (the screen remembers the choice).
-	public var groupBy: ConversationGroupBy = .recent
+	/// The Display menu's layout: by person, or one list (the screen remembers the choice).
+	public var groupBy: ConversationGroupBy = .person
 	public var filter: Filter = .all {
 		didSet {
 			guard filter != oldValue else { return }
@@ -91,17 +91,26 @@ public final class ConversationsStore {
 		return ConversationGrouping.group(filtered, now: now)
 	}
 
-	/// The list as the Chats screen draws it: pinned tiles, then groups. A search or the archive
-	/// has no tiles and one flat group, as in `groups`.
-	public func sections(query: String = "", currentActorID: String?, now: Date = Date())
-		-> ConversationListSections
-	{
+	/// The flat list as the Team screen draws it: pinned tiles, then day groups. A search or the
+	/// archive has no tiles and one flat group, as in `groups`.
+	public func sections(query: String = "", now: Date = Date()) -> ConversationListSections {
 		let flat = groups(query: query, now: now)
-		let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
-		if scope == .archived || searching { return ConversationListSections(pinned: [], groups: flat) }
+		if scope == .archived || isSearching(query) { return ConversationListSections(pinned: [], groups: flat) }
 		return ConversationGrouping.sections(
-			ConversationGrouping.filter(conversations, agentID: agentFilterID), by: groupBy,
-			currentActorID: currentActorID, now: now)
+			ConversationGrouping.filter(conversations, agentID: agentFilterID), now: now)
+	}
+
+	/// The person view: pinned tiles, UNREAD, PEOPLE & AGENTS. Nil in the archive and while
+	/// searching, which show one flat list (`sections`).
+	public func teamSections(query: String = "", currentActorID: String?) -> TeamSections? {
+		guard scope == .active, !isSearching(query) else { return nil }
+		return ConversationGrouping.teamSections(
+			ConversationGrouping.filter(conversations, agentID: agentFilterID),
+			currentActorID: currentActorID)
+	}
+
+	private func isSearching(_ query: String) -> Bool {
+		!query.trimmingCharacters(in: .whitespaces).isEmpty
 	}
 
 	/// The filter menu only lists agents in the current list, so a filter on an agent that is no
@@ -326,6 +335,28 @@ public final class ConversationsStore {
 		await mutate(id, apply: { $0.unreadCount = 0 }) {
 			try await self.api.updateState(
 				conversationID: id, pinned: nil, archived: nil, lastReadMessageID: messageID, markUnread: false)
+		}
+	}
+
+	/// Mark every listed chat read (the UNREAD card's "Mark all read"): one optimistic write per
+	/// chat, each rolled back on its own failure. A chat that is already read is skipped.
+	@discardableResult
+	public func markRead(_ ids: [String]) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids where conversation(id: id)?.isUnread == true {
+			if await markReadThroughLatest(id) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		if let text = result.failureNotice(action: "mark", past: "marked read", noun: "chat") { notice = text }
+		return result
+	}
+
+	private func markReadThroughLatest(_ id: String) async -> Bool {
+		let latest: Int?
+		do { latest = try await api.latestMessageID(conversationID: id) } catch { return false }
+		guard let latest else { return false }
+		return await mutate(id, apply: { $0.unreadCount = 0 }) {
+			try await self.api.updateState(
+				conversationID: id, pinned: nil, archived: nil, lastReadMessageID: latest, markUnread: false)
 		}
 	}
 

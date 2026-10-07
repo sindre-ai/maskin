@@ -16,9 +16,14 @@ public protocol ConversationsAPI: Sendable {
 	) async throws
 	/// Workspace actors for the participant picker.
 	func actors() async throws -> [ChatActor]
+	/// The newest message in a conversation, which "read" is recorded against. The list rows
+	/// carry no message id, so marking a chat read from the list has to ask.
+	func latestMessageID(conversationID: String) async throws -> Int?
 }
 
 extension ConversationsAPI {
+	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
+
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		try await list(archived: archived, pinnedOnly: false, unreadOnly: false, limit: limit, offset: offset)
 	}
