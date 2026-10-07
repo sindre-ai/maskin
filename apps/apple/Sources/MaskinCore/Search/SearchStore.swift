@@ -18,7 +18,11 @@ public final class SearchStore {
 	public static let pageSize = 25
 
 	public private(set) var query = ""
-	public var scope: SearchScope = .all
+	public var scope: SearchScope = .all {
+		didSet { if scope != oldValue { objectType = nil } }
+	}
+	/// The type sub-chip under Objects; nil means every type.
+	public var objectType: String?
 	public private(set) var phase: Phase = .idle
 	public private(set) var allResults: [SearchResult] = []
 	public private(set) var recents: [String] = []
@@ -34,6 +38,7 @@ public final class SearchStore {
 	@ObservationIgnored private var task: Task<Void, Never>?
 	@ObservationIgnored private var chatsCache: [SearchResult]?
 	@ObservationIgnored private var agentsCache: [SearchResult]?
+	@ObservationIgnored private var flowsCache: [SearchResult]?
 	/// When, and for which workspace, the directory caches were filled.
 	@ObservationIgnored private var cacheStamp: (workspace: String?, at: Date)?
 	@ObservationIgnored private let directoryTTL: TimeInterval
@@ -57,16 +62,19 @@ public final class SearchStore {
 
 	/// Results in the chosen scope, grouped in display order.
 	public var sections: [SearchSection] {
-		SearchKind.displayOrder.compactMap { kind in
-			let rows = allResults.filter { $0.kind == kind && scope.includes($0) }
-			return rows.isEmpty ? nil : SearchSection(kind: kind, results: rows)
+		SearchGroup.displayOrder.compactMap { group in
+			let rows = allResults.filter { $0.group == group && scope.includes($0, objectType: objectType) }
+			return rows.isEmpty ? nil : SearchSection(group: group, results: rows)
 		}
 	}
+
+	/// The sub-chips under Objects: the types the current results contain.
+	public var objectTypes: [String] { SearchScope.objectTypes(in: allResults) }
 
 	public var visibleCount: Int { sections.reduce(0) { $0 + $1.results.count } }
 
 	public func count(in scope: SearchScope) -> Int {
-		allResults.filter(scope.includes).count
+		allResults.filter { scope.includes($0) }.count
 	}
 
 	// MARK: Input
@@ -147,6 +155,7 @@ public final class SearchStore {
 	public func invalidateDirectories() {
 		chatsCache = nil
 		agentsCache = nil
+		flowsCache = nil
 		cacheStamp = nil
 	}
 
@@ -168,12 +177,14 @@ public final class SearchStore {
 		let startWorkspace = workspaceId()
 		let cachedChats = chatsCache
 		let cachedAgents = agentsCache
+		let cachedFlows = flowsCache
 
 		async let objects = Self.attempt { try await remote.searchObjects(query: text, limit: limit) }
 		async let files = Self.attempt { try await remote.searchFiles(query: text, limit: limit) }
 		async let chats = Self.attempt { if let cachedChats { return cachedChats }; return try await remote.conversations() }
 		async let agents = Self.attempt { if let cachedAgents { return cachedAgents }; return try await remote.agents() }
-		let (o, f, c, a) = await (objects, files, chats, agents)
+		async let flows = Self.attempt { if let cachedFlows { return cachedFlows }; return try await remote.flows() }
+		let (o, f, c, a, fl) = await (objects, files, chats, agents, flows)
 		// A newer query (or a cancel) started while this one was in flight.
 		guard mine == generation, !Task.isCancelled else { return }
 		// The workspace changed while this was in flight: its lists belong to the old one.
@@ -185,9 +196,12 @@ public final class SearchStore {
 
 		if case .success(let list) = c { chatsCache = list }
 		if case .success(let list) = a { agentsCache = list }
+		if case .success(let list) = fl { flowsCache = list }
 		// A fresh fetch restarts the TTL; a pure cache hit leaves the old stamp alone.
-		if cachedChats == nil || cachedAgents == nil { cacheStamp = (startWorkspace, now()) }
+		if cachedChats == nil || cachedAgents == nil || cachedFlows == nil { cacheStamp = (startWorkspace, now()) }
 
+		// The flow list only supplements the four searched sources: it never decides "nothing could
+		// be searched", but its failure still marks the results partial.
 		let outcomes = [o, f, c, a]
 		let errors = outcomes.compactMap { outcome -> SearchError? in
 			if case .failure(let e) = outcome { return e }
@@ -201,12 +215,19 @@ public final class SearchStore {
 			return
 		}
 		isOffline = false
-		isPartial = !errors.isEmpty
+		if case .failure = fl { isPartial = true } else { isPartial = !errors.isEmpty }
 
 		var merged: [SearchResult] = []
 		if case .success(let list) = c { merged += Self.filter(list, text) }
 		if case .success(let list) = a { merged += Self.filter(list, text) }
-		if case .success(let list) = o { merged += list }
+		// The flow list is authoritative for flows; the server's object hits fill in the rest.
+		var flowIds = Set<String>()
+		if case .success(let list) = fl {
+			let hits = Self.filter(list, text)
+			flowIds = Set(hits.map(\.entityId))
+			merged += hits
+		}
+		if case .success(let list) = o { merged += list.filter { !flowIds.contains($0.entityId) } }
 		if case .success(let list) = f { merged += list }
 		allResults = merged
 		phase = .results

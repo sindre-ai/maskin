@@ -130,45 +130,74 @@ struct SearchStoreTests {
 		let store = makeStore(remote)
 		store.setQuery("launch")
 		await store.settle()
-		#expect(store.sections.map(\.kind) == [.chat, .object, .file])
+		#expect(store.sections.map(\.group) == [.team, .objects, .files])
 		#expect(store.visibleCount == 3)
-		store.scope = .files
-		#expect(store.sections.map(\.kind) == [.file])
-		#expect(store.count(in: .objects) == 1)
+		store.scope = .team
+		#expect(store.sections.map(\.group) == [.team])
+		store.scope = .objects
+		#expect(store.sections.map(\.group) == [.objects])
 		store.scope = .agents
 		#expect(store.sections.isEmpty)
 		#expect(await remote.objectQueries.count == 1)
 	}
 
-	@Test("type chips narrow objects by their type")
+	@Test("type sub-chips narrow Objects by type, most frequent first, flows excluded")
 	func typeChips() async {
 		let remote = FakeSearchRemote()
 		await remote.setObjects { _ in
 			[
 				SearchResult(kind: .object, entityId: "b1", title: "Launch bet", detail: "bet"),
 				SearchResult(kind: .object, entityId: "t1", title: "Launch task", detail: "task"),
-				SearchResult(kind: .object, entityId: "i1", title: "Launch insight", detail: "insight"),
+				SearchResult(kind: .object, entityId: "t2", title: "Launch task 2", detail: "task"),
+				SearchResult(kind: .object, entityId: "l1", title: "Launch loop", detail: "loop"),
 			]
 		}
-		await remote.setFiles { _ in [file("f1", "launch.md")] }
 		let store = makeStore(remote)
 		store.setQuery("launch")
 		await store.settle()
-		store.scope = .bets
+		#expect(store.objectTypes == ["task", "bet"])
+		store.scope = .objects
+		#expect(store.visibleCount == 3)
+		store.objectType = "bet"
 		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["b1"])
-		store.scope = .tasks
-		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["t1"])
-		store.scope = .insights
-		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["i1"])
-		#expect(store.count(in: .bets) == 1)
+		store.scope = .flows
+		#expect(store.objectType == nil, "changing scope clears the type")
+		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["l1"])
 		#expect(store.count(in: .all) == 4)
-		store.scope = .all
-		#expect(store.visibleCount == 4)
 	}
 
-	@Test("the search tab offers All, Bets, Tasks, Insights, Files and Agents")
+	@Test("flows come from the flow list, filtered by name, and replace the server's duplicate")
+	func flowsList() async {
+		struct Remote: SearchRemote {
+			func searchObjects(query: String, limit: Int) async throws -> [SearchResult] {
+				[SearchResult(kind: .object, entityId: "l1", title: "Weekly report", detail: "loop")]
+			}
+			func searchFiles(query: String, limit: Int) async throws -> [SearchResult] { [] }
+			func conversations() async throws -> [SearchResult] { [] }
+			func agents() async throws -> [SearchResult] { [] }
+			func flows() async throws -> [SearchResult] {
+				[
+					SearchResult(kind: .object, entityId: "l1", title: "Weekly report", subtitle: "Supervised", detail: "loop"),
+					SearchResult(kind: .object, entityId: "l2", title: "Onboarding", detail: "loop"),
+				]
+			}
+		}
+		let defaults = UserDefaults(suiteName: "search-tests-\(UUID().uuidString)")!
+		let store = SearchStore(
+			remote: Remote(), recents: SearchRecents(defaults: defaults), workspaceId: { "ws-1" },
+			debounce: .milliseconds(10))
+		store.setQuery("weekly")
+		await store.settle()
+		#expect(store.allResults.map(\.entityId) == ["l1"])
+		#expect(store.allResults.first?.subtitle == "Supervised")
+		#expect(store.allResults.first?.isFlow == true)
+		store.scope = .flows
+		#expect(store.sections.map(\.group) == [.flows])
+	}
+
+	@Test("the search tab offers All, Team, Objects, Flows and Agents")
 	func chipOrder() {
-		#expect(SearchScope.chips.map(\.title) == ["All", "Bets", "Tasks", "Insights", "Files", "Agents"])
+		#expect(SearchScope.chips.map(\.title) == ["All", "Team", "Objects", "Flows", "Agents"])
 	}
 
 	@Test("one failing source still yields results and flags the list as partial")

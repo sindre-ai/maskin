@@ -1,69 +1,68 @@
 import Foundation
 
-/// What a search result points at. The shell maps each kind onto its own navigation.
+/// What a search result points at. The shell maps each kind onto its own navigation. Flows are
+/// loop objects, so they stay `.object` here and open like any object; `SearchGroup` separates them.
 public enum SearchKind: String, Sendable, Equatable, Hashable, CaseIterable {
 	case object, chat, agent, file
+}
 
-	/// Group order and section titles in the results list (the web's order, minus loops and
-	/// automations, which have no server-side search yet).
+/// The sections of the results list, in display order.
+public enum SearchGroup: String, Sendable, Equatable, Hashable, CaseIterable {
+	case team, agents, flows, objects, files
+
 	public var title: String {
 		switch self {
-		case .chat: "Team"
-		case .agent: "Agents"
-		case .object: "Objects"
-		case .file: "Files"
+		case .team: "Team"
+		case .agents: "Agents"
+		case .flows: "Flows"
+		case .objects: "Objects"
+		case .files: "Files"
 		}
 	}
 
-	static let displayOrder: [SearchKind] = [.chat, .agent, .object, .file]
+	static let displayOrder: [SearchGroup] = [.team, .agents, .flows, .objects, .files]
 }
 
-/// The scope chips: everything, one kind, or one object type.
+/// The scope chips: everything, or one of Team, Objects, Flows, Agents. Objects narrow further by
+/// type through `SearchScope.objectTypes(in:)` (the sub-chips). Files appear under All only.
 public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Identifiable {
-	case all, objects, chats, agents, files, bets, tasks, insights
+	case all, team, objects, flows, agents
 
 	public var id: String { rawValue }
 
-	/// The chips the search tab offers, in order. Chats are reached through All.
-	public static let chips: [SearchScope] = [.all, .bets, .tasks, .insights, .files, .agents]
+	/// The chips the search tab offers, in order.
+	public static let chips: [SearchScope] = [.all, .team, .objects, .flows, .agents]
 
 	public var title: String {
 		switch self {
 		case .all: "All"
+		case .team: "Team"
 		case .objects: "Objects"
-		case .chats: "Team"
+		case .flows: "Flows"
 		case .agents: "Agents"
-		case .files: "Files"
-		case .bets: "Bets"
-		case .tasks: "Tasks"
-		case .insights: "Insights"
 		}
 	}
 
-	func includes(_ kind: SearchKind) -> Bool {
+	/// Whether a result belongs in this scope. `objectType` narrows `.objects` to one type.
+	func includes(_ result: SearchResult, objectType: String? = nil) -> Bool {
 		switch self {
 		case .all: true
-		case .objects, .bets, .tasks, .insights: kind == .object
-		case .chats: kind == .chat
-		case .agents: kind == .agent
-		case .files: kind == .file
+		case .team: result.group == .team
+		case .agents: result.group == .agents
+		case .flows: result.group == .flows
+		case .objects:
+			result.group == .objects && (objectType == nil || result.detail == objectType)
 		}
 	}
 
-	/// The object type a type chip narrows to.
-	private var objectType: String? {
-		switch self {
-		case .bets: "bet"
-		case .tasks: "task"
-		case .insights: "insight"
-		default: nil
+	/// The object types present in `results` (flows excluded), most frequent first, then by name.
+	/// These are the sub-chips under Objects.
+	public static func objectTypes(in results: [SearchResult]) -> [String] {
+		var counts: [String: Int] = [:]
+		for result in results where result.group == .objects {
+			if let type = result.detail, !type.isEmpty { counts[type, default: 0] += 1 }
 		}
-	}
-
-	func includes(_ result: SearchResult) -> Bool {
-		guard includes(result.kind) else { return false }
-		guard let objectType else { return true }
-		return result.detail == objectType
+		return counts.keys.sorted { (counts[$0]!, $1) > (counts[$1]!, $0) }
 	}
 }
 
@@ -84,6 +83,19 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 
 	public var id: String { "\(kind.rawValue):\(entityId)" }
 
+	/// Flows are loop objects.
+	public var isFlow: Bool { kind == .object && detail == "loop" }
+
+	/// The section this result is listed under.
+	public var group: SearchGroup {
+		switch kind {
+		case .chat: .team
+		case .agent: .agents
+		case .file: .files
+		case .object: isFlow ? .flows : .objects
+		}
+	}
+
 	public init(
 		kind: SearchKind, entityId: String, title: String, subtitle: String = "",
 		snippet: String = "", detail: String? = nil, updatedAt: Date? = nil,
@@ -101,9 +113,9 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 }
 
 public struct SearchSection: Identifiable, Sendable, Equatable {
-	public var kind: SearchKind
+	public var group: SearchGroup
 	public var results: [SearchResult]
-	public var id: String { kind.rawValue }
+	public var id: String { group.rawValue }
 }
 
 public struct SearchError: Error, Equatable, Sendable {
@@ -127,4 +139,10 @@ public protocol SearchRemote: Sendable {
 	func conversations() async throws -> [SearchResult]
 	/// Agent actors (`GET /api/actors`, `type == agent`). No `q` parameter, so the store filters.
 	func agents() async throws -> [SearchResult]
+	/// The workspace's flows (loop objects). No `q` parameter, so the store filters by name.
+	func flows() async throws -> [SearchResult]
+}
+
+extension SearchRemote {
+	public func flows() async throws -> [SearchResult] { [] }
 }
