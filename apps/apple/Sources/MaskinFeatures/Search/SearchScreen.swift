@@ -35,6 +35,7 @@ public struct SearchScreen: View {
 private struct SearchScreenContent: View {
 	@State private var store: SearchStore
 	@State private var path: [SearchRoute] = []
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	private let environment: AppEnvironment
 	private let open: ((SearchResult) -> Void)?
 
@@ -52,18 +53,18 @@ private struct SearchScreenContent: View {
 
 	var body: some View {
 		NavigationStack(path: $path) {
-			SearchContentView(store: store, onSelect: select)
+			SearchContentView(
+				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
+				onSelect: select
+			)
 				.navigationTitle("Search")
 				#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
 				#endif
 				.searchable(
 					text: Binding(get: { store.query }, set: { store.setQuery($0) }),
-					prompt: "Search objects, chats, agents, files"
+					prompt: "Search or ask Chief of Staff"
 				)
-				.searchScopes(Binding(get: { store.scope }, set: { store.scope = $0 })) {
-					ForEach(SearchScope.allCases) { scope in Text(scope.title).tag(scope) }
-				}
 				.onSubmit(of: .search) { Task { await store.commit() } }
 				.navigationDestination(for: SearchRoute.self) { route in
 					switch route {
@@ -77,6 +78,16 @@ private struct SearchScreenContent: View {
 		.onAppear {
 			store.reloadRecents()
 			store.expireStaleDirectories()
+		}
+	}
+
+	/// The decisions waiting on the person (For you's "Needs you"), as plain rows.
+	private var needsYou: [SearchNeedsYou] {
+		guard let runtime else { return [] }
+		return runtime.forYou.store.entries.filter { $0.bucket == .needs }.prefix(4).map {
+			SearchNeedsYou(
+				id: $0.card.id, title: $0.card.headline,
+				type: $0.card.objectType?.replacingOccurrences(of: "_", with: " "))
 		}
 	}
 
