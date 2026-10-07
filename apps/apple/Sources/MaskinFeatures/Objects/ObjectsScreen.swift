@@ -13,6 +13,8 @@ public struct ObjectsScreen: View {
 	@Namespace private var zoom
 	@State private var selection: String?
 	@State private var detailPath: [ObjectRoute] = []
+	@State private var showNewChat = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	public init(environment: AppEnvironment) {
@@ -33,6 +35,14 @@ public struct ObjectsScreen: View {
 				split
 			}
 		}
+		.sheet(isPresented: $showNewChat) {
+			if let chief = runtime?.forYou.chief {
+				NewChatSheet(store: chief.conversations, currentActorID: environment.auth.session?.actorId) { created in
+					runtime?.selectedTab = .chats
+					runtime?.requestedConversationId = created.id
+				}
+			}
+		}
 		.task(id: environment.workspaceId) {
 			store.reset()
 			path = []
@@ -42,12 +52,17 @@ public struct ObjectsScreen: View {
 		.task { await store.observe(environment.events.subscribe()) }
 	}
 
+	/// New starts a plain chat; Display holds the filters and grouping.
+	private var shellActions: ShellActions {
+		ShellActions(new: { showNewChat = true }, display: ShellDisplayMenu { ObjectsDisplayMenu(store: store) })
+	}
+
 	// MARK: iPhone
 
 	private var stack: some View {
 		NavigationStack(path: $path) {
 			ObjectsListView(store: store, selection: nil, zoomNamespace: zoom)
-				.shellToolbar(environment: environment, title: "Objects")
+				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)
@@ -60,7 +75,7 @@ public struct ObjectsScreen: View {
 	private var split: some View {
 		NavigationSplitView {
 			ObjectsListView(store: store, selection: $selection)
-				.shellToolbar(environment: environment, title: "Objects")
+				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			NavigationStack(path: $detailPath) {

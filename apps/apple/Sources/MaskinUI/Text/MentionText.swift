@@ -61,6 +61,12 @@ public enum MentionText {
 		return result
 	}
 
+	/// The names whose tag does not appear in `text`: tagged people the words do not show (the tag
+	/// was edited out, or came from metadata alone). A caption for these is the only record of them.
+	public static func untagged(_ names: [String], in text: String) -> [String] {
+		names.filter { ranges(in: text, names: [$0]).isEmpty }
+	}
+
 	/// Markdown for `MarkdownContent`: each tagged name becomes `[@Name](mention:<actor id>)`, which
 	/// the renderer already draws emphasised and never tappable. Use this for message bodies that
 	/// are rendered as markdown (chat bubbles); `attributed` is for plain `Text`.

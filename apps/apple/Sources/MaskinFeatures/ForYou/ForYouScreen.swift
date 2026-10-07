@@ -12,7 +12,7 @@ public struct ForYouScreen: View {
 	private let environment: AppEnvironment
 	private let openObject: ((String) -> Void)?
 	@Environment(AppRuntime.self) private var appRuntime
-	@State private var storiesProvider = StoriesProvider()
+	@State private var showNewChat = false
 
 	public init(environment: AppEnvironment, openObject: ((String) -> Void)? = nil) {
 		self.environment = environment
@@ -27,17 +27,50 @@ public struct ForYouScreen: View {
 			ForYouFeedView(
 				store: runtime.store, outbox: runtime.outbox,
 				openObject: openObject, chief: runtime.chief, environment: environment,
-				stories: storiesProvider.store(for: environment)
+				stories: appRuntime.storiesStore()
 			)
-			.shellToolbar(environment: environment, title: "For you")
+			.shellToolbar(
+				environment: environment, title: "For you",
+				actions: ShellActions(
+					new: { showNewChat = true }, live: true, display: ShellDisplayMenu { displayMenu })
+			)
+			.sheet(isPresented: $showNewChat) {
+				if let chief = runtime.chief {
+					NewChatSheet(
+						store: chief.conversations, currentActorID: environment.auth.session?.actorId
+					) { created in
+						appRuntime.selectedTab = .chats
+						appRuntime.requestedConversationId = created.id
+					}
+				}
+			}
 			.task(id: environment.workspaceId) {
 				async let feed: Void = runtime.store.load()
-				async let stories: Void = storiesProvider.store(for: environment)?.load() ?? ()
+				async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
 				_ = await (feed, stories)
 			}
 		}
 	}
 
+	/// The Display menu: which kind of card to show, and taking every suggested option. That acts on
+	/// the store's per-card path, so each card stays individually undoable.
+	@ViewBuilder private var displayMenu: some View {
+		let store = runtime.store
+		if !store.typeCounts.isEmpty {
+			Picker(
+				"Show",
+				selection: Binding(
+					get: { store.options.typeFilter }, set: { store.options.typeFilter = $0 })
+			) {
+				Text("Everything").tag(String?.none)
+				ForEach(store.typeCounts, id: \.type) { item in
+					Text("\(item.type.capitalized)s \(item.count)").tag(String?.some(item.type))
+				}
+			}
+		}
+		Button("Take every suggested", systemImage: "checkmark.circle") { store.takeSuggestedOptions() }
+			.disabled(store.suggestedOptionCount == 0)
+	}
 }
 
 /// Builds the story store for the current workspace and keeps it until the workspace changes.
@@ -80,7 +113,6 @@ struct ForYouFeedView: View {
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
-	@State private var showFilters = false
 	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
@@ -97,7 +129,6 @@ struct ForYouFeedView: View {
 				.listRowBackground(Color.clear)
 				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
 			}
-			if showFilters && !store.typeCounts.isEmpty { filterPills }
 			headerRows(entries: entries)
 			feedRows(entries: entries)
 		}
@@ -113,13 +144,10 @@ struct ForYouFeedView: View {
 			default: break
 			}
 		}
-		.toolbar {
-			if !store.typeCounts.isEmpty { ToolbarItem(placement: .primaryAction) { filterToggle } }
-		}
 		.sheet(item: presentedBinding) { presented in
 			if let chief, let environment {
 				ChiefOfStaffSheet(environment: environment, desk: chief, presented: presented)
-					.presentationDetents([.large])
+					.presentationDetents([.medium, .large])
 					.presentationDragIndicator(.visible)
 			}
 		}
@@ -168,48 +196,6 @@ struct ForYouFeedView: View {
 		let queued = outbox.pendingCount
 		guard queued > 0 else { return "You're offline. Changes will send when you reconnect." }
 		return "You're offline. \(queued) \(queued == 1 ? "change" : "changes") will send when you reconnect."
-	}
-
-	/// Shows or hides the filter pills. Filled while a filter is narrowing the feed.
-	private var filterToggle: some View {
-		Button {
-			withAnimation(MaskinMotion.standard) { showFilters.toggle() }
-		} label: {
-			Label(
-				showFilters ? "Hide filters" : "Show filters",
-				systemImage: store.options.typeFilter != nil
-					? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
-		}
-		.accessibilityLabel(showFilters ? "Hide filters" : "Show filters")
-	}
-
-	/// One pill per kind of object in the queue, plus Everything. The selected one is on a fill.
-	private var filterPills: some View {
-		let selected = store.options.typeFilter
-		let items: [(type: String?, title: String)] =
-			[(nil, "Everything")]
-			+ store.typeCounts.map { ($0.type, "\($0.type.capitalized)s \($0.count)") }
-		return ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s2) {
-				ForEach(items, id: \.title) { item in
-					let isSelected = item.type == selected
-					Button { store.options.typeFilter = item.type } label: {
-						Text(item.title)
-							.maskinText(.subhead)
-							.fontWeight(isSelected ? .semibold : .regular)
-							.foregroundStyle(isSelected ? MaskinColor.ink : MaskinColor.ink4)
-							.padding(.horizontal, MaskinSpace.s6)
-							.frame(minHeight: MaskinSpace.s14)
-							.background(isSelected ? MaskinSurface.fill : Color.clear, in: Capsule())
-							.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: isSelected ? 0 : 1))
-							.contentShape(Capsule())
-					}
-					.buttonStyle(.plain)
-					.accessibilityAddTraits(isSelected ? .isSelected : [])
-				}
-			}
-		}
-		.modifier(ReadableRow(width: readableWidth))
 	}
 
 	// MARK: Rows
@@ -411,7 +397,7 @@ private struct FailureRow: View {
 	}
 }
 
-private extension View {
+extension View {
 	/// Stories open full screen on iPhone/iPad; elsewhere a sheet.
 	@ViewBuilder
 	func storyCover<Item: Identifiable, Content: View>(

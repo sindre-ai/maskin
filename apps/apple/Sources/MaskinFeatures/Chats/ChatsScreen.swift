@@ -77,7 +77,9 @@ private struct ChatsContainer: View {
 				onNewChat: { showNewChat = true }
 			)
 			.shellToolbar(
-				environment: environment, title: store.scope == .archived ? "Archived" : "Chats")
+				environment: environment, title: store.scope == .archived ? "Archived" : "Chats",
+				actions: ShellActions(
+					new: { showNewChat = true }, display: ShellDisplayMenu { ChatsDisplayMenu(store: store) }))
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {

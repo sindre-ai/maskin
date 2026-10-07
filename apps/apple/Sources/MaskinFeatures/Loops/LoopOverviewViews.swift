@@ -53,6 +53,31 @@ struct OutcomesSection: View {
 	}
 }
 
+/// The loop's own briefing cards: the same story cards For you shows, limited to the pages this
+/// loop produced. Nothing shows until there is one.
+struct LoopBriefingsSection: View {
+	let loopID: String
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@State private var openStory: StoryCard?
+
+	var body: some View {
+		if let runtime, let stories = runtime.storiesStore(), !stories.cards(forLoop: loopID).isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				SectionHeader("Briefings")
+				StoryRow(stories: stories, loopID: loopID) { card in
+					stories.markSeen(card)
+					openStory = card
+				}
+			}
+			.storyCover(item: $openStory) { card in
+				if case .page(let output) = card.content {
+					OutcomePresenter(environment: runtime.environment, output: output, sourceName: card.unit)
+				}
+			}
+		}
+	}
+}
+
 /// What the agents said on the loop's timeline, newest first, in one grouped card.
 struct LoopPostsSection: View {
 	let posts: [LoopPost]
@@ -329,26 +354,34 @@ struct LoopActionsSection: View {
 		}
 	}
 
+	/// Scheduled steps in the order they fire, with when; event-driven steps after, with what wakes them.
 	private var comingUp: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+		let items = LoopComingUp.items(steps: store.steps, now: Date(), paused: store.loop.isPaused)
+		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			SectionHeader("Coming up")
-			if store.steps.isEmpty {
+			if items.isEmpty {
 				Text("This loop runs on its triggers.")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 					.loopNote()
 			} else {
 				VStack(spacing: 0) {
-					ForEach(Array(store.steps.enumerated()), id: \.element.id) { index, step in
+					ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
 						HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s6) {
-							Text(step.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+								Text(item.step.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+								Text(item.step.firesSummary)
+									.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+							}
 							Spacer(minLength: MaskinSpace.s3)
-							Text(step.firesSummary)
-								.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-								.multilineTextAlignment(.trailing)
+							if let next = item.next {
+								Text(next.formatted(date: .abbreviated, time: .shortened))
+									.maskinText(.caption).foregroundStyle(MaskinColor.ink3)
+									.multilineTextAlignment(.trailing)
+							}
 						}
 						.padding(.vertical, MaskinSpace.s5)
 						.accessibilityElement(children: .combine)
-						if index < store.steps.count - 1 { Divider().overlay(MaskinSurface.separator) }
+						if index < items.count - 1 { Divider().overlay(MaskinSurface.separator) }
 					}
 				}
 				.padding(.horizontal, MaskinSpace.s8)

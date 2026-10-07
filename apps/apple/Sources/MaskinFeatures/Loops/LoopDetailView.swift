@@ -64,6 +64,10 @@ struct LoopDetailView: View {
 			Text("Its agents and triggers stay. This can't be undone.")
 		}
 		.task { await store.start() }
+		// The loop's briefing cards come from the store For you shares; load it if nothing has yet.
+		.task {
+			if let stories = runtime?.storiesStore(), !stories.hasLoaded { await stories.load() }
+		}
 		.onDisappear { store.stop() }
 	}
 
@@ -113,6 +117,7 @@ struct LoopDetailContent: View {
 				.pickerStyle(.segmented)
 				switch tab {
 				case .outcomes:
+					LoopBriefingsSection(loopID: store.loop.id)
 					OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName)
 					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this loop makes land here.") }
 				case .actions:

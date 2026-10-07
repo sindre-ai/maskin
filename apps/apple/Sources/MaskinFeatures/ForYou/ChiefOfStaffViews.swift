@@ -87,7 +87,7 @@ struct ChiefOfStaffSheet: View {
 		}
 		.task { sendPending(built) }
 		.sheet(isPresented: $showParticipants) {
-			ParticipantsSheet(chat: built.chat, conversations: desk.conversations)
+			PeopleSheet(chat: built.chat, conversations: desk.conversations)
 				.presentationDetents([.medium, .large])
 		}
 	}

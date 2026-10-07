@@ -14,6 +14,9 @@ struct ChatThreadView: View {
 
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(\.horizontalSizeClass) private var sizeClass
+	@Environment(\.liveMeeting) private var liveMeeting
+	/// Present in the app; absent in previews and snapshots, where `@` falls back to the thread's people.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var isAtBottom = true
 	/// Messages that arrived while the reader was scrolled up; the jump pill says how many.
 	@State private var unseenCount = 0
@@ -60,9 +63,17 @@ struct ChatThreadView: View {
 			#endif
 			.toolbar {
 				ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
-				// One trailing button with a flat menu: a second toolbar item makes iOS fold both into
-				// a "More" overflow.
-				ToolbarItem(placement: .primaryAction) {
+				// Live (when an agent is in the chat) and a flat menu, in one group so iOS keeps both in
+				// the bar instead of folding them into a "More" overflow.
+				ToolbarItemGroup(placement: .primaryAction) {
+					if let lead = liveLead {
+						Button {
+							liveMeeting.present(.thread(chat: store, lead: lead))
+						} label: {
+							Label("Live", systemImage: "waveform")
+						}
+						.shellLiveButton()
+					}
 					Menu {
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
@@ -100,6 +111,7 @@ struct ChatThreadView: View {
 					}
 				}
 			}
+			.task { await runtime?.mentionRoster()?.load() }
 			.task {
 				store.isActive = scenePhase == .active
 				await store.start()
@@ -337,6 +349,9 @@ struct ChatThreadView: View {
 		for message in fresh { SpeechReader.shared.enqueue(markdown: message.content, id: message.id) }
 	}
 
+	/// Who a live call from this thread is with: its first agent. Nil (no Live button) without one.
+	private var liveLead: ChatParticipant? { store.participants.first { $0.kind == .agent } }
+
 	private var composerField: some View {
 		ChatComposer(
 			model: composer, placeholder: "Message \(store.title)",
@@ -347,7 +362,8 @@ struct ChatThreadView: View {
 			},
 			inConversation: Set(store.participants.map(\.id)), onSend: send,
 			agentName: store.participants.first { $0.kind == .agent }?.name ?? "Agent",
-			replies: Array(store.messages.suffix(12))
+			replies: Array(store.messages.suffix(12)),
+			roster: runtime?.mentionRoster()?.roster
 		)
 	}
 
@@ -524,6 +540,9 @@ struct ThreadTranscript: View {
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
+				mentions: message.mentionIDs.compactMap { id in
+					store.displayName(for: id).map { (id: id, name: $0) }
+				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
 				onRetrySend: { store.retrySend(message.id) },
 				onDiscard: { store.discard(message.id) },
