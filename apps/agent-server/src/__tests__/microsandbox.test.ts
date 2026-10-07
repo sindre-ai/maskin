@@ -582,6 +582,29 @@ describe('spawnSession (orchestration)', () => {
 		}
 	})
 
+	it('redacts AGENT_SECRET_ env values from the msb create failure message', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-create-redact-'))
+		try {
+			// execFile puts the whole command line, env args included, in err.message.
+			const createErr = Object.assign(
+				new Error('Command failed: msb create -e AGENT_SECRET_X=fake-secret-value-for-test img'),
+				{ stderr: '' },
+			)
+			const { run } = makeRunner({
+				create: { throwError: createErr },
+				remove: { stdout: '' },
+			})
+			const thrown = await spawnSession(
+				{ ...baseInput, sessionId: 'orch-4', sessionDir: dir },
+				{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			).catch((e: Error) => e)
+			expect((thrown as Error).message).toMatch(/msb create failed/)
+			expect((thrown as Error).message).not.toContain('fake-secret-value-for-test')
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
 	it('throws and best-effort removes the sandbox when msb create fails', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-create-fail-'))
 		try {

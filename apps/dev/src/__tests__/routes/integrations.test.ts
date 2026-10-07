@@ -248,6 +248,60 @@ describe('Integrations Routes', () => {
 			}
 		})
 
+		// "Install on another organization": the authorize URL only lists orgs that
+		// already have the App, so this mode must return the App's install page
+		// instead — with a signed state, and the binding cookie, like a normal connect.
+		it('returns the App install URL with a signed state when github is asked to install on another org', async () => {
+			const previousSlug = process.env.GITHUB_APP_SLUG
+			process.env.GITHUB_APP_SLUG = 'sindre-maskin'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/github/connect',
+						{ install_new_org: true },
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				const url = new URL(body.install_url)
+				expect(`${url.origin}${url.pathname}`).toBe(
+					'https://github.com/apps/sindre-maskin/installations/new',
+				)
+				const state = url.searchParams.get('state')
+				expect(state).toBeTruthy()
+				expect(res.headers.get('set-cookie')).toContain('oauth_nonce')
+			} finally {
+				process.env.GITHUB_APP_SLUG = previousSlug
+			}
+		})
+
+		it('ignores install_new_org for providers other than github', async () => {
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: (_state: string) => 'https://custom.example/authorize',
+				},
+			} as unknown as ReturnType<typeof getProvider>)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/custom-provider/connect',
+					{ install_new_org: true },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).install_url).toBe('https://custom.example/authorize')
+		})
+
 		it('returns 500 when the GitHub App OAuth client id is not configured', async () => {
 			const previousClientId = process.env.GITHUB_CLIENT_ID
 			process.env.GITHUB_CLIENT_ID = undefined
@@ -385,6 +439,50 @@ describe('Integrations Routes', () => {
 			expect(body.error.message).toContain('misconfiguration')
 			// The operator-facing detail must not leak to the caller.
 			expect(body.error.message).not.toContain('INTEGRATION_ENCRYPTION_KEY')
+		})
+
+		it('stores expose_to_agent_sessions on the row when a manual provider (resend) connects with it', async () => {
+			const systemActor = { id: 'resend-system-actor-id', type: 'system', name: 'Resend' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[systemActor], // system actor lookup
+				[{ id: 'member-id' }], // existing workspace member
+			]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/resend/connect',
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const integrationInsert = calls.inserts[0] as { provider: string; config: unknown }
+			expect(integrationInsert.provider).toBe('resend')
+			expect(integrationInsert.config).toEqual({
+				system_actor_id: systemActor.id,
+				expose_to_agent_sessions: false,
+			})
+		})
+
+		it('leaves expose_to_agent_sessions absent on a manual connect that does not send it', async () => {
+			const systemActor = { id: 'resend-system-actor-id', type: 'system', name: 'Resend' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[systemActor], [{ id: 'member-id' }]]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/resend/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const integrationInsert = calls.inserts[0] as { config: unknown }
+			expect(integrationInsert.config).toEqual({ system_actor_id: systemActor.id })
 		})
 
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
@@ -1248,6 +1346,79 @@ describe('Integrations Routes', () => {
 				jsonDelete(`/api/integrations/${integration.id}`, {
 					'x-workspace-id': wsId,
 				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('PATCH /api/integrations/:id', () => {
+		it('merges expose_to_agent_sessions into the stored config and strips credentials', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'resend',
+				config: { system_actor_id: 'sys-actor', resend: { receive_subdomain: 'inbound' } },
+			})
+			const updated = {
+				...integration,
+				config: { ...integration.config, expose_to_agent_sessions: false },
+			}
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/integrations/${integration.id}`,
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).not.toHaveProperty('credentials')
+			expect(body.config.expose_to_agent_sessions).toBe(false)
+
+			const setCall = calls.updates[0] as { config: Record<string, unknown> }
+			expect(setCall.config).toEqual({
+				system_actor_id: 'sys-actor',
+				resend: { receive_subdomain: 'inbound' },
+				expose_to_agent_sessions: false,
+			})
+			const eventInsert = calls.inserts[0] as Record<string, unknown>
+			expect(eventInsert.entityType).toBe('integration')
+			expect(eventInsert.action).toBe('updated')
+			expect(eventInsert.data).toEqual({ expose_to_agent_sessions: false })
+		})
+
+		it('returns 400 when expose_to_agent_sessions is not a boolean', async () => {
+			const integration = buildIntegration({ workspaceId: wsId })
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/integrations/${integration.id}`,
+					{ expose_to_agent_sessions: 'no' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when the integration is not in the caller workspace', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/integrations/00000000-0000-0000-0000-000000000099',
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
 			)
 
 			expect(res.status).toBe(404)

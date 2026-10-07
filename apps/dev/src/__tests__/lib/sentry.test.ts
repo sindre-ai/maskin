@@ -62,7 +62,10 @@ describe('lib/sentry (apps/dev) init gating', () => {
 			expect.objectContaining({
 				dsn: 'https://example.invalid/1',
 				sendDefaultPii: false,
-				enableLogs: true,
+				enableLogs: false,
+				beforeSendLog: expect.any(Function),
+				beforeSend: expect.any(Function),
+				beforeBreadcrumb: expect.any(Function),
 			}),
 		)
 	})

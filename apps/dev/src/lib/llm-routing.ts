@@ -10,6 +10,7 @@ import {
 	isTransientCredentialError,
 	resolveClaudeCredentialsWithFailover,
 } from './claude-failover'
+import { isClaudePlatformRefreshEnabled, readClaudeLaunchBufferMs } from './claude-oauth'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterprise } from './enterprise'
 import { logger } from './logger'
@@ -68,6 +69,12 @@ export interface LlmRoutingResult {
 	envVars: Record<string, string>
 	oauthSlot?: OAuthSlotKind
 	/**
+	 * Access-token expiry (epoch ms) the container launched with. Set only when the
+	 * refresh token was withheld from it, so the settle path can tell a session
+	 * that outlived its token from a genuinely rejected credential.
+	 */
+	oauthExpiresAt?: number
+	/**
 	 * OpenRouter model id that will actually run this session. Populated on
 	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
 	 * stamp `sessions.model_name` at spawn; the follow-on local cost resolver
@@ -83,6 +90,11 @@ export interface FallbackConfig {
 	baseUrl?: string
 	model?: string
 	smallModel?: string
+	/**
+	 * Ask OpenRouter to route in-process chat calls to zero-data-retention
+	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
+	 */
+	zdr: boolean
 }
 
 export interface AgentLlmConfig {
@@ -105,6 +117,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
 			'deepseek/deepseek-v4.1-flash',
+		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
 	}
 }
 
@@ -536,12 +549,18 @@ export async function resolveLlmRoute(params: {
 		try {
 			/** Set by the resolver when a configured slot yields nothing usable. */
 			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
+			// On (only when the env is the literal "true"): the platform refreshes at
+			// launch with a session-sized buffer and the container never sees the
+			// refresh token. Off (default): today's behaviour exactly (10 minute
+			// buffer, refresh token in the env).
+			const platformRefresh = isClaudePlatformRefreshEnabled(params.env)
 			const oauthResult = await resolveClaudeCredentialsWithFailover({
 				db,
 				workspaceId,
 				actorId,
 				probe: claudeProbe,
 				env: params.env,
+				bufferMs: platformRefresh ? { launchMs: readClaudeLaunchBufferMs(params.env) } : undefined,
 				onUnusable: (info) => {
 					unusableRef.current = info
 				},
@@ -549,7 +568,9 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult) {
 				const envVars: Record<string, string> = {
 					CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
-					CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken,
+					...(platformRefresh
+						? {}
+						: { CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken }),
 					CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
 				}
 				if (oauthResult.tokens.scopes) {
@@ -560,7 +581,12 @@ export async function resolveLlmRoute(params: {
 				}
 				envVars.ANTHROPIC_MODEL = CLAUDE_SUBSCRIPTION_MODEL
 				envVars.MASKIN_CLAUDE_EFFORT = CLAUDE_SUBSCRIPTION_EFFORT
-				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
+				return {
+					route: LLM_ROUTE_OAUTH,
+					envVars,
+					oauthSlot: oauthResult.slot,
+					...(platformRefresh ? { oauthExpiresAt: oauthResult.tokens.expiresAt } : {}),
+				}
 			}
 
 			// `resolveClaudeCredentialsWithFailover` reports an unusable
@@ -829,6 +855,13 @@ export interface ChatCredentials {
 	apiKey: string
 	baseUrl?: string
 	model: string
+	/**
+	 * OpenRouter provider preferences, sent as the request body's "provider"
+	 * object. Set only on the Maskin-funded fallback route: a customer's own
+	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
+	 * can reject unknown body fields with a 400.
+	 */
+	providerPrefs?: { zdr: true }
 }
 
 /**
@@ -926,5 +959,6 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
+		...(fallback.zdr && { providerPrefs: { zdr: true as const } }),
 	}
 }
