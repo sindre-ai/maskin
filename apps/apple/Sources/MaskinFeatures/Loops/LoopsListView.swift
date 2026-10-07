@@ -29,7 +29,7 @@ struct LoopsListView: View {
 			}
 			if search.isEmpty, let summary = store.summaryLine {
 				Text(summary)
-					.maskinText(.subhead)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
 					.foregroundStyle(MaskinColor.ink4)
 					.listRowSeparator(.hidden)
 					.listRowBackground(Color.clear)
@@ -46,7 +46,8 @@ struct LoopsListView: View {
 			ForEach(loops) { loop in
 				LoopCard(
 					loop: loop, agentCount: loop.agentIDs.count, needsYou: store.needsYou(loop),
-					hasUpdate: store.installs[loop.id]?.hasUpdate == true
+					hasUpdate: store.installs[loop.id]?.hasUpdate == true,
+					update: store.latestUpdate(for: loop)
 				)
 				.tag(loop.id)
 				.zoomSource(id: loop.id, in: zoomNamespace)
@@ -63,7 +64,7 @@ struct LoopsListView: View {
 						} label: {
 							Label(loop.isPaused ? "Resume" : "Pause", systemImage: loop.isPaused ? "play.fill" : "pause.fill")
 						}
-						.tint(loop.isPaused ? MaskinColor.success : MaskinColor.ink4)
+						.tint(MaskinColor.ink3)
 					}
 				}
 			}

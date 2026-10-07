@@ -26,7 +26,7 @@ struct LoopsStoreTests {
 				loopRow("a"), loopRow("b", status: .supervised, waiting: 1), loopRow("c", status: .paused),
 			]), events: nil)
 		await store.start()
-		#expect(store.summaryLine == "2 outcomes in motion. 1 needs you.")
+		#expect(store.summaryLine == "Two outcomes in motion. One needs you.")
 	}
 
 	@Test("search filters by name")
@@ -247,5 +247,72 @@ struct LoopDetailStoreTests {
 			triggerID: "t", name: "x", triggerKind: .cron,
 			triggerConfig: .object(["expression": .string("0 17 * * 0")]))
 		#expect(step.firesSummary == "Runs every Sunday at 5:00 PM UTC")
+	}
+}
+
+@Suite("Loops store latest updates")
+@MainActor
+struct LoopsLatestUpdateTests {
+	private func post(_ text: String, by actor: String? = "agent-1") -> LoopPost {
+		LoopPost(id: 1, actorID: actor, text: text, date: Date())
+	}
+
+	@Test("the newest post of a running flow becomes its card line, with the author resolved")
+	func loadsLine() async {
+		let api = FakeLoopsAPI([loopRow("a")])
+		await api.setPost(post("Scored the week's leads."), for: "a")
+		let store = LoopsStore(api: api, events: nil)
+		await store.start()
+		await store.loadLatestUpdates()
+		let line = store.latestUpdate(for: store.loops[0])
+		#expect(line?.text == "Scored the week's leads.")
+		#expect(line?.author != nil)
+	}
+
+	@Test("only the ten most recently touched non-draft flows are read")
+	func bounded() async {
+		var rows: [LoopSummary] = []
+		for i in 0..<14 {
+			var row = loopRow("l\(i)")
+			row.updatedAt = Date(timeIntervalSince1970: Double(1000 + i))
+			rows.append(row)
+		}
+		rows.append(loopRow("draft", status: .draft))
+		let api = FakeLoopsAPI(rows)
+		let store = LoopsStore(api: api, events: nil)
+		await store.start()
+		await store.loadLatestUpdates()
+		let called = await api.postCalls
+		#expect(Set(called).count == LoopsStore.latestUpdateBound)
+		#expect(!called.contains("draft"))
+		#expect(!called.contains("l0"))
+		#expect(called.contains("l13"))
+	}
+
+	@Test("a flow is not read again until it changes, and a failed read is retried")
+	func cachedUntilChanged() async {
+		var row = loopRow("a")
+		row.updatedAt = Date(timeIntervalSince1970: 1000)
+		let api = FakeLoopsAPI([row])
+		await api.setPost(post("First."), for: "a")
+		let store = LoopsStore(api: api, events: nil)
+		await store.start()
+		await store.loadLatestUpdates()
+		await store.loadLatestUpdates()
+		#expect(await api.postCalls.filter { $0 == "a" }.count == 1)
+
+		row.updatedAt = Date(timeIntervalSince1970: 2000)
+		await api.set([row])
+		await api.setPost(post("Second."), for: "a")
+		await store.refresh()
+		await store.loadLatestUpdates()
+		#expect(store.latestUpdate(for: store.loops[0])?.text == "Second.")
+
+		row.updatedAt = Date(timeIntervalSince1970: 3000)
+		await api.set([row])
+		await api.setFailPosts(["a"])
+		await store.refresh()
+		await store.loadLatestUpdates()
+		#expect(store.latestUpdate(for: store.loops[0])?.text == "Second.")
 	}
 }

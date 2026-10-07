@@ -17,6 +17,8 @@ public final class LoopsStore {
 	/// Loop object id → install info (only loops installed from the marketplace).
 	public private(set) var installs: [String: LoopInstall] = [:]
 	public var notice: String?
+	/// Loop id → its newest post, for the card's latest update (only the bounded set is loaded).
+	public private(set) var latestPosts: [String: LoopPost] = [:]
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
 	public private(set) var freshness = Freshness()
 
@@ -27,6 +29,8 @@ public final class LoopsStore {
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var inFlight: [String: LoopPill] = [:]
+	@ObservationIgnored private var updatesSeenAt: [String: Date] = [:]
+	@ObservationIgnored private var updatesTask: Task<Void, Never>?
 
 	@ObservationIgnored private let debouncer: RefreshDebouncer
 	@ObservationIgnored private var intents = IntentKeys()
@@ -93,16 +97,64 @@ public final class LoopsStore {
 	/// Running loops that need the viewer (a paused loop is not in motion, so it is not counted).
 	public var needYouCount: Int { loops.filter { $0.status.isLive && needsYou($0) }.count }
 
-	/// "3 outcomes in motion. 2 need you." Nil when no loop is running.
+	/// "Three outcomes in motion. Two need you." Nil when no loop is running.
 	public var summaryLine: String? {
-		let running = loops.filter { $0.status.isLive }
-		guard !running.isEmpty else { return nil }
-		let moving = "\(running.count) \(running.count == 1 ? "outcome" : "outcomes") in motion."
-		let needs = needYouCount
-		guard needs > 0 else { return moving }
-		return moving + " \(needs) \(needs == 1 ? "needs" : "need") you."
+		FlowsSummary.line(running: loops.filter { $0.status.isLive }.count, needYou: needYouCount)
 	}
 
+	/// How many cards get a latest update: the most recently touched flows that are not drafts.
+	public static let latestUpdateBound = 10
+
+	/// The card's latest-update sentence for a loop, once its newest post has loaded.
+	public func latestUpdate(for loop: LoopSummary) -> LoopLatestUpdate.Line? {
+		guard let post = latestPosts[loop.id] else { return nil }
+		return LoopLatestUpdate.line(post: post, author: directory.name(post.actorID))
+	}
+
+	/// Loads the newest post for the visible cards: at most `latestUpdateBound` flows, one graph
+	/// read each, and a flow is only read again after its `updatedAt` moved.
+	public func loadLatestUpdates() async {
+		// One pass at a time; a caller that arrives mid-pass waits, then checks what is still stale.
+		while let running = updatesTask { await running.value }
+		// The pass clears its own slot before it finishes, so a waiter never sees a finished task.
+		let task = Task {
+			await fetchLatestUpdates()
+			updatesTask = nil
+		}
+		updatesTask = task
+		await task.value
+	}
+
+	private func fetchLatestUpdates() async {
+		let wanted = loops
+			.filter { $0.status != .draft }
+			.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+			.prefix(Self.latestUpdateBound)
+		let stale = wanted.filter { loop in
+			guard let seen = updatesSeenAt[loop.id] else { return true }
+			return seen != (loop.updatedAt ?? .distantPast)
+		}
+		guard !stale.isEmpty else { return }
+		let api = api
+		let results = await withTaskGroup(of: (LoopSummary, LoopPost??).self) { group in
+			for loop in stale {
+				group.addTask {
+					do { return (loop, .some(try await api.latestPost(loopID: loop.id))) } catch {
+						return (loop, nil)
+					}
+				}
+			}
+			var all: [(LoopSummary, LoopPost??)] = []
+			for await result in group { all.append(result) }
+			return all
+		}
+		for (loop, outcome) in results {
+			// A failed read leaves the flow stale so the next refresh tries again.
+			guard let post = outcome else { continue }
+			updatesSeenAt[loop.id] = loop.updatedAt ?? .distantPast
+			latestPosts[loop.id] = post
+		}
+	}
 
 	// MARK: Loading
 
@@ -168,6 +220,7 @@ public final class LoopsStore {
 				freshness.refreshed(at: cache?.now() ?? Date())
 				SyncLog.revalidated(Self.cacheName, ok: true, since: started)
 				persist()
+				Task { await loadLatestUpdates() }
 			} catch {
 				freshness.revalidateFailed()
 				SyncLog.revalidated(Self.cacheName, ok: false, since: started)

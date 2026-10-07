@@ -75,14 +75,14 @@ struct LoopDetailView: View {
 
 /// The loop page's three tabs.
 enum LoopDetailTab: String, CaseIterable, Identifiable {
-	case outcomes = "Outcomes"
+	case outcome = "Outcome"
 	case actions = "Actions"
 	case activity = "Activity"
 	var id: String { rawValue }
 }
 
 /// The loop detail body without its scroll view (so it can be rendered offscreen in tests): a
-/// header, then Outcomes / Actions / Activity. "Under the hood" swaps the tabs for the loop's
+/// header, then Outcome / Actions / Activity. "Under the hood" swaps the tabs for the loop's
 /// plumbing (flow, conditions, stats, steps).
 struct LoopDetailContent: View {
 	let store: LoopDetailStore
@@ -93,7 +93,7 @@ struct LoopDetailContent: View {
 
 	init(
 		store: LoopDetailStore, install: LoopInstall? = nil, underTheHood: Bool = false,
-		initialTab: LoopDetailTab = .outcomes, onOpenTrigger: @escaping (String) -> Void = { _ in }
+		initialTab: LoopDetailTab = .outcome, onOpenTrigger: @escaping (String) -> Void = { _ in }
 	) {
 		self.store = store
 		self.install = install
@@ -103,25 +103,26 @@ struct LoopDetailContent: View {
 	}
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s10) {
 			header
+			if let problem = FlowProblems.derive(loop: store.loop, activity: store.activity, now: Date()) {
+				LoopProblemBanner(problem: problem, loop: store.loop, directory: store.directory)
+			}
 			if underTheHood {
-				conditions
-				LoopFlowSection(store: store, onOpenTrigger: onOpenTrigger)
-				stats
-				pipeline
+				LoopHoodSection(store: store, onOpenTrigger: onOpenTrigger)
 			} else {
 				Picker("Show", selection: $tab) {
 					ForEach(LoopDetailTab.allCases) { Text($0.rawValue).tag($0) }
 				}
 				.pickerStyle(.segmented)
 				switch tab {
-				case .outcomes:
+				case .outcome:
 					LoopTargetsSection(
 						cards: LoopOutcomes.cards(for: store.loop), directory: store.directory)
 					LoopBriefingsSection(loopID: store.loop.id)
 					LoopQualitySection(loop: store.loop, steps: store.steps)
-					OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName)
+					OutcomesSection(
+						outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
 					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this flow makes land here.") }
 				case .actions:
 					LoopActionsSection(store: store)
@@ -143,25 +144,20 @@ struct LoopDetailContent: View {
 
 	private var header: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			HStack(alignment: .top, spacing: MaskinSpace.s8) {
+			HStack(alignment: .top, spacing: MaskinSpace.s9) {
 				LoopProgressRing(
-					loop: store.loop, size: MaskinSpace.s14 * 2 + MaskinSpace.s4, lineWidth: MaskinSpace.s3)
+					loop: store.loop, size: MaskinSpace.s14 * 2 + MaskinSpace.s4 + MaskinSpace.s1,
+					lineWidth: MaskinSpace.s3,
+					valueFont: MaskinTypeface.mono(MaskinFontSize.t15, weight: .semibold))
 				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					Text(store.loop.displayName).maskinText(.title).foregroundStyle(MaskinColor.ink)
+					Text(store.loop.displayName)
+						.maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
+						.fixedSize(horizontal: false, vertical: true)
 					Text("\(store.loop.cycleLabel) · \(store.loop.pill.label)")
-						.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-					HStack(spacing: MaskinSpace.s4) {
-						LoopPillView(pill: store.loop.pill)
-						RelativeTime(store.loop.updatedAt)
-							.maskinText(.caption)
-							.foregroundStyle(MaskinColor.ink5)
-					}
-					.padding(.top, MaskinSpace.s2)
+						.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+						.foregroundStyle(MaskinColor.ink5)
+					stateLine.padding(.top, MaskinSpace.s3)
 				}
-			}
-			Text(store.verdict).maskinText(.body).foregroundStyle(MaskinColor.ink2)
-			if let content = store.loop.content, !content.isEmpty {
-				Text(content).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			}
 			if let notice = store.notice {
 				FormError(notice).onTapGesture { store.notice = nil }
@@ -173,82 +169,26 @@ struct LoopDetailContent: View {
 						: "Update to v\(install.availableVersion) available. Open the marketplace to review it."
 				)
 				.maskinText(.subhead)
-				.foregroundStyle(MaskinColor.warningStrong)
+				.foregroundStyle(MaskinColor.noticeFg2)
 				.padding(MaskinSpace.s8)
 				.frame(maxWidth: .infinity, alignment: .leading)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+				.background(
+					MaskinColor.noticeBg, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 			}
 		}
 	}
 
-	@ViewBuilder
-	private var conditions: some View {
-		let rows = [("Starts when", store.loop.entryCondition), ("Done when", store.loop.closeCondition)]
-			.compactMap { label, value in value.flatMap { $0.isEmpty ? nil : (label, $0) } }
-		if !rows.isEmpty {
-			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-				ForEach(rows, id: \.0) { label, value in
-					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-						MonoLabel(label)
-						Text(value).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-					}
-				}
-			}
-			.padding(MaskinSpace.s8)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+	/// One line of how the flow is doing: a Patina dot while it runs, grey while it is stopped.
+	private var stateLine: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			Circle()
+				.fill(store.loop.pill.isLive ? MaskinColor.sig : MaskinColor.ink5)
+				.frame(width: MaskinSpace.s3 + MaskinSpace.s1, height: MaskinSpace.s3 + MaskinSpace.s1)
+			Text(store.verdict)
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.semibold, relativeTo: .subheadline))
+				.foregroundStyle(store.loop.pill.isLive ? MaskinColor.sigInk : MaskinColor.ink4)
 		}
-	}
-
-	private var stats: some View {
-		let tiles: [(String, String)] = [
-			("In progress", "\(store.loop.inProgressCount)"),
-			("Closed", "\(store.loop.closedCount)"),
-			("Needs you", "\(store.loop.waitingCount)"),
-			("Median time", store.loop.medianTimeToClose.map(LoopDurationText.string) ?? "—"),
-		]
-		return LazyVGrid(
-			columns: [GridItem(.adaptive(minimum: 150), spacing: MaskinSpace.s5)], spacing: MaskinSpace.s5
-		) {
-			ForEach(tiles, id: \.0) { label, value in
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					MonoLabel(label)
-					Text(value).maskinText(.title).foregroundStyle(MaskinColor.ink)
-				}
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.padding(MaskinSpace.s8)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
-				.accessibilityElement(children: .combine)
-			}
-		}
-	}
-
-	private var pipeline: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			SectionHeader("Steps") {
-				Text("\(store.steps.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-			}
-			switch store.phase {
-			case .idle where store.steps.isEmpty, .loading where store.steps.isEmpty:
-				LoadingSkeleton(rows: 3)
-			case .failed(let message) where store.steps.isEmpty:
-				EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load steps", message: message) {
-					Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
-				}
-			default:
-				if store.steps.isEmpty {
-					Text("This flow has no steps yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-				} else {
-					VStack(spacing: 0) {
-						ForEach(Array(store.steps.enumerated()), id: \.element.id) { index, step in
-							LoopStepRow(
-								number: index + 1, step: step, isLast: index == store.steps.count - 1,
-								onOpen: { onOpenTrigger(step.triggerID) })
-						}
-					}
-				}
-			}
-		}
+		.accessibilityElement(children: .combine)
 	}
 
 	/// Latest first, so the newest run is on screen without scrolling. Undated entries go last.
@@ -261,7 +201,7 @@ struct LoopDetailContent: View {
 
 	private var activity: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			SectionHeader("Recent activity")
+			FlowSectionHeader("Recent activity")
 			if store.activity.isEmpty {
 				Text(store.phase == .loaded ? "Nothing has run yet." : "")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
@@ -276,7 +216,7 @@ struct LoopDetailContent: View {
 					}
 				}
 				.padding(.horizontal, MaskinSpace.s8)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			}
 		}
 	}
@@ -309,7 +249,7 @@ struct LoopStepRow: View {
 						Spacer(minLength: MaskinSpace.s3)
 						if step.pendingCount > 0 {
 							Text("\(step.pendingCount) waiting")
-								.maskinText(.caption).foregroundStyle(MaskinColor.warningStrong)
+								.maskinText(.caption).foregroundStyle(MaskinColor.sigInk)
 						}
 					}
 					label("Fires", step.firesSummary)
@@ -328,10 +268,10 @@ struct LoopStepRow: View {
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.padding(MaskinSpace.s8)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 				.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityHint("Opens this step's trigger")
 			.padding(.bottom, isLast ? 0 : MaskinSpace.s5)
 		}
@@ -370,7 +310,7 @@ struct LoopActivityRow: View {
 
 	private var color: Color {
 		switch entry.tone {
-		case .success: MaskinColor.success
+		case .success: MaskinColor.ink
 		case .failure: MaskinColor.danger
 		case .active: MaskinColor.sig
 		case .neutral: MaskinColor.ink5

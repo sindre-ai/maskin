@@ -57,6 +57,12 @@ public struct APILoopsSource: LoopsAPI {
 			statusOrder: order)
 	}
 
+	public func latestPost(loopID: String) async throws -> LoopPost? {
+		guard let objects else { return nil }
+		let graph = try await objects.graph(objectId: loopID)
+		return LoopOverviewBuilder.posts(from: graph.events).first
+	}
+
 	public func loops() async throws -> [LoopSummary] {
 		let output = try await client.get_sol_api_sol_loops(
 			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))

@@ -45,7 +45,11 @@ private struct LoopsContainer: View {
 		self.workspaceID = workspaceID
 		_loops = State(
 			initialValue: LoopsStore(
-				api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
+				api: APILoopsSource(
+					client: environment.client, workspaceID: workspaceID,
+					// The card's latest update reads each flow's graph through the objects remote.
+					objects: APIObjectsRemote(
+						client: environment.client, credentials: environment.auth.credentialsProvider)),
 				events: environment.events, cache: environment.snapshotCache))
 	}
 

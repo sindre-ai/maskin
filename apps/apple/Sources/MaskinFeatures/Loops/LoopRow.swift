@@ -36,7 +36,7 @@ struct LoopRow: View {
 					if loop.waitingCount > 0 {
 						Text("\(loop.waitingCount) \(loop.waitingCount == 1 ? "needs" : "need") you")
 							.maskinText(.subhead)
-							.foregroundStyle(MaskinColor.warningStrong)
+							.foregroundStyle(MaskinColor.sigInk)
 							.lineLimit(1)
 					} else {
 						Text(loop.statsLine)

@@ -18,6 +18,9 @@ actor FakeLoopsAPI: LoopsAPI {
 	var feed: [LoopActivityEntry] = []
 	var overviewRow: LoopOverview = .empty
 	var installRows: [LoopInstall] = []
+	var posts: [String: LoopPost] = [:]
+	var failPosts: Set<String> = []
+	private(set) var postCalls: [String] = []
 	var failStatus = false
 	var failLoops = false
 	var statusDelay: Duration?
@@ -37,6 +40,8 @@ actor FakeLoopsAPI: LoopsAPI {
 	func setOverview(_ value: LoopOverview) { overviewRow = value }
 	func setFeed(_ entries: [LoopActivityEntry]) { feed = entries }
 	func setInstalls(_ rows: [LoopInstall]) { installRows = rows }
+	func setPost(_ post: LoopPost?, for id: String) { posts[id] = post }
+	func setFailPosts(_ ids: Set<String>) { failPosts = ids }
 	func setFailStatus(_ value: Bool) { failStatus = value }
 	func setFailLoops(_ value: Bool) { failLoops = value }
 	func setStatusDelay(_ value: Duration?) { statusDelay = value }
@@ -49,6 +54,11 @@ actor FakeLoopsAPI: LoopsAPI {
 	func steps(loopID: String) async throws -> [LoopStep] { stepRows }
 	func activity(loopID: String) async throws -> [LoopActivityEntry] { feed }
 	func overview(loopID: String) async throws -> LoopOverview { overviewRow }
+	func latestPost(loopID: String) async throws -> LoopPost? {
+		postCalls.append(loopID)
+		if failPosts.contains(loopID) { throw AutomationError("offline") }
+		return posts[loopID]
+	}
 	func actors() async throws -> [AutomationActor] { testActors }
 	func installs() async throws -> [LoopInstall] { installRows }
 

@@ -7,9 +7,9 @@ private extension View {
 	func outcomeCard() -> some View {
 		frame(maxWidth: .infinity, alignment: .leading)
 			.background(
-				MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+				MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
 			)
-			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			.contentShape(Rectangle())
 	}
 }
@@ -48,19 +48,46 @@ struct OutcomeFeatureCard: View {
 
 struct OutcomeRow: View {
 	let output: LoopOutput
+	/// Inside a shared card: no surface of its own.
+	var grouped = false
+
+	/// "HTML", "PDF", or the file's own extension, for the chip.
+	private var ext: String {
+		let fileExt = (output.name as NSString).pathExtension
+		if !fileExt.isEmpty { return String(fileExt.prefix(4)).uppercased() }
+		return output.isHTML ? "HTML" : OutcomeLabels.kind(output.kind).uppercased()
+	}
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s6) {
-			Image(systemName: output.isHTML ? "rectangle.on.rectangle.angled" : "doc.richtext")
-				.font(.title3)
-				.foregroundStyle(output.isHTML ? MaskinColor.ink : MaskinColor.ink4)
-				.frame(width: MaskinSpace.s14)
+		HStack(spacing: MaskinSpace.s7) {
+			Text(ext)
+				.maskinText(.microLabel)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(width: MaskinSpace.s14 + MaskinSpace.s4, height: MaskinSpace.s13 + MaskinSpace.s1)
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
 				.accessibilityHidden(true)
 			OutcomeCaption(output: output)
 			Spacer(minLength: 0)
+			Image(systemName: "chevron.right")
+				.font(.footnote.weight(.semibold))
+				.foregroundStyle(MaskinColor.ink5)
+				.accessibilityHidden(true)
 		}
-		.padding(MaskinSpace.s8)
-		.outcomeCard()
+		.padding(.vertical, MaskinSpace.s7)
+		.padding(.horizontal, MaskinSpace.s8)
+		.modifier(RowSurface(grouped: grouped))
+	}
+}
+
+private struct RowSurface: ViewModifier {
+	let grouped: Bool
+
+	func body(content: Content) -> some View {
+		if grouped {
+			content.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+		} else {
+			content.outcomeCard()
+		}
 	}
 }
 
@@ -69,7 +96,9 @@ private struct OutcomeCaption: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-			Text(output.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(2)
+			Text(output.name)
+				.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: MaskinFontWeight.w650, relativeTo: .headline))
+				.foregroundStyle(MaskinColor.ink).lineLimit(2)
 			HStack(spacing: MaskinSpace.s3) {
 				Text(output.sourceTitle ?? OutcomeLabels.kind(output.kind)).lineLimit(1)
 				if output.updatedAt != nil {

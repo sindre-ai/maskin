@@ -49,16 +49,20 @@ private struct OutcomeBar: View {
 	}
 }
 
-/// TARGET on a loop's Outcomes tab: one card per target, hidden when the loop has none.
+/// TARGET on a flow's Outcome tab: one card per target, hidden when the flow has none. No due
+/// date or forecast line: the API carries neither.
 struct LoopTargetsSection: View {
 	let cards: [OutcomeCard]
 	let directory: ActorDirectory
 
 	var body: some View {
 		ForEach(cards) { card in
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 				HStack {
-					MonoLabel("Target")
+					Text("TARGET")
+						.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold))
+						.tracking(0.08 * MaskinFontSize.t11)
+						.foregroundStyle(MaskinColor.ink5)
 					Spacer(minLength: MaskinSpace.s4)
 					if let owner = directory.actor(card.target.ownerID) {
 						ActorAvatar(
@@ -66,23 +70,34 @@ struct LoopTargetsSection: View {
 							seed: owner.id)
 					}
 				}
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Text(number(card.target.actual)).maskinText(.title).foregroundStyle(MaskinColor.ink)
-					Text("/ \(number(card.target.target))")
-						.maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3 + MaskinSpace.s1) {
+					Text(number(card.target.actual))
+						.font(MaskinTypeface.sans(MaskinFontSize.t32, weight: MaskinFontWeight.w750, relativeTo: .largeTitle))
+						.tracking(-0.03 * MaskinFontSize.t32)
+						.foregroundStyle(MaskinColor.ink)
+					Text("of \(number(card.target.target))")
+						.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+						.foregroundStyle(MaskinColor.ink5)
 				}
-				Text(card.target.label).maskinText(.headline).foregroundStyle(MaskinColor.ink)
+				Text(card.target.label)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: MaskinFontWeight.w650, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.ink)
 				OutcomeBar(fraction: card.target.fraction, status: card.status)
+					.padding(.top, MaskinSpace.s4)
 				HStack(spacing: MaskinSpace.s3) {
 					Circle().fill(card.status.dot).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-					Text(card.status.label).maskinText(.caption).foregroundStyle(card.status.textColor)
+					Text(card.status.label)
+						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650, relativeTo: .footnote))
+						.foregroundStyle(card.status.textColor)
 				}
+				.padding(.top, MaskinSpace.s2)
 				.accessibilityElement(children: .combine)
 			}
-			.padding(MaskinSpace.s8)
+			.padding(.vertical, MaskinSpace.s9)
+			.padding(.horizontal, MaskinSpace.s10)
 			.frame(maxWidth: .infinity, alignment: .leading)
 			.background(
-				MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+				MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
 			)
 			.accessibilityElement(children: .combine)
 			.accessibilityLabel(
@@ -105,7 +120,7 @@ struct OutcomeScoreRow: View {
 				LazyHStack(spacing: MaskinSpace.s5) {
 					ForEach(cards) { card in
 						Button { onOpen(card.loopID) } label: { scoreCard(card) }
-							.buttonStyle(.plain)
+							.buttonStyle(.maskinPressed(.shrink))
 					}
 				}
 				.padding(.horizontal, MaskinSpace.s7)
@@ -144,31 +159,38 @@ struct OutcomeScoreRow: View {
 	}
 }
 
-/// QUALITY on a loop's Outcomes tab: the counts the API reports, plus when it next runs.
+/// QUALITY on a flow's Outcome tab: three small cards of what the API reports (closed, median
+/// time to close, when it next runs). The handoff's rework and edit-rate metrics are not computed.
 struct LoopQualitySection: View {
 	let loop: LoopSummary
 	let steps: [LoopStep]
 
 	var body: some View {
-		let stats = LoopQuality.stats(
+		let stats = LoopQuality.cardStats(
 			for: loop, nextRun: LoopQuality.nextRun(steps: steps, now: Date(), paused: loop.isPaused),
 			duration: LoopDurationText.string,
 			date: { $0.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)) })
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			SectionHeader("Quality")
-			LazyVGrid(
-				columns: [GridItem(.adaptive(minimum: 110), spacing: MaskinSpace.s5)], spacing: MaskinSpace.s5
-			) {
+			FlowSectionHeader("Quality")
+			HStack(alignment: .top, spacing: MaskinSpace.s4) {
 				ForEach(stats) { stat in
-					VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-						Text(stat.value).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						Text(stat.label).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+						Text(stat.value)
+							.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.w750, relativeTo: .title3))
+							.tracking(-0.02 * MaskinFontSize.t20)
+							.foregroundStyle(MaskinColor.ink)
+							.lineLimit(1)
+							.minimumScaleFactor(0.7)
+						Text(stat.label)
+							.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: MaskinFontWeight.w650, relativeTo: .caption))
+							.foregroundStyle(MaskinColor.ink)
 					}
 					.frame(maxWidth: .infinity, alignment: .leading)
-					.padding(MaskinSpace.s7)
+					.padding(.vertical, MaskinSpace.s7)
+					.padding(.horizontal, MaskinSpace.s7)
 					.background(
 						MaskinSurface.card,
-						in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
 					)
 					.accessibilityElement(children: .combine)
 				}
