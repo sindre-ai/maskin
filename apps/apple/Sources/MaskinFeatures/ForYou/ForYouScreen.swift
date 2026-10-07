@@ -110,10 +110,7 @@ struct ForYouFeedView: View {
 		let entries = store.entries
 		List {
 			if let stories, !stories.cards.isEmpty {
-				StoryRow(stories: stories) { card in
-					stories.markSeen(card)
-					openStory = card
-				}
+				StoryRow(stories: stories) { card in openStory = card }
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
 				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
@@ -141,13 +138,11 @@ struct ForYouFeedView: View {
 			}
 		}
 		.storyCover(item: $openStory) { card in
-			switch card.content {
-			case .page(let output):
-				if let environment {
-					OutcomePresenter(environment: environment, output: output, sourceName: card.unit)
-				}
-			case .briefing(let headline, let script):
-				BriefingStoryView(headline: headline, script: script)
+			if let environment, let stories {
+				BriefViewer(
+					environment: environment, stories: stories,
+					sequence: BriefSequence.make(cards: stories.cards, opening: card)
+				) { openStory = nil }
 			}
 		}
 		.alert(

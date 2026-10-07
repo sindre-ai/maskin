@@ -83,32 +83,3 @@ struct StoryCardView: View {
 		isSeen ? AnyShapeStyle(MaskinSurface.card) : AnyShapeStyle(MaskinGradient.unseenBrief)
 	}
 }
-
-/// The daily briefing opened full screen: the Chief of Staff's spoken brief as text.
-struct BriefingStoryView: View {
-	let headline: String
-	let script: String
-	@Environment(\.dismiss) private var dismiss
-
-	var body: some View {
-		NavigationStack {
-			ScrollView {
-				VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-					Text("YOUR DAILY BRIEFING")
-						.font(MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
-						.foregroundStyle(MaskinColor.ink4)
-					Text(headline).maskinText(.title).foregroundStyle(MaskinColor.ink)
-					Text(script).maskinText(.body).foregroundStyle(MaskinColor.ink)
-				}
-				.frame(maxWidth: 680, alignment: .leading)
-				.frame(maxWidth: .infinity)
-				.padding(MaskinSpace.s9)
-			}
-			.ambientBackground(showsBottom: false)
-			.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-			#if os(iOS)
-			.navigationBarTitleDisplayMode(.inline)
-			#endif
-		}
-	}
-}
