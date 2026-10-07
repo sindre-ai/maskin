@@ -38,6 +38,27 @@ private func thread(_ rig: Rig, _ api: FakeChatAPI) -> ChatStore {
 @Suite("Chat cache: thread")
 @MainActor
 struct ChatThreadCacheTests {
+	@Test("handoff rows survive the cache, and a cache written before them still decodes")
+	func handoffsRoundTrip() throws {
+		let spawned = SpawnedSession(
+			id: "s1", status: "running", actorID: "dev", actorName: "Dev", actionPrompt: "Fix it",
+			currentActivity: "Reading")
+		var message = chatMsg(1, by: "relay", agent: true, "handing off")
+		message.spawnedSessions = [spawned]
+		let cached = try #require(ChatCaching.CachedMessage(message))
+		let decoded = try JSONDecoder().decode(
+			ChatCaching.CachedMessage.self, from: JSONEncoder().encode(cached))
+		#expect(decoded.message.spawnedSessions == [spawned])
+
+		// An entry from before the field existed has no such key at all.
+		var object = try #require(
+			JSONSerialization.jsonObject(with: JSONEncoder().encode(cached)) as? [String: Any])
+		object["spawnedSessions"] = nil
+		let old = try JSONDecoder().decode(
+			ChatCaching.CachedMessage.self, from: JSONSerialization.data(withJSONObject: object))
+		#expect(old.message.spawnedSessions.isEmpty)
+	}
+
 	@Test("a cached thread is on screen before any network call, then revalidated")
 	func hydratesThenRevalidates() async {
 		let rig = Rig()

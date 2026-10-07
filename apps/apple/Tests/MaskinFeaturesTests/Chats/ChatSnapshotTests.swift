@@ -288,9 +288,10 @@ struct ChatSnapshotTests {
 
 	@Test("handoff rows, the group pill and activity render", arguments: [false, true])
 	func handoffAndPeople(dark: Bool) throws {
-		let handoff = ChatHandoff(
-			sessionID: "s2", agentID: "relay", triggerMessageID: 2, title: "Draft the importer rollout note for the customer",
-			status: .running, startedAt: base)
+		let handoff = SpawnedSession(
+			id: "s2", status: "running", actorID: "relay", actorName: "Relay",
+			actionPrompt: "Draft the importer rollout note for the customer\nKeep it short.",
+			startedAt: base, currentActivity: "Reading notes/importer.md", dependsOn: ["s1"])
 		let steps = [
 			ActivityStep(id: "1", kind: .thinking, label: "Thinking"),
 			ActivityStep(id: "2", kind: .toolUse, label: "Using Read", detail: "notes/importer.md"),
@@ -298,12 +299,22 @@ struct ChatSnapshotTests {
 		]
 		let turn = ActivityTurn(sessionID: "s2", messageID: 2, startedAt: base, status: .running, steps: steps)
 		var done = handoff
-		done.status = .completed
+		done.status = "completed"
+		done.durationMs = 185_000
+		done.currentActivity = nil
+		done.outcomeText = "Note drafted and saved to the importer doc."
+		var failed = handoff
+		failed.status = "failed"
+		failed.outcomeText = "Credit balance too low"
+		var queued = handoff
+		queued.status = "pending"
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				GroupHeaderPill(participants: [me, relay, sam, ChatParticipant(id: "cpo", name: "CPO", kind: .agent), ChatParticipant(id: "dev", name: "Dev", kind: .agent)], selfID: "me", action: {})
-				HandoffRow(handoff: handoff, agent: relay, turn: turn)
-				HandoffRow(handoff: done, agent: relay, turn: ActivityTurn(sessionID: "s2", messageID: 2, status: .completed, steps: steps.map { var s = $0; s.status = .completed; return s }))
+				HandoffRow(session: queued, behind: ["Sentinel", "Forge"])
+				HandoffRow(session: handoff)
+				HandoffRow(session: done)
+				HandoffRow(session: failed)
 				LiveActivityView(agent: relay, turn: turn, startedAt: base.addingTimeInterval(-42), onStop: {})
 				FinishedTraceView(turn: ActivityTurn(sessionID: "s3", messageID: 3, status: .failed, result: ActivityResult(text: "x", isError: true), steps: [ActivityStep(id: "9", kind: .error, label: "Credit balance too low", status: .failed)]))
 			}

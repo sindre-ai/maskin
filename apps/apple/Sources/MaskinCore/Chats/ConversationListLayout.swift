@@ -138,30 +138,6 @@ public enum PersonRoleLabel {
 	}
 }
 
-/// A sub-agent session shown between messages: an agent that was handed work by another agent.
-public struct ChatHandoff: Identifiable, Equatable, Sendable {
-	public var id: String { sessionID }
-	public var sessionID: String
-	public var agentID: String
-	/// The message that handed the work over; the row sits right after it.
-	public var triggerMessageID: Int
-	public var title: String
-	public var status: ChatAgentSession.Status
-	public var startedAt: Date?
-
-	public init(
-		sessionID: String, agentID: String, triggerMessageID: Int, title: String,
-		status: ChatAgentSession.Status, startedAt: Date? = nil
-	) {
-		self.sessionID = sessionID
-		self.agentID = agentID
-		self.triggerMessageID = triggerMessageID
-		self.title = title
-		self.status = status
-		self.startedAt = startedAt
-	}
-}
-
 /// The group header pill under a thread's title: "You, Sebastian, Chief of Staff +2".
 public enum GroupChatSummary {
 	/// You first, then the others in order; past `limit` names the rest are counted.

@@ -313,6 +313,25 @@ struct ChatStoreTests {
 		h.store.stop()
 	}
 
+	@Test("a session event re-reads the thread so a handoff row follows its session")
+	func handoffRowFollowsSessionEvents() async {
+		func handoff(_ status: String) -> SpawnedSession {
+			SpawnedSession(
+				id: "sub1", status: status, actorID: "dev", actorName: "Dev", actionPrompt: "Fix it")
+		}
+		var parent = chatMsg(1, by: "relay", agent: true, "handing off")
+		parent.spawnedSessions = [handoff("running")]
+		let hub = scriptedHub([conversationFrame(10, conversation: "sub1", action: "updated", entity: "session")])
+		let h = ChatHarness(server: [parent], events: hub)
+		await h.store.start()
+		#expect(h.store.messages.first?.spawnedSessions.first?.pill == .working)
+		parent.spawnedSessions = [handoff("completed")]
+		await h.api.set(server: [parent])
+		hub.connect(workspaceId: "w1")
+		#expect(await eventually { h.store.messages.first?.spawnedSessions.first?.pill == .done })
+		h.store.stop()
+	}
+
 	@Test("working agents come from live sessions, not just from a send")
 	func workingFromSessions() async {
 		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay, chatSam]))
