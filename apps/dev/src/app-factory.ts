@@ -21,6 +21,7 @@ import {
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import { requestTiming } from './middleware/request-timing'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -241,6 +242,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/mcp', cors())
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use('*', honoLogger())
+	// Server-Timing header, slow-request log and per-route aggregates. Registered
+	// before everything else on these prefixes so it times the whole chain (auth,
+	// idempotency, handler).
+	app.use('/api/*', requestTiming())
+	app.use('/mcp', requestTiming())
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
