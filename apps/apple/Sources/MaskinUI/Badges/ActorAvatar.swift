@@ -92,7 +92,7 @@ public struct ActorAvatar: View {
 		switch mood {
 		case .idle: name
 		case .working: "\(name), working"
-		case .waiting: "\(name), waiting for you"
+		case .waiting: "\(name), needs you"
 		case .failed: "\(name), last run failed"
 		case .paused: "\(name), paused"
 		}

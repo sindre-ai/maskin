@@ -91,7 +91,7 @@ public enum LoopQuality {
 			Stat(label: "In progress", value: "\(loop.inProgressCount)"),
 			Stat(label: "Closed", value: "\(loop.closedCount)"),
 			Stat(label: "Median time", value: loop.medianTimeToClose.map(duration) ?? "—"),
-			Stat(label: "Waiting", value: "\(loop.waitingCount)"),
+			Stat(label: "Needs you", value: "\(loop.waitingCount)"),
 			Stat(label: "Next run", value: nextRun.map(date) ?? "—"),
 		]
 	}

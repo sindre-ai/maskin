@@ -43,7 +43,7 @@ final class ChatLiveTests: LiveTestCase {
 
 	private func open(_ title: String) throws {
 		try signInIfNeeded()
-		openSidebarTab("Chats")
+		openSidebarTab("Team")
 		let row = el(title)
 		if !row.waitForExistence(timeout: 20) { shot("chat-row-missing"); dumpTree("chats"); XCTFail("row \(title) missing"); throw XCTSkip("no row") }
 		row.tap()
@@ -215,7 +215,7 @@ final class ChatLiveTests: LiveTestCase {
 		app.terminate()
 		setOffline(true)
 		app.launch()
-		openSidebarTab("Chats")
+		openSidebarTab("Team")
 		let t0 = Date()
 		XCTAssertTrue(el(c.title).waitForExistence(timeout: 10), "cached list row while offline")
 		shot("cached-list-offline")

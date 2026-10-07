@@ -8,7 +8,7 @@ public enum SearchKind: String, Sendable, Equatable, Hashable, CaseIterable {
 	/// automations, which have no server-side search yet).
 	public var title: String {
 		switch self {
-		case .chat: "Chats"
+		case .chat: "Team"
 		case .agent: "Agents"
 		case .object: "Objects"
 		case .file: "Files"
@@ -31,7 +31,7 @@ public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Id
 		switch self {
 		case .all: "All"
 		case .objects: "Objects"
-		case .chats: "Chats"
+		case .chats: "Team"
 		case .agents: "Agents"
 		case .files: "Files"
 		case .bets: "Bets"

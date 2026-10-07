@@ -221,7 +221,7 @@ struct ForYouFeedView: View {
 
 	private func title(for bucket: FeedBucket) -> String {
 		switch bucket {
-		case .needs: "Needs your decision"
+		case .needs: "Needs you"
 		case .waiting: "Waiting on an agent"
 		case .fyi: "Updates for you"
 		case .done: "Done just now"

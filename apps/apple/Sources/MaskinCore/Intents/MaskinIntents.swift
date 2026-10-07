@@ -135,7 +135,7 @@ import Foundation
 		public static let title: LocalizedStringResource = "Ask an agent"
 		public static let description = IntentDescription(
 			"Sends a message to one of your agents. It is queued, so it goes out even if you are offline.",
-			categoryName: "Chats")
+			categoryName: "Team")
 
 		@Parameter(title: "Agent", requestValueDialog: "Which agent?")
 		public var agent: AgentEntity
@@ -204,7 +204,7 @@ import Foundation
 	public struct OpenAgentThreadIntent: AppIntent {
 		public static let title: LocalizedStringResource = "Open an agent's chat"
 		public static let description = IntentDescription(
-			"Opens your conversation with an agent in Maskin.", categoryName: "Chats")
+			"Opens your conversation with an agent in Maskin.", categoryName: "Team")
 		public static let openAppWhenRun = true
 
 		@Parameter(title: "Agent", requestValueDialog: "Which agent?")

@@ -30,7 +30,7 @@ struct FirstUseBeat: Identifiable, Equatable {
 	static let all: [FirstUseBeat] = [
 		.init(
 			id: 1, symbol: "arrow.triangle.2.circlepath", title: "Agents do the work",
-			detail: "Loops keep cycling on their own. Bets are scoped hypotheses, worked until they're settled."),
+			detail: "Flows keep cycling on their own. Bets are scoped hypotheses, worked until they're settled."),
 		.init(
 			id: 2, symbol: "hand.raised", title: "You make the calls",
 			detail: "Anything that needs a person lands in For You, one card at a time."),

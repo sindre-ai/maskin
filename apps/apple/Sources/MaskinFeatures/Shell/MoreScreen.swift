@@ -114,7 +114,7 @@ struct MoreScreen: View {
 			if environment.workspaceId != nil {
 				separator()
 				MoreRow(
-					title: "Marketplace", subtitle: "Loops to install", symbol: "square.grid.2x2",
+					title: "Marketplace", subtitle: "Flows to install", symbol: "square.grid.2x2",
 					tint: MaskinColor.successTint, tone: MaskinColor.successStrong
 				) { showMarketplace = true }
 			}

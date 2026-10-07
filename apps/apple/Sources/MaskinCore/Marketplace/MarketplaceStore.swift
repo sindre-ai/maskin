@@ -93,7 +93,7 @@ public final class MarketplaceStore {
 			if let fresh = try? await api.installs() { installs = fresh }
 			return row.objectID
 		} catch {
-			notice = "Couldn't install this loop. \(AutomationError.message(error))"
+			notice = "Couldn't install this flow. \(AutomationError.message(error))"
 			return nil
 		}
 	}
@@ -110,7 +110,7 @@ public final class MarketplaceStore {
 			if let i = installs.firstIndex(where: { $0.id == installID }) { installs[i].isForked = true }
 			if let fresh = try? await api.installs() { installs = fresh }
 		} catch {
-			notice = "Couldn't fork this loop. \(AutomationError.message(error))"
+			notice = "Couldn't fork this flow. \(AutomationError.message(error))"
 		}
 	}
 
@@ -133,7 +133,7 @@ public final class MarketplaceStore {
 			onLoopsChanged?()
 		} catch {
 			if !installs.contains(where: { $0.id == installID }) { installs.insert(removed, at: min(index, installs.count)) }
-			notice = "Couldn't remove this loop. \(AutomationError.message(error))"
+			notice = "Couldn't remove this flow. \(AutomationError.message(error))"
 		}
 	}
 }

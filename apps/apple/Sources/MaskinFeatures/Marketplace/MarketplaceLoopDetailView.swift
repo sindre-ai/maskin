@@ -20,7 +20,7 @@ struct MarketplaceLoopDetailView: View {
 				if let detail {
 					content(detail)
 				} else if let loadError {
-					EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load this loop", message: loadError) {
+					EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load this flow", message: loadError) {
 						Button("Try again") { Task { await load() } }.buttonStyle(.secondaryAction)
 					}
 				} else {
@@ -37,7 +37,7 @@ struct MarketplaceLoopDetailView: View {
 		#endif
 		.navigationTitle(detail?.loop.name ?? "")
 		.task { await load() }
-		.confirmationDialog("Remove this loop?", isPresented: $confirmRemove, titleVisibility: .visible) {
+		.confirmationDialog("Remove this flow?", isPresented: $confirmRemove, titleVisibility: .visible) {
 			if let row = store.install(for: loopID) {
 				Button("Remove and keep its agents and triggers") {
 					Task { await store.uninstall(row.id, keepProvisionedItems: true) }
@@ -49,7 +49,7 @@ struct MarketplaceLoopDetailView: View {
 			Button("Cancel", role: .cancel) {}
 		}
 		.confirmationDialog(
-			"Fork this loop?", isPresented: $confirmFork, titleVisibility: .visible
+			"Fork this flow?", isPresented: $confirmFork, titleVisibility: .visible
 		) {
 			if let row = store.install(for: loopID) {
 				Button("Fork") { Task { await store.fork(row.id) } }
@@ -89,7 +89,7 @@ struct MarketplaceLoopDetailView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			switch store.state(of: loopID) {
 			case .notInstalled:
-				Button("Install loop") { Task { await store.installLoop(loopID) } }
+				Button("Install flow") { Task { await store.installLoop(loopID) } }
 					.buttonStyle(.primaryAction)
 			case .installing:
 				HStack(spacing: MaskinSpace.s4) {
@@ -107,7 +107,7 @@ struct MarketplaceLoopDetailView: View {
 						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 				}
 				if let object = row.objectID {
-					Button("Open loop") { onOpenLoop(object) }.buttonStyle(.primaryAction)
+					Button("Open flow") { onOpenLoop(object) }.buttonStyle(.primaryAction)
 				}
 				HStack(spacing: MaskinSpace.s5) {
 					if !row.isForked {
@@ -117,7 +117,7 @@ struct MarketplaceLoopDetailView: View {
 				}
 				.disabled(store.busyInstalls.contains(row.id))
 				if row.isForked {
-					Text("You forked this loop. It no longer follows marketplace updates.")
+					Text("You forked this flow. It no longer follows marketplace updates.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
 			}

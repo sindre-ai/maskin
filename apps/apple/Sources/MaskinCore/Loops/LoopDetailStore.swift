@@ -80,7 +80,7 @@ public final class LoopDetailStore {
 		if loop.isPaused { return "Paused" }
 		let failed = activity.prefix(10).filter { $0.tone == .failure }.count
 		var parts: [String] = []
-		if loop.waitingCount > 0 { parts.append("\(loop.waitingCount) waiting on you") }
+		if loop.waitingCount > 0 { parts.append("\(loop.waitingCount) \(loop.waitingCount == 1 ? "needs" : "need") you") }
 		if failed > 0 { parts.append("\(failed) recent failure\(failed == 1 ? "" : "s")") }
 		if parts.isEmpty { parts.append("Healthy") }
 		parts.append("\(loop.inProgressCount) in progress")
@@ -166,7 +166,7 @@ public final class LoopDetailStore {
 			intents.succeeded(intent)
 		} catch {
 			loop = loop.with(status: before.status)
-			notice = "Couldn't \(target == .paused ? "pause" : "resume") this loop. \(AutomationError.message(error))"
+			notice = "Couldn't \(target == .paused ? "pause" : "resume") this flow. \(AutomationError.message(error))"
 		}
 	}
 
@@ -179,7 +179,7 @@ public final class LoopDetailStore {
 		let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
 		let body = content.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !title.isEmpty else {
-			notice = "A loop needs a name."
+			notice = "A flow needs a name."
 			return false
 		}
 		let newName: String? = title == loop.name ? nil : title
@@ -210,7 +210,7 @@ public final class LoopDetailStore {
 			isGone = true
 			onDeleted?(loop.id)
 		} catch {
-			notice = "Couldn't delete this loop. \(AutomationError.message(error))"
+			notice = "Couldn't delete this flow. \(AutomationError.message(error))"
 		}
 	}
 }

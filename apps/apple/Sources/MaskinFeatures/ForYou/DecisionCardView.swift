@@ -199,7 +199,7 @@ struct DecisionCardView: View {
 	/// A plain mention has no options: say so, and make "I've seen it" one tap.
 	private var noDecisionRow: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			Text(asksQuestion ? "Needs your answer" : "Just a heads-up").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			Text(asksQuestion ? "Needs you" : "Just a heads-up").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			Spacer(minLength: MaskinSpace.s3)
 			Button("Mark read", action: actions.dismiss)
 				.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)

@@ -56,7 +56,7 @@ public struct ShellCompose {
 
 	/// New loop, New bet, Hire an agent: the creations that go through the Chief of Staff.
 	public static let starters: [Starter] = [
-		Starter(title: "New loop", symbol: "arrow.triangle.2.circlepath", prompt: "I'd like to build a new loop. "),
+		Starter(title: "New flow", symbol: "arrow.triangle.2.circlepath", prompt: "I'd like to build a new flow. "),
 		Starter(title: "New bet", symbol: "target", prompt: "I'd like to create a new bet. "),
 		Starter(title: "Hire an agent", symbol: "person.badge.plus", prompt: "I'd like to build a new agent. "),
 	]

@@ -34,7 +34,7 @@ struct LoopRow: View {
 				}
 				HStack(alignment: .center, spacing: MaskinSpace.s4) {
 					if loop.waitingCount > 0 {
-						Text("\(loop.waitingCount) waiting on you")
+						Text("\(loop.waitingCount) \(loop.waitingCount == 1 ? "needs" : "need") you")
 							.maskinText(.subhead)
 							.foregroundStyle(MaskinColor.warningStrong)
 							.lineLimit(1)
@@ -57,7 +57,7 @@ struct LoopRow: View {
 
 	private var accessibilityLabel: String {
 		var parts = [loop.displayName, loop.pill.label, loop.statsLine]
-		if loop.waitingCount > 0 { parts.append("\(loop.waitingCount) waiting on you") }
+		if loop.waitingCount > 0 { parts.append("\(loop.waitingCount) \(loop.waitingCount == 1 ? "needs" : "need") you") }
 		if !agentNames.isEmpty { parts.append("Agents: " + agentNames.joined(separator: ", ")) }
 		if hasUpdate { parts.append("update available") }
 		return parts.joined(separator: ", ")

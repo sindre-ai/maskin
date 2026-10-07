@@ -4,7 +4,7 @@ import Testing
 
 @Suite struct ShellComposeTests {
 	@Test func startersAreLoopBetAndAgentInOrder() {
-		#expect(ShellCompose.starters.map(\.title) == ["New loop", "New bet", "Hire an agent"])
+		#expect(ShellCompose.starters.map(\.title) == ["New flow", "New bet", "Hire an agent"])
 	}
 
 	@Test func everyStarterHasAPromptToContinueTyping() {

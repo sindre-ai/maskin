@@ -31,9 +31,9 @@ enum ShellTab: String, CaseIterable, Hashable, Identifiable {
 	var title: String {
 		switch self {
 		case .forYou: "For you"
-		case .chats: "Chats"
+		case .chats: "Team"
 		case .objects: "Objects"
-		case .loops: "Loops"
+		case .loops: "Flows"
 		case .agents: "Agents"
 		case .more: "More"
 		case .search: "Search"
