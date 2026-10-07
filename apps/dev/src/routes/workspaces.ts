@@ -339,6 +339,10 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
 	// claude_oauth has its own locked, slot-aware, audited read-modify-write
 	// routes (POST /api/claude-oauth/import, DELETE /api/claude-oauth,
 	// POST /api/claude-oauth/swap) built to prevent concurrent writers from
@@ -796,12 +800,21 @@ const listMembersRoute = createRoute({
 			description: 'List of members',
 			content: { 'application/json': { schema: z.array(memberResponseSchema) } },
 		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(listMembersRoute, async (c) => {
+app.openapi(listMembersRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	const members = await db
 		.select({
@@ -816,7 +829,7 @@ app.openapi(listMembersRoute, async (c) => {
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
-})
+}) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership
 const transferOwnershipRoute = createRoute({

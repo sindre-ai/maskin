@@ -87,7 +87,9 @@ describe('Files as first-class relationship endpoints (Slice 1)', () => {
 		expect(created.sourceTitle).toBe('Anchor bet')
 		expect(created.targetTitle).toBe('design.md')
 
-		const listRes = await app.request(jsonGet(`/api/relationships?object_id=${anchorObjectId}`))
+		const listRes = await app.request(
+			jsonGet(`/api/relationships?object_id=${anchorObjectId}`, { 'x-workspace-id': workspaceId }),
+		)
 		expect(listRes.status).toBe(200)
 		const list = await listRes.json()
 		const fileEdge = list.find((r: { targetId: string }) => r.targetId === fileAId)
