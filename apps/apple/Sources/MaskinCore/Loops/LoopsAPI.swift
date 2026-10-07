@@ -21,8 +21,12 @@ public protocol LoopsAPI: Sendable {
 	/// Members, agent posts and produced files, from the loop's object graph. Best effort: a
 	/// source with no graph access returns `.empty`.
 	func overview(loopID: String) async throws -> LoopOverview
+	/// The newest top-level post on the loop's timeline, for the list card's latest update. One
+	/// read of the loop object's graph; nil when it has none or the source has no graph access.
+	func latestPost(loopID: String) async throws -> LoopPost?
 }
 
 extension LoopsAPI {
 	public func overview(loopID: String) async throws -> LoopOverview { .empty }
+	public func latestPost(loopID: String) async throws -> LoopPost? { nil }
 }

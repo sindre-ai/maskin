@@ -3,22 +3,13 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// A loop's state as one badge: draft, paused, a live rung of the autonomy ladder, or "Waiting on
-/// you". Colours come from the shared status palette.
+/// A loop's state as one badge. Patina marks a flow that is running or waiting on you, grey marks
+/// one that is stopped; the rung's name carries the difference between the running states.
 struct LoopPillView: View {
 	let pill: LoopPill
 
-	private var colors: MaskinColorPair { MaskinStatus.colors(for: Self.paletteKey(pill)) }
-
-	static func paletteKey(_ pill: LoopPill) -> String {
-		switch pill {
-		case .draft: "new"
-		case .paused: "paused"
-		case .learning: "in_progress"
-		case .supervised: "proposed"
-		case .fullyAutonomous: "active"
-		case .waitingOnYou: "at_risk"
-		}
+	private var colors: (fg: Color, bg: Color) {
+		pill.isLive ? (MaskinColor.sigInk, MaskinColor.sigTint) : (MaskinColor.ink4, MaskinSurface.fill)
 	}
 
 	var body: some View {
@@ -36,6 +27,19 @@ struct LoopPillView: View {
 		.fixedSize()
 		.accessibilityElement(children: .ignore)
 		.accessibilityLabel("State \(pill.label)")
+	}
+}
+
+/// The "Needs you" chip: `sigInk` on `sigTint`, the only colour it ever wears.
+struct NeedsYouChip: View {
+	var body: some View {
+		Text("Needs you")
+			.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: MaskinFontWeight.w650, relativeTo: .caption))
+			.foregroundStyle(MaskinColor.sigInk)
+			.padding(.horizontal, MaskinSpace.s5)
+			.padding(.vertical, MaskinSpace.s2)
+			.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.panel, style: .continuous))
+			.fixedSize()
 	}
 }
 

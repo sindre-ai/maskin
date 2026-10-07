@@ -183,11 +183,4 @@ struct LoopsSnapshotTests {
 			try render(view, width: width, dark: dark, name: "triggers-empty")
 		}
 	}
-
-	@Test("pill palette keys all resolve to a known status colour")
-	func paletteKeys() {
-		for pill in LoopPill.allCases {
-			#expect(MaskinStatus.tokenKey(for: LoopPillView.paletteKey(pill)) != nil)
-		}
-	}
 }

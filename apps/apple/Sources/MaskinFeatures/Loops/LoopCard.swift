@@ -3,36 +3,43 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop in the list as a glanceable card: progress ring, name, "cycle · stage", an amber
-/// "Needs you" pill when the viewer is the blocker, and three stats. Pure values in, so it renders in previews and snapshots.
+/// One flow in the list as a glanceable card: progress ring, name, "cycle · stage", a Patina
+/// "Needs you" chip when the viewer is the blocker, the newest thing an agent said, and three
+/// stats. Pure values in, so it renders in previews and snapshots.
 struct LoopCard: View {
 	let loop: LoopSummary
 	let agentCount: Int
 	let needsYou: Bool
 	var hasUpdate = false
+	var update: LoopLatestUpdate.Line?
 
 	private static let ringSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s4
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
-			Divider()
-			stats
+			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+				Divider().overlay(MaskinSurface.separator)
+				if let update { latest(update) }
+				stats
+			}
 		}
-		.padding(MaskinSpace.s8)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+		.padding(.vertical, MaskinSpace.s9)
+		.padding(.horizontal, MaskinSpace.s10)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
 
 	private var header: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+		HStack(alignment: .center, spacing: MaskinSpace.s8) {
 			ring
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				HStack(spacing: MaskinSpace.s3) {
 					Text(loop.displayName)
-						.maskinText(.headline)
+						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.bold, relativeTo: .headline))
+						.tracking(-0.018 * MaskinFontSize.t17)
 						.foregroundStyle(MaskinColor.ink)
 						.lineLimit(2)
 					if hasUpdate {
@@ -43,31 +50,39 @@ struct LoopCard: View {
 					}
 				}
 				Text(stageLine)
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+					.foregroundStyle(MaskinColor.ink5)
 					.lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s3)
-			if needsYou { needsPill }
+			if needsYou { NeedsYouChip() }
 		}
 	}
 
 	private var ring: some View {
-		LoopProgressRing(loop: loop, size: Self.ringSize, lineWidth: MaskinSpace.s2)
+		LoopProgressRing(
+			loop: loop, size: Self.ringSize, lineWidth: MaskinSpace.s2,
+			valueFont: MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
 	}
 
-	private var needsPill: some View {
-		Text("Needs you")
-			.maskinText(.caption).fontWeight(.semibold)
-			.foregroundStyle(MaskinColor.warningStrong)
-			.padding(.horizontal, MaskinSpace.s4)
-			.padding(.vertical, MaskinSpace.s2)
-			.background(MaskinColor.warningTint, in: Capsule())
-			.fixedSize()
+	/// The newest post as one sentence, its author in bold ink ahead of the grey text.
+	private func latest(_ update: LoopLatestUpdate.Line) -> some View {
+		Group {
+			if let author = update.author {
+				Text(author).fontWeight(.semibold).foregroundStyle(MaskinColor.ink) + Text(" " + update.text)
+			} else {
+				Text(update.text)
+			}
+		}
+		.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
+		.foregroundStyle(MaskinColor.ink3)
+		.lineSpacing(MaskinSpace.s1)
+		.lineLimit(4)
+		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
 	private var stats: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s7) {
+		HStack(alignment: .top, spacing: MaskinSpace.s4) {
 			stat("\(loop.inProgressCount)", "in progress")
 			stat("\(loop.closedCount)", "closed")
 			stat("\(agentCount)", agentCount == 1 ? "agent" : "agents")
@@ -77,11 +92,12 @@ struct LoopCard: View {
 	private func stat(_ value: String, _ label: String) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 			Text(value)
-				.maskinText(.headline).fontWeight(.bold)
+				.font(MaskinTypeface.sans(MaskinFontSize.t18, weight: MaskinFontWeight.bold, relativeTo: .headline))
+				.tracking(-0.02 * MaskinFontSize.t18)
 				.foregroundStyle(MaskinColor.ink)
 			Text(label)
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink4)
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
+				.foregroundStyle(MaskinColor.ink5)
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
@@ -94,6 +110,7 @@ struct LoopCard: View {
 	private var accessibilityLabel: String {
 		var parts = [loop.displayName, stageLine]
 		if needsYou { parts.append("Needs you") }
+		if let update { parts.append(([update.author, update.text].compactMap { $0 }).joined(separator: " ")) }
 		parts.append("\(loop.inProgressCount) in progress, \(loop.closedCount) closed, \(agentCount) agents")
 		if hasUpdate { parts.append("update available") }
 		return parts.joined(separator: ". ")
@@ -117,6 +134,7 @@ struct LoopProgressRing: View {
 	let loop: LoopSummary
 	let size: CGFloat
 	let lineWidth: CGFloat
+	var valueFont: Font = MaskinTextRole.caption.font
 
 	var body: some View {
 		ZStack {
@@ -129,8 +147,8 @@ struct LoopProgressRing: View {
 				)
 				.rotationEffect(.degrees(-90))
 			Text("\(Int((loop.progress * 100).rounded()))")
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink3)
+				.font(valueFont)
+				.foregroundStyle(MaskinColor.ink)
 		}
 		.frame(width: size, height: size)
 		.accessibilityHidden(true)

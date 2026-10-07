@@ -96,6 +96,18 @@ public enum LoopQuality {
 		]
 	}
 
+	/// The three labels the Outcome tab's QUALITY cards show, in order.
+	public static let cardLabels = ["Closed", "Median time", "Next run"]
+
+	/// `stats` narrowed to the three quality cards.
+	public static func cardStats(
+		for loop: LoopSummary, nextRun: Date?, duration: (TimeInterval) -> String,
+		date: (Date) -> String
+	) -> [Stat] {
+		let all = stats(for: loop, nextRun: nextRun, duration: duration, date: date)
+		return cardLabels.compactMap { label in all.first { $0.label == label } }
+	}
+
 	/// When the loop next runs on its own: the earliest scheduled step; nil if paused or event-only.
 	public static func nextRun(steps: [LoopStep], now: Date, paused: Bool) -> Date? {
 		LoopComingUp.items(steps: steps, now: now, paused: paused).compactMap(\.next).min()
