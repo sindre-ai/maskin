@@ -51,7 +51,7 @@ private struct FilesListContent: View {
 	}
 
 	var body: some View {
-		NavigationStack {
+		StandaloneStack {
 			FilesListView(store: store, search: search, onOpen: open)
 			.ambientBackground()
 			.navigationTitle("Files")

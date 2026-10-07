@@ -7,34 +7,38 @@ import SwiftUI
 /// Your profile), the workspace with Switch, the WORKSPACE and YOU groups, and Log out. Replaces the
 /// More tab.
 ///
-/// Profile pushes onto the sheet's own stack. Every other row opens the existing screen as a second
-/// sheet over this one, because those screens own a `NavigationStack` (or split view) and a Done
-/// button and cannot be pushed into another stack.
+/// The sheet hosts ONE `NavigationStack`. Every row pushes a page onto it (Your profile, Members,
+/// Integrations, Triggers, Billing, Keys, and the existing Agents, Marketplace, Artefacts, Settings
+/// and Notifications screens in their embedded mode: no stack and no Done button of their own).
+/// Only the workspace switcher is still a sheet, because it is a picker.
 struct ProfileSheet: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
-	@State private var destination: Destination?
+	@State private var path: [Route] = []
+	@State private var showWorkspaces = false
 	@State private var confirmSignOut = false
 	@Environment(\.dismiss) private var dismiss
 
-	private enum Destination: Hashable, Identifiable {
+	private enum Route: Hashable {
+		case yourProfile
 		case item(ProfileMenuItem)
-		case workspaces
-		var id: Self { self }
 	}
-
-	private enum Route: Hashable { case yourProfile }
 
 	private var hasWorkspace: Bool { environment.workspaceId != nil }
 
+	/// The signed-in person's role here; unknown means least privilege (hides Keys).
+	private var role: MemberRole {
+		MemberRole(serverValue: environment.workspaces.selected?.role ?? "member")
+	}
+
 	var body: some View {
-		NavigationStack {
+		NavigationStack(path: $path) {
 			ScrollView {
 				VStack(spacing: MaskinSpace.gapSection) {
 					profileCard
 					workspaceCard
 					ForEach(ProfileMenuGroup.allCases) { group in
-						let items = ProfileMenu.items(in: group, hasWorkspace: hasWorkspace)
+						let items = ProfileMenu.items(in: group, hasWorkspace: hasWorkspace, role: role)
 						if !items.isEmpty {
 							groupLabel(group.title)
 							card(items)
@@ -55,8 +59,10 @@ struct ProfileSheet: View {
 			.toolbar {
 				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
 			}
-			.navigationDestination(for: Route.self) { _ in
-				YourProfilePage(environment: environment)
+			.navigationDestination(for: Route.self) { route in
+				destination(route)
+					.environment(\.isPushedInHostStack, true)
+					.environment(\.shellShowsAvatar, false)
 			}
 			// Signing out discards writes still waiting to send, so ask first (Settings does too).
 			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
@@ -64,8 +70,10 @@ struct ProfileSheet: View {
 			} message: {
 				Text("Anything still waiting to send will be discarded.")
 			}
-			.sheet(item: $destination) { destination in
-				destinationContent(destination)
+			.sheet(isPresented: $showWorkspaces) {
+				// Picking a workspace resets the app to For you and closes this sheet (`AppRuntime.sync`).
+				WorkspaceSwitcher(environment: environment)
+					.presentationDetents([.medium, .large])
 					.environment(\.shellShowsAvatar, false)
 			}
 		}
@@ -73,18 +81,25 @@ struct ProfileSheet: View {
 		.environment(\.shellShowsAvatar, false)
 	}
 
-	// MARK: Destinations
+	// MARK: Pushed pages
 
 	@ViewBuilder
-	private func destinationContent(_ destination: Destination) -> some View {
-		switch destination {
-		case .workspaces:
-			// Picking a workspace resets the app to For you and closes this sheet (`AppRuntime.sync`).
-			WorkspaceSwitcher(environment: environment)
-				.presentationDetents([.medium, .large])
-		case .item(.agents):
+	private func destination(_ route: Route) -> some View {
+		switch route {
+		case .yourProfile:
+			YourProfilePage(environment: environment)
+		case .item(let item):
+			page(for: item)
+		}
+	}
+
+	@ViewBuilder
+	private func page(for item: ProfileMenuItem) -> some View {
+		let services = SettingsServices(environment: environment)
+		switch item {
+		case .agents:
 			AgentsScreen(environment: environment)
-		case .item(.marketplace):
+		case .marketplace:
 			if let workspaceID = environment.workspaceId {
 				MarketplaceSheet(
 					environment: environment, workspaceID: workspaceID,
@@ -93,18 +108,27 @@ struct ProfileSheet: View {
 						runtime.selectedTab = .loops
 					})
 			}
-		case .item(.artefacts):
-			FilesListScreen(environment: environment, onDone: { self.destination = nil })
-		case .item(.settings):
+		case .artefacts:
+			FilesListScreen(environment: environment)
+		case .members:
+			MembersView(store: services.membersStore())
+		case .integrations:
+			IntegrationsView(
+				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+		case .triggers:
+			if let workspaceID = environment.workspaceId {
+				TriggersPage(environment: environment, workspaceID: workspaceID)
+			}
+		case .billing:
+			BillingView(store: services.billingStore())
+		case .keys:
+			KeysPage(store: services.apiKeyStore())
+		case .settings:
 			SettingsScreen(environment: environment)
-		case .item(.notifications):
+		case .notifications:
 			NotificationsScreen(environment: environment, store: runtime.notifications)
 				.environment(runtime.router)
 				.task { await runtime.requestPushPermission() }
-		case .item(.triggers):
-			if let workspaceID = environment.workspaceId {
-				TriggersSheet(environment: environment, workspaceID: workspaceID)
-			}
 		}
 	}
 
@@ -148,7 +172,7 @@ struct ProfileSheet: View {
 					.maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s4)
-			Button("Switch") { destination = .workspaces }
+			Button("Switch") { showWorkspaces = true }
 				.buttonStyle(.bordered)
 				.controlSize(.small)
 		}
@@ -165,7 +189,7 @@ struct ProfileSheet: View {
 				ProfileRow(
 					title: item.title, symbol: item.symbol,
 					badge: item == .notifications ? runtime.notifications.unreadCount : 0
-				) { destination = .item(item) }
+				) { path.append(.item(item)) }
 			}
 		}
 		.profileCard()
@@ -230,6 +254,10 @@ extension ProfileMenuItem {
 		case .settings: "gearshape"
 		case .notifications: "bell"
 		case .triggers: "bolt"
+		case .members: "person.2"
+		case .integrations: "puzzlepiece.extension"
+		case .billing: "creditcard"
+		case .keys: "key"
 		}
 	}
 }

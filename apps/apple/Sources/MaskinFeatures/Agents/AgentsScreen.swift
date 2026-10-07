@@ -19,7 +19,7 @@ public struct AgentsScreen: View {
 			AgentsContainer(environment: environment, workspaceID: workspaceID)
 				.id(workspaceID)
 		} else {
-			NavigationStack {
+			StandaloneStack {
 				EmptyState(symbol: "person.2", title: "Choose a workspace")
 					.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 			}
@@ -51,6 +51,7 @@ private struct AgentsContainer: View {
 	@State private var selection: String?
 	@State private var search = ""
 	@Namespace private var zoom
+	@Environment(\.isPushedInHostStack) private var pushed
 
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
@@ -61,6 +62,28 @@ private struct AgentsContainer: View {
 	}
 
 	var body: some View {
+		if pushed { pushedBody } else { splitBody }
+	}
+
+	/// Pushed onto the profile sheet's stack: the list, with an agent's detail pushed on top.
+	private var pushedBody: some View {
+		AgentListView(
+			store: store, selection: $selection, search: $search,
+			isLive: environment.events.connection != .failed, zoomNamespace: zoom
+		)
+		.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
+		.navigationDestination(item: $selection) { id in
+			AgentDetailHost(environment: environment, agentID: id) {
+				store.remove(id: id)
+				selection = nil
+			}
+			.id(id)
+		}
+		.task { await store.start() }
+		.onDisappear { store.stop() }
+	}
+
+	private var splitBody: some View {
 		NavigationSplitView {
 			AgentListView(
 				store: store, selection: $selection, search: $search,

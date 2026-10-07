@@ -11,6 +11,8 @@ public protocol TriggersAPI: Sendable {
 	func delete(id: String, idempotencyKey: String) async throws
 	/// Workspace people and agents, to resolve and pick the agent a trigger runs.
 	func actors() async throws -> [AutomationActor]
+	/// The last runs of one trigger (newest first, at most `limit`).
+	func recentRuns(triggerID: String, limit: Int) async throws -> [TriggerRun]
 }
 
 public struct TriggerListing: Sendable {
@@ -24,5 +26,6 @@ public struct TriggerListing: Sendable {
 }
 
 extension TriggersAPI {
+	public func recentRuns(triggerID: String, limit: Int) async throws -> [TriggerRun] { [] }
 	public func listPage() async throws -> TriggerListing { TriggerListing(triggers: try await list()) }
 }

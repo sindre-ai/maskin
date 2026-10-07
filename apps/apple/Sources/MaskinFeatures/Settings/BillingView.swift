@@ -3,8 +3,9 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Plan and usage, read-only. No purchase or link-out: App Review 3.1.1 forbids pointing to
-/// external purchasing, so plan changes and credits are handled on the web, outside the app.
+/// Billing (2C): the plan, its state and this period's usage, read-only. There is deliberately no
+/// button that opens a purchase page: App Review 3.1.1 forbids pointing out of the app to buy,
+/// so plan changes and credits are handled outside it. See the D2 report for the open question.
 struct BillingView: View {
 	@State private var store: BillingStore
 	init(store: BillingStore) {
@@ -12,66 +13,51 @@ struct BillingView: View {
 	}
 
 	var body: some View {
-		List {
+		WorkspacePage(title: "Billing") {
 			if let usage = store.usage {
-				Section {
-					VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-						Text(usage.planLabel).maskinText(.title).foregroundStyle(MaskinColor.ink)
-						Text(usage.statusLabel).maskinText(.subhead)
-							.foregroundStyle(usage.status == .active ? MaskinColor.ink4 : MaskinColor.warning)
-					}
-					.padding(.vertical, MaskinSpace.s4)
-					.accessibilityElement(children: .combine)
-				}
-				Section {
-					VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-						HStack(alignment: .firstTextBaseline) {
-							Text(BillingUsage.dollars(usage.usedCents)).maskinText(.title)
-								.foregroundStyle(MaskinColor.ink)
-							if let cap = usage.capCents {
-								Text("of \(BillingUsage.dollars(cap))").maskinText(.subhead)
-									.foregroundStyle(MaskinColor.ink4)
-							}
-						}
-						if let fraction = usage.usedFraction {
-							ProgressView(value: fraction)
-								.tint(fraction >= 0.9 ? MaskinColor.warning : MaskinColor.ink)
-								.accessibilityLabel("Usage")
-								.accessibilityValue("\(Int(fraction * 100)) percent")
-						}
-						if let resets = usage.resetsText {
-							Text(resets).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-						}
-					}
-					.padding(.vertical, MaskinSpace.s4)
-					.accessibilityElement(children: .combine)
-				} header: {
-					Text("Usage this period")
-				}
+				PageGroupLabel(text: "Plan")
+				PageCard(rows: rows(usage))
 				if usage.creditBalanceCents > 0 {
-					Section("Credits") {
-						LabeledContent("Balance", value: BillingUsage.dollars(usage.creditBalanceCents))
-							.frame(minHeight: MaskinSpace.touchMin)
-					}
+					PageCard(rows: [
+						PageRowModel(
+							id: "credits", title: "Credits",
+							subtitle: "Left to use after your allowance",
+							accessory: .state(PageState(BillingUsage.dollars(usage.creditBalanceCents), .plain)))
+					])
+				}
+				PageFootnote(text: "This is a summary of your plan and this period's usage.")
+			} else {
+				switch store.phase {
+				case .failed(let message): PageStatus(text: message)
+				default: PageStatus(text: "Loading your plan")
 				}
 			}
 		}
-		.settingsListStyle()
-		.overlay {
-			switch store.phase {
-			case .loading: ProgressView()
-			case .failed(let message) where store.usage == nil:
-				ContentUnavailableView(
-					"Couldn't load your plan", systemImage: "wifi.exclamationmark",
-					description: Text(message))
-			default: EmptyView()
-			}
-		}
-		.navigationTitle("Plan and usage")
-		#if os(iOS)
-			.navigationBarTitleDisplayMode(.inline)
-		#endif
 		.task { await store.load() }
 		.refreshable { await store.load() }
+	}
+
+	private func rows(_ usage: BillingUsage) -> [PageRowModel] {
+		let healthy = usage.status == .active
+		var rows = [
+			PageRowModel(
+				id: "plan", title: usage.planLabel,
+				subtitle: usage.resetsText ?? "Your current plan",
+				accessory: .state(PageState(usage.statusLabel, healthy ? .active : .muted)))
+		]
+		let spent = BillingUsage.dollars(usage.usedCents)
+		if let fraction = usage.usedFraction, let cap = usage.capCents {
+			rows.append(
+				PageRowModel(
+					id: "usage", title: "Agent usage",
+					subtitle: "\(spent) of \(BillingUsage.dollars(cap)) this period",
+					accessory: .state(PageState("\(Int(fraction * 100))%", .plain))))
+		} else {
+			rows.append(
+				PageRowModel(
+					id: "usage", title: "Agent usage", subtitle: "This period",
+					accessory: .state(PageState(spent, .plain))))
+		}
+		return rows
 	}
 }

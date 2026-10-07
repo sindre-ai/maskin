@@ -10,6 +10,8 @@ public final class TriggerDetailStore {
 	public private(set) var directory: ActorDirectory
 	public private(set) var isSaving = false
 	public private(set) var isDeleted = false
+	/// The last runs (newest first); empty until loaded or when the server has none.
+	public private(set) var runs: [TriggerRun] = []
 	/// Last failure, shown inline by the screen.
 	public var error: String?
 
@@ -62,6 +64,8 @@ public final class TriggerDetailStore {
 					case .reconnected: await self.refresh()
 					case .event(let e) where e.entityType == .trigger && e.entityId == self.trigger.id:
 						await self.refresh()
+					case .event(let e) where e.entityType == .session:
+						await self.loadRuns()
 					default: break
 					}
 				}
@@ -70,7 +74,17 @@ public final class TriggerDetailStore {
 		if directory.byID.isEmpty, let actors = try? await api.actors() {
 			directory = ActorDirectory(actors)
 		}
+		await loadRuns()
 	}
+
+	/// The last three runs. A failure leaves what is on screen; runs are context, not required.
+	public func loadRuns() async {
+		if let fresh = try? await api.recentRuns(triggerID: trigger.id, limit: Self.runLimit) {
+			runs = Array(fresh.prefix(Self.runLimit))
+		}
+	}
+
+	public static let runLimit = 3
 
 	public func stop() {
 		listener?.cancel()

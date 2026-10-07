@@ -41,31 +41,47 @@ struct MarketplaceContent: View {
 	let onOpenLoop: (String) -> Void
 
 	@Environment(\.dismiss) private var dismiss
+	@Environment(\.isPushedInHostStack) private var pushed
 	@State private var search = ""
 	@State private var useCase: String?
 	@State private var path: [String] = []
 
 	var body: some View {
-		NavigationStack(path: $path) {
-			catalogList
-				.ambientBackground()
-				.navigationTitle("Marketplace")
-				#if os(iOS)
-				.toolbarTitleDisplayMode(.inlineLarge)
-				#endif
-				.searchable(text: $search, prompt: "Search flows")
-				.toolbar {
-					ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-				}
-				.navigationDestination(for: String.self) { id in
-					MarketplaceLoopDetailView(
-						store: store, loopID: id,
-						onOpenLoop: { object in
-							dismiss()
-							onOpenLoop(object)
-						})
-				}
+		if pushed {
+			catalog.navigationDestination(item: openLoopID) { detail($0) }
+		} else {
+			NavigationStack(path: $path) {
+				catalog
+					.toolbar {
+						ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+					}
+					.navigationDestination(for: String.self) { detail($0) }
+			}
 		}
+	}
+
+	/// The open loop as an optional, for the pushed layout that has no path-driven stack of its own.
+	private var openLoopID: Binding<String?> {
+		Binding(get: { path.last }, set: { if $0 == nil { path.removeAll() } else { path = [$0!] } })
+	}
+
+	private var catalog: some View {
+		catalogList
+			.ambientBackground()
+			.navigationTitle("Marketplace")
+			#if os(iOS)
+			.toolbarTitleDisplayMode(.inlineLarge)
+			#endif
+			.searchable(text: $search, prompt: "Search flows")
+	}
+
+	private func detail(_ id: String) -> some View {
+		MarketplaceLoopDetailView(
+			store: store, loopID: id,
+			onOpenLoop: { object in
+				dismiss()
+				onOpenLoop(object)
+			})
 	}
 
 	private var catalogList: some View {
