@@ -245,6 +245,7 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
+		tags: [],
 		inProgressCount: 0,
 		closedCount: 0,
 		medianTimeToCloseMs: null,

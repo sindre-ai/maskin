@@ -77,10 +77,23 @@ public final class LoopsStore {
 		loop.agentIDs.compactMap { directory.name($0) }
 	}
 
-	/// Every loop, as the API ordered them, narrowed by the search text.
+	/// The tag the list is narrowed to, or nil for every loop.
+	public var selectedTag: String?
+
+	/// Every tag in use, most common first (ties alphabetical), for the filter pills.
+	public var allTags: [String] {
+		var counts: [String: Int] = [:]
+		for tag in loops.flatMap(\.tags) { counts[tag, default: 0] += 1 }
+		return counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
+	}
+
+	/// Every loop, as the API ordered them, narrowed by the search text and the chosen tag.
 	public func filtered(query: String = "") -> [LoopSummary] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		return loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
+		return loops.filter {
+			(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
+				&& (selectedTag.map($0.tags.contains) ?? true)
+		}
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }

@@ -26550,6 +26550,8 @@ public enum Operations {
                             public var entryCondition: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closeCondition`.
                             public var closeCondition: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/tags`.
+                            public var tags: [Swift.String]
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/inProgressCount`.
                             public var inProgressCount: Swift.Int
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closedCount`.
@@ -26694,6 +26696,7 @@ public enum Operations {
                             ///   - pill:
                             ///   - entryCondition:
                             ///   - closeCondition:
+                            ///   - tags:
                             ///   - inProgressCount:
                             ///   - closedCount:
                             ///   - medianTimeToCloseMs:
@@ -26713,6 +26716,7 @@ public enum Operations {
                                 pill: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.pillPayload,
                                 entryCondition: Swift.String? = nil,
                                 closeCondition: Swift.String? = nil,
+                                tags: [Swift.String],
                                 inProgressCount: Swift.Int,
                                 closedCount: Swift.Int,
                                 medianTimeToCloseMs: Swift.Int? = nil,
@@ -26732,6 +26736,7 @@ public enum Operations {
                                 self.pill = pill
                                 self.entryCondition = entryCondition
                                 self.closeCondition = closeCondition
+                                self.tags = tags
                                 self.inProgressCount = inProgressCount
                                 self.closedCount = closedCount
                                 self.medianTimeToCloseMs = medianTimeToCloseMs
@@ -26752,6 +26757,7 @@ public enum Operations {
                                 case pill
                                 case entryCondition
                                 case closeCondition
+                                case tags
                                 case inProgressCount
                                 case closedCount
                                 case medianTimeToCloseMs

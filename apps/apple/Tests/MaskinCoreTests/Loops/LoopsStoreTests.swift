@@ -249,3 +249,37 @@ struct LoopDetailStoreTests {
 		#expect(step.firesSummary == "Runs every Sunday at 5:00 PM UTC")
 	}
 }
+
+@MainActor
+@Suite("Loop tags")
+struct LoopTagsTests {
+	private func store(_ loops: [LoopSummary]) async -> LoopsStore {
+		let store = LoopsStore(api: FakeLoopsAPI(loops), events: nil)
+		await store.start()
+		return store
+	}
+
+	@Test("tags are listed most common first, then alphabetically")
+	func order() async {
+		let s = await store([
+			LoopSummary(id: "1", name: "A", tags: ["Sales", "EMEA"]),
+			LoopSummary(id: "2", name: "B", tags: ["Sales"]),
+			LoopSummary(id: "3", name: "C", tags: ["Ops"]),
+		])
+		#expect(s.allTags == ["Sales", "EMEA", "Ops"])
+	}
+
+	@Test("choosing a tag narrows the list to loops carrying it")
+	func filter() async {
+		let s = await store([
+			LoopSummary(id: "1", name: "A", status: .learning, tags: ["Sales"]),
+			LoopSummary(id: "2", name: "B", status: .learning, tags: ["Ops"]),
+			LoopSummary(id: "3", name: "C", status: .learning),
+		])
+		#expect(s.filtered().count == 3)
+		s.selectedTag = "Sales"
+		#expect(s.filtered().map(\.id) == ["1"])
+		s.selectedTag = nil
+		#expect(s.filtered().count == 3)
+	}
+}
