@@ -2,6 +2,11 @@ import MaskinCore
 import MaskinDesign
 import MaskinUI
 import SwiftUI
+#if canImport(UIKit)
+	import UIKit
+#elseif canImport(AppKit)
+	import AppKit
+#endif
 
 /// The thread for one conversation: history, live messages, a composer pinned above the keyboard.
 /// Takes a ready `ChatStore` and `ChatComposerModel` so it previews and snapshots without a server.
@@ -83,6 +88,14 @@ struct ChatThreadView: View {
 							}
 						}
 						Button(action: onInvite) { Label("Invite people", systemImage: "person.badge.plus") }
+						if let link = chatLink {
+							Button {
+								Self.copy(link.absoluteString)
+								MaskinHaptics.play(.success)
+							} label: {
+								Label("Copy link", systemImage: "link")
+							}
+						}
 						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
 						Button {
 							searching.toggle()
@@ -146,17 +159,60 @@ struct ChatThreadView: View {
 			}
 	}
 
-	/// The large title: the conversation's name, no subtitle. The back button and ··· menu stay in
-	/// the bar; the agent's page opens from the avatar or name on its messages.
+	/// The web link to this conversation, for Copy link.
+	private var chatLink: URL? {
+		guard let workspaceID = runtime?.environment.workspaceId else { return nil }
+		return DeepLink.chat(workspaceId: workspaceID, id: store.conversationID).universalURL()
+	}
+
+	private static func copy(_ text: String) {
+		#if canImport(UIKit) && !os(tvOS) && !os(watchOS)
+			UIPasteboard.general.string = text
+		#elseif canImport(AppKit) && os(macOS)
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(text, forType: .string)
+		#endif
+	}
+
+	/// The other party of a direct chat; nil for a group, which has its own header pill.
+	private var counterpart: ChatParticipant? {
+		let others = store.participants.filter { $0.id != store.currentActorID }
+		return others.count == 1 ? others.first : nil
+	}
+
+	/// "WITH IDA" in mono above the title. An agent's opens its page; a person has no page to
+	/// open yet. (A "THREAD IN {FLOW}" link needs a flow on the conversation, which the API lacks.)
+	@ViewBuilder
+	private var contextLink: some View {
+		if let counterpart {
+			if counterpart.kind == .agent, let runtime {
+				Button {
+					runtime.openAgent(counterpart.id)
+				} label: {
+					MonoLabel("With \(counterpart.name)", color: MaskinColor.sigInk)
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityLabel("With \(counterpart.name), open agent")
+			} else {
+				MonoLabel("With \(counterpart.name)")
+			}
+		}
+	}
+
+	/// The large title: a mono context link over the conversation's name. The back button and ···
+	/// menu stay in the bar; the agent's page opens from the avatar or name on its messages.
 	private var titleView: some View {
-		Text(store.title)
-			.font(MaskinTypeface.threadTitle)
-			.foregroundStyle(MaskinColor.ink)
-			.lineLimit(2)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.padding(.horizontal, MaskinSpace.s9)
-			.padding(.top, MaskinSpace.s3)
-			.accessibilityAddTraits(.isHeader)
+		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+			contextLink
+			Text(store.title)
+				.font(MaskinTypeface.threadTitle)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(2)
+				.accessibilityAddTraits(.isHeader)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(.horizontal, MaskinSpace.s9)
+		.padding(.top, MaskinSpace.s3)
 	}
 
 	/// The thread plus the observers for search and hands-free speech (kept apart so `body`

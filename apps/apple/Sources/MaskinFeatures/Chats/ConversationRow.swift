@@ -5,7 +5,7 @@ import SwiftUI
 
 /// One conversation in the list: a 40pt avatar (two overlapped for a group chat), the title over
 /// "Agent · preview", the time in the Messages style and an unread count. An unread chat reads
-/// louder: a bold title, a darker preview and the count badge.
+/// louder: a bold title and the count badge. The list gives the row its 12 x 16 padding.
 struct ConversationRow: View {
 	let conversation: ConversationSummary
 	let currentActorID: String?
@@ -33,20 +33,20 @@ struct ConversationRow: View {
 					if let date = conversation.activityDate {
 						Text(ChatListTime.label(for: date, now: now))
 							.maskinText(.caption)
-							.foregroundStyle(conversation.isUnread ? MaskinColor.sigInk : MaskinColor.ink4)
+							// fg55 in the handoff's names: the quiet end of the ink scale.
+							.foregroundStyle(MaskinColor.inkPlaceholder)
 					}
 				}
 				HStack(alignment: .top, spacing: MaskinSpace.s4) {
 					previewLine
 						.maskinText(.subhead)
-						.foregroundStyle(conversation.isUnread ? MaskinColor.ink2 : MaskinColor.ink4)
+						.foregroundStyle(MaskinColor.ink4)
 						.lineLimit(2)
 					Spacer(minLength: 0)
 					if conversation.isUnread { UnreadBadge(count: conversation.unreadCount) }
 				}
 			}
 		}
-		.padding(.vertical, MaskinSpace.s2)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
