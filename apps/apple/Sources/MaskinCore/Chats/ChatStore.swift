@@ -245,6 +245,11 @@ public final class ChatStore {
 						await self.sync(full: event.action == "message_updated")
 						await self.refreshSessions()
 					case .event(let event) where event.entityType == .actor || event.entityType == .session:
+						// A handed-off session's row lives on its message: re-read the page when one of
+						// ours (or any, while one is live) changed state.
+						if event.entityType == .session, self.tracksSpawnedSession(event.entityId) {
+							await self.sync(full: true)
+						}
 						await self.refreshSessions()
 					case .event:
 						break
@@ -273,7 +278,10 @@ public final class ChatStore {
 				while !Task.isCancelled {
 					try? await Task.sleep(for: interval)
 					guard let self, !Task.isCancelled else { return }
-					if self.isActive, self.needsSessionPoll { await self.refreshSessions() }
+					if self.isActive, self.needsSessionPoll {
+						if self.hasLiveSpawnedSession { await self.sync(full: true) }
+						await self.refreshSessions()
+					}
 				}
 			}
 		}
@@ -296,7 +304,18 @@ public final class ChatStore {
 
 	/// Only poll sessions while something could change: an agent is running or a reply is due.
 	private var needsSessionPoll: Bool {
-		!liveSessions().isEmpty || awaitingReplySince != nil
+		!liveSessions().isEmpty || awaitingReplySince != nil || hasLiveSpawnedSession
+	}
+
+	/// A handoff row is still queued or working: its state only reaches us through the messages.
+	private var hasLiveSpawnedSession: Bool {
+		confirmed.contains { $0.spawnedSessions.contains { $0.isLive } }
+	}
+
+	private func tracksSpawnedSession(_ id: String?) -> Bool {
+		if hasLiveSpawnedSession { return true }
+		guard let id else { return false }
+		return confirmed.contains { $0.spawnedSessions.contains { $0.id == id } }
 	}
 
 	/// First frame from disk: the newest page of this thread, before any network call.

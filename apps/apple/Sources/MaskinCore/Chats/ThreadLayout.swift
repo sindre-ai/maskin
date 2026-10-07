@@ -8,6 +8,9 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 	case message(ChatMessage, showsAuthor: Bool)
 	/// "N new", above the first message the reader hadn't seen when they opened the thread.
 	case unreadDivider(count: Int)
+	/// A sub-agent session the message above handed work to. `behind` names the sessions of the
+	/// same message it waits on (a name, never an id).
+	case handoff(SpawnedSession, behind: [String])
 
 	public var id: String {
 		switch self {
@@ -15,6 +18,7 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 		case .daySeparator(let day): "day-\(Int(day.timeIntervalSince1970))"
 		case .system(let m): m.id
 		case .message(let m, _): m.id
+		case .handoff(let session, _): "handoff-\(session.id)"
 		}
 	}
 }
@@ -89,8 +93,23 @@ public enum ThreadLayout {
 			}
 			items.append(.message(message, showsAuthor: showsAuthor))
 			previous = message
+			let handoffs = handoffItems(for: message)
+			if !handoffs.isEmpty {
+				// The card sits between two messages, so a following one opens a fresh run.
+				items.append(contentsOf: handoffs)
+				previous = nil
+			}
 		}
 		return items
+	}
+
+	/// One row per spawned session the strip has a pill for, in the server's order.
+	static func handoffItems(for message: ChatMessage) -> [ThreadItem] {
+		let names = Dictionary(
+			message.spawnedSessions.map { ($0.id, $0.actorName) }, uniquingKeysWith: { first, _ in first })
+		return message.spawnedSessions.filter { $0.pill != nil }.map { session in
+			.handoff(session, behind: session.dependsOn.compactMap { names[$0] })
+		}
 	}
 
 	/// How one message sits in its run of consecutive messages from one author.

@@ -150,7 +150,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 					serverID: Int(row.id), conversationID: row.conversationId, actorID: row.actorId,
 					actorName: row.actorName, author: row.actorType == "agent" ? .agent : .human,
 					kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
-					editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata))
+					editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata),
+					spawnedSessions: (row.spawned_sessions ?? []).map(Self.spawned))
 			}
 			return MessagePage(messages: messages.sorted { ($0.serverID ?? 0) < ($1.serverID ?? 0) }, hasMore: body.has_more)
 		default:
@@ -295,6 +296,22 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			.init(
 				path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		guard case .ok = output else { throw ChatsError("Couldn't resume the agent.") }
+	}
+
+	private static func spawned(
+		_ row: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body
+			.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload
+	) -> SpawnedSession {
+		let pill = SpawnedSession(
+			id: row.id, status: row.status, actorID: row.actorId, actorName: row.actorName,
+			actionPrompt: row.actionPrompt
+		).pill
+		return SpawnedSession(
+			id: row.id, status: row.status, actorID: row.actorId, actorName: row.actorName,
+			actionPrompt: row.actionPrompt, startedAt: ChatDates.parse(row.startedAt),
+			completedAt: ChatDates.parse(row.completedAt), durationMs: row.durationMs,
+			outcomeText: SpawnedSession.outcome(from: Self.json(row.result), pill: pill),
+			currentActivity: row.currentActivity, dependsOn: row.depends_on_session_ids)
 	}
 
 	private static func json(_ container: (any Encodable)?) -> JSONValue? {

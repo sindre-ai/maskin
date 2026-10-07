@@ -39,6 +39,8 @@ enum ChatCaching {
 		var editedAt: Date?
 		var metadata: JSONValue?
 		var isError: Bool
+		/// Absent in caches written before handoff rows existed; they decode as none.
+		var spawnedSessions: [SpawnedSession]?
 
 		init?(_ message: ChatMessage) {
 			guard let id = message.serverID else { return nil }
@@ -52,6 +54,7 @@ enum ChatCaching {
 			createdAt = message.createdAt
 			editedAt = message.editedAt
 			isError = message.isErrorReply
+			spawnedSessions = message.spawnedSessions.isEmpty ? nil : message.spawnedSessions
 			metadata = Self.sanitize(message.metadata)
 		}
 
@@ -66,7 +69,7 @@ enum ChatCaching {
 			return .confirmed(
 				serverID: serverID, conversationID: conversationID, actorID: actorID, actorName: actorName,
 				author: author, kind: kind, content: content, createdAt: createdAt, editedAt: editedAt,
-				metadata: meta)
+				metadata: meta, spawnedSessions: spawnedSessions ?? [])
 		}
 
 		private static func sanitize(_ metadata: JSONValue?) -> JSONValue? {

@@ -118,13 +118,16 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 	public var status: Status
 	/// For a message this client is sending: the key that makes a retry idempotent.
 	public var idempotencyKey: String?
+	/// Sub-agent sessions this message handed work to; the thread shows a row for each.
+	public var spawnedSessions: [SpawnedSession]
 
 	public init(
 		id: String, serverID: Int? = nil, conversationID: String, actorID: String, actorName: String,
 		author: ChatParticipant.Kind, kind: String = "message", content: String, createdAt: Date? = nil,
 		editedAt: Date? = nil, metadata: JSONValue? = nil, status: Status = .sent,
-		idempotencyKey: String? = nil
+		idempotencyKey: String? = nil, spawnedSessions: [SpawnedSession] = []
 	) {
+		self.spawnedSessions = spawnedSessions
 		self.id = id
 		self.serverID = serverID
 		self.conversationID = conversationID
@@ -144,12 +147,12 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 	public static func confirmed(
 		serverID: Int, conversationID: String, actorID: String, actorName: String,
 		author: ChatParticipant.Kind, kind: String = "message", content: String, createdAt: Date? = nil,
-		editedAt: Date? = nil, metadata: JSONValue? = nil
+		editedAt: Date? = nil, metadata: JSONValue? = nil, spawnedSessions: [SpawnedSession] = []
 	) -> ChatMessage {
 		ChatMessage(
 			id: "m\(serverID)", serverID: serverID, conversationID: conversationID, actorID: actorID,
 			actorName: actorName, author: author, kind: kind, content: content, createdAt: createdAt,
-			editedAt: editedAt, metadata: metadata)
+			editedAt: editedAt, metadata: metadata, spawnedSessions: spawnedSessions)
 	}
 
 	public var isSystem: Bool { kind == "system" }

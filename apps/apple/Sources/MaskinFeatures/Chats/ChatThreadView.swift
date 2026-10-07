@@ -532,6 +532,8 @@ struct ThreadTranscript: View {
 		case .unreadDivider(let count):
 			ThreadDivider(
 				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.sigInk)
+		case .handoff(let session, let behind):
+			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
 			let run = runs[message.id] ?? ThreadLayout.Run()
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
