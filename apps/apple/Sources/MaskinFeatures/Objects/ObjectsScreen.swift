@@ -9,6 +9,7 @@ public struct ObjectsScreen: View {
 	private let environment: AppEnvironment
 	private let services: ObjectsServices
 	@State private var store: ObjectsStore
+	@State private var board: ObjectsBoardStore
 	@State private var path: [ObjectRoute] = []
 	@Namespace private var zoom
 	@State private var selection: String?
@@ -22,7 +23,8 @@ public struct ObjectsScreen: View {
 		_store = State(
 			initialValue: ObjectsStore(
 				remote: services.remote, directory: services.directory,
-				cache: environment.snapshotCache))
+				cache: environment.snapshotCache, displayStorage: UserDefaultsObjectsDisplayStorage()))
+		_board = State(initialValue: ObjectsBoardStore(remote: services.remote))
 	}
 
 	public var body: some View {
@@ -35,11 +37,13 @@ public struct ObjectsScreen: View {
 		}
 		.task(id: environment.workspaceId) {
 			store.reset()
+			board.reset()
 			path = []
 			selection = nil
 			await store.load()
 		}
 		.task { await store.observe(environment.events.subscribe()) }
+		.task { await board.observe(environment.events.subscribe()) }
 	}
 
 	/// Search is the list's own `.searchable`; Display holds the filters and grouping.
@@ -51,7 +55,7 @@ public struct ObjectsScreen: View {
 
 	private var stack: some View {
 		NavigationStack(path: $path) {
-			ObjectsListView(store: store, selection: nil, zoomNamespace: zoom)
+			ObjectsListView(store: store, board: board, selection: nil, zoomNamespace: zoom)
 				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
@@ -64,7 +68,7 @@ public struct ObjectsScreen: View {
 
 	private var split: some View {
 		NavigationSplitView {
-			ObjectsListView(store: store, selection: $selection)
+			ObjectsListView(store: store, board: board, selection: $selection)
 				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {

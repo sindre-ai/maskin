@@ -37,6 +37,10 @@ public final class ObjectsStore {
 	public var starredOnly = false
 	public private(set) var searchText = ""
 	public var grouping: ObjectsGrouping = .type
+	/// Sort, "Needs you only", shown properties and list/board: remembered across launches.
+	public private(set) var display = ObjectsDisplay() {
+		didSet { if display != oldValue { displayStorage?.save(display) } }
+	}
 
 	public let directory: ObjectsDirectory
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
@@ -44,6 +48,7 @@ public final class ObjectsStore {
 
 	@ObservationIgnored private let remote: any ObjectsRemote
 	@ObservationIgnored private let cache: SnapshotCache?
+	@ObservationIgnored private let displayStorage: (any ObjectsDisplayStorage)?
 	/// The list on screen came from disk and has not been confirmed by the server yet, so
 	/// `load()` must still revalidate it.
 	@ObservationIgnored private var hydratedFromCache = false
@@ -53,18 +58,21 @@ public final class ObjectsStore {
 	@ObservationIgnored private var refreshQueued = false
 
 	public init(
-		remote: any ObjectsRemote, directory: ObjectsDirectory, cache: SnapshotCache? = nil
+		remote: any ObjectsRemote, directory: ObjectsDirectory, cache: SnapshotCache? = nil,
+		displayStorage: (any ObjectsDisplayStorage)? = nil
 	) {
 		self.remote = remote
 		self.directory = directory
 		self.cache = cache
+		self.displayStorage = displayStorage
+		if let saved = displayStorage?.load() { display = saved }
 		hydrateIfNeeded()
 	}
 
 	/// Show the last-known first page before any network call. Only the unfiltered head is ever
 	/// cached, so this only applies while no filter or search is set.
 	private func hydrateIfNeeded() {
-		guard phase == .idle, objects.isEmpty, !isFiltered,
+		guard phase == .idle, objects.isEmpty, !isFiltered, cachesHead,
 			let entry = cache?.read([WorkObject].self, Self.cacheName)
 		else { return }
 		objects = entry.value
@@ -76,15 +84,21 @@ public final class ObjectsStore {
 
 	/// Remember the unfiltered head so the next launch opens on it.
 	private func persistHead() {
-		guard !isFiltered else { return }
+		guard !isFiltered, cachesHead else { return }
 		cache?.write(Array(objects.prefix(Self.pageSize)), Self.cacheName)
 	}
 
 	// MARK: Derived
 
-	/// `objects` narrowed by the starred filter.
+	/// The cached head is the newest-updated page; another server order must not be stored as it.
+	private var cachesHead: Bool { display.sort.serverField == "updatedAt" }
+
+	/// `objects` narrowed by the starred and "Needs you only" filters.
 	public var visibleObjects: [WorkObject] {
-		starredOnly ? objects.filter(\.isStarred) : objects
+		var visible = objects
+		if starredOnly { visible = visible.filter(\.isStarred) }
+		if display.needsYouOnly { visible = visible.filter(ObjectsUrgency.needsYou) }
+		return visible
 	}
 
 	/// The types the filter pills offer: those the workspace actually has objects of (schema
@@ -98,7 +112,8 @@ public final class ObjectsStore {
 	}
 
 	public var groups: [ObjectGroup] {
-		ObjectsGrouper.group(visibleObjects, by: grouping, schema: directory.schema, type: typeFilter)
+		ObjectsGrouper.group(
+			visibleObjects, by: grouping, schema: directory.schema, type: typeFilter, sort: display.sort)
 	}
 
 	/// Statuses offered by the status filter for the current type filter.
@@ -110,7 +125,7 @@ public final class ObjectsStore {
 		ObjectsQuery(
 			type: typeFilter, status: statusFilter,
 			search: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
-			limit: Self.pageSize, offset: 0)
+			limit: Self.pageSize, offset: 0, sort: display.sort)
 	}
 
 	// MARK: Loading
@@ -190,6 +205,29 @@ public final class ObjectsStore {
 		starredOnly = on
 		// The head is cached unfiltered; coming back off the filter needs no refetch.
 		if on { await loadMore() }
+	}
+
+	// MARK: Display
+
+	public func setSort(_ sort: ObjectsSort) async {
+		guard sort != display.sort else { return }
+		let reorders = sort.serverField != display.sort.serverField
+		display.sort = sort
+		// A different server order (name) needs its own first page; the tiers are local.
+		if reorders { await fetchFirstPage(showSpinner: false) }
+	}
+
+	public func setNeedsYouOnly(_ on: Bool) { display.needsYouOnly = on }
+
+	public func toggleProperty(_ property: ObjectsProperty) { display.toggle(property) }
+
+	/// Switching to the board needs one type (the board is per type), so it opens on the first
+	/// present one when "All" is selected.
+	public func setLayout(_ layout: ObjectsLayout) async {
+		display.layout = layout
+		if layout == .board, typeFilter == nil, let first = presentTypes.first {
+			await setType(first)
+		}
 	}
 
 	public func setSearch(_ text: String) async {

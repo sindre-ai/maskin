@@ -9,6 +9,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	private var _graphs: [String: ObjectGraph] = [:]
 	private var _failures: Set<String> = []
 	private var _listQueries: [ObjectsQuery] = []
+	private var _boardQueries: [ObjectsBoardQuery] = []
 	private var _commentKeys: [String] = []
 	private var _commentMentions: [[String]] = []
 	private var _commentRefs: [[String]] = []
@@ -35,6 +36,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	func goOffline(_ value: Bool) { lock.withLock { _offline = value } }
 
 	var listQueries: [ObjectsQuery] { lock.withLock { _listQueries } }
+	var boardQueries: [ObjectsBoardQuery] { lock.withLock { _boardQueries } }
 	var commentKeys: [String] { lock.withLock { _commentKeys } }
 	var commentMentions: [[String]] { lock.withLock { _commentMentions } }
 	var commentRefs: [[String]] { lock.withLock { _commentRefs } }
@@ -61,6 +63,21 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 			result = result.filter { $0.displayTitle.localizedCaseInsensitiveContains(query.search) }
 		}
 		return Array(result.dropFirst(query.offset).prefix(query.limit))
+	}
+
+	/// One column per configured status of the type (the server's shape), filtered by `column` and
+	/// paged by `offset` / `limit`; `total` counts the column before paging.
+	func board(_ query: ObjectsBoardQuery) async throws -> [ObjectsBoardColumn] {
+		lock.withLock { _boardQueries.append(query) }
+		try check("board")
+		let ofType = objects.filter { $0.type == query.type }
+		let statuses = ObjectsSchema.fallback.statuses(for: query.type)
+		return statuses.filter { query.column == nil || $0 == query.column }.map { status in
+			let inColumn = ofType.filter { $0.status == status }
+			return ObjectsBoardColumn(
+				id: "status:\(status)", value: status, total: inColumn.count,
+				objects: Array(inColumn.dropFirst(query.offset).prefix(query.limit)))
+		}
 	}
 
 	var graphCalls: Int { lock.withLock { _graphCalls } }

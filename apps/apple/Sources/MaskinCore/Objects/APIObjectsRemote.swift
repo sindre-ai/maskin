@@ -35,11 +35,32 @@ public struct APIObjectsRemote: ObjectsRemote {
 			let output = try await client.get_sol_api_sol_objects(
 				.init(
 					query: .init(
-						_type: query.type, status: query.status, sort: "updatedAt", order: .desc,
+						_type: query.type, status: query.status, sort: query.sort.serverField,
+						order: query.sort.serverAscending ? .asc : .desc,
 						limit: min(query.limit, ServerLimits.maxPageSize), offset: query.offset),
 					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
 			guard case .ok(let ok) = output else { throw Self.failure(output) }
 			return try Self.convert(ok.body.json, as: [ObjectDTO].self).map(\.model)
+		} catch {
+			throw Self.wrap(error)
+		}
+	}
+
+	// MARK: Board
+
+	public func board(_ query: ObjectsBoardQuery) async throws -> [ObjectsBoardColumn] {
+		let workspace = await workspaceHeader()
+		do {
+			let output = try await client.get_sol_api_sol_objects_sol_board(
+				.init(
+					query: .init(
+						_type: query.type, sort: query.sort.serverField,
+						order: query.sort.serverAscending ? .asc : .desc,
+						limit: min(query.limit, ServerLimits.maxPageSize), offset: query.offset,
+						column: query.column),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
+			guard case .ok(let ok) = output else { throw Self.failure(output) }
+			return try Self.convert(ok.body.json, as: BoardDTO.self).columns.map(\.model)
 		} catch {
 			throw Self.wrap(error)
 		}
@@ -295,6 +316,21 @@ private struct ObjectDTO: Decodable {
 			unreadCount: Int(unread_count ?? 0), activeActivity: activeSessionCurrentActivity,
 			hasActiveSession: !(activeSessionId ?? "").isEmpty)
 	}
+}
+
+private struct BoardDTO: Decodable {
+	struct Column: Decodable {
+		var id: String
+		var value: String
+		var total: Double
+		var objects: [ObjectDTO]
+
+		var model: ObjectsBoardColumn {
+			ObjectsBoardColumn(id: id, value: value, total: Int(total), objects: objects.map(\.model))
+		}
+	}
+
+	var columns: [Column]
 }
 
 private struct RelationshipDTO: Decodable {
