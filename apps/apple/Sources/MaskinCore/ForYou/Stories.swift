@@ -31,6 +31,21 @@ public struct StoryCard: Identifiable, Equatable, Sendable {
 	}
 }
 
+extension StoryCard {
+	/// The mono line under the headline. A text briefing reads in `words / 200` minutes (at least
+	/// one); a loop's page is an HTML outcome, which has no length the app knows, so it is just
+	/// labelled a page. A deck's "N CARDS" needs a card count the data does not carry.
+	public var formatLabel: String {
+		switch content {
+		case .briefing(_, let script):
+			let words = script.split(whereSeparator: \.isWhitespace).count
+			return "READ \u{00B7} \(max(1, Int((Double(words) / 200).rounded(.up)))) MIN"
+		case .page:
+			return "PAGE"
+		}
+	}
+}
+
 /// Today's brief as the Chief of Staff would say it (`POST /api/briefing/spoken`).
 public struct SpokenBrief: Equatable, Sendable {
 	public var headline: String

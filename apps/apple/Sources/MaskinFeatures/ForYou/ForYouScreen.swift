@@ -97,6 +97,8 @@ struct ForYouFeedView: View {
 	/// The briefing cards above the feed; nil in snapshots.
 	var stories: StoriesStore?
 	@State private var openStory: StoryCard?
+	/// Which cards the reader opened with Ask; the rest stay compact.
+	@State private var expansion = CardExpansion()
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
 
@@ -123,6 +125,7 @@ struct ForYouFeedView: View {
 		.ambientBackground()
 		.refreshable { await store.refresh() }
 		.animation(store.isFetching ? nil : MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
+		.onChange(of: entries.map { $0.card.id }) { _, ids in expansion.prune(keeping: Set(ids)) }
 		.onChange(of: scenePhase) { _, phase in
 			switch phase {
 			case .active: outbox.appDidBecomeActive()
@@ -260,7 +263,7 @@ struct ForYouFeedView: View {
 					} label: {
 						Label(option.label, systemImage: "checkmark")
 					}
-					.tint(MaskinColor.success)
+					.tint(MaskinColor.doneFg)
 				}
 			}
 			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -270,16 +273,20 @@ struct ForYouFeedView: View {
 					} label: {
 						Label("Mark read", systemImage: "checkmark")
 					}
-					.tint(MaskinColor.success)
+					.tint(MaskinColor.doneFg)
 				}
 			}
 	}
 
 	private func card(_ entry: FeedEntry) -> some View {
-		DecisionCardView(
-			entry: entry, sender: store.senderName(of: entry.card), expanded: true,
-			now: fixedNow ?? Date(),
-			actions: .live(store: store, entry: entry, openObject: openObject), chief: chief)
+		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+		let id = entry.card.id
+		actions.expand = { withAnimation(MaskinMotion.standard) { expansion.expand(id) } }
+		actions.collapse = { withAnimation(MaskinMotion.standard) { expansion.collapse(id) } }
+		return DecisionCardView(
+			entry: entry, sender: store.senderName(of: entry.card),
+			expanded: expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
+			actions: actions, chief: chief)
 	}
 
 	private func dismiss(_ entry: FeedEntry) {
@@ -336,13 +343,14 @@ struct CaughtUp: View {
 				.foregroundStyle(ForYouPalette.receiptCheck)
 				.frame(width: MaskinSpace.touchMin * 1.2, height: MaskinSpace.touchMin * 1.2)
 				.background(ForYouPalette.receiptBackground, in: Circle())
+				.overlay(Circle().strokeBorder(ForYouPalette.receiptBorder, lineWidth: 1))
 				.accessibilityHidden(true)
 			Text(filtered ? "Nothing of this kind" : "You're caught up")
 				.maskinText(.title).foregroundStyle(MaskinColor.ink)
 			Text(
 				filtered
 					? "Nothing in your feed matches this filter."
-					: "Nothing needs you right now. The agents keep working. You'll hear when one needs you."
+					: "Nothing needs you right now. The flows keep running \u{2014} you'll hear when one does."
 			)
 			.maskinText(.body).foregroundStyle(MaskinColor.ink4).multilineTextAlignment(.center)
 		}
