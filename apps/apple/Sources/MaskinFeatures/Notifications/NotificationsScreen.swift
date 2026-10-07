@@ -11,6 +11,7 @@ import SwiftUI
 /// notification about an object closes the sheet and opens it.
 public struct NotificationsScreen: View {
 	@Environment(\.dismiss) private var dismiss
+	@Environment(\.isPushedInHostStack) private var pushed
 	@Environment(DeepLinkRouter.self) private var router: DeepLinkRouter?
 	private let environment: AppEnvironment
 	@State private var store: NotificationsStore
@@ -21,14 +22,16 @@ public struct NotificationsScreen: View {
 	}
 
 	public var body: some View {
-		NavigationStack {
+		StandaloneStack {
 			NotificationsContent(store: store) { open($0) }
 				.navigationTitle("Notifications")
 				#if os(iOS)
 					.navigationBarTitleDisplayMode(.inline)
 				#endif
 				.toolbar {
-					ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+					if !pushed {
+						ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+					}
 					ToolbarItem(placement: .primaryAction) {
 						Menu {
 							Button {

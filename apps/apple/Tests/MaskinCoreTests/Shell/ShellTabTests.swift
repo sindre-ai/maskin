@@ -42,21 +42,38 @@ struct ShellTabTests {
 struct ProfileMenuTests {
 	@Test func workspaceGroupThenYouGroup() {
 		#expect(
-			ProfileMenu.items(in: .workspace, hasWorkspace: true).map(\.title)
-				== ["Agents", "Marketplace", "Artefacts"])
+			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
+				== [
+					"Agents", "Marketplace", "Artefacts", "Members", "Integrations", "Triggers",
+					"Billing", "Keys",
+				])
 		#expect(
 			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
-				== ["Settings", "Notifications", "Triggers"])
+				== ["Settings", "Notifications"])
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
-		#expect(ProfileMenu.items(in: .workspace, hasWorkspace: false) == [.agents, .artefacts])
+		#expect(
+			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.agents, .artefacts])
 		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings, .notifications])
 	}
 
+	@Test func keysAreForOwnersAndAdminsOnly() {
+		for role in [MemberRole.owner, .admin] {
+			#expect(ProfileMenu.items(in: .workspace, hasWorkspace: true, role: role).contains(.keys))
+		}
+		#expect(!ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .member).contains(.keys))
+	}
+
 	@Test func everyItemIsInExactlyOneGroup() {
-		let all = ProfileMenuGroup.allCases.flatMap { ProfileMenu.items(in: $0, hasWorkspace: true) }
+		let all = ProfileMenuGroup.allCases.flatMap {
+			ProfileMenu.items(in: $0, hasWorkspace: true, role: .owner)
+		}
 		#expect(Set(all) == Set(ProfileMenuItem.allCases))
 		#expect(all.count == ProfileMenuItem.allCases.count)
+	}
+
+	@Test func thereIsNoAutonomyRow() {
+		#expect(!ProfileMenuItem.allCases.map(\.title).contains("Autonomy"))
 	}
 }

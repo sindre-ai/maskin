@@ -180,9 +180,9 @@ public final class TriggersStore {
 	/// Creates the trigger and adds it to the list. Throws so the sheet can show the failure.
 	@discardableResult
 	public func create(_ draft: TriggerDraft) async throws -> Trigger {
-		guard draft.isValid else { throw AutomationError("Give it a name, a prompt and an agent.") }
+		guard draft.isValid else { throw AutomationError("Choose when it starts, then an agent and what it should do.") }
 		// The same draft retried after a lost response reuses its key, so it can't create twice.
-		let intent = "create:\(draft.trimmedName)|\(draft.trimmedPrompt)|\(draft.targetActorID ?? "")|\(draft.schedule.expression)"
+		let intent = "create:\(draft.trimmedName)|\(draft.trimmedPrompt)|\(draft.targetActorID ?? "")|\(draft.whenFingerprint)"
 		let created = try await api.create(draft, idempotencyKey: intents.key(for: intent))
 		intents.succeeded(intent)
 		replace(created)

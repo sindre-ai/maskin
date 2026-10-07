@@ -41,13 +41,24 @@ public struct APITriggersSource: TriggersAPI {
 	}
 
 	public func create(_ draft: TriggerDraft, idempotencyKey: String) async throws -> Trigger {
+		let when: (type: String, config: JSONValue)
+		switch draft.whenKind {
+		case .schedule:
+			when = ("cron", .object(["expression": .string(draft.schedule.expression)]))
+		case .event:
+			guard let event = draft.event else { throw AutomationError("Choose which event starts it.") }
+			when = (
+				"event",
+				.object(["entity_type": .string(event.entityType), "action": .string(event.action)])
+			)
+		}
 		let body: JSONValue = .object([
-			"type": .string("cron"),
-			"name": .string(draft.trimmedName),
+			"type": .string(when.type),
+			"name": .string(draft.resolvedName),
 			"action_prompt": .string(draft.trimmedPrompt),
 			"target_actor_id": .string(draft.targetActorID ?? ""),
 			"enabled": .bool(true),
-			"config": .object(["expression": .string(draft.schedule.expression)]),
+			"config": when.config,
 		])
 		let payload = try Self.decode(
 			Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.self, from: body)
@@ -104,7 +115,29 @@ public struct APITriggersSource: TriggersAPI {
 		try await AutomationActorsSource.load(client: client, workspaceID: workspaceID)
 	}
 
+	public func recentRuns(triggerID: String, limit: Int) async throws -> [TriggerRun] {
+		let output = try await client.get_sol_api_sol_sessions(
+			.init(
+				query: .init(trigger_id: triggerID, limit: limit),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load recent runs.") }
+		let rows = try Self.decode([RunWire].self, from: ok.body.json)
+		return rows.map {
+			TriggerRun(
+				id: $0.id, outcome: TriggerRun.outcome(forStatus: $0.status),
+				at: AutomationDates.parse($0.completedAt ?? $0.startedAt ?? $0.createdAt))
+		}
+	}
+
 	// MARK: Wire
+
+	private struct RunWire: Decodable {
+		var id: String
+		var status: String
+		var createdAt: String?
+		var startedAt: String?
+		var completedAt: String?
+	}
 
 	private struct Wire: Decodable {
 		var id: String

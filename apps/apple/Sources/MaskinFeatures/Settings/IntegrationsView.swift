@@ -3,10 +3,13 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+/// Integrations (2B): every account a flow can use with its state: connected, needs sign-in, or
+/// not connected. Connecting happens in the browser; disconnecting is here.
 struct IntegrationsView: View {
 	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var store: IntegrationsStore
+	@State private var actionTarget: ConnectedIntegration?
 	@State private var pendingDisconnect: ConnectedIntegration?
 	let webSetupURL: URL?
 
@@ -16,76 +19,37 @@ struct IntegrationsView: View {
 	}
 
 	var body: some View {
-		List {
-			if !store.connected.isEmpty {
-				Section("Connected") {
-					ForEach(store.connected) { integration in
-						IntegrationRow(
-							name: store.displayName(for: integration), status: status(integration)
-						)
-						.contentShape(Rectangle())
-						.onTapGesture { if needsWeb(integration) { openSetup() } }
-						.contextMenu { menu(integration) }
-						.swipeActions(edge: .trailing) {
-							if store.canManage {
-								Button("Disconnect", role: .destructive) { pendingDisconnect = integration }
-							}
-						}
-					}
+		WorkspacePage(title: "Integrations") {
+			if rows.isEmpty {
+				switch store.phase {
+				case .failed(let message): PageStatus(text: message)
+				case .loaded: PageStatus(text: "No integrations available.")
+				default: PageStatus(text: "Loading integrations")
 				}
+			} else {
+				PageCard(rows: rows)
 			}
-			if !store.available.isEmpty {
-				Section("Available") {
-					ForEach(store.available) { provider in
-						Button { openSetup() } label: {
-							HStack {
-								IntegrationRow(name: provider.displayName, status: .available)
-								Image(systemName: "arrow.up.right").font(.footnote)
-									.foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
-							}
-						}
-						.buttonStyle(.plain)
-						.disabled(webSetupURL == nil || !store.canManage)
-						.accessibilityHint("Opens in your browser")
-					}
-				}
-			}
-			if let error = store.actionError {
-				Section { FormError(error) }
-			}
-			Section {
-				Button {
-					if let webSetupURL { openURL(webSetupURL) }
-				} label: {
-					SettingsRow(symbol: "safari", title: "Connect or reconnect on the web")
-				}
-				.disabled(webSetupURL == nil || !store.canManage)
-			} footer: {
-				Text(
-					"Connecting an integration signs you in with the provider in your browser. When you come back, this list refreshes."
-				)
-			}
+			if let error = store.actionError { FormError(error) }
+			PageFootnote(
+				text: store.canManage
+					? "Connecting signs you in with the provider in your browser. When you come back, this list refreshes."
+					: "Only owners and admins can connect or disconnect an integration.")
 		}
-		.settingsListStyle()
-		.overlay {
-			switch store.phase {
-			case .loading: ProgressView()
-			case .failed(let message):
-				ContentUnavailableView(
-					"Couldn't load integrations", systemImage: "wifi.exclamationmark",
-					description: Text(message))
-			default: EmptyView()
-			}
-		}
-		.navigationTitle("Integrations")
-		#if os(iOS)
-			.navigationBarTitleDisplayMode(.inline)
-		#endif
 		.task { await store.load() }
 		.refreshable { await store.load() }
 		// Returning from the browser: pick up whatever the web flow just connected.
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { Task { await store.load() } }
+		}
+		.confirmationDialog(
+			actionTarget.map { store.displayName(for: $0) } ?? "Integration",
+			isPresented: Binding(get: { actionTarget != nil }, set: { if !$0 { actionTarget = nil } }),
+			titleVisibility: .visible, presenting: actionTarget
+		) { integration in
+			if needsWeb(integration) {
+				Button("Reconnect in browser") { openSetup() }
+			}
+			Button("Disconnect", role: .destructive) { pendingDisconnect = integration }
 		}
 		.confirmationDialog(
 			pendingDisconnect.map { "Disconnect \(store.displayName(for: $0))?" } ?? "Disconnect?",
@@ -99,35 +63,33 @@ struct IntegrationsView: View {
 		}
 	}
 
+	private var rows: [PageRowModel] {
+		let connected = store.connected.map { integration in
+			PageRowModel(
+				id: integration.id, title: store.displayName(for: integration),
+				subtitle: WorkspacePageState.integrationSubtitle(
+					integration.state, account: store.accountLabel(for: integration)),
+				accessory: .state(WorkspacePageState.integration(integration.state)),
+				action: store.canManage ? { actionTarget = integration } : nil)
+		}
+		let available = store.available.map { provider in
+			PageRowModel(
+				id: "available-\(provider.id)", title: provider.displayName,
+				subtitle: WorkspacePageState.integrationAvailableSubtitle,
+				accessory: .state(WorkspacePageState.integrationAvailable),
+				action: store.canManage && webSetupURL != nil ? { openSetup() } : nil)
+		}
+		return connected + available
+	}
+
 	private func openSetup() { if let webSetupURL { openURL(webSetupURL) } }
 
 	/// Rows whose fix is a trip to the browser: an expired or under-scoped connection.
 	private func needsWeb(_ integration: ConnectedIntegration) -> Bool {
-		guard store.canManage else { return false }
+		guard store.canManage, webSetupURL != nil else { return false }
 		switch integration.state {
 		case .needsReconnect, .incomplete, .disconnected: return true
 		case .connected: return false
-		}
-	}
-
-	@ViewBuilder
-	private func menu(_ integration: ConnectedIntegration) -> some View {
-		if needsWeb(integration) {
-			Button("Reconnect in browser", systemImage: "arrow.triangle.2.circlepath") { openSetup() }
-		}
-		if store.canManage {
-			Button("Disconnect", systemImage: "link.badge.minus", role: .destructive) {
-				pendingDisconnect = integration
-			}
-		}
-	}
-
-	private func status(_ integration: ConnectedIntegration) -> IntegrationRow.Status {
-		switch integration.state {
-		case .connected: .connected(account: store.accountLabel(for: integration))
-		case .needsReconnect(let n): .needsReconnect(missingScopes: n)
-		case .incomplete: .incomplete
-		case .disconnected: .disconnected
 		}
 	}
 }

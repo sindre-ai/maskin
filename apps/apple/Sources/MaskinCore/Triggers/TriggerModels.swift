@@ -116,20 +116,101 @@ public enum TriggerDescriber {
 	}
 }
 
-/// Fields for creating a scheduled trigger. Event and reminder triggers are created on the web.
+/// What starts a new trigger: a schedule, or something that happens in the workspace.
+public enum TriggerWhenKind: String, CaseIterable, Identifiable, Equatable, Sendable {
+	case schedule, event
+
+	public var id: String { rawValue }
+	public var label: String { self == .schedule ? "Schedule" : "Event" }
+}
+
+/// A workspace event a trigger can listen for, named in plain words. The wire form is the
+/// `entity_type` + `action` pair the server matches on.
+public struct TriggerEventRule: Equatable, Hashable, Identifiable, Sendable {
+	public var entityType: String
+	public var action: String
+
+	public init(entityType: String, action: String) {
+		self.entityType = entityType
+		self.action = action
+	}
+
+	public var id: String { "\(entityType).\(action)" }
+
+	/// "Task created", "Bet status changed".
+	public var plainName: String {
+		let noun = entityType.prefix(1).uppercased() + entityType.dropFirst()
+		return "\(noun) \(action.replacingOccurrences(of: "_", with: " "))"
+	}
+
+	/// The events the app offers: the three built-in object types and what can happen to them.
+	/// Workspace-defined object types are set up on the web.
+	public static let options: [TriggerEventRule] = ["insight", "bet", "task"].flatMap { type in
+		["created", "updated", "status_changed"].map { TriggerEventRule(entityType: type, action: $0) }
+	}
+}
+
+/// Fields for creating a trigger: When (a schedule or an event) and Then (an agent and what it
+/// should do). Reminders are created on the web.
 public struct TriggerDraft: Equatable, Sendable {
 	public var name = ""
 	public var actionPrompt = ""
 	public var targetActorID: String?
+	public var whenKind: TriggerWhenKind = .schedule
 	public var schedule = CronSchedule()
+	public var event: TriggerEventRule?
 
 	public init() {}
 
 	public var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 	public var trimmedPrompt: String { actionPrompt.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-	public var isValid: Bool {
-		!trimmedName.isEmpty && !trimmedPrompt.isEmpty && targetActorID != nil
+	/// When is set: a schedule always is; an event only once one is picked.
+	public var hasWhen: Bool { whenKind == .schedule || event != nil }
+	/// Then is set: an agent and something for it to do.
+	public var hasThen: Bool { targetActorID != nil && !trimmedPrompt.isEmpty }
+
+	public var isValid: Bool { hasWhen && hasThen }
+
+	/// The name sent to the server: what the person typed, else the When in words.
+	public var resolvedName: String {
+		if !trimmedName.isEmpty { return trimmedName }
+		switch whenKind {
+		case .schedule: return schedule.summary.prefix(1).uppercased() + schedule.summary.dropFirst()
+		case .event: return event?.plainName ?? "Event trigger"
+		}
+	}
+
+	/// A stable fingerprint of the When, so a retried create reuses its idempotency key.
+	public var whenFingerprint: String {
+		switch whenKind {
+		case .schedule: return "cron:\(schedule.expression)"
+		case .event: return "event:\(event?.id ?? "-")"
+		}
+	}
+}
+
+/// One past run of a trigger, from the session it started.
+public struct TriggerRun: Identifiable, Equatable, Sendable {
+	public enum Outcome: Equatable, Sendable { case ok, failed, running }
+
+	public var id: String
+	public var outcome: Outcome
+	public var at: Date?
+
+	public init(id: String, outcome: Outcome, at: Date? = nil) {
+		self.id = id
+		self.outcome = outcome
+		self.at = at
+	}
+
+	/// Maps a session status to what the detail shows as a tick, a cross or a dot.
+	public static func outcome(forStatus status: String) -> Outcome {
+		switch status {
+		case "completed": .ok
+		case "failed", "timeout": .failed
+		default: .running
+		}
 	}
 }
 

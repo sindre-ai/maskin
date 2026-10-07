@@ -13,6 +13,7 @@ import SwiftUI
 public struct SettingsScreen: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openURL) private var openURL
+	@Environment(\.isPushedInHostStack) private var pushed
 	/// Present inside the signed-in shell; nil in previews. Sign-out goes through it so the push
 	/// token is unregistered and this account's queued writes are discarded.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -32,7 +33,11 @@ public struct SettingsScreen: View {
 	}
 
 	public var body: some View {
-		NavigationStack(path: $path) {
+		if pushed { hub } else { NavigationStack(path: $path) { hub } }
+	}
+
+	private var hub: some View {
+		Group {
 			List {
 				Section("Account") {
 					NavigationLink(value: SettingsRoute.profile) {
@@ -91,7 +96,9 @@ public struct SettingsScreen: View {
 				.navigationBarTitleDisplayMode(.inline)
 			#endif
 			.toolbar {
-				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+				if !pushed {
+					ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+				}
 			}
 			.navigationDestination(for: SettingsRoute.self) { route in
 				switch route {
