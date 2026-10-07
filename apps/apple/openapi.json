@@ -24537,6 +24537,31 @@
 															"nudges"
 														]
 													},
+													"empty_completion": {
+														"type": "object",
+														"properties": {
+															"attempts": {
+																"type": "integer",
+																"minimum": 0,
+																"maximum": 10
+															},
+															"model": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"maxLength": 128
+															},
+															"fallback_model": {
+																"type": "string",
+																"maxLength": 128
+															}
+														},
+														"required": [
+															"attempts",
+															"model"
+														]
+													},
 													"subtype": {
 														"type": "string",
 														"maxLength": 64
@@ -26240,6 +26265,31 @@
 															"occurrences",
 															"tags",
 															"nudges"
+														]
+													},
+													"empty_completion": {
+														"type": "object",
+														"properties": {
+															"attempts": {
+																"type": "integer",
+																"minimum": 0,
+																"maximum": 10
+															},
+															"model": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"maxLength": 128
+															},
+															"fallback_model": {
+																"type": "string",
+																"maxLength": 128
+															}
+														},
+														"required": [
+															"attempts",
+															"model"
 														]
 													},
 													"subtype": {

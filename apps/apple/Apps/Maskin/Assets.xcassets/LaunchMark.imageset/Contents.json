@@ -1,5 +1,8 @@
-{ "images" : [
-  { "filename" : "mark-120.png", "idiom" : "universal", "scale" : "1x" },
-  { "filename" : "mark-240.png", "idiom" : "universal", "scale" : "2x" },
-  { "filename" : "mark-360.png", "idiom" : "universal", "scale" : "3x" } ],
-  "info" : { "author" : "xcode", "version" : 1 } }
+{
+	"images": [
+		{ "filename": "mark-120.png", "idiom": "universal", "scale": "1x" },
+		{ "filename": "mark-240.png", "idiom": "universal", "scale": "2x" },
+		{ "filename": "mark-360.png", "idiom": "universal", "scale": "3x" }
+	],
+	"info": { "author": "xcode", "version": 1 }
+}

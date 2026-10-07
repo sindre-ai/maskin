@@ -34876,6 +34876,37 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/pseudo_tool_calls`.
                             public var pseudo_tool_calls: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload.pseudo_tool_callsPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/empty_completion`.
+                            public struct empty_completionPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/empty_completion/attempts`.
+                                public var attempts: Swift.Int
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/empty_completion/model`.
+                                public var model: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/empty_completion/fallback_model`.
+                                public var fallback_model: Swift.String?
+                                /// Creates a new `empty_completionPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - attempts:
+                                ///   - model:
+                                ///   - fallback_model:
+                                public init(
+                                    attempts: Swift.Int,
+                                    model: Swift.String? = nil,
+                                    fallback_model: Swift.String? = nil
+                                ) {
+                                    self.attempts = attempts
+                                    self.model = model
+                                    self.fallback_model = fallback_model
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case attempts
+                                    case model
+                                    case fallback_model
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/empty_completion`.
+                            public var empty_completion: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload.empty_completionPayload?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/subtype`.
                             public var subtype: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/truncated`.
@@ -34891,6 +34922,7 @@ public enum Operations {
                             ///   - retries:
                             ///   - retry:
                             ///   - pseudo_tool_calls:
+                            ///   - empty_completion:
                             ///   - subtype:
                             ///   - truncated:
                             public init(
@@ -34902,6 +34934,7 @@ public enum Operations {
                                 retries: Swift.Int? = nil,
                                 retry: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload.retryPayload? = nil,
                                 pseudo_tool_calls: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload.pseudo_tool_callsPayload? = nil,
+                                empty_completion: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload.empty_completionPayload? = nil,
                                 subtype: Swift.String? = nil,
                                 truncated: Swift.Bool? = nil
                             ) {
@@ -34913,6 +34946,7 @@ public enum Operations {
                                 self.retries = retries
                                 self.retry = retry
                                 self.pseudo_tool_calls = pseudo_tool_calls
+                                self.empty_completion = empty_completion
                                 self.subtype = subtype
                                 self.truncated = truncated
                             }
@@ -34925,6 +34959,7 @@ public enum Operations {
                                 case retries
                                 case retry
                                 case pseudo_tool_calls
+                                case empty_completion
                                 case subtype
                                 case truncated
                             }
@@ -37788,6 +37823,37 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/pseudo_tool_calls`.
                             public var pseudo_tool_calls: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload.pseudo_tool_callsPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/empty_completion`.
+                            public struct empty_completionPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/empty_completion/attempts`.
+                                public var attempts: Swift.Int
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/empty_completion/model`.
+                                public var model: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/empty_completion/fallback_model`.
+                                public var fallback_model: Swift.String?
+                                /// Creates a new `empty_completionPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - attempts:
+                                ///   - model:
+                                ///   - fallback_model:
+                                public init(
+                                    attempts: Swift.Int,
+                                    model: Swift.String? = nil,
+                                    fallback_model: Swift.String? = nil
+                                ) {
+                                    self.attempts = attempts
+                                    self.model = model
+                                    self.fallback_model = fallback_model
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case attempts
+                                    case model
+                                    case fallback_model
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/empty_completion`.
+                            public var empty_completion: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload.empty_completionPayload?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/subtype`.
                             public var subtype: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/truncated`.
@@ -37803,6 +37869,7 @@ public enum Operations {
                             ///   - retries:
                             ///   - retry:
                             ///   - pseudo_tool_calls:
+                            ///   - empty_completion:
                             ///   - subtype:
                             ///   - truncated:
                             public init(
@@ -37814,6 +37881,7 @@ public enum Operations {
                                 retries: Swift.Int? = nil,
                                 retry: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload.retryPayload? = nil,
                                 pseudo_tool_calls: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload.pseudo_tool_callsPayload? = nil,
+                                empty_completion: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload.empty_completionPayload? = nil,
                                 subtype: Swift.String? = nil,
                                 truncated: Swift.Bool? = nil
                             ) {
@@ -37825,6 +37893,7 @@ public enum Operations {
                                 self.retries = retries
                                 self.retry = retry
                                 self.pseudo_tool_calls = pseudo_tool_calls
+                                self.empty_completion = empty_completion
                                 self.subtype = subtype
                                 self.truncated = truncated
                             }
@@ -37837,6 +37906,7 @@ public enum Operations {
                                 case retries
                                 case retry
                                 case pseudo_tool_calls
+                                case empty_completion
                                 case subtype
                                 case truncated
                             }
