@@ -4418,8 +4418,11 @@ export class SessionManager extends EventEmitter {
 				.where(and(eq(sessions.sessionState, 'running'), eq(sessions.interactive, false)))
 
 			for (const session of runningSessions) {
+				// Only the timestamp is used. A bare `.select()` here pulled the whole
+				// newest log row — content included, ~4.6 KB — for every running
+				// non-interactive session on every watchdog tick.
 				const [lastLog] = await this.db
-					.select()
+					.select({ createdAt: sessionLogs.createdAt })
 					.from(sessionLogs)
 					.where(eq(sessionLogs.sessionId, session.id))
 					.orderBy(desc(sessionLogs.createdAt))
