@@ -24,6 +24,14 @@ public protocol ObjectsRemote: Sendable {
 	) async throws -> ObjectEvent
 	/// `GET /api/actors`.
 	func actors() async throws -> [ActorRef]
+	/// `GET /api/objects/board`: one column per status of `query.type`, each with its first objects.
+	func board(_ query: ObjectsBoardQuery) async throws -> [ObjectsBoardColumn]
 	/// Workspace settings (`GET /api/workspaces`, the selected workspace's `settings`).
 	func schema(workspaceId: String) async throws -> ObjectsSchema
+}
+
+extension ObjectsRemote {
+	public func board(_ query: ObjectsBoardQuery) async throws -> [ObjectsBoardColumn] {
+		throw ObjectsError("The board isn't available.")
+	}
 }

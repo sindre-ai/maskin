@@ -182,13 +182,18 @@ public struct ObjectsQuery: Sendable, Equatable {
 	public var search: String
 	public var limit: Int
 	public var offset: Int
+	public var sort: ObjectsSort
 
-	public init(type: String? = nil, status: String? = nil, search: String = "", limit: Int = 50, offset: Int = 0) {
+	public init(
+		type: String? = nil, status: String? = nil, search: String = "", limit: Int = 50, offset: Int = 0,
+		sort: ObjectsSort = .needsYou
+	) {
 		self.type = type
 		self.status = status
 		self.search = search
 		self.limit = limit
 		self.offset = offset
+		self.sort = sort
 	}
 }
 

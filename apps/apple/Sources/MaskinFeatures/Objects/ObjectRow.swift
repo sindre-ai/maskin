@@ -3,80 +3,142 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One object in the list, laid out like a conversation row: a type glyph, the title over a
-/// quiet line of type, status and driver, then age, star and unread state at the trailing edge.
-/// Pure values in, so it renders in previews and snapshots.
+extension ObjectsStatusTone {
+	/// Patina for running and needs-you, ink for done, grey for paused.
+	var color: Color {
+		switch self {
+		case .patina: MaskinColor.sigInk
+		case .ink: MaskinColor.doneFg
+		case .quiet: MaskinColor.ink4
+		case .neutral: MaskinColor.ink3
+		}
+	}
+}
+
+/// The type as the lists show it: the hued square (the one place a type keeps its colour) and a
+/// neutral mono pill with the type's name.
+struct ObjectTypeTag: View {
+	let type: String
+	let name: String
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+				.fill(MaskinObjectType.colors(for: type).fg)
+				.frame(width: MaskinSpace.s4 - MaskinSpace.s1, height: MaskinSpace.s4 - MaskinSpace.s1)
+				.accessibilityHidden(true)
+			Text(name.uppercased())
+				.maskinText(.microLabel)
+				.foregroundStyle(MaskinColor.ink2)
+				.padding(.horizontal, MaskinSpace.s3)
+				.padding(.vertical, MaskinSpace.s1)
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.inputSm, style: .continuous))
+				.lineLimit(1)
+		}
+		.fixedSize()
+	}
+}
+
+/// "Needs you": the Patina marker the lists use, a dot on rows and the words on board cards.
+struct NeedsYouDot: View {
+	var body: some View {
+		Circle().fill(MaskinColor.sig)
+			.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+			.accessibilityLabel("Needs you")
+	}
+}
+
+/// The driver's coded avatar (people are circles, agents their own shapes). Nothing when the
+/// driver can't be resolved: no initials of an id.
+struct ObjectDriverAvatar: View {
+	let name: String?
+	let isAgent: Bool
+	let seed: String?
+	var working = false
+	var size: CGFloat = MaskinSpace.s11
+
+	var body: some View {
+		if let name {
+			ActorAvatar(name: name, kind: isAgent ? .agent : .human, size: size, seed: seed, working: working)
+		}
+	}
+}
+
+/// One object in the list: type tag over the title over driver, status and age. Pure values in, so
+/// it renders in previews and snapshots; the surrounding card belongs to the list.
 struct ObjectRow: View {
 	let object: WorkObject
 	let typeName: String
-	/// The driver's resolved name; left out of the subtitle when it can't be resolved.
+	/// The driver's resolved name; no avatar when it can't be resolved.
 	let ownerName: String?
 	var ownerIsAgent = false
-	var showsStatus = false
+	var showsStatus = true
+	var showsDriver = true
+	var showsUpdated = true
 
 	var body: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s7) {
-			typeGlyph
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Text(object.displayTitle)
-						.maskinText(.headline)
-						.fontWeight(object.unreadCount > 0 ? .bold : .semibold)
-						.foregroundStyle(MaskinColor.ink)
-						.lineLimit(1)
-					Spacer(minLength: MaskinSpace.s3)
-					RelativeTime(object.updatedAt, style: .compact)
-						.maskinText(.caption)
-						.foregroundStyle(object.unreadCount > 0 ? MaskinColor.sigInk : MaskinColor.ink4)
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			HStack(alignment: .center, spacing: MaskinSpace.s4) {
+				ObjectTypeTag(type: object.type, name: typeName)
+				Spacer(minLength: MaskinSpace.s3)
+				if object.isStarred {
+					Image(systemName: "star.fill")
+						.font(.system(size: MaskinFontSize.t12))
+						.foregroundStyle(MaskinColor.ink4)
+						.accessibilityHidden(true)
 				}
-				HStack(alignment: .center, spacing: MaskinSpace.s4) {
-					if let activity = object.activeActivity, !activity.isEmpty {
-						Label(activity, systemImage: "sparkles")
-							.maskinText(.subhead)
-							.foregroundStyle(MaskinColor.sigInk)
-							.lineLimit(1)
-					} else {
-						Text(subtitle)
-							.maskinText(.subhead)
-							.foregroundStyle(MaskinColor.ink4)
-							.lineLimit(1)
-					}
-					Spacer(minLength: 0)
-					if object.unreadCount > 0 { UnreadBadge(count: object.unreadCount) }
-				}
+				if ObjectsUrgency.needsYou(object) { NeedsYouDot() }
 			}
+			Text(object.displayTitle)
+				.maskinText(.headline)
+				.fontWeight(object.unreadCount > 0 ? .bold : .semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(2)
+				.multilineTextAlignment(.leading)
+			if let activity = object.activeActivity, !activity.isEmpty {
+				Label(activity, systemImage: "sparkles")
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.sigInk)
+					.lineLimit(1)
+			}
+			footer
 		}
-		.padding(.vertical, MaskinSpace.s2)
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
 
-	/// The type's glyph on its tint, the size of a chat avatar so the lists line up. A starred
-	/// object shows a star in that slot instead, so the title doesn't need a star of its own.
-	private var typeGlyph: some View {
-		let colors = object.isStarred ? MaskinColorPair(bg: MaskinSurface.fill, fg: MaskinColor.ink) : MaskinObjectType.colors(for: object.type)
-		let size = MaskinSpace.s14 + MaskinSpace.s4
-		return Circle()
-			.fill(colors.bg)
-			.frame(width: size, height: size)
-			.overlay {
-				Image(systemName: object.isStarred ? "star.fill" : MaskinObjectType.symbol(for: object.type) ?? "circle.fill")
-					.font(.system(size: MaskinFontSize.t15, weight: .semibold))
-					.foregroundStyle(colors.fg)
+	@ViewBuilder private var footer: some View {
+		let hasDriver = showsDriver && ownerName != nil
+		if hasDriver || showsStatus || showsUpdated || object.unreadCount > 0 {
+			HStack(alignment: .center, spacing: MaskinSpace.s4) {
+				if showsDriver {
+					ObjectDriverAvatar(
+						name: ownerName, isAgent: ownerIsAgent, seed: object.driverId,
+						working: object.hasActiveSession)
+				}
+				if showsStatus {
+					Text(MaskinStatus.label(for: object.status))
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(ObjectsStatusTone.of(object).color)
+						.lineLimit(1)
+				}
+				Spacer(minLength: MaskinSpace.s3)
+				if object.unreadCount > 0 { UnreadBadge(count: object.unreadCount) }
+				if showsUpdated {
+					RelativeTime(object.updatedAt, style: .compact)
+						.maskinText(.caption)
+						.foregroundStyle(MaskinColor.ink5)
+				}
 			}
-			.accessibilityHidden(true)
-	}
-
-	private var subtitle: String {
-		var parts = [typeName]
-		if showsStatus { parts.append(MaskinStatus.label(for: object.status)) }
-		if object.hasActiveSession { parts.append("Agents working") }
-		return parts.joined(separator: " · ")
+		}
 	}
 
 	private var accessibilityLabel: String {
-		var parts = [typeName, object.displayTitle]
+		var parts = [typeName, object.displayTitle, MaskinStatus.label(for: object.status)]
+		if let ownerName, showsDriver { parts.append("driven by \(ownerName)") }
+		if ObjectsUrgency.needsYou(object) { parts.append("Needs you") }
 		if object.isStarred { parts.append("Starred") }
 		if object.hasActiveSession { parts.append("Agents working") }
 		if object.unreadCount > 0 { parts.append("\(object.unreadCount) unread") }
@@ -96,12 +158,14 @@ struct ObjectGroupHeader: View {
 					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 					.accessibilityHidden(true)
 				Text((group.title ?? group.id).uppercased())
-					.maskinText(.mono)
-					.foregroundStyle(MaskinColor.ink3)
+					.maskinText(.microLabelLarge)
+					.foregroundStyle(MaskinColor.ink4)
 			} else if !group.id.isEmpty {
-				StatusBadge(group.id, style: .dotWord)
+				Text(MaskinStatus.label(for: group.id).uppercased())
+					.maskinText(.microLabelLarge)
+					.foregroundStyle(MaskinColor.ink4)
 			}
-			Text("\(group.objects.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
+			Text("\(group.objects.count)").maskinText(.microLabelLarge).foregroundStyle(MaskinColor.ink5)
 			Spacer()
 		}
 		.textCase(nil)

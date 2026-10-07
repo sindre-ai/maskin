@@ -7,6 +7,7 @@ import SwiftUI
 /// split view (when `selection` is non-nil).
 struct ObjectsListView: View {
 	@Bindable var store: ObjectsStore
+	@Bindable var board: ObjectsBoardStore
 	let selection: Binding<String?>?
 	/// Set on iPhone, where a row pushes its detail with a zoom.
 	var zoomNamespace: Namespace.ID?
@@ -28,6 +29,8 @@ struct ObjectsListView: View {
 		}
 		.ambientBackground()
 		.animation(.snappy, value: picking.isActive)
+		// Selection belongs to the list; leaving it for the board ends it.
+		.onChange(of: store.display.layout) { picking.exit() }
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
 		.confirmationDialog(
@@ -137,7 +140,9 @@ struct ObjectsListView: View {
 	}
 
 	@ViewBuilder private var content: some View {
-		if store.objects.isEmpty || (store.visibleObjects.isEmpty && !store.hasMore) {
+		if store.display.layout == .board {
+			ObjectsBoardView(store: store, board: board, selection: selection, zoomNamespace: zoomNamespace)
+		} else if store.objects.isEmpty || (store.visibleObjects.isEmpty && !store.hasMore) {
 			emptyContent
 				.id("empty")
 		} else {
@@ -164,7 +169,11 @@ struct ObjectsListView: View {
 			}
 		case .loaded:
 			ScrollView {
-				if store.isFiltered {
+				if store.display.needsYouOnly && !store.isFiltered {
+					EmptyState(
+						symbol: "checkmark.circle", title: "Nothing here yet",
+						message: "Nothing in this list needs you right now.")
+				} else if store.isFiltered {
 					EmptyState(
 						symbol: "magnifyingglass", title: "No matches",
 						message: "Nothing fits these filters. Try a different type, status or word.")
@@ -215,7 +224,16 @@ struct ObjectsListView: View {
 			}
 		}
 		.listStyle(.plain)
+		.scrollContentBackground(.hidden)
 		.refreshable { await store.reload() }
+	}
+
+	/// The card behind a row; the picked row on a split view's selection takes the quiet fill.
+	private func rowBackground(_ object: WorkObject) -> some View {
+		let selected = selection?.wrappedValue == object.id && !picking.isActive
+		return RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
+			.fill(selected ? MaskinSurface.fillStrong : MaskinSurface.card)
+			.padding(.vertical, MaskinSpace.s2)
 	}
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {
@@ -223,7 +241,8 @@ struct ObjectsListView: View {
 			object: object, typeName: store.directory.typeName(object.type),
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
-			showsStatus: store.grouping != .status)
+			showsStatus: store.grouping != .status, showsDriver: store.display.shows(.driver),
+			showsUpdated: store.display.shows(.updated))
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {
@@ -242,6 +261,10 @@ struct ObjectsListView: View {
 			}
 		}
 		.listRowSeparator(.hidden)
+		.listRowBackground(rowBackground(object))
+		.listRowInsets(
+			EdgeInsets(
+				top: MaskinSpace.s4, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 		.swipeActions(edge: .leading) {
 			if !picking.isActive { Button {
 				MaskinHaptics.play(.selection)
@@ -289,31 +312,74 @@ struct ObjectsListView: View {
 	}
 }
 
-/// The Objects Display menu in the shell's pill: status and starred filters and the grouping.
+/// The Objects Display menu in the shell's pill: sort, "Needs you only", the properties a row shows,
+/// list or board, then (list only) the status and starred filters and the grouping.
 struct ObjectsDisplayMenu: View {
 	@Bindable var store: ObjectsStore
 
 	var body: some View {
-		Picker(
-			"Status",
-			selection: Binding(
-				get: { store.statusFilter ?? "" },
-				set: { value in Task { await store.setStatus(value.isEmpty ? nil : value) } })
-		) {
-			Text("Any status").tag("")
-			ForEach(store.statusOptions, id: \.self) { Text(MaskinStatus.label(for: $0)).tag($0) }
+		Section("Sort by") {
+			Picker(
+				"Sort by",
+				selection: Binding(
+					get: { store.display.sort },
+					set: { value in Task { await store.setSort(value) } })
+			) {
+				ForEach(ObjectsSort.allCases) { Text($0.title).tag($0) }
+			}
+			.pickerStyle(.inline)
+			.labelsHidden()
 		}
 		Toggle(
-			"Starred only", systemImage: "star",
+			"Needs you only", systemImage: "circle.fill",
 			isOn: Binding(
-				get: { store.starredOnly },
-				set: { value in Task { await store.setStarredOnly(value) } }))
-		Picker("Group by", selection: $store.grouping) {
-			ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
+				get: { store.display.needsYouOnly },
+				set: { store.setNeedsYouOnly($0) }))
+		Section("Show") {
+			ForEach(ObjectsProperty.allCases) { property in
+				Toggle(
+					property.title,
+					isOn: Binding(
+						get: { store.display.shows(property) },
+						set: { _ in store.toggleProperty(property) }))
+			}
 		}
-		if store.statusFilter != nil || store.starredOnly {
+		Section("View") {
+			Picker(
+				"View",
+				selection: Binding(
+					get: { store.display.layout },
+					set: { value in Task { await store.setLayout(value) } })
+			) {
+				ForEach(ObjectsLayout.allCases) { Text($0.title).tag($0) }
+			}
+			.pickerStyle(.inline)
+			.labelsHidden()
+		}
+		if store.display.layout == .list {
+			Divider()
+			Picker(
+				"Status",
+				selection: Binding(
+					get: { store.statusFilter ?? "" },
+					set: { value in Task { await store.setStatus(value.isEmpty ? nil : value) } })
+			) {
+				Text("Any status").tag("")
+				ForEach(store.statusOptions, id: \.self) { Text(MaskinStatus.label(for: $0)).tag($0) }
+			}
+			Toggle(
+				"Starred only", systemImage: "star",
+				isOn: Binding(
+					get: { store.starredOnly },
+					set: { value in Task { await store.setStarredOnly(value) } }))
+			Picker("Group by", selection: $store.grouping) {
+				ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
+			}
+		}
+		if store.statusFilter != nil || store.starredOnly || store.display.needsYouOnly {
 			Divider()
 			Button("Clear filters", systemImage: "xmark.circle") {
+				store.setNeedsYouOnly(false)
 				Task {
 					await store.setStarredOnly(false)
 					await store.setStatus(nil)
