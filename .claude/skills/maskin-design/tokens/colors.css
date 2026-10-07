@@ -1,7 +1,10 @@
-/* v2 palette — Tailwind's cool zinc scale with an indigo-600 accent.
-   Values are the exact hexes the mockup uses inline. Object-type dots and
-   agent-identity swatches sit outside the neutral trunk and are named here
-   so nothing hardcodes them downstream. */
+/* v2 palette — Tailwind's cool zinc scale with the Signal x Patina brand
+   (Patina = verdigris, used ONLY for signals, never for actions; actions are
+   ink). Indigo is retired: the `--accent*` names are kept so existing code
+   keeps compiling, but their values now map onto ink / Patina (see below).
+   Success is neutral ink, not green. Gradient tokens (--badge, --av-bg,
+   --st-bg) are web-usable; the native generator skips them and the iOS
+   client hand-writes them in MaskinDesign/IOS/Patina.swift. */
 
 :root {
   /* --- surface / neutrals (cool zinc) --- */
@@ -26,24 +29,59 @@
   --ink-5: #a1a1aa;                  /* zinc-400, muted meta */
   --ink-placeholder: #b0b0b6;        /* input placeholder */
 
-  /* --- accent --- */
-  --accent: #4f46e5;                 /* indigo-600, the only live/click colour */
-  --accent-strong: #4338ca;          /* indigo-700, hover on the accent */
-  --accent-deep: #3730a3;            /* indigo-800, accent link hover */
-  --accent-tint: #e0e7ff;            /* indigo-100, quiet accent fills */
-  --accent-tint-2: #eef2ff;          /* indigo-50, quieter fills */
-  --accent-tint-3: #e8edff;          /* a warmer indigo-tinted surface used on chips */
-  --accent-fg-strong: #4338ca;       /* text-on-tint reads as indigo-700 */
-  --accent-fg-quiet: #6366f1;        /* indigo-500 for mid-emphasis */
-  --accent-fg-quieter: #818cf8;      /* indigo-400 for de-emphasised meta */
-  --accent-fg-quietest: #a5b4fc;     /* indigo-300, used in dark-on-dark toast actions */
-  --accent-fg-quietest-2: #c7d2fe;   /* indigo-200 hover on the toast action */
+  /* --- Patina ramp (verdigris; same in both themes) --- */
+  --patina-50: #eef6f4;
+  --patina-100: #d5ebe6;
+  --patina-200: #acd6cd;
+  --patina-300: #7dbcb0;
+  --patina-400: #4f9e91;
+  --patina-500: #2f7d74;             /* the brand colour */
+  --patina-600: #276a62;
+  --patina-700: #20564f;
+  --patina-800: #1a443f;
+  --patina-900: #12302c;             /* text on Patina tints */
+
+  /* --- brand signal (Patina: unread, waiting/running status, rings, avatars) --- */
+  --sig: #2f7d74;                    /* brand signal */
+  --sig-hi: #7dbcb0;                 /* light accents */
+  --sig-ink: #2a7068;                /* Patina TEXT (status, tags, mentions) */
+  --sig-tint: #e6f2ef;               /* chip/tag fill behind sig-ink */
+  --badge: linear-gradient(150deg, #acd6cd, #7dbcb0);   /* unread badges */
+  --badge-fg: #12302c;
+  --av-bg: linear-gradient(150deg, #e6f2ef, #acd6cd);   /* all agent + user avatars */
+  --av-fg: #12302c;
+  --st-bg: linear-gradient(165deg, #ffffff 0%, #f3f8f7 55%, #dcece8 100%); /* unseen brief card */
+  --st-fg: #12302c;
+  --st-lab: #20564f;
+  --wash: rgba(125, 188, 176, .50);  /* ambient bg, top-left */
+  --wash2: rgba(172, 214, 205, .55); /* ambient bg, top-right */
+  --wash3: rgba(125, 188, 176, .32); /* ambient bg, bottom */
+  --pill: rgba(255, 255, 255, .45);  /* glass label pill on brief cards */
+  --pill-bd: rgba(255, 255, 255, .75);
+
+  /* --- accent (legacy names, Patina-era values) ---
+     Indigo is retired. Interactive -> ink; live/status -> sig-ink / sig-tint;
+     dots -> sig. Names are kept only so callers keep compiling; new code
+     should reach for the semantic tokens above. */
+  --accent: #18181b;                 /* ink: actions and selection are ink, never Patina */
+  --accent-strong: #18181b;          /* ink: hover / links (underlined, offset 2px) */
+  --accent-deep: #18181b;            /* ink */
+  --accent-tint: #e6f2ef;            /* sig-tint: quiet status fills */
+  --accent-tint-2: #e6f2ef;          /* sig-tint */
+  --accent-tint-3: #e6f2ef;          /* sig-tint */
+  --accent-fg-strong: #2a7068;       /* sig-ink: text on tint */
+  --accent-fg-quiet: #2f7d74;        /* sig */
+  --accent-fg-quieter: #7dbcb0;      /* sig-hi */
+  --accent-fg-quietest: #7dbcb0;     /* sig-hi */
+  --accent-fg-quietest-2: #acd6cd;   /* patina-200 */
 
   /* --- semantic --- */
-  --success: #16a34a;                /* green-600 */
-  --success-strong: #15803d;         /* green-700 */
-  --success-tint: #dcfce7;           /* green-100 */
-  --success-tint-2: #bbf7d0;         /* green-200 */
+  /* Success is neutral: ink on zinc-100 with a check glyph, so Patina is
+     never read as "done". Names kept; values are the neutral set. */
+  --success: #18181b;                /* fg */
+  --success-strong: #3f3f46;         /* fg2 */
+  --success-tint: #f4f4f5;           /* bg */
+  --success-tint-2: #e4e4e7;         /* border */
 
   --warning: #d97706;                /* amber-600 */
   --warning-strong: #b45309;         /* amber-700 */
@@ -66,16 +104,16 @@
   --obj-task: #22c55e;               /* green-500 — Task */
   --obj-knowledge: #7c3aed;          /* violet-600 — Knowledge */
 
-  /* --- agent identity (verbatim from v2's AV table, ~line 3313 of the mockup) ---
-     These are the agent avatar tint/text pairs. Use `AVATAR_PALETTE` in the
-     app, not these values directly — they are declared here so a designer can
-     mock the same characters without re-deriving them. */
-  --agent-relay-tint: #dcfce7;   --agent-relay-fg: #15803d;   --agent-relay-strong: #16a34a;
-  --agent-compass-tint: #eef2ff; --agent-compass-fg: #4338ca; --agent-compass-strong: #4f46e5;
-  --agent-forge-tint: #fef3c7;   --agent-forge-fg: #b45309;   --agent-forge-strong: #d97706;
-  --agent-sentinel-tint: #ede9fe;--agent-sentinel-fg: #6d28d9;--agent-sentinel-strong: #7c3aed;
-  --agent-quill-tint: #fae8ff;   --agent-quill-fg: #a21caf;   --agent-quill-strong: #c026d3;
-  --agent-you-tint: #e0e7ff;     --agent-you-fg: #4338ca;
+  /* --- agent identity ---
+     One accent only: every agent and the user share the Patina avatar. The
+     per-agent names are kept so callers compile; all resolve to the same
+     tint / fg / strong. Use --av-bg / --av-fg for the real avatar fill. */
+  --agent-relay-tint: #e6f2ef;    --agent-relay-fg: #12302c;    --agent-relay-strong: #2f7d74;
+  --agent-compass-tint: #e6f2ef;  --agent-compass-fg: #12302c;  --agent-compass-strong: #2f7d74;
+  --agent-forge-tint: #e6f2ef;    --agent-forge-fg: #12302c;    --agent-forge-strong: #2f7d74;
+  --agent-sentinel-tint: #e6f2ef; --agent-sentinel-fg: #12302c; --agent-sentinel-strong: #2f7d74;
+  --agent-quill-tint: #e6f2ef;    --agent-quill-fg: #12302c;    --agent-quill-strong: #2f7d74;
+  --agent-you-tint: #e6f2ef;      --agent-you-fg: #12302c;
 
   /* --- overlays --- */
   --overlay-dim: rgba(0, 0, 0, .35);       /* modal backdrop */
@@ -88,8 +126,8 @@
 }
 
 /* Dark-mode is a full token swap. v2's inline mockup renders light only, so
-   this swap is derived by inverting the trunk against the same zinc scale and
-   promoting the accent one step lighter. Every UI surface must read from
+   this swap is derived by inverting the trunk against the same zinc scale;
+   Patina signals lift one step so they read on the dark field. Every UI surface must read from
    these tokens — no component may hardcode a hex in either theme. */
 [data-theme="dark"], html.dark {
   --surface: #0a0a0b;
@@ -111,17 +149,46 @@
   --ink-5: #71717a;
   --ink-placeholder: #52525b;
 
-  --accent: #818cf8;                 /* indigo-400 */
-  --accent-strong: #a5b4fc;
-  --accent-deep: #c7d2fe;
-  --accent-tint: #312e81;            /* indigo-900 */
-  --accent-tint-2: #1e1b4b;
-  --accent-tint-3: #312e81;
-  --accent-fg-strong: #c7d2fe;
-  --accent-fg-quiet: #a5b4fc;
-  --accent-fg-quieter: #818cf8;
-  --accent-fg-quietest: #6366f1;
-  --accent-fg-quietest-2: #4f46e5;
+  --sig: #5fb3a6;
+  --sig-hi: #6cc4b5;
+  --sig-ink: #6cc4b5;
+  --sig-tint: #15302b;
+  --badge: linear-gradient(150deg, #7dbcb0, #4f9e91);
+  --badge-fg: #0a1a18;
+  --av-bg: linear-gradient(150deg, #20564f, #12302c);
+  --av-fg: #d5ebe6;
+  --st-bg: linear-gradient(165deg, #2f7d74 0%, #1a443f 60%, #12302c 100%);
+  --st-fg: #eef6f4;
+  --st-lab: #acd6cd;
+  --wash: rgba(47, 125, 116, .42);
+  --wash2: rgba(32, 86, 79, .38);
+  --wash3: rgba(47, 125, 116, .26);
+  --pill: rgba(255, 255, 255, .10);
+  --pill-bd: rgba(255, 255, 255, .18);
+
+  --accent: #fafafa;                 /* ink */
+  --accent-strong: #fafafa;
+  --accent-deep: #fafafa;
+  --accent-tint: #15302b;            /* sig-tint */
+  --accent-tint-2: #15302b;
+  --accent-tint-3: #15302b;
+  --accent-fg-strong: #6cc4b5;       /* sig-ink */
+  --accent-fg-quiet: #5fb3a6;        /* sig */
+  --accent-fg-quieter: #6cc4b5;      /* sig-hi */
+  --accent-fg-quietest: #6cc4b5;
+  --accent-fg-quietest-2: #2f7d74;
+
+  --success: #fafafa;
+  --success-strong: #d4d4d8;
+  --success-tint: #1f1f22;
+  --success-tint-2: #27272a;
+
+  --agent-relay-tint: #20564f;    --agent-relay-fg: #d5ebe6;    --agent-relay-strong: #5fb3a6;
+  --agent-compass-tint: #20564f;  --agent-compass-fg: #d5ebe6;  --agent-compass-strong: #5fb3a6;
+  --agent-forge-tint: #20564f;    --agent-forge-fg: #d5ebe6;    --agent-forge-strong: #5fb3a6;
+  --agent-sentinel-tint: #20564f; --agent-sentinel-fg: #d5ebe6; --agent-sentinel-strong: #5fb3a6;
+  --agent-quill-tint: #20564f;    --agent-quill-fg: #d5ebe6;    --agent-quill-strong: #5fb3a6;
+  --agent-you-tint: #20564f;      --agent-you-fg: #d5ebe6;
 
   --overlay-dim: rgba(0, 0, 0, .6);
   --shadow-card: 0 1px 4px rgba(0, 0, 0, .5);
