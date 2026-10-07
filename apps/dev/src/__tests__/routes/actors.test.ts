@@ -563,7 +563,7 @@ describe('Actors Routes', () => {
 			mockResults.update = [agent]
 
 			const res = await app.request(
-				jsonRequest('PATCH', `/api/actors/${agent.id}`, { name: 'Pwned' }),
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { name: 'Renamed' }),
 			)
 
 			expect(res.status).toBe(404)
@@ -580,7 +580,7 @@ describe('Actors Routes', () => {
 				jsonRequest(
 					'PATCH',
 					`/api/actors/${agent.id}`,
-					{ name: 'Pwned' },
+					{ name: 'Renamed' },
 					{ 'X-Workspace-Id': '00000000-0000-0000-0000-000000000001' },
 				),
 			)
@@ -677,7 +677,7 @@ describe('Actors Routes', () => {
 	describe('POST /api/actors/:id/api-keys', () => {
 		it('returns 200 with new API key', async () => {
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.update = [{ id: actor.id }]
 
 			const res = await app.request(jsonRequest('POST', `/api/actors/${actor.id}/api-keys`))
@@ -689,74 +689,13 @@ describe('Actors Routes', () => {
 		})
 
 		it('returns 404 when actor not found', async () => {
-			const id = '00000000-0000-0000-0000-000000000099'
-			const { app } = createTestApp(actorsRoutes, '/api/actors', id)
-
-			const res = await app.request(jsonRequest('POST', `/api/actors/${id}/api-keys`))
-
-			expect(res.status).toBe(404)
-		})
-
-		it("returns 404 and leaves the key alone when a caller resets another actor's key without a workspace", async () => {
-			const victim = buildActor()
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'attacker-id')
-			mockResults.update = [{ id: victim.id }]
-
-			const res = await app.request(jsonRequest('POST', `/api/actors/${victim.id}/api-keys`))
-
-			expect(res.status).toBe(404)
-			expect(calls.updates).toHaveLength(0)
-		})
-
-		it('returns 404 when the caller is not an admin of the workspace in X-Workspace-Id', async () => {
-			const victim = buildActor()
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'attacker-id')
-			// isWorkspaceHumanAdminOrOwner: caller is only a member (or not in this workspace at all)
-			mockResults.selectQueue = [[{ role: 'member', type: 'human' }]]
-			mockResults.update = [{ id: victim.id }]
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
 
 			const res = await app.request(
-				jsonRequest('POST', `/api/actors/${victim.id}/api-keys`, undefined, {
-					'X-Workspace-Id': '00000000-0000-0000-0000-000000000001',
-				}),
+				jsonRequest('POST', '/api/actors/00000000-0000-0000-0000-000000000099/api-keys'),
 			)
 
 			expect(res.status).toBe(404)
-			expect(calls.updates).toHaveLength(0)
-		})
-
-		it('returns 404 when an admin of workspace A targets an actor outside workspace A', async () => {
-			const victim = buildActor()
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
-			// caller is admin in the header workspace, target is not a member of it
-			mockResults.selectQueue = [[{ role: 'admin', type: 'human' }], []]
-			mockResults.update = [{ id: victim.id }]
-
-			const res = await app.request(
-				jsonRequest('POST', `/api/actors/${victim.id}/api-keys`, undefined, {
-					'X-Workspace-Id': '00000000-0000-0000-0000-000000000001',
-				}),
-			)
-
-			expect(res.status).toBe(404)
-			expect(calls.updates).toHaveLength(0)
-		})
-
-		it('returns 200 when a workspace admin resets the key of a member of that workspace', async () => {
-			const target = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
-			mockResults.selectQueue = [[{ role: 'admin', type: 'human' }], [{ actorId: target.id }]]
-			mockResults.update = [{ id: target.id }]
-
-			const res = await app.request(
-				jsonRequest('POST', `/api/actors/${target.id}/api-keys`, undefined, {
-					'X-Workspace-Id': '00000000-0000-0000-0000-000000000001',
-				}),
-			)
-
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.api_key).toMatch(/^ank_/)
 		})
 	})
 

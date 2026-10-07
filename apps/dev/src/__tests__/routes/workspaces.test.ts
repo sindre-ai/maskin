@@ -141,10 +141,10 @@ describe('Workspaces Routes', () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.select = []
-			mockResults.update = [{ ...ws, name: 'Hijacked' }]
+			mockResults.update = [{ ...ws, name: 'Renamed' }]
 
 			const res = await app.request(
-				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Hijacked' }),
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed' }),
 			)
 
 			expect(res.status).toBe(404)

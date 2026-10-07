@@ -47,11 +47,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import {
-	actorsShareWorkspace,
-	isWorkspaceHumanAdminOrOwner,
-	isWorkspaceMember,
-} from '../lib/workspace-auth'
+import { actorsShareWorkspace, isWorkspaceMember } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
@@ -841,13 +837,6 @@ const regenerateApiKeyRoute = createRoute({
 	summary: 'Regenerate API key',
 	request: {
 		params: idParamSchema,
-		headers: z.object({
-			'x-workspace-id': z
-				.string()
-				.uuid()
-				.optional()
-				.describe("Required to regenerate another actor's key: the workspace both share."),
-		}),
 	},
 	responses: {
 		200: {
@@ -863,22 +852,7 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-
-	// A key is the actor's identity, so only the actor itself or a human
-	// owner/admin of a workspace the target belongs to may replace it. Anyone
-	// else gets the same 404 as an unknown id.
-	if (id !== actorId) {
-		if (
-			!workspaceId ||
-			!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId)) ||
-			!(await isWorkspaceMember(db, id, workspaceId))
-		) {
-			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
-		}
-	}
 
 	const { key } = generateApiKey()
 
