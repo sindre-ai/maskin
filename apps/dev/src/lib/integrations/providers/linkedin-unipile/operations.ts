@@ -937,7 +937,15 @@ type SendPayload = {
 	 */
 	attachments?: unknown[]
 }
-type ReplyPayload = { thread_id: string; body: string; idempotency_key: string }
+type ReplyPayload = {
+	thread_id: string
+	body: string
+	idempotency_key: string
+	/** True when the key was derived from in_reply_to_message_id, false on the legacy path. */
+	derived_key: boolean
+}
+
+const IDEMPOTENCY_KEY_MAX = 128
 
 function validateSendPayload(input: {
 	recipient_urn?: unknown
@@ -980,6 +988,7 @@ function validateReplyPayload(input: {
 	thread_id?: unknown
 	body?: unknown
 	idempotency_key?: unknown
+	in_reply_to_message_id?: unknown
 }): { ok: true; payload: ReplyPayload } | { ok: false; error: string } {
 	if (typeof input.thread_id !== 'string' || input.thread_id.length === 0) {
 		return { ok: false, error: 'thread_id is required' }
@@ -987,12 +996,46 @@ function validateReplyPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	// The key is built here, from the chat and the inbound message being
+	// answered, so the webhook path and the sweep path claim the same slot no
+	// matter what a prompt tells the agent. A supplied idempotency_key is
+	// ignored when in_reply_to_message_id is present.
+	if (input.in_reply_to_message_id !== undefined) {
+		if (
+			typeof input.in_reply_to_message_id !== 'string' ||
+			input.in_reply_to_message_id.length === 0
+		) {
+			return { ok: false, error: 'in_reply_to_message_id must be a non-empty string' }
+		}
+		const derivedKey = `inbound:${input.thread_id}:${input.in_reply_to_message_id}`
+		if (derivedKey.length >= IDEMPOTENCY_KEY_MAX) {
+			return {
+				ok: false,
+				error: 'thread_id and in_reply_to_message_id are too long to build an idempotency key',
+			}
+		}
+		return {
+			ok: true,
+			payload: {
+				thread_id: input.thread_id,
+				body: input.body,
+				idempotency_key: derivedKey,
+				derived_key: true,
+			},
+		}
+	}
+	// Transitional: callers that predate in_reply_to_message_id keep supplying
+	// their own key, so prompt edits and the deploy can land in either order.
 	if (
 		typeof input.idempotency_key !== 'string' ||
 		input.idempotency_key.length === 0 ||
-		input.idempotency_key.length > 128
+		input.idempotency_key.length > IDEMPOTENCY_KEY_MAX
 	) {
-		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
+		return {
+			ok: false,
+			error:
+				'in_reply_to_message_id is required (legacy callers: idempotency_key, a non-empty string, max 128 chars)',
+		}
 	}
 	return {
 		ok: true,
@@ -1000,6 +1043,7 @@ function validateReplyPayload(input: {
 			thread_id: input.thread_id,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
+			derived_key: false,
 		},
 	}
 }
@@ -1086,11 +1130,22 @@ export async function sendLinkedInMessage(
 
 export async function replyToLinkedInThread(
 	ctx: LinkedInOperationContext,
-	input: { thread_id?: unknown; body?: unknown; idempotency_key?: unknown },
+	input: {
+		thread_id?: unknown
+		body?: unknown
+		idempotency_key?: unknown
+		in_reply_to_message_id?: unknown
+	},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateReplyPayload(input)
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
+	}
+	if (!validation.payload.derived_key) {
+		logger.warn('LinkedIn reply called without in_reply_to_message_id; using the supplied key', {
+			actorId: ctx.actorId,
+			threadId: validation.payload.thread_id,
+		})
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
