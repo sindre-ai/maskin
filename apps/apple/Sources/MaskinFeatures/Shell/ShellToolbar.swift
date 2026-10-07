@@ -14,12 +14,14 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Live, New, Search, Display. While the content is scrolled New and Search
+/// Order in the pill is Live, Compose, New, Search, Display. While the content is scrolled New and Search
 /// fold away (Display stays). Search shows only where search is not already a tab
 /// (`ShellTab.searchIsTab`); pass `search: false` for a screen that has none.
 public struct ShellActions {
-	/// The "+" button (New / New conversation). Nil hides it.
+	/// The "+" button. Only the Loops Triggers segment uses it (a form with no chat path). Nil hides it.
 	public var new: (() -> Void)?
+	/// The pencil Compose button (Chats only): tap starts a chat, long-press lists starters.
+	public var compose: ShellCompose?
 	/// The dark Live button (For you and Chats only).
 	public var live: Bool
 	/// What the Live button opens. For you keeps the daily briefing; Chats starts a call with the Chief of Staff.
@@ -30,15 +32,41 @@ public struct ShellActions {
 	public var display: ShellDisplayMenu?
 
 	public init(
-		new: (() -> Void)? = nil, live: Bool = false, liveRequest: LiveMeetingRequest = .dailyBriefing,
+		new: (() -> Void)? = nil, compose: ShellCompose? = nil, live: Bool = false, liveRequest: LiveMeetingRequest = .dailyBriefing,
 		search: Bool = true,
 		display: ShellDisplayMenu? = nil
 	) {
 		self.new = new
+		self.compose = compose
 		self.live = live
 		self.liveRequest = liveRequest
 		self.search = search
 		self.display = display
+	}
+}
+
+/// A Compose button's long-press starters: each opens a pre-filled chat with the Chief of Staff.
+public struct ShellCompose {
+	public struct Starter: Identifiable, Equatable, Sendable {
+		public let title: String
+		public let symbol: String
+		public let prompt: String
+		public var id: String { title }
+	}
+
+	/// New loop, New bet, Hire an agent: the creations that go through the Chief of Staff.
+	public static let starters: [Starter] = [
+		Starter(title: "New loop", symbol: "arrow.triangle.2.circlepath", prompt: "I'd like to build a new loop. "),
+		Starter(title: "New bet", symbol: "target", prompt: "I'd like to create a new bet. "),
+		Starter(title: "Hire an agent", symbol: "person.badge.plus", prompt: "I'd like to build a new agent. "),
+	]
+
+	public var action: () -> Void
+	public var starter: (Starter) -> Void
+
+	public init(action: @escaping () -> Void, starter: @escaping (Starter) -> Void) {
+		self.action = action
+		self.starter = starter
 	}
 }
 
@@ -94,6 +122,18 @@ private struct ShellToolbarModifier: ViewModifier {
 							Label(actions.liveRequest.buttonLabel, systemImage: "waveform")
 						}
 						.shellLiveButton()
+					}
+					if let compose = actions.compose, !scrolled {
+						Menu {
+							ForEach(ShellCompose.starters) { starter in
+								Button(starter.title, systemImage: starter.symbol) { compose.starter(starter) }
+							}
+						} label: {
+							Label("Compose", systemImage: "pencil")
+						} primaryAction: {
+							compose.action()
+						}
+						.keyboardShortcut("n", modifiers: .command)
 					}
 					if let new = actions.new, !scrolled {
 						Button(action: new) { Label("New", systemImage: "plus") }

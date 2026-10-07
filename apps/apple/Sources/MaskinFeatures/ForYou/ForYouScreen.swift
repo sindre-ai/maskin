@@ -12,7 +12,6 @@ public struct ForYouScreen: View {
 	private let environment: AppEnvironment
 	private let openObject: ((String) -> Void)?
 	@Environment(AppRuntime.self) private var appRuntime
-	@State private var showNewChat = false
 
 	public init(environment: AppEnvironment, openObject: ((String) -> Void)? = nil) {
 		self.environment = environment
@@ -32,18 +31,8 @@ public struct ForYouScreen: View {
 			.shellToolbar(
 				environment: environment, title: "For you",
 				actions: ShellActions(
-					new: { showNewChat = true }, live: true, display: ShellDisplayMenu { displayMenu })
+					live: true, display: ShellDisplayMenu { displayMenu })
 			)
-			.sheet(isPresented: $showNewChat) {
-				if let chief = runtime.chief {
-					NewChatSheet(
-						store: chief.conversations, currentActorID: environment.auth.session?.actorId
-					) { created in
-						appRuntime.selectedTab = .chats
-						appRuntime.requestedConversationId = created.id
-					}
-				}
-			}
 			.task(id: environment.workspaceId) {
 				async let feed: Void = runtime.store.load()
 				async let stories: Void = appRuntime.storiesStore()?.load() ?? ()

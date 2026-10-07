@@ -13,8 +13,6 @@ public struct ObjectsScreen: View {
 	@Namespace private var zoom
 	@State private var selection: String?
 	@State private var detailPath: [ObjectRoute] = []
-	@State private var showNewChat = false
-	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	public init(environment: AppEnvironment) {
@@ -35,14 +33,6 @@ public struct ObjectsScreen: View {
 				split
 			}
 		}
-		.sheet(isPresented: $showNewChat) {
-			if let chief = runtime?.forYou.chief {
-				NewChatSheet(store: chief.conversations, currentActorID: environment.auth.session?.actorId) { created in
-					runtime?.selectedTab = .chats
-					runtime?.requestedConversationId = created.id
-				}
-			}
-		}
 		.task(id: environment.workspaceId) {
 			store.reset()
 			path = []
@@ -52,9 +42,9 @@ public struct ObjectsScreen: View {
 		.task { await store.observe(environment.events.subscribe()) }
 	}
 
-	/// New starts a plain chat; Display holds the filters and grouping.
+	/// Search is the list's own `.searchable`; Display holds the filters and grouping.
 	private var shellActions: ShellActions {
-		ShellActions(new: { showNewChat = true }, display: ShellDisplayMenu { ObjectsDisplayMenu(store: store) })
+		ShellActions(search: false, display: ShellDisplayMenu { ObjectsDisplayMenu(store: store) })
 	}
 
 	// MARK: iPhone

@@ -79,8 +79,10 @@ private struct ChatsContainer: View {
 			.shellToolbar(
 				environment: environment, title: store.scope == .archived ? "Archived" : "Chats",
 				actions: ShellActions(
-					new: { showNewChat = true }, live: true, liveRequest: .chiefOfStaff,
-					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) }))
+					compose: ShellCompose(
+						action: { showNewChat = true },
+						starter: { runtime?.buildInChat($0.prompt) }),
+					live: true, liveRequest: .chiefOfStaff, search: false))
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {
