@@ -3789,6 +3789,7 @@ describe('tool handlers', () => {
 				if (urlStr.includes('/api/objects?')) {
 					return {
 						ok: true,
+						headers: new Headers(),
 						json: () =>
 							Promise.resolve([
 								{ id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
@@ -3819,11 +3820,16 @@ describe('tool handlers', () => {
 				type: 'bet',
 				title: `Bet ${i + 1}`,
 				status: 'active',
+				createdAt: '2026-01-01T00:00:00.000Z',
 			}))
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects?')) {
-					return { ok: true, json: () => Promise.resolve(rows) } as Response
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '250' }),
+						json: () => Promise.resolve(rows),
+					} as Response
 				}
 				if (urlStr.endsWith('/api/actors')) {
 					return { ok: true, json: () => Promise.resolve([]) } as Response
@@ -3844,16 +3850,109 @@ describe('tool handlers', () => {
 			}
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
-			// The cursor walk fetches `limit + 1` as a "has more" sentinel and the
-			// requested limit is capped at LIST_ENDPOINT_MAX_LIMIT - 1 (99) so the
-			// sentinel stays within the API's hard cap of 100 — so a 100-row
-			// fixture yields 99 kept rows, not 100.
-			expect(result.structuredContent.heroCard.totalCount).toBe(99)
+			// limit=100 is honoured in full, and totalCount is the API's X-Total-Count
+			// rather than the number of rows on the page.
+			expect(result.structuredContent.heroCard.totalCount).toBe(250)
 			expect(result.structuredContent.heroCard.page).toMatchObject({
 				limit: 25,
 				hasMore: true,
 			})
-			expect(result.structuredContent.objects).toHaveLength(99)
+			expect(result.structuredContent.objects).toHaveLength(100)
+		})
+
+		describe('list_objects paging contract', () => {
+			const makeRows = (n: number, from = 0) =>
+				Array.from({ length: n }, (_, i) => ({
+					id: `obj-${from + i + 1}`,
+					type: 'task',
+					title: `Task ${from + i + 1}`,
+					status: 'todo',
+					createdAt: '2026-01-01T00:00:00.123Z',
+				}))
+
+			type PagedResult = {
+				structuredContent: {
+					heroCard: { kind: string; totalCount?: number; page?: { hasMore: boolean } }
+					objects: unknown[]
+					page: { limit: number; returned: number; next_cursor?: string }
+					next_cursor?: string
+				}
+			}
+
+			function mockObjects(pages: unknown[][], total: number) {
+				const urls: string[] = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const urlStr = url as string
+					if (urlStr.includes('/api/objects?')) {
+						urls.push(urlStr)
+						return {
+							ok: true,
+							headers: new Headers({ 'X-Total-Count': String(total) }),
+							json: () => Promise.resolve(pages.shift() ?? []),
+						} as Response
+					}
+					return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+				})
+				return urls
+			}
+
+			it('reports the real totalCount and the requested limit, with hasMore agreeing with next_cursor', async () => {
+				// limit=2: the API hands back the +1 sentinel row.
+				mockObjects([makeRows(3)], 120)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 2 })) as PagedResult
+				const { heroCard, objects, page, next_cursor } = result.structuredContent
+				expect(heroCard.totalCount).toBe(120)
+				expect(heroCard.page?.hasMore).toBe(true)
+				expect(next_cursor).toBeTruthy()
+				expect(page).toMatchObject({ limit: 2, returned: 2, next_cursor })
+				expect(objects).toHaveLength(2)
+			})
+
+			it('has no next_cursor and hasMore false on the last page', async () => {
+				mockObjects([makeRows(2)], 2)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 5 })) as PagedResult
+				const { heroCard, page, next_cursor } = result.structuredContent
+				expect(heroCard.totalCount).toBe(2)
+				expect(heroCard.page?.hasMore).toBe(false)
+				expect(next_cursor).toBeUndefined()
+				expect(page).toMatchObject({ limit: 5, returned: 2 })
+			})
+
+			it('keeps a one-row page a list when more rows match', async () => {
+				mockObjects([makeRows(2)], 40)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 1 })) as PagedResult
+				expect(result.structuredContent.heroCard.kind).toBe('list')
+				expect(result.structuredContent.heroCard.totalCount).toBe(40)
+			})
+
+			it('honours limit=100 and probes one row past a full page for has-more', async () => {
+				const urls = mockObjects([makeRows(100), makeRows(1, 100)], 101)
+				const result = (await getHandler('list_objects')({
+					type: 'task',
+					limit: 100,
+				})) as PagedResult
+				const { heroCard, objects, page, next_cursor } = result.structuredContent
+				expect(new URL(urls[0], 'http://x').searchParams.get('limit')).toBe('100')
+				const probe = new URL(urls[1], 'http://x').searchParams
+				expect(probe.get('limit')).toBe('1')
+				expect(probe.get('cursor_id')).toBe('obj-100')
+				expect(objects).toHaveLength(100)
+				expect(page).toMatchObject({ limit: 100, returned: 100 })
+				expect(next_cursor).toBeTruthy()
+				expect(heroCard.page?.hasMore).toBe(true)
+			})
+
+			it('ends the walk when the probe past a full limit=100 page finds nothing', async () => {
+				mockObjects([makeRows(100), []], 100)
+				const result = (await getHandler('list_objects')({
+					type: 'task',
+					limit: 100,
+				})) as PagedResult
+				const { heroCard, page, next_cursor } = result.structuredContent
+				expect(page).toMatchObject({ limit: 100, returned: 100 })
+				expect(next_cursor).toBeUndefined()
+				expect(heroCard.page?.hasMore).toBe(false)
+			})
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
