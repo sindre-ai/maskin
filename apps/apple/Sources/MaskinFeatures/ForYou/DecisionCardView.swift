@@ -17,7 +17,8 @@ struct DecisionCardView: View {
 		var dismiss: () -> Void = {}
 		var retry: () -> Void = {}
 		var open: (() -> Void)?
-		var toggleExpanded: (() -> Void)?
+		var expand: (() -> Void)?
+		var collapse: (() -> Void)?
 	}
 
 	let entry: FeedEntry
@@ -40,49 +41,22 @@ struct DecisionCardView: View {
 	private var card: ForYouCard { entry.card }
 	private var record: DecisionRecord? { entry.record }
 
-	var body: some View {
-		Group {
-			if expanded || record != nil {
-				fullCard
-			} else {
-				compactRow
-			}
-		}
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s3, style: .continuous))
-		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s3, style: .continuous)
-				.strokeBorder(MaskinSurface.line, lineWidth: 1)
-		)
-		.accessibilityElement(children: .contain)
+	/// Opened by the reader (Ask); a card also stays open while its reply is being worked on.
+	private var engagement: CardExpansion.Engagement {
+		CardExpansion.Engagement(
+			composerFocused: composerFocused,
+			hasDraft: chief.map { !$0.composer(for: card).text.isEmpty } ?? !draft.isEmpty,
+			threadOpen: chief?.presented?.card.id == card.id)
 	}
 
-	// MARK: Compact (list mode)
+	private var isExpanded: Bool {
+		CardExpansion.isExpanded(manual: expanded, engagement: engagement)
+	}
 
-	private var compactRow: some View {
-		Button {
-			actions.toggleExpanded?()
-		} label: {
-			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s5) {
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					Text(card.headline).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						.lineLimit(2).multilineTextAlignment(.leading)
-					HStack(spacing: MaskinSpace.s4) {
-						if let status = card.status { StatusBadge(status, style: .word) }
-						if let sender { Text(sender).maskinText(.caption).foregroundStyle(MaskinColor.ink4) }
-						if let held = ForYouFormat.heldNote(since: card.latestActivityAt, now: now) {
-							Text(held).maskinText(.caption).foregroundStyle(ForYouPalette.heldNote)
-						}
-					}
-				}
-				Spacer(minLength: MaskinSpace.s4)
-				RelativeTime(card.latestActivityAt, style: .compact, compactDayLimit: 7)
-					.maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
-			}
-			.padding(MaskinSpace.s9)
-			.contentShape(Rectangle())
-		}
-		.buttonStyle(.plain)
-		.accessibilityHint("Shows the full decision")
+	var body: some View {
+		fullCard
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
+			.accessibilityElement(children: .contain)
 	}
 
 	// MARK: Full
@@ -91,7 +65,7 @@ struct DecisionCardView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
 			say
-			objectChip
+			if isExpanded { objectChip }
 
 			if let record, !isFailed(record) {
 				receipt(record).transition(.opacity)
@@ -103,21 +77,31 @@ struct DecisionCardView: View {
 					} else {
 						noDecisionRow
 					}
-					replyArea
+					if isExpanded {
+						replyArea
+						showLess
+					} else {
+						footer
+					}
 				}
 				.transition(.opacity)
 			}
 		}
 		// The options fade into the receipt in place, and the card eases to its new height.
 		.animation(MaskinMotion.standard, value: record.map { "\($0.phase)" })
-		.padding(MaskinSpace.s9)
+		.animation(MaskinMotion.standard, value: isExpanded)
+		.padding(.horizontal, MaskinSpace.s10)
+		.padding(.top, MaskinSpace.s9)
+		.padding(.bottom, MaskinSpace.s9)
 	}
 
 	/// Every card speaks as the Chief of Staff, whichever agent escalated.
 	private var header: some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s4) {
 			ChiefOfStaffTile()
-			Text("Chief of Staff").maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+			Text("Chief of Staff")
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.w650))
+				.foregroundStyle(MaskinColor.ink)
 				.lineLimit(1)
 			Spacer(minLength: MaskinSpace.s3)
 			if isWaiting {
@@ -127,10 +111,12 @@ struct DecisionCardView: View {
 					.padding(.horizontal, MaskinSpace.s3).padding(.vertical, MaskinSpace.s1)
 					.background(ForYouPalette.waitingBackground, in: RoundedRectangle(cornerRadius: MaskinRadius.btn - 2))
 			} else if record == nil, let held = ForYouFormat.heldNote(since: card.latestActivityAt, now: now) {
-				Text(held).maskinText(.caption).foregroundStyle(ForYouPalette.heldNote)
+				Text(held)
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: MaskinFontWeight.semibold))
+					.foregroundStyle(ForYouPalette.heldNote)
 			}
 			RelativeTime(card.latestActivityAt, style: .compact, compactDayLimit: 7)
-				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(sender.map { "Chief of Staff, for \($0)" } ?? "Chief of Staff")
@@ -140,14 +126,12 @@ struct DecisionCardView: View {
 		card.mention?.content.contains("?") == true
 	}
 
-	/// What the Chief of Staff says: the decision's summary, or the mention itself.
+	/// What the Chief of Staff says: the decision's summary, or the mention itself. The card's own
+	/// object name inside the text is an underlined link that opens it.
 	@ViewBuilder private var say: some View {
-		let content = VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			if let decision = card.decision {
-				Text(decision.summary)
-					.font(MaskinTypeface.sans(MaskinFontSize.t16))
-					.foregroundStyle(MaskinColor.ink)
-					.frame(maxWidth: .infinity, alignment: .leading)
+				messageText(decision.summary)
 			} else {
 				Text(card.headline)
 					.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold))
@@ -157,11 +141,35 @@ struct DecisionCardView: View {
 			}
 		}
 		.fixedSize(horizontal: false, vertical: true)
-		if let toggle = actions.toggleExpanded {
-			Button(action: toggle) { content }.buttonStyle(.plain)
-		} else {
-			content
+	}
+
+	private static let objectScheme = "maskin-object"
+
+	private func messageText(_ text: String) -> some View {
+		var attributed = AttributedString(text)
+		for range in ObjectLinks.ranges(of: card.objectTitle, in: text) {
+			guard let lower = AttributedString.Index(range.lowerBound, within: attributed),
+				let upper = AttributedString.Index(range.upperBound, within: attributed)
+			else { continue }
+			attributed[lower..<upper].underlineStyle = .single
+			if actions.open != nil {
+				attributed[lower..<upper].link = URL(string: "\(Self.objectScheme)://open")
+			}
 		}
+		return Text(attributed)
+			.font(MaskinTypeface.sans(MaskinFontSize.t16))
+			.tracking(-0.16)
+			.lineSpacing(MaskinSpace.s2)
+			.foregroundStyle(MaskinColor.ink)
+			.tint(MaskinColor.ink)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.environment(
+				\.openURL,
+				OpenURLAction { url in
+					guard url.scheme == Self.objectScheme, let open = actions.open else { return .systemAction }
+					open()
+					return .handled
+				})
 	}
 
 	/// The object the card is about: an outlined chip that opens it.
@@ -215,22 +223,24 @@ struct DecisionCardView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			Text(decision.ask)
 				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold))
-				.foregroundStyle(MaskinColor.ink)
+				.foregroundStyle(MaskinColor.ink3)
 				.frame(maxWidth: .infinity, alignment: .leading)
 			ChipFlow(spacing: MaskinSpace.s4) {
 				ForEach(decision.options) { option in
 					Button {
 						if option.destructive { pendingDestructive = option } else { actions.choose(option) }
 					} label: {
-						Text(option.label).multilineTextAlignment(.leading)
+						OptionPill(
+							label: pendingDestructive == option ? option.label + "\u{2026}" : option.label,
+							recommended: option.recommended, destructive: option.destructive)
 					}
-					.buttonStyle(OptionPillStyle(recommended: option.recommended, destructive: option.destructive))
+					.buttonStyle(.maskinPressed(.shrink))
 					.accessibilityLabel(option.recommended ? "\(option.label), recommended" : option.label)
 					.accessibilityHint(option.consequences.joined(separator: ". "))
 				}
 			}
-			if let line = Self.suggestedLine(for: decision) {
-				Text(line).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+			if isExpanded, let line = Self.suggestedLine(for: decision) {
+				Text(line).font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
 		}
@@ -256,6 +266,81 @@ struct DecisionCardView: View {
 			return trimmed.hasSuffix(".") ? trimmed : trimmed + "."
 		}
 		return (["Suggested: \(option.label)."] + reasons).joined(separator: " ")
+	}
+
+	// MARK: Footer
+
+	/// Compact card footer: what it is about, and Ask to open the reply.
+	private var footer: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			Button {
+				actions.open?()
+			} label: {
+				HStack(spacing: MaskinSpace.s4) {
+					if let type = card.objectType {
+						// The type's hue is the one documented colour exception in this card.
+						RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+							.fill(MaskinObjectType.colors(for: type).fg)
+							.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+							.accessibilityHidden(true)
+						Text(type.uppercased())
+							.font(MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
+							.tracking(0.7)
+							.foregroundStyle(MaskinColor.ink5)
+							.lineLimit(1).fixedSize()
+					}
+					if let title = card.objectTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+						Text(title)
+							.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.semibold))
+							.foregroundStyle(MaskinColor.ink3)
+							.lineLimit(1)
+					}
+					Spacer(minLength: 0)
+				}
+				.frame(minHeight: MaskinSpace.s14)
+			}
+			.buttonStyle(.maskinPressed)
+			.disabled(actions.open == nil)
+			.accessibilityLabel(card.objectTitle ?? "Object")
+			.accessibilityHint(actions.open == nil ? "" : "Opens the object")
+
+			if actions.expand != nil {
+				Button {
+					actions.expand?()
+				} label: {
+					HStack(spacing: MaskinSpace.s3) {
+						Image(systemName: "bubble.left")
+							.font(.system(size: MaskinFontSize.t13, weight: .semibold))
+							.accessibilityHidden(true)
+						Text("Ask").font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650))
+					}
+					.foregroundStyle(MaskinColor.ink2)
+					.padding(.horizontal, MaskinSpace.s8)
+					.frame(height: MaskinSpace.s14)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityLabel("Ask Chief of Staff")
+			}
+		}
+		.padding(.top, MaskinSpace.s7)
+		.overlay(alignment: .top) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
+		.padding(.top, MaskinSpace.s2)
+	}
+
+	/// Collapses an opened card; absent while the reply is in progress, which keeps it open.
+	@ViewBuilder private var showLess: some View {
+		if actions.collapse != nil, expanded, !engagement.isEngaged {
+			Button {
+				actions.collapse?()
+			} label: {
+				Text("Show less")
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: MaskinFontWeight.semibold))
+					.foregroundStyle(MaskinColor.ink5)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
+			}
+			.buttonStyle(.maskinPressed)
+		}
 	}
 
 	// MARK: Reply
@@ -371,10 +456,15 @@ struct DecisionCardView: View {
 		}()
 		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack(spacing: MaskinSpace.s4) {
-				Image(systemName: "checkmark.circle.fill")
-					.foregroundStyle(ForYouPalette.receiptCheck)
+				Image(systemName: "checkmark")
+					.font(.system(size: MaskinFontSize.t12, weight: .bold))
+					.foregroundStyle(ForYouPalette.receiptBackground)
+					.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
+					.background(ForYouPalette.receiptCheck, in: Circle())
 					.accessibilityHidden(true)
-				Text(title).maskinText(.headline).foregroundStyle(ForYouPalette.receiptForeground)
+				Text(title)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: MaskinFontWeight.w650))
+					.foregroundStyle(ForYouPalette.receiptForeground)
 					.frame(maxWidth: .infinity, alignment: .leading)
 				if sending {
 					ProgressView().controlSize(.small)
@@ -417,25 +507,22 @@ struct DecisionCardView: View {
 	}
 
 	private func queuedNote(_ record: DecisionRecord) -> some View {
-		let what: String
-		switch record.kind {
-		case .option(let label): what = "\u{201C}\(label)\u{201D}"
-		case .reply: what = "Your reply"
-		case .dismissed: what = "Your change"
-		}
-		return HStack(alignment: .top, spacing: MaskinSpace.s4) {
-			Image(systemName: "arrow.up.circle.fill")
-				.foregroundStyle(MaskinColor.warning)
+		HStack(alignment: .center, spacing: MaskinSpace.s4) {
+			Image(systemName: "arrow.up")
+				.font(.system(size: MaskinFontSize.t12, weight: .bold))
+				.foregroundStyle(MaskinSurface.onInverse)
+				.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
+				.background(MaskinSurface.inverse, in: Circle())
 				.accessibilityHidden(true)
-			Text("\(what) is queued. It will send when you're back online.")
-				.maskinText(.subhead).foregroundStyle(MaskinSurface.amberForeground)
+			Text("Queued offline \u{2014} sends when you\u{2019}re back.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.noticeFg)
 				.frame(maxWidth: .infinity, alignment: .leading)
 		}
 		.padding(MaskinSpace.s7)
-		.background(MaskinSurface.amberBackground, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+		.background(MaskinColor.noticeBg, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
-				.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1)
+			RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+				.strokeBorder(MaskinColor.noticeBd, lineWidth: 1)
 		)
 		.accessibilityElement(children: .combine)
 	}
@@ -469,27 +556,28 @@ struct DecisionCardView: View {
 
 // MARK: - Option pill
 
-/// The recommended option is the ink-gradient pill; the others are glass.
-private struct OptionPillStyle: ButtonStyle {
+/// The recommended option is the ink-gradient pill; the others are glass. Pressing is the shared
+/// `.maskinPressed(.shrink)` on the button around it.
+private struct OptionPill: View {
+	let label: String
 	let recommended: Bool
 	var destructive = false
 	@Environment(\.isEnabled) private var isEnabled
 
-	func makeBody(configuration: Configuration) -> some View {
-		configuration.label
-			.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+	var body: some View {
+		let shape = RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
+		Text(label)
+			.multilineTextAlignment(.leading)
+			.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: recommended ? MaskinFontWeight.w650 : MaskinFontWeight.semibold))
 			.foregroundStyle(recommended ? Color.white : MaskinColor.ink)
 			.padding(.horizontal, MaskinSpace.s8)
 			.padding(.vertical, MaskinSpace.s5)
 			.frame(minHeight: MaskinSpace.touchMin)
-			.background(recommended ? AnyShapeStyle(MaskinGradient.decisionInk) : AnyShapeStyle(MaskinSurface.fill), in: Capsule())
+			.background(recommended ? AnyShapeStyle(MaskinGradient.decisionInk) : AnyShapeStyle(MaskinSurface.fill), in: shape)
 			.shadow(color: recommended ? MaskinPatina.decisionShadow : .clear, radius: 8, y: 6)
-			.overlay(
-				Capsule().strokeBorder(destructive ? ForYouPalette.failureBorder : Color.clear, lineWidth: 1))
+			.overlay(shape.strokeBorder(destructive ? ForYouPalette.failureBorder : Color.clear, lineWidth: 1))
 			.opacity(isEnabled ? 1 : 0.4)
-			.scaleEffect(configuration.isPressed ? 0.97 : 1)
-			.animation(MaskinMotion.quick, value: configuration.isPressed)
-			.contentShape(Capsule())
+			.contentShape(shape)
 	}
 }
 

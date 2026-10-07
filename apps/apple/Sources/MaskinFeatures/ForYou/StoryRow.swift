@@ -31,7 +31,8 @@ struct StoryRow: View {
 }
 
 /// One 124 x 176 card: unit label (a glass pill) and unseen dot on top, the headline below. No ring,
-/// no border. An unseen card is the Patina gradient; a seen one is a plain card.
+/// no border. An unseen card is the Patina gradient; a seen one is a plain card. The mono format
+/// line under the headline says what opening it gives (`READ · 1 MIN`).
 struct StoryCardView: View {
 	let card: StoryCard
 	let isSeen: Bool
@@ -62,10 +63,18 @@ struct StoryCardView: View {
 				}
 				Spacer(minLength: 0)
 				Text(card.headline)
-					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold))
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold))
+					.tracking(-0.225)
+					.lineSpacing(MaskinSpace.s1)
 					.foregroundStyle(isSeen ? MaskinColor.ink : MaskinColor.stFg)
 					.multilineTextAlignment(.leading)
 					.lineLimit(5)
+				Text(card.formatLabel)
+					.font(MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold))
+					.tracking(0.63)
+					.foregroundStyle(isSeen ? MaskinColor.ink5 : MaskinColor.stLab)
+					.lineLimit(1)
+					.padding(.top, MaskinSpace.s3)
 			}
 			.padding(MaskinSpace.s6)
 			.frame(width: Self.size.width, height: Self.size.height)
@@ -74,8 +83,8 @@ struct StoryCardView: View {
 			.shadow(color: MaskinPatina.cardShadow, radius: 9, y: 6)
 			.contentShape(shape)
 		}
-		.buttonStyle(.plain)
-		.accessibilityLabel("\(card.unit): \(card.headline)\(isSeen ? "" : ", new")")
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel("\(card.unit): \(card.headline), \(card.formatLabel)\(isSeen ? "" : ", new")")
 		.accessibilityHint("Opens the briefing")
 	}
 

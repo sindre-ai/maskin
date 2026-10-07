@@ -145,3 +145,27 @@ struct StoriesStoreTests {
 		#expect(!seen.isSeen(edited))
 	}
 }
+
+@Suite("StoryCard format label")
+struct StoryCardFormatLabelTests {
+	private func briefing(words: Int) -> StoryCard {
+		StoryCard(
+			id: "b", unit: "Daily briefing", headline: "Hi", updatedAt: nil,
+			content: .briefing(headline: "Hi", script: Array(repeating: "word", count: words).joined(separator: " ")))
+	}
+
+	@Test func shortBriefingReadsInOneMinute() {
+		#expect(briefing(words: 40).formatLabel == "READ \u{00B7} 1 MIN")
+	}
+
+	@Test func longerBriefingRoundsUp() {
+		#expect(briefing(words: 450).formatLabel == "READ \u{00B7} 3 MIN")
+	}
+
+	@Test func pageIsLabelledAPage() {
+		let card = StoryCard(
+			id: "p", unit: "Sales", headline: "Pipeline", updatedAt: nil,
+			content: .page(LoopOutput(id: "f", name: "pipeline.html")))
+		#expect(card.formatLabel == "PAGE")
+	}
+}
