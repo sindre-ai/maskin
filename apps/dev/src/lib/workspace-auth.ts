@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 /**
  * Check if an actor is a member of a workspace.
@@ -24,6 +24,87 @@ export async function isWorkspaceMember(
 		)
 		.limit(1)
 	return !!member
+}
+
+/**
+ * Whether `callerId` may reach `targetId` through a workspace they both belong
+ * to: the caller itself, or two members of one workspace. When `workspaceId`
+ * is given (the X-Workspace-Id header) the shared workspace must be that one.
+ * By-ID actor routes use this so a member of workspace A cannot read or edit an
+ * actor that only lives in workspace B.
+ */
+export async function actorsShareWorkspace(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId?: string,
+): Promise<boolean> {
+	if (callerId === targetId) return true
+	if (workspaceId) {
+		return (
+			(await isWorkspaceMember(db, callerId, workspaceId)) &&
+			(await isWorkspaceMember(db, targetId, workspaceId))
+		)
+	}
+	const callerWorkspaces = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(eq(workspaceMembers.actorId, callerId))
+	if (callerWorkspaces.length === 0) return false
+	const [shared] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, targetId),
+				inArray(
+					workspaceMembers.workspaceId,
+					callerWorkspaces.map((w) => w.workspaceId),
+				),
+			),
+		)
+		.limit(1)
+	return !!shared
+}
+
+/**
+ * Whether `callerId` is an owner or admin (any actor type) of a workspace it
+ * shares with `targetId`. When `workspaceId` (the X-Workspace-Id header) is
+ * given, the role must be held in that workspace and the target must be a
+ * member of it; otherwise any shared workspace counts. Gates writes to another
+ * actor's tools and llm_config, which decide what runs in its sessions.
+ */
+export async function isAdminOfSharedWorkspace(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId?: string,
+): Promise<boolean> {
+	const callerAdminWorkspaces = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, callerId),
+				inArray(workspaceMembers.role, ['owner', 'admin']),
+				...(workspaceId ? [eq(workspaceMembers.workspaceId, workspaceId)] : []),
+			),
+		)
+	if (callerAdminWorkspaces.length === 0) return false
+	const [shared] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, targetId),
+				inArray(
+					workspaceMembers.workspaceId,
+					callerAdminWorkspaces.map((w) => w.workspaceId),
+				),
+			),
+		)
+		.limit(1)
+	return !!shared
 }
 
 export async function isWorkspaceOwner(

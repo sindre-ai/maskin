@@ -50,6 +50,10 @@ const FALLBACK_ENV_KEYS = [
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
 	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
+	// These tests are about route priority, not refresh behaviour: keep the
+	// platform refresh off so a fixture token never triggers a real refresh call.
+	// The flag-on contract is in claude-launch-refresh.test.ts.
+	process.env.MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED = 'false'
 })
 
 afterEach(() => {

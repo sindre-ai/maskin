@@ -127,6 +127,7 @@ describe('Workspaces Routes', () => {
 			const ws = buildWorkspace()
 			const updated = { ...ws, name: 'Updated Workspace' }
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]] // isWorkspaceMember
 			mockResults.update = [updated]
 
 			const res = await app.request(
@@ -136,8 +137,23 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('returns 404 and does not touch the DB when the caller is not a member of the workspace', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+			mockResults.update = [{ ...ws, name: 'Renamed' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed' }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
 		it('returns 404 when workspace not found for settings merge', async () => {
-			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }], []] // member, then no workspace row
 			const id = '00000000-0000-0000-0000-000000000099'
 
 			const res = await app.request(
@@ -152,6 +168,7 @@ describe('Workspaces Routes', () => {
 		it('returns 400 and does not touch the DB when settings.claude_oauth is present', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
 			mockResults.update = [{ ...ws, name: 'should not be used' }]
 
 			const res = await app.request(
@@ -179,6 +196,7 @@ describe('Workspaces Routes', () => {
 		it('returns 400 and does not touch the DB when settings.billing is present', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
 			mockResults.update = [{ ...ws }]
 
 			const res = await app.request(
@@ -196,6 +214,7 @@ describe('Workspaces Routes', () => {
 		it('rejects settings.billing even when smuggled alongside a legitimate key', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
 			mockResults.update = [{ ...ws }]
 
 			const res = await app.request(
@@ -506,6 +525,27 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].role).toBe('owner')
+		})
+
+		it('returns 404 and no member list when the caller is not a member of the workspace', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]] // isWorkspaceMember: no row
+			mockResults.select = [
+				{
+					actorId: randomUUID(),
+					role: 'owner',
+					joinedAt: new Date(),
+					name: 'Alice',
+					type: 'human',
+				},
+			]
+
+			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/members`))
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body).not.toBeInstanceOf(Array)
 		})
 	})
 
