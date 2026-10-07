@@ -606,8 +606,7 @@ private struct SelectionTextField: View {
 
 	private func offsets(of selection: TextSelection?) -> Range<Int>? {
 		guard let selection, case .selection(let range) = selection.indices else { return nil }
-		let text = model.text
-		return text.distance(from: text.startIndex, to: range.lowerBound)..<text.distance(from: text.startIndex, to: range.upperBound)
+		return TextOffsets.characterOffsets(of: range, in: model.text)
 	}
 
 	private func textSelection(for range: Range<Int>) -> TextSelection {

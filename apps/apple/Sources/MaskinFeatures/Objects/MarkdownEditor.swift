@@ -100,9 +100,7 @@ private struct SelectionEditor: View {
 		guard let selection, case .selection(let range) = selection.indices else {
 			return text.count..<text.count
 		}
-		let lo = text.distance(from: text.startIndex, to: range.lowerBound)
-		let hi = text.distance(from: text.startIndex, to: range.upperBound)
-		return lo..<hi
+		return TextOffsets.characterOffsets(of: range, in: text) ?? text.count..<text.count
 	}
 }
 
