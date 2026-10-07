@@ -148,8 +148,24 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	// "Running on a fallback": sessions are served by something other than the
 	// first subscription in the list, and we know why the first one stepped
 	// aside.
+	const lastSlot = connectedSlots[connectedSlots.length - 1]
+	// Nothing left to fall over to: the last subscription in a multi-slot chain
+	// is the active one and carries a failure record. The backend never stamps
+	// a lone credential (it has no chain to exhaust), so a record on a
+	// single-slot chain is stale and does not count.
+	const chainExhausted = Boolean(
+		status?.connected &&
+			connectedSlots.length > 1 &&
+			lastSlot &&
+			status.active_slot === lastSlot.slot &&
+			lastSlot.failure_reason,
+	)
 	const failedOver = Boolean(
-		status?.connected && head && status.active_slot !== head.slot && head.failure_reason,
+		!chainExhausted &&
+			status?.connected &&
+			head &&
+			status.active_slot !== head.slot &&
+			head.failure_reason,
 	)
 	const reasonCopy = head?.failure_reason ? FAILOVER_REASON_COPY[head.failure_reason] : undefined
 	// -1 when `active_slot` isn't in the rendered chain. slotLabel(-1) reads
@@ -175,6 +191,8 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 				credentials expire, they fall through to the next, and so on down the list.
 			</p>
 
+			{chainExhausted && <ExhaustedBanner />}
+
 			{failedOver && reasonCopy && head && (
 				<FailoverBanner
 					reasonCopy={reasonCopy}
@@ -190,6 +208,7 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 						info={info}
 						position={position}
 						activeSlot={status?.active_slot}
+						chainExhausted={chainExhausted}
 						workspaceId={workspaceId}
 						onSuccess={invalidate}
 						onReplaceClick={() => setPasteSlot(info.slot)}
@@ -262,6 +281,7 @@ interface SlotCardProps {
 	info: ClaudeOAuthSlotInfo
 	position: number
 	activeSlot: ClaudeOAuthSlot | undefined
+	chainExhausted: boolean
 	workspaceId: string
 	onSuccess: () => void
 	onReplaceClick: () => void
@@ -271,6 +291,7 @@ function SlotCard({
 	info,
 	position,
 	activeSlot,
+	chainExhausted,
 	workspaceId,
 	onSuccess,
 	onReplaceClick,
@@ -328,8 +349,10 @@ function SlotCard({
 	const reasonCopy = info.failure_reason ? FAILOVER_REASON_COPY[info.failure_reason] : undefined
 	// A recorded failure only means "unhealthy" while something else is
 	// serving: once this subscription is the active one again, session start
-	// has either cleared the record or is about to re-probe it.
-	const isUnhealthy = Boolean(info.failure_reason) && !isActive
+	// has either cleared the record or is about to re-probe it. The exception
+	// is the end of the chain: the last subscription stays active when it is
+	// rejected too, so its record is current, not stale.
+	const isUnhealthy = Boolean(info.failure_reason) && (!isActive || chainExhausted)
 	const unhealthyLine = isUnhealthy
 		? (reasonCopy?.slotLine ?? 'This subscription was rejected on its last attempt.')
 		: null
@@ -442,6 +465,19 @@ function SlotCard({
 					Disconnect
 				</Button>
 			</div>
+		</div>
+	)
+}
+
+function ExhaustedBanner() {
+	return (
+		<div
+			className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 mb-3"
+			data-testid="exhausted-banner"
+		>
+			<p className="text-sm font-bold text-warning">
+				Every Claude login is failing. Replace one in Settings &gt; Keys.
+			</p>
 		</div>
 	)
 }

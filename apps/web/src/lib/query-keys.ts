@@ -40,6 +40,9 @@ export const queryKeys = {
 		detail: (id: string) => ['workspaces', 'detail', id] as const,
 		members: (id: string) => ['workspaces', id, 'members'] as const,
 	},
+	invites: {
+		list: (workspaceId: string) => ['invites', workspaceId] as const,
+	},
 	relationships: {
 		all: (workspaceId: string) => ['relationships', workspaceId] as const,
 		byObject: (workspaceId: string, objectId: string) =>
