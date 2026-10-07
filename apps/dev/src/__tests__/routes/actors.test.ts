@@ -927,6 +927,64 @@ describe('Actors Routes', () => {
 			expect(body.deleted).toBe(true)
 		})
 
+		it('records only identity fields in the deleted event, never tools, llm_config or credentials', async () => {
+			const agentActor = buildActor({
+				type: 'agent',
+				name: 'Doomed Agent',
+				apiKey: 'fake-api-key-for-test',
+				systemPrompt: 'fake system prompt for test',
+				tools: {
+					mcpServers: {
+						fake: {
+							command: 'fake-cmd',
+							env: { FAKE_TOKEN: 'fake-env-secret-for-test' },
+							headers: { Authorization: 'fake-header-secret-for-test' },
+						},
+					},
+				},
+				llmConfig: { api_key: 'fake-llm-key-for-test', model: 'fake-model' },
+				memory: { notes: 'fake memory for test' },
+			})
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+				[], // actorSessions in transaction
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const event = calls.inserts.find((v) => (v as { action?: string }).action === 'deleted') as {
+				entityType: string
+				entityId: string
+				data: unknown
+			}
+			expect(event).toBeDefined()
+			expect(event.entityType).toBe('agent')
+			expect(event.entityId).toBe(agentActor.id)
+			expect(event.data).toEqual({
+				id: agentActor.id,
+				type: 'agent',
+				name: 'Doomed Agent',
+				is_system: false,
+			})
+			const stored = JSON.stringify(event.data)
+			for (const fake of [
+				'fake-api-key-for-test',
+				'fake system prompt for test',
+				'fake-env-secret-for-test',
+				'fake-header-secret-for-test',
+				'fake-llm-key-for-test',
+				'fake memory for test',
+			]) {
+				expect(stored).not.toContain(fake)
+			}
+		})
+
 		it('returns 404 when requesting actor is not a workspace member', async () => {
 			const { app } = createTestApp(actorsRoutes, '/api/actors')
 			// isWorkspaceMember returns empty — requester not a member
@@ -1058,6 +1116,41 @@ describe('Actors Routes', () => {
 			expect(body.llm_provider).toBe(WORKSPACE_COACH_DEFAULT.llmProvider)
 			expect(body.llm_config).toEqual(WORKSPACE_COACH_DEFAULT.llmConfig)
 			expect(body.tools).toEqual(WORKSPACE_COACH_DEFAULT.tools)
+		})
+
+		it('records only identity fields in the reset event, never tools, llm_config or memory', async () => {
+			const systemActor = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
+			const resetActor = {
+				...systemActor,
+				tools: { mcpServers: { fake: { env: { FAKE_TOKEN: 'fake-env-secret-for-test' } } } },
+				llm_config: { api_key: 'fake-llm-key-for-test' },
+				memory: { notes: 'fake memory for test' },
+			}
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+			mockResults.update = [resetActor]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const event = calls.inserts.find((v) => (v as { action?: string }).action === 'reset') as {
+				data: unknown
+			}
+			expect(event).toBeDefined()
+			expect(event.data).toEqual({
+				id: systemActor.id,
+				type: 'agent',
+				name: 'Workspace Coach',
+				is_system: true,
+			})
 		})
 
 		it('returns 403 when the actor is not a system actor', async () => {

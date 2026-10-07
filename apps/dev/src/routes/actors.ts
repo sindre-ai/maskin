@@ -74,6 +74,16 @@ const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
 
+/**
+ * Event data for an actor mutation. Events are readable by every workspace
+ * member (history and SSE return the row unfiltered), so this carries identity
+ * only. Never pass an actor row here: it holds tools, llm_config and
+ * credentials.
+ */
+function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
+	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
+}
+
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST / - Create actor (signup)
@@ -996,7 +1006,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		action: 'reset',
 		entityType: 'actor',
 		entityId: id,
-		data: updated,
+		data: actorEventData(updated),
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -1055,8 +1065,6 @@ app.openapi(deleteActorRoute, (async (c) => {
 	if (existing.type !== 'agent') {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
-
-	const existingData = { ...existing }
 
 	// Stop before delete. The cascade below removes this actor's session rows,
 	// but a sandbox already running on an agent-server keeps executing as an
@@ -1148,7 +1156,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		action: 'deleted',
 		entityType: 'agent',
 		entityId: id,
-		data: existingData,
+		data: actorEventData(existing),
 	})
 
 	return c.json({ deleted: true })
