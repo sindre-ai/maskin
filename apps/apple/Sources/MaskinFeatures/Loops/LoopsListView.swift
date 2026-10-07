@@ -34,6 +34,15 @@ struct LoopsListView: View {
 					.listRowSeparator(.hidden)
 					.listRowBackground(Color.clear)
 			}
+			if search.isEmpty {
+				let cards = LoopOutcomes.cards(for: store.loops)
+				if !cards.isEmpty {
+					OutcomeScoreRow(cards: cards) { selection = $0 }
+						.listRowInsets(EdgeInsets())
+						.listRowSeparator(.hidden)
+						.listRowBackground(Color.clear)
+				}
+			}
 			ForEach(loops) { loop in
 				LoopCard(
 					loop: loop, agentCount: loop.agentIDs.count, needsYou: store.needsYou(loop),
