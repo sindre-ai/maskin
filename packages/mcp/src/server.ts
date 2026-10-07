@@ -32,7 +32,7 @@ import {
 	parseApiErrorStatus,
 	toolErrorResponse,
 } from './read-error.js'
-import { applyResponseTokenCap } from './response-cap.js'
+import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
 import {
 	type ApiCaller as SetupApiCaller,
 	buildActorSetupBlockFromApi,
@@ -206,6 +206,10 @@ function resolveListPagination(args: {
 	 *  tools that expose their own sort-direction param (e.g. `list_objects`'
 	 *  `sort=updated_at_asc`) need to pass this. */
 	order?: 'asc' | 'desc'
+	/** Largest page the tool can serve. Defaults to `MAX - 1` (room for the
+	 *  `+ 1` sentinel); a tool that confirms "has more" some other way can pass
+	 *  `LIST_ENDPOINT_MAX_LIMIT` to honour the full documented limit. */
+	maxLimit?: number
 }): ResolvedPagination {
 	const cursor = decodeCursor(args.cursor)
 	const requested =
@@ -215,7 +219,7 @@ function resolveListPagination(args: {
 	// We fetch `requested + 1` to detect "has more"; the API's list endpoints
 	// reject any `limit > LIST_ENDPOINT_MAX_LIMIT`, so cap the effective page
 	// at `MAX - 1` to keep the sentinel within bounds.
-	const limit = Math.min(requested, LIST_ENDPOINT_MAX_LIMIT - 1)
+	const limit = Math.min(requested, args.maxLimit ?? LIST_ENDPOINT_MAX_LIMIT - 1)
 	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
 	const order = cursor?.o ?? args.order ?? 'desc'
 	return { limit, cursor, snapshotAt, order }
@@ -1813,6 +1817,7 @@ async function buildCollectionHeroCard(
 	workspaceId: string | undefined,
 	totalCount = rows.length,
 	offset = 0,
+	hasMore?: boolean,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
 	const driverIds = rows.map((o) => o.driver).filter((v): v is string => typeof v === 'string')
@@ -1820,7 +1825,9 @@ async function buildCollectionHeroCard(
 	const heroObjects = rows.map((o) =>
 		buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 	)
-	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	if (heroObjects.length === 1 && totalCount === 1) {
+		return { kind: 'single', tool, object: heroObjects[0] }
+	}
 	const uiObjects = heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE)
 	return {
 		kind: 'list',
@@ -1830,7 +1837,7 @@ async function buildCollectionHeroCard(
 		page: {
 			limit: uiObjects.length,
 			offset,
-			hasMore: offset + uiObjects.length < totalCount,
+			hasMore: hasMore ?? offset + uiObjects.length < totalCount,
 		},
 	}
 }
@@ -2873,7 +2880,12 @@ export function createMcpServer(config: McpConfig) {
 			// way. `order` must be pinned from the first call so an `asc` request
 			// isn't silently dropped to the pagination default of `desc`.
 			const order = args.sort === 'updated_at_asc' ? 'asc' : 'desc'
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor, order })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				order,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
@@ -2882,7 +2894,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.updated_after) params.set('updated_after', args.updated_after)
 			params.set('sort', args.sort ? 'updatedAt' : 'createdAt')
 			params.set('order', pagination.order)
-			params.set('limit', String(pagination.limit + 1))
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
 			params.set('snapshot_at', pagination.snapshotAt)
 			if (pagination.cursor) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
@@ -2892,18 +2906,48 @@ export function createMcpServer(config: McpConfig) {
 				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
 			}
 			if (args.include_archived) params.set('include_archived', 'true')
-			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})) as RawObject[]
-			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw, (row) =>
-				args.sort ? row.updatedAt : row.createdAt,
+			const apiOptions = { workspaceId: args.workspace_id }
+			const sortValueOf = (row: RawObject) => (args.sort ? row.updatedAt : row.createdAt)
+			const { data, response } = await apiCallWithResponse(
+				config,
+				'GET',
+				`/api/objects?${params}`,
+				undefined,
+				apiOptions,
 			)
+			let raw = data as RawObject[]
+			const lastRaw = raw[raw.length - 1]
+			const lastSortValue = lastRaw && sortValueOf(lastRaw)
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastRaw &&
+				lastSortValue &&
+				raw.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastSortValue)
+				probeParams.set('cursor_id', lastRaw.id)
+				const probe = (await apiCall(
+					config,
+					'GET',
+					`/api/objects?${probeParams}`,
+					undefined,
+					apiOptions,
+				)) as RawObject[]
+				raw = [...raw, ...probe]
+			}
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw, sortValueOf)
 			const result = trimmed as RawObject[]
+			const totalCount = parseTotalCountHeader(response, result.length)
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'list_objects',
 				result,
 				args.workspace_id,
+				totalCount,
+				0,
+				nextCursor !== null,
 			)
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched = wsId
@@ -2931,11 +2975,24 @@ export function createMcpServer(config: McpConfig) {
 					heroCard,
 					objects: enriched,
 					page: {
-						limit: result.length,
+						limit: pagination.limit,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships instead of after the whole pre-trim page.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as RawObject
+					const sortValue = sortValueOf(row)
+					return sortValue
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue, id: row.id },
+							})
+						: null
 				},
 			}
 		},
