@@ -64,15 +64,13 @@ struct LoopBriefingsSection: View {
 		if let runtime, let stories = runtime.storiesStore(), !stories.cards(forLoop: loopID).isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 				SectionHeader("Briefings")
-				StoryRow(stories: stories, loopID: loopID) { card in
-					stories.markSeen(card)
-					openStory = card
-				}
+				StoryRow(stories: stories, loopID: loopID) { card in openStory = card }
 			}
 			.storyCover(item: $openStory) { card in
-				if case .page(let output) = card.content {
-					OutcomePresenter(environment: runtime.environment, output: output, sourceName: card.unit)
-				}
+				BriefViewer(
+					environment: runtime.environment, stories: stories,
+					sequence: BriefSequence.make(cards: stories.cards(forLoop: loopID), opening: card)
+				) { openStory = nil }
 			}
 		}
 	}
