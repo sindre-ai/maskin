@@ -6,13 +6,17 @@ import SwiftUI
 /// The horizontal row of executive-briefing cards at the top of For you.
 struct StoryRow: View {
 	let stories: StoriesStore
+	/// Limits the row to one loop's cards (the loop page); nil shows every card (For you).
+	var loopID: String?
 	let open: (StoryCard) -> Void
 
+	private var cards: [StoryCard] { loopID.map { stories.cards(forLoop: $0) } ?? stories.cards }
+
 	var body: some View {
-		if !stories.cards.isEmpty {
+		if !cards.isEmpty {
 			ScrollView(.horizontal, showsIndicators: false) {
 				LazyHStack(spacing: MaskinSpace.s5) {
-					ForEach(stories.cards) { card in
+					ForEach(cards) { card in
 						StoryCardView(card: card, isSeen: stories.isSeen(card)) { open(card) }
 					}
 				}

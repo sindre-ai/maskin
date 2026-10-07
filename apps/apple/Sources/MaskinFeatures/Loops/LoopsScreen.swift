@@ -129,14 +129,9 @@ private struct LoopsContainer: View {
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
 		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
-		.toolbar {
-			if mode == .triggers {
-				ToolbarItem(placement: .automatic) {
-					Button { showNewTrigger = true } label: { Label("New schedule", systemImage: "plus") }
-				}
-			}
-		}
-		.shellToolbar(environment: environment, title: mode.rawValue)
+		.shellToolbar(
+			environment: environment, title: mode.rawValue,
+			actions: ShellActions(new: mode == .triggers ? { showNewTrigger = true } : buildLoopInChat))
 	}
 
 	@ViewBuilder

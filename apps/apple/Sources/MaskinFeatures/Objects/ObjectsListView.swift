@@ -33,9 +33,6 @@ struct ObjectsListView: View {
 			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
 			if !Task.isCancelled { await store.setSearch(search) }
 		}
-		.toolbar {
-			ToolbarItem(placement: .primaryAction) { filterMenu }
-		}
 		.confirmationDialog(
 			"Change status", isPresented: Binding(
 				get: { statusTarget != nil }, set: { if !$0 { statusTarget = nil } }),
@@ -92,42 +89,6 @@ struct ObjectsListView: View {
 			.padding(.horizontal, MaskinSpace.s9)
 		}
 		.padding(.vertical, MaskinSpace.s2)
-	}
-
-	private var filterMenu: some View {
-		Menu {
-			Picker(
-				"Status",
-				selection: Binding(
-					get: { store.statusFilter ?? "" },
-					set: { value in Task { await store.setStatus(value.isEmpty ? nil : value) } })
-			) {
-				Text("Any status").tag("")
-				ForEach(store.statusOptions, id: \.self) { Text(MaskinStatus.label(for: $0)).tag($0) }
-			}
-			Toggle(
-				"Starred only", systemImage: "star",
-				isOn: Binding(
-					get: { store.starredOnly },
-					set: { value in Task { await store.setStarredOnly(value) } }))
-			Picker("Group by", selection: $store.grouping) {
-				ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
-			}
-			if store.statusFilter != nil || store.starredOnly {
-				Divider()
-				Button("Clear filters", systemImage: "xmark.circle") {
-					Task {
-						await store.setStarredOnly(false)
-						await store.setStatus(nil)
-					}
-				}
-			}
-		} label: {
-			Label(
-				"Filter",
-				systemImage: store.statusFilter == nil && !store.starredOnly
-					? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
-		}
 	}
 
 	@ViewBuilder private var content: some View {
@@ -255,6 +216,40 @@ struct ObjectsListView: View {
 				pendingDelete = object
 			} label: {
 				Label("Delete", systemImage: "trash")
+			}
+		}
+	}
+}
+
+/// The Objects Display menu in the shell's pill: status and starred filters and the grouping.
+struct ObjectsDisplayMenu: View {
+	@Bindable var store: ObjectsStore
+
+	var body: some View {
+		Picker(
+			"Status",
+			selection: Binding(
+				get: { store.statusFilter ?? "" },
+				set: { value in Task { await store.setStatus(value.isEmpty ? nil : value) } })
+		) {
+			Text("Any status").tag("")
+			ForEach(store.statusOptions, id: \.self) { Text(MaskinStatus.label(for: $0)).tag($0) }
+		}
+		Toggle(
+			"Starred only", systemImage: "star",
+			isOn: Binding(
+				get: { store.starredOnly },
+				set: { value in Task { await store.setStarredOnly(value) } }))
+		Picker("Group by", selection: $store.grouping) {
+			ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
+		}
+		if store.statusFilter != nil || store.starredOnly {
+			Divider()
+			Button("Clear filters", systemImage: "xmark.circle") {
+				Task {
+					await store.setStarredOnly(false)
+					await store.setStatus(nil)
+				}
 			}
 		}
 	}

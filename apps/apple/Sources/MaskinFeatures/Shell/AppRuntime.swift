@@ -176,6 +176,28 @@ public final class AppRuntime {
 		return runtime
 	}
 
+	// MARK: Mentions
+
+	@ObservationIgnored private var rosterProvider: MentionRosterProvider?
+
+	/// Who `@` offers in any composer, for the selected workspace. Built on first use and rebuilt
+	/// when the workspace changes. Nil with no workspace.
+	func mentionRoster() -> MentionRosterProvider? {
+		guard let workspaceID = environment.workspaceId else { return nil }
+		if let rosterProvider, rosterProvider.workspaceID == workspaceID { return rosterProvider }
+		let provider = MentionRosterProvider(environment: environment, workspaceID: workspaceID)
+		rosterProvider = provider
+		return provider
+	}
+
+	// MARK: Stories
+
+	@ObservationIgnored private var storiesProvider = StoriesProvider()
+
+	/// The briefing and page cards for the selected workspace, shared by For you and the loop pages
+	/// so each page is fetched once. Nil with no workspace.
+	func storiesStore() -> StoriesStore? { storiesProvider.store(for: environment) }
+
 	// MARK: Workspace sync
 
 	/// What `RootView` keys its sync task on: any change re-points the inbox and gives a held
@@ -264,6 +286,8 @@ public final class AppRuntime {
 	func sessionEnded() {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
+		rosterProvider = nil
+		storiesProvider = StoriesProvider()
 		stopSyncCoordinator()
 		notifications.stop()
 		notifications.reset()
@@ -372,6 +396,8 @@ public final class AppRuntime {
 		let actorId = environment.auth.session?.actorId
 		let running = forYouRuntime
 		forYouRuntime = nil
+		rosterProvider = nil
+		storiesProvider = StoriesProvider()
 		if let push {
 			await push.signOut(timeout: signOutTimeout) { [environment] in environment.signOut() }
 		} else {

@@ -46,6 +46,15 @@ private func decisionCard(
 				])))
 }
 
+private func destructiveCard(_ id: String) -> ForYouCard {
+	var card = decisionCard(id)
+	card.mention?.decision?.options = [
+		DecisionOption(label: "Delete", consequences: ["Gone"], recommended: true, destructive: true),
+		DecisionOption(label: "Keep", consequences: ["Stays"]),
+	]
+	return card
+}
+
 private func threadCard(_ id: String, age: TimeInterval = 120) -> ForYouCard {
 	ForYouCard(
 		id: id, objectTitle: "Thread \(id)", objectType: "task", latestEventId: 20,
@@ -217,6 +226,19 @@ struct ForYouStoreTests {
 		await store.load()
 		store.takeSuggestedOptions()
 		#expect(await eventually { backend.calls.first == "comment:a:Ship:7" })
+	}
+
+	@Test func takeSuggestedLeavesIrreversibleOptionsAlone() async {
+		let (store, source, backend, _) = make()
+		source.feed = .success([destructiveCard("a")])
+		await store.load()
+		#expect(store.suggestedOptionCount == 0)
+		store.takeSuggestedOptions()
+		#expect(backend.calls.isEmpty)
+
+		source.feed = .success([destructiveCard("a"), decisionCard("b")])
+		await store.refresh()
+		#expect(store.suggestedOptionCount == 1)
 	}
 
 	@Test func liveEventsRefreshTheFeed() async {

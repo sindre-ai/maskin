@@ -14,7 +14,7 @@ struct ConversationListView: View {
 	var isLive = true
 	let onNewChat: () -> Void
 
-	@AppStorage("chats.groupBy") private var storedGroupBy = ConversationGroupBy.recent.rawValue
+	@AppStorage(ChatsDisplayMenu.groupByKey) private var storedGroupBy = ConversationGroupBy.recent.rawValue
 
 	var body: some View {
 		let sections = store.sections(query: search, currentActorID: currentActorID)
@@ -87,30 +87,6 @@ struct ConversationListView: View {
 		.refreshable { await store.refresh() }
 		.chatSearch(store: store, text: $search)
 		.onAppear { store.groupBy = ConversationGroupBy(rawValue: storedGroupBy) ?? .recent }
-		.toolbar {
-			ToolbarItem(placement: .automatic) {
-				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
-					.keyboardShortcut("n", modifiers: .command)
-			}
-			// Display stays when New and Search collapse on scroll.
-			ToolbarItem(placement: .automatic) {
-				Menu {
-					Picker(
-						"Group by",
-						selection: Binding(
-							get: { store.groupBy },
-							set: {
-								store.groupBy = $0
-								storedGroupBy = $0.rawValue
-							})
-					) {
-						ForEach(ConversationGroupBy.allCases) { Text($0.title).tag($0) }
-					}
-				} label: {
-					Label("Display", systemImage: "line.3.horizontal.decrease")
-				}
-			}
-		}
 	}
 
 	@ViewBuilder
@@ -273,4 +249,26 @@ struct PinnedTile: View {
 
 	/// 54pt: the tile's avatar.
 	static let avatarSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s11 + MaskinSpace.s1
+}
+
+
+/// The Chats Display menu in the shell's pill: how the list is grouped. The choice is remembered.
+struct ChatsDisplayMenu: View {
+	static let groupByKey = "chats.groupBy"
+	let store: ConversationsStore
+	@AppStorage(Self.groupByKey) private var storedGroupBy = ConversationGroupBy.recent.rawValue
+
+	var body: some View {
+		Picker(
+			"Group by",
+			selection: Binding(
+				get: { store.groupBy },
+				set: {
+					store.groupBy = $0
+					storedGroupBy = $0.rawValue
+				})
+		) {
+			ForEach(ConversationGroupBy.allCases) { Text($0.title).tag($0) }
+		}
+	}
 }

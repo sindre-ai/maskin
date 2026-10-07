@@ -95,6 +95,8 @@ struct MessageRow: View {
 	let isOwn: Bool
 	let showsAuthor: Bool
 	var mentionNames: [String] = []
+	/// The tagged people (id and full name). Their `@Name` in the text is shown bold.
+	var mentions: [(id: String, name: String)] = []
 	/// What the human picked, once this question has been answered.
 	var questionAnswers: [ChatQuestionAnswer.Answer]?
 	let onRetrySend: () -> Void
@@ -219,12 +221,24 @@ struct MessageRow: View {
 			}
 			MessageAttachments(attachments: message.attachments, alignment: .trailing)
 			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
-			MentionLine(names: mentionNames, isOwn: true)
+			MentionLine(names: untaggedNames, isOwn: true)
 			statusLine
 		}
 		.frame(maxWidth: .infinity, alignment: .trailing)
 		// Leaves room on the left so a short message hugs the right edge and a long one still reads as a bubble.
 		.padding(.leading, MaskinSpace.s12 + MaskinSpace.s9)
+	}
+
+	/// The text with each tagged `@Name` marked so the renderer draws it bold.
+	private var markdownText: String {
+		mentions.isEmpty ? message.content : MentionText.markdown(message.content, mentions: mentions)
+	}
+
+	/// The "Mentioned X" caption only names people the words do not show; a tag in the text is
+	/// already bold there, so repeating it below would say the same thing twice.
+	private var untaggedNames: [String] {
+		let names = mentions.isEmpty ? mentionNames : mentions.map(\.name)
+		return MentionText.untagged(names, in: message.content)
 	}
 
 	/// Your message is only a link into Maskin (shown as a card) or only an emoji: no bubble.
@@ -244,7 +258,7 @@ struct MessageRow: View {
 			}
 			MessageAttachments(attachments: message.attachments)
 			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
-			MentionLine(names: mentionNames, isOwn: isOwn)
+			MentionLine(names: untaggedNames, isOwn: isOwn)
 			if message.isErrorReply {
 				Button {
 					onRetryAgent()
@@ -380,7 +394,7 @@ struct MessageRow: View {
 			if message.isEmojiOnly {
 				Text(message.content).font(.system(size: Self.emojiSize))
 			} else {
-				MarkdownContent(message.content, style: .chat, hardBreaks: message.author == .human)
+				MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
 			}
 		}
 		// Words and sentences can be selected and copied in place (long-press, then drag the handles).

@@ -322,11 +322,22 @@ public final class ForYouStore {
 		for entry in entries where entry.bucket == .fyi { dismiss(entry.card) }
 	}
 
-	/// The recommended option on every open decision, in one go.
+	/// The recommended option on every open decision, in one go. Options that can't be undone are
+	/// left for the reader: like the swipe, this never takes one.
 	public func takeSuggestedOptions() {
 		for entry in entries where entry.bucket == .needs {
-			if let option = entry.card.decision?.recommended { choose(option, on: entry.card) }
+			if let option = entry.card.decision?.recommended, !option.destructive {
+				choose(option, on: entry.card)
+			}
 		}
+	}
+
+	/// How many decisions `takeSuggestedOptions()` would act on.
+	public var suggestedOptionCount: Int {
+		entries.filter { entry in
+			guard entry.bucket == .needs, let option = entry.card.decision?.recommended else { return false }
+			return !option.destructive
+		}.count
 	}
 
 	private func retain(_ card: ForYouCard) { retained[card.id] = card }

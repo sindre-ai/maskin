@@ -24,6 +24,13 @@ struct MentionTextTests {
 		#expect(tagged("hi @Ida", []).isEmpty)
 	}
 
+	@Test("names the tagged people whose tag the text does not show")
+	func untagged() {
+		#expect(MentionText.untagged(["Ida Berg", "CPO"], in: "ask @Ida and @CPO") == [])
+		#expect(MentionText.untagged(["Ida Berg", "CPO"], in: "ask @Ida") == ["CPO"])
+		#expect(MentionText.untagged(["Ida Berg"], in: "no tags here") == ["Ida Berg"])
+	}
+
 	@Test("finds several tags, and a tag at the very end")
 	func several() {
 		#expect(tagged("@Ida and @CPO", ["Ida Berg", "CPO"]) == ["@Ida", "@CPO"])

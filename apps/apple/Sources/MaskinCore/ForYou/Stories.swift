@@ -15,8 +15,14 @@ public struct StoryCard: Identifiable, Equatable, Sendable {
 	public var headline: String
 	public var updatedAt: Date?
 	public var content: Content
+	/// The loop a page came from; nil for the daily briefing.
+	public var loopID: String?
 
-	public init(id: String, unit: String, headline: String, updatedAt: Date?, content: Content) {
+	public init(
+		id: String, unit: String, headline: String, updatedAt: Date?, content: Content,
+		loopID: String? = nil
+	) {
+		self.loopID = loopID
 		self.id = id
 		self.unit = unit
 		self.headline = headline
@@ -144,6 +150,9 @@ public struct SeenStories {
 public final class StoriesStore {
 	public private(set) var cards: [StoryCard] = []
 	public private(set) var seenIDs: Set<String> = []
+	/// True once `load()` has finished once, so a screen that shares the store loads it only if
+	/// nobody has yet.
+	public private(set) var hasLoaded = false
 
 	@ObservationIgnored private let loops: any LoopsAPI
 	@ObservationIgnored private let files: any FilesRemote
@@ -167,6 +176,9 @@ public final class StoriesStore {
 
 	public func isSeen(_ card: StoryCard) -> Bool { seenIDs.contains(card.id) }
 
+	/// The pages one loop produced, newest first (a loop's own page shows only its own cards).
+	public func cards(forLoop loopID: String) -> [StoryCard] { cards.filter { $0.loopID == loopID } }
+
 	public func markSeen(_ card: StoryCard) {
 		seen.markSeen(card)
 		seenIDs.insert(card.id)
@@ -188,6 +200,7 @@ public final class StoriesStore {
 		}
 		next += found
 		cards = next
+		hasLoaded = true
 		seenIDs = Set(next.filter { seen.isSeen($0) }.map(\.id))
 	}
 
@@ -199,19 +212,22 @@ public final class StoriesStore {
 	private func loadPages() async -> [StoryCard] {
 		guard let all = try? await loops.loops() else { return [] }
 		let loops = loops
-		let outputs: [(loop: String, output: LoopOutput)] = await withTaskGroup(
-			of: [(String, LoopOutput)].self
+		let found: [(loop: String, id: String, output: LoopOutput)] = await withTaskGroup(
+			of: [(String, String, LoopOutput)].self
 		) { group in
 			for loop in all {
 				group.addTask {
 					let overview = try? await loops.overview(loopID: loop.id)
-					return (overview?.outputs ?? []).map { (loop.name ?? "Loop", $0) }
+					return (overview?.outputs ?? []).map { (loop.name ?? "Loop", loop.id, $0) }
 				}
 			}
-			var result: [(String, LoopOutput)] = []
+			var result: [(String, String, LoopOutput)] = []
 			for await part in group { result += part }
 			return result
-		}.map { (loop: $0.0, output: $0.1) }
+		}.map { (loop: $0.0, id: $0.1, output: $0.2) }
+		let loopOfOutput = Dictionary(
+			found.map { ($0.output.id, $0.id) }, uniquingKeysWith: { first, _ in first })
+		let outputs = found.map { (loop: $0.loop, output: $0.output) }
 		let chosen = StoryDerivation.pages(from: outputs)
 		let files = files
 		return await withTaskGroup(of: (Int, StoryCard).self) { group in
@@ -223,7 +239,8 @@ public final class StoriesStore {
 						StoryCard(
 							id: item.output.id, unit: item.loop,
 							headline: StoryDerivation.headline(html: html, fileName: item.output.name),
-							updatedAt: item.output.updatedAt, content: .page(item.output)))
+							updatedAt: item.output.updatedAt, content: .page(item.output),
+							loopID: loopOfOutput[item.output.id]))
 				}
 			}
 			var result: [(Int, StoryCard)] = []

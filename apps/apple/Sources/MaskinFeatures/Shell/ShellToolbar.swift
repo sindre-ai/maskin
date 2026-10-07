@@ -85,6 +85,7 @@ private struct ShellToolbarModifier: ViewModifier {
 					}
 					if let new = actions.new, !scrolled {
 						Button(action: new) { Label("New", systemImage: "plus") }
+							.keyboardShortcut("n", modifiers: .command)
 					}
 					if showsSearch, !scrolled {
 						Button {
@@ -156,7 +157,7 @@ extension View {
 	}
 
 	/// The dark, prominent Live button of the pill (glass on iOS 26).
-	fileprivate func shellLiveButton() -> some View {
+	func shellLiveButton() -> some View {
 		if #available(iOS 26, macOS 26, *) {
 			return AnyView(buttonStyle(.glassProminent).tint(MaskinSurface.inverse))
 		}

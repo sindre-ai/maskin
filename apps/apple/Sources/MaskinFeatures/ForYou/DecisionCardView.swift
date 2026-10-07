@@ -31,6 +31,8 @@ struct DecisionCardView: View {
 
 	@State private var draft = ""
 	@State private var composerFocused = false
+	/// Present in the app; absent in previews and snapshots, where `@` falls back to `chief.suggestions`.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@FocusState private var replyFocused: Bool
 	/// A destructive option waiting for its "Are you sure?" answer.
 	@State private var pendingDestructive: DecisionOption?
@@ -273,10 +275,11 @@ struct DecisionCardView: View {
 					model: model, placeholder: "Message Chief of Staff",
 					suggestions: { chief.suggestions(for: $0, excluding: Set(model.mentions.map(\.id))) },
 					inConversation: [], onSend: { Task { await chief.submit(card: card) } },
-					agentName: "Chief of Staff")
+					agentName: "Chief of Staff", roster: runtime?.mentionRoster()?.roster,
+					allowsLive: false, onFocusChange: { composerFocused = $0 })
 			}
 			.animation(MaskinMotion.quick, value: composerFocused)
-			.composerFocus($composerFocused)
+			.task { await runtime?.mentionRoster()?.load() }
 		} else {
 			replyBar
 		}

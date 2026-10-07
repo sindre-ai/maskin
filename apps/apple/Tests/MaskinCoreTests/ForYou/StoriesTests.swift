@@ -102,6 +102,17 @@ struct StoriesStoreTests {
 		#expect(s.cards[2].headline == "Competitor scan")
 	}
 
+	@Test("a loop's own cards are the pages it produced, never the briefing or another loop's")
+	func cardsForLoop() async {
+		let s = await store()
+		#expect(!s.hasLoaded)
+		await s.load()
+		#expect(s.hasLoaded)
+		#expect(s.cards(forLoop: "l1").map(\.id) == ["b", "a"])
+		#expect(s.cards(forLoop: "other").isEmpty)
+		#expect(s.cards.first { $0.id == "briefing" }?.loopID == nil)
+	}
+
 	@Test("a briefing that fails to load is left out; the pages still show")
 	func briefingFails() async {
 		let s = await store(brief: nil)
