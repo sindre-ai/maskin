@@ -17,6 +17,7 @@ public struct MainShell: View {
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
 		self.environment = environment
 		self.runtime = runtime
+		TabBarBadgeStyle.applyOnce()
 	}
 
 	public var body: some View {

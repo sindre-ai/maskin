@@ -39,6 +39,10 @@ public enum MaskinGradient {
 	public static let badge = css(
 		angle: 150, even(pair(0xACD6CD, 0x7DBCB0, 0x7DBCB0, 0x4F9E91)))
 
+	/// The badge gradient's mid colour, for places that only take a flat fill (the system tab-bar badge
+	/// cannot render a gradient). Pair with `MaskinColor.badgeFg`.
+	public static let badgeSolid = Color(light: RGBA(0x94C9BE), dark: RGBA(0x66ADA0))
+
 	/// Every agent and user avatar (fill); pair with `MaskinColor.avFg`.
 	public static let avatar = css(
 		angle: 150, even(pair(0xE6F2EF, 0xACD6CD, 0x20564F, 0x12302C)))
