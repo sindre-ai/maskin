@@ -1753,19 +1753,13 @@ describe('SessionManager', () => {
 			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
-		describe('MASKIN_GITHUB_MCP kill-switch', () => {
-			const legacySpec = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
+		describe('auto-injected github-<owner> entries', () => {
 			const officialSpec = {
 				command: 'github-mcp-server',
 				args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
 			}
 
-			afterEach(() => {
-				vi.unstubAllEnvs()
-			})
-
-			async function launchGithubEntries(flag: string | undefined) {
-				vi.stubEnv('MASKIN_GITHUB_MCP', flag)
+			it('emits the shared official spec with the entry name and token env unchanged', async () => {
 				const wsId = randomUUID()
 				const fixtures = buildLaunchFixtures([
 					buildIntegration({
@@ -1785,45 +1779,14 @@ describe('SessionManager', () => {
 					env: Record<string, string>
 				}
 				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-					mcpServers: Record<string, { type: string; command: string; args: string[] }>
+					mcpServers: Record<string, unknown>
 				}
-				return Object.fromEntries(
-					Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-')),
-				)
-			}
-
-			it('emits the legacy npx spec when the flag is unset', async () => {
-				const entries = await launchGithubEntries(undefined)
-				expect(Object.keys(entries)).toEqual(['github-sindre-ai'])
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
-			})
-
-			it('emits the legacy npx spec when the flag is legacy', async () => {
-				const entries = await launchGithubEntries('legacy')
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
-			})
-
-			it('emits the legacy npx spec for any unrecognised flag value', async () => {
-				const entries = await launchGithubEntries('Official ')
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
-			})
-
-			it('emits the shared official spec when the flag is official', async () => {
-				const entries = await launchGithubEntries('official')
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...officialSpec })
-			})
-
-			it('keeps entry names and env identical across legacy and official', async () => {
-				const legacy = await launchGithubEntries('legacy')
-				mockContainerManager.create.mockClear()
-				const official = await launchGithubEntries('official')
-				expect(Object.keys(official)).toEqual(Object.keys(legacy))
-				expect(Object.keys(official)).toEqual(['github-sindre-ai'])
-				expect((official['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
-					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
-				})
-				expect((legacy['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
-					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+				const entries = Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-'))
+				expect(entries.map(([k]) => k)).toEqual(['github-sindre-ai'])
+				expect(entries[0]?.[1]).toEqual({
+					type: 'stdio',
+					...officialSpec,
+					env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
 				})
 			})
 		})
@@ -3275,6 +3238,36 @@ describe('SessionManager', () => {
 			).rejects.toThrow('stream closed')
 
 			expect(events).toEqual([])
+		})
+	})
+
+	describe('setSessionModel()', () => {
+		it('writes a set_model control request to a local container and persists nothing', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			const events: unknown[] = []
+			manager.on('log', (e) => events.push(e))
+
+			await manager.setSessionModel(session.id, 'deepseek/deepseek-v4-flash')
+
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'control_request',
+				request_id: expect.any(String),
+				request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+			})
+			// A control message is not a turn: nothing in the transcript, no log event.
+			expect(events).toEqual([])
+		})
+
+		it('refuses a model name that is not one, before anything is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			await expect(manager.setSessionModel(session.id, 'bad name')).rejects.toThrow(
+				'Invalid model name',
+			)
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
 		})
 	})
 

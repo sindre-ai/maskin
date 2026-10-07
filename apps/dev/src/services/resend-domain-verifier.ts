@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { decrypt } from '../lib/crypto'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger as defaultLogger } from '../lib/logger'
@@ -206,7 +206,7 @@ interface EligibleRow {
 }
 
 /**
- * Polls Resend `GET /domains/:id` on every `awaiting_secret` resend
+ * Polls Resend `GET /domains/:id` on every `awaiting_secret` or `active` resend
  * integration whose `config.resend.verification_status` is still `pending`,
  * on a cadence that tightens for new rows and widens for older ones (spec §8.3).
  *
@@ -265,7 +265,7 @@ export class ResendDomainVerifier {
 				.where(
 					and(
 						eq(integrations.provider, 'resend'),
-						eq(integrations.status, 'awaiting_secret'),
+						inArray(integrations.status, ['awaiting_secret', 'active']),
 						sql`${integrations.config}->'resend'->>'verification_status' = 'pending'`,
 					),
 				)) as EligibleRow[]
