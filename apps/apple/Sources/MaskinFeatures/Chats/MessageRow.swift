@@ -80,11 +80,6 @@ struct MentionLine: View {
 	}
 }
 
-private struct MessageHeightKey: PreferenceKey {
-	static let defaultValue: CGFloat = 0
-	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
-
 /// One message. Everyone else's (people and agents) is flat at the full width: on the first message
 /// of a run a small avatar, the name, an agent tag and the time at the right edge, then the text.
 /// Follow-ups from the same author are just text. Yours is a soft tinted bubble on the right with no
@@ -115,9 +110,6 @@ struct MessageRow: View {
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
-	/// The message's full height once laid out, and whether the reader has opened a long one.
-	@State private var fullHeight: CGFloat = 0
-	@State private var expanded = false
 
 	var body: some View {
 		layout
@@ -370,21 +362,6 @@ struct MessageRow: View {
 	}
 
 	private static let emojiSize: CGFloat = 44
-	/// A long message shows this much, then "Show more". It only collapses if opening it would reveal
-	/// at least `collapseSlack` more, so a message a few lines over the line is never hidden.
-	private static let collapsedHeight: CGFloat = 300
-	private static let collapseSlack: CGFloat = 120
-
-	/// Until the message has been measured, a long text is assumed tall, so it starts collapsed
-	/// instead of drawing full height and then shrinking.
-	private var isCollapsible: Bool {
-		guard !message.isEmojiOnly, message.questions.isEmpty else { return false }
-		if fullHeight > 0 { return fullHeight > Self.collapsedHeight + Self.collapseSlack }
-		return message.content.count > 900 || message.content.filter { $0 == "\n" }.count > 16
-	}
-
-	private var isCollapsed: Bool { isCollapsible && !expanded }
-
 	/// Every message goes through the markdown renderer, as on the web. A person's line breaks are
 	/// kept (they pressed Return); an agent's soft breaks are wrapped prose. A long-press opens the
 	/// message menu; "Select text" there covers picking words.
@@ -401,41 +378,7 @@ struct MessageRow: View {
 		// Words and sentences can be selected and copied in place (long-press, then drag the handles).
 		// The whole-message actions live on the row's tap bar and the avatar/name long-press menu.
 		.textSelection(.enabled)
-		// Measured at its natural height (not squeezed by the frame below), then cropped.
-		.fixedSize(horizontal: false, vertical: true)
-		.background(
-			GeometryReader { proxy in
-				Color.clear.preference(key: MessageHeightKey.self, value: proxy.size.height)
-			}
-		)
-		.onPreferenceChange(MessageHeightKey.self) { fullHeight = $0 }
-		.frame(maxHeight: isCollapsed ? Self.collapsedHeight : nil, alignment: .top)
-		.clipped()
-		.overlay(alignment: .bottom) {
-			if isCollapsed {
-				LinearGradient(
-					colors: [MaskinSurface.card.opacity(0), MaskinSurface.card], startPoint: .top,
-					endPoint: .bottom
-				)
-				.frame(height: MaskinSpace.s14 * 2)
-				.allowsHitTesting(false)
-			}
-		}
 		.opacity(dimmed ? 0.6 : 1)
-		if isCollapsible {
-			Button {
-				withAnimation(MaskinMotion.standard) { expanded.toggle() }
-				MaskinHaptics.play(.selection)
-			} label: {
-				Label(expanded ? "Show less" : "Show more", systemImage: expanded ? "chevron.up" : "chevron.down")
-					.maskinText(.subhead).fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.ink)
-					.padding(.vertical, MaskinSpace.s3)
-					.contentShape(Rectangle())
-			}
-			.buttonStyle(.plain)
-			.accessibilityLabel(expanded ? "Show less of this message" : "Show the full message")
-		}
 		if message.editedAt != nil {
 			Text("edited").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 		}
