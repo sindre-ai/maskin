@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 /**
  * Check if an actor is a member of a workspace.
@@ -24,6 +24,47 @@ export async function isWorkspaceMember(
 		)
 		.limit(1)
 	return !!member
+}
+
+/**
+ * Whether `callerId` may reach `targetId` through a workspace they both belong
+ * to: the caller itself, or two members of one workspace. When `workspaceId`
+ * is given (the X-Workspace-Id header) the shared workspace must be that one.
+ * By-ID actor routes use this so a member of workspace A cannot read or edit an
+ * actor that only lives in workspace B.
+ */
+export async function actorsShareWorkspace(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId?: string,
+): Promise<boolean> {
+	if (callerId === targetId) return true
+	if (workspaceId) {
+		return (
+			(await isWorkspaceMember(db, callerId, workspaceId)) &&
+			(await isWorkspaceMember(db, targetId, workspaceId))
+		)
+	}
+	const callerWorkspaces = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(eq(workspaceMembers.actorId, callerId))
+	if (callerWorkspaces.length === 0) return false
+	const [shared] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, targetId),
+				inArray(
+					workspaceMembers.workspaceId,
+					callerWorkspaces.map((w) => w.workspaceId),
+				),
+			),
+		)
+		.limit(1)
+	return !!shared
 }
 
 export async function isWorkspaceOwner(
