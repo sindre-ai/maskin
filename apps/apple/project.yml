@@ -96,6 +96,8 @@ targets:
         UILaunchScreen:
           UIColorName: LaunchBackground
           UIImageName: LaunchMark
+        # Handoff from the watch ("Open on iPhone"): see HandoffActivity.
+        NSUserActivityTypes: [io.maskin.app.open-object]
         # maskin://<workspaceId>/objects/<id> (and chats/<id>, notifications): the form the backend
         # puts in push payloads. Universal links (https://maskin.io/...) come via associated-domains.
         CFBundleURLTypes:
@@ -511,6 +513,7 @@ targets:
         # Companion of the iPhone app (embedded in it): iPhone pushes mirror here, and the
         # sign-in is handed over by WatchSessionBridge.
         WKCompanionAppBundleIdentifier: io.maskin.app
+        NSUserActivityTypes: [io.maskin.app.open-object]
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         NSAppTransportSecurity:
           NSExceptionDomains:
