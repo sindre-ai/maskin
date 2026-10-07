@@ -47,7 +47,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { actorsShareWorkspace, getWorkspaceMember, isWorkspaceMember } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
@@ -662,8 +662,13 @@ const getActorRoute = createRoute({
 
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
 
 	const [[actor], skills, [membership]] = await Promise.all([
 		db
@@ -760,6 +765,24 @@ app.openapi(updateActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	if (existing.type === 'agent') {
+		// An agent's prompt, tools and LLM config decide what it can do, so a
+		// write needs a workspace both sides belong to and either self-update or
+		// an owner/admin there. A non-member gets the same 404 as an unknown id.
+		if (!workspaceId) {
+			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
+		}
+
+		const caller = await getWorkspaceMember(db, actorId, workspaceId)
+		if (!caller || !(await isWorkspaceMember(db, id, workspaceId))) {
+			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+		}
+
+		if (id !== actorId && !['owner', 'admin'].includes(caller.role)) {
+			return c.json(createApiError('FORBIDDEN', 'Only workspace admins can update agents'), 403)
+		}
+	}
+
 	if (existing.type === 'human' && id !== actorId) {
 		if (!workspaceId) {
 			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
@@ -828,11 +851,16 @@ const regenerateApiKeyRoute = createRoute({
 	summary: 'Regenerate API key',
 	request: {
 		params: idParamSchema,
+		headers: workspaceIdHeader,
 	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: z.object({ api_key: z.string() }) } },
 			description: 'API key regenerated',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller may not rotate this actor key',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -843,7 +871,30 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// A key is the actor's identity. Caller and target must both be members of
+	// the workspace in the header, else the same 404 as an unknown id. Then an
+	// actor may rotate its own key, and a human owner or admin may rotate an
+	// agent's. A human's key is never rotated by anyone else, and an agent never
+	// rotates another actor's key.
+	const caller = await getWorkspaceMember(db, actorId, workspaceId)
+	const target = !caller
+		? null
+		: id === actorId
+			? caller
+			: await getWorkspaceMember(db, id, workspaceId)
+	if (!caller || !target) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	if (id !== actorId) {
+		const callerIsHumanAdmin = caller.type === 'human' && ['owner', 'admin'].includes(caller.role)
+		if (target.type !== 'agent' || !callerIsHumanAdmin) {
+			return c.json(createApiError('FORBIDDEN', 'Not allowed to rotate this key'), 403)
+		}
+	}
 
 	const { key } = generateApiKey()
 

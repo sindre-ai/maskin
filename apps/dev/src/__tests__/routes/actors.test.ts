@@ -377,7 +377,7 @@ describe('Actors Routes', () => {
 	describe('GET /api/actors/:id', () => {
 		it('returns 200 when actor found', async () => {
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.select = [actor]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
@@ -397,7 +397,7 @@ describe('Actors Routes', () => {
 
 		it('exposes is_system field on the response', async () => {
 			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Workspace Coach' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', systemActor.id)
 			mockResults.select = [systemActor]
 
 			const res = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
@@ -409,7 +409,7 @@ describe('Actors Routes', () => {
 
 		it('exposes isSystem=false for non-system actors', async () => {
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.select = [actor]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
@@ -422,7 +422,7 @@ describe('Actors Routes', () => {
 		it('includes id and name of attached workspace skills', async () => {
 			const actor = buildActor()
 			const skill = { id: randomUUID(), name: 'PDF Extraction' }
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.selectQueue = [[actor], [skill]]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
@@ -434,7 +434,7 @@ describe('Actors Routes', () => {
 
 		it('returns an empty skills array when no skills are attached', async () => {
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.selectQueue = [[actor], []]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
@@ -446,7 +446,7 @@ describe('Actors Routes', () => {
 
 		it('omits role when no X-Workspace-Id header is provided', async () => {
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.selectQueue = [[actor], []]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
@@ -459,7 +459,7 @@ describe('Actors Routes', () => {
 		it("returns the actor's membership role when X-Workspace-Id is provided", async () => {
 			const wsId = randomUUID()
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.selectQueue = [[actor], [], [{ role: 'admin' }]]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
@@ -472,7 +472,7 @@ describe('Actors Routes', () => {
 		it('returns role: null when the actor is not a member of the given workspace', async () => {
 			const wsId = randomUUID()
 			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
 			mockResults.selectQueue = [[actor], [], []]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
@@ -480,6 +480,74 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.role).toBeNull()
+		})
+
+		describe('workspace scoping', () => {
+			const wsId = randomUUID()
+
+			it('returns 404 and no prompt or tools when the caller shares no workspace with the agent', async () => {
+				const agent = buildActor({ type: 'agent', systemPrompt: 'secret prompt' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				// caller belongs to workspace A, the agent has no membership in it
+				mockResults.selectQueue = [[{ workspaceId: randomUUID() }], []]
+				mockResults.select = [agent]
+
+				const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+
+				expect(res.status).toBe(404)
+				expect(JSON.stringify(await res.json())).not.toContain('secret prompt')
+			})
+
+			it('returns 404 when the caller belongs to no workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.select = []
+
+				const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+
+				expect(res.status).toBe(404)
+			})
+
+			it('returns 404 when the agent is not a member of the X-Workspace-Id workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [[{ actorId: 'caller-id' }], []]
+				mockResults.select = [agent]
+
+				const res = await app.request(
+					jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(404)
+			})
+
+			it('returns 404 when the caller is not a member of the X-Workspace-Id workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [[]]
+				mockResults.select = [agent]
+
+				const res = await app.request(
+					jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(404)
+			})
+
+			it('returns 200 when caller and agent share a workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // caller's workspaces
+					[{ actorId: agent.id }], // agent is a member of one of them
+					[agent],
+					[],
+				]
+
+				const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+
+				expect(res.status).toBe(200)
+			})
 		})
 	})
 
@@ -549,28 +617,252 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		describe('agent targets', () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const wsHeader = { 'X-Workspace-Id': wsId }
+			const patchPrompt = (agentId: string, headers?: Record<string, string>) =>
+				jsonRequest('PATCH', `/api/actors/${agentId}`, { system_prompt: 'pwned' }, headers)
+
+			it('returns 403 and writes nothing without X-Workspace-Id', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [[{ type: 'agent' }]]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 404 and leaves the prompt alone when the caller is not in the workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(
+					actorsRoutes,
+					'/api/actors',
+					'attacker-id',
+				)
+				mockResults.selectQueue = [[{ type: 'agent' }], []]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id, wsHeader))
+
+				expect(res.status).toBe(404)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 404 and leaves the prompt alone when an admin targets an agent outside the workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+				mockResults.selectQueue = [[{ type: 'agent' }], [{ role: 'admin', type: 'human' }], []]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id, wsHeader))
+
+				expect(res.status).toBe(404)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 and leaves the prompt alone when a non-admin member edits another agent', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'member-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ role: 'member', type: 'human' }],
+					[{ actorId: agent.id }],
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id, wsHeader))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when a member agent edits a peer agent', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(
+					actorsRoutes,
+					'/api/actors',
+					'peer-agent-id',
+					'agent',
+				)
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ role: 'member', type: 'agent' }],
+					[{ actorId: agent.id }],
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id, wsHeader))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 200 when a workspace admin edits an agent in the workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ role: 'admin', type: 'human' }],
+					[{ actorId: agent.id }],
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id, wsHeader))
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+
+			it('returns 200 when a member agent updates itself', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(
+					actorsRoutes,
+					'/api/actors',
+					agent.id,
+					'agent',
+				)
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ role: 'member', type: 'agent' }],
+					[{ actorId: agent.id }],
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(patchPrompt(agent.id, wsHeader))
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+		})
 	})
 
 	describe('POST /api/actors/:id/api-keys', () => {
-		it('returns 200 with new API key', async () => {
-			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.update = [{ id: actor.id }]
+		const wsId = '00000000-0000-0000-0000-000000000001'
+		const wsHeader = { 'X-Workspace-Id': wsId }
+		const selfId = '00000000-0000-0000-0000-0000000000a1'
+		const otherId = '00000000-0000-0000-0000-0000000000a2'
+		const rotate = (id: string, headers?: Record<string, string>) =>
+			jsonRequest('POST', `/api/actors/${id}/api-keys`, undefined, headers)
 
-			const res = await app.request(jsonRequest('POST', `/api/actors/${actor.id}/api-keys`))
+		it('returns 200 with a new API key when a member rotates its own key', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.selectQueue = [[{ role: 'member', type: 'human' }]]
+			mockResults.update = [{ id: selfId }]
+
+			const res = await app.request(rotate(selfId, wsHeader))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.api_key).toBeDefined()
 			expect(body.api_key).toMatch(/^ank_/)
+			expect(calls.updates).toHaveLength(1)
 		})
 
-		it('returns 404 when actor not found', async () => {
-			const { app } = createTestApp(actorsRoutes, '/api/actors')
+		it('returns 400 and writes nothing without X-Workspace-Id', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.update = [{ id: selfId }]
 
-			const res = await app.request(
-				jsonRequest('POST', '/api/actors/00000000-0000-0000-0000-000000000099/api-keys'),
+			const res = await app.request(rotate(selfId))
+
+			expect(res.status).toBe(400)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 404 and rotates nothing when the caller is not in the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'attacker-id')
+			mockResults.selectQueue = [[]]
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(rotate(otherId, wsHeader))
+
+			expect(res.status).toBe(404)
+			expect((await res.json()).api_key).toBeUndefined()
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 404 and rotates nothing when an admin targets an actor outside the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+			mockResults.selectQueue = [[{ role: 'admin', type: 'human' }], []]
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(rotate(otherId, wsHeader))
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 403 and rotates nothing when a non-admin member targets an agent', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'member-id')
+			mockResults.selectQueue = [
+				[{ role: 'member', type: 'human' }],
+				[{ role: 'member', type: 'agent' }],
+			]
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(rotate(otherId, wsHeader))
+
+			expect(res.status).toBe(403)
+			expect((await res.json()).api_key).toBeUndefined()
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 403 and rotates nothing when an admin targets another human', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }],
+				[{ role: 'member', type: 'human' }],
+			]
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(rotate(otherId, wsHeader))
+
+			expect(res.status).toBe(403)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 403 and rotates nothing when an admin-role agent targets another actor', async () => {
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'agent-admin-id',
+				'agent',
 			)
+			mockResults.selectQueue = [
+				[{ role: 'admin', type: 'agent' }],
+				[{ role: 'member', type: 'agent' }],
+			]
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(rotate(otherId, wsHeader))
+
+			expect(res.status).toBe(403)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 200 when a human admin rotates the key of an agent in the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+			mockResults.selectQueue = [
+				[{ role: 'admin', type: 'human' }],
+				[{ role: 'member', type: 'agent' }],
+			]
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(rotate(otherId, wsHeader))
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).api_key).toMatch(/^ank_/)
+			expect(calls.updates).toHaveLength(1)
+		})
+
+		it('returns 404 when the actor row is gone after the checks pass', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.selectQueue = [[{ role: 'member', type: 'human' }]]
+			mockResults.update = []
+
+			const res = await app.request(rotate(selfId, wsHeader))
 
 			expect(res.status).toBe(404)
 		})
@@ -722,10 +1014,13 @@ describe('Actors Routes', () => {
 			const systemActor = buildActor({ type: 'agent', isSystem: true })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			// DELETE: requester member, target actor, target member.
-			// Follow-up GET: same actor row — proves the record was not removed.
+			// Follow-up GET: caller's workspaces, target shares one, then the same
+			// actor row — proves the record was not removed.
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
 				[systemActor],
 			]

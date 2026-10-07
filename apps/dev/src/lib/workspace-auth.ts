@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 /**
  * Check if an actor is a member of a workspace.
@@ -24,6 +24,68 @@ export async function isWorkspaceMember(
 		)
 		.limit(1)
 	return !!member
+}
+
+/**
+ * Membership row for an actor in a workspace, with the actor's type, or null
+ * when the actor is not a member. Lets a route decide on role and type from
+ * one query.
+ */
+export async function getWorkspaceMember(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<{ role: string; type: string } | null> {
+	const [row] = await db
+		.select({ role: workspaceMembers.role, type: actors.type })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+		.where(
+			and(eq(workspaceMembers.actorId, actorId), eq(workspaceMembers.workspaceId, workspaceId)),
+		)
+		.limit(1)
+	return row ?? null
+}
+
+/**
+ * Whether `callerId` may reach `targetId` through a workspace they both belong
+ * to: the caller itself, or two members of one workspace. When `workspaceId`
+ * is given (the X-Workspace-Id header) the shared workspace must be that one.
+ * Used by GET /api/actors/:id so a caller cannot read an actor, including its
+ * system prompt and tools, that lives only in a workspace the caller is not in.
+ */
+export async function actorsShareWorkspace(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId?: string,
+): Promise<boolean> {
+	if (callerId === targetId) return true
+	if (workspaceId) {
+		return (
+			(await isWorkspaceMember(db, callerId, workspaceId)) &&
+			(await isWorkspaceMember(db, targetId, workspaceId))
+		)
+	}
+	const callerWorkspaces = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(eq(workspaceMembers.actorId, callerId))
+	if (callerWorkspaces.length === 0) return false
+	const [shared] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, targetId),
+				inArray(
+					workspaceMembers.workspaceId,
+					callerWorkspaces.map((w) => w.workspaceId),
+				),
+			),
+		)
+		.limit(1)
+	return !!shared
 }
 
 export async function isWorkspaceOwner(
