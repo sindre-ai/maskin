@@ -47,7 +47,11 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	actorsShareWorkspace,
+	isAdminOfSharedWorkspace,
+	isWorkspaceMember,
+} from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
@@ -69,6 +73,16 @@ type Env = {
 const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
+
+/**
+ * Event data for an actor mutation. Events are readable by every workspace
+ * member (history and SSE return the row unfiltered), so this carries identity
+ * only. Never pass an actor row here: it holds tools, llm_config and
+ * credentials.
+ */
+function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
+	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
+}
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -662,8 +676,13 @@ const getActorRoute = createRoute({
 
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
 
 	const [[actor], skills, [membership]] = await Promise.all([
 		db
@@ -736,6 +755,10 @@ const updateActorRoute = createRoute({
 			content: { 'application/json': { schema: actorResponseSchema } },
 			description: 'Actor updated',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller may not update this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -760,6 +783,10 @@ app.openapi(updateActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	if (existing.type === 'agent' && !(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
 	if (existing.type === 'human' && id !== actorId) {
 		if (!workspaceId) {
 			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
@@ -780,6 +807,23 @@ app.openapi(updateActorRoute, (async (c) => {
 		if (!(await isWorkspaceMember(db, id, workspaceId))) {
 			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 		}
+	}
+
+	// tools and llm_config decide what runs in the agent's sessions and with
+	// which credentials, so changing another actor's needs owner/admin.
+	// Prompt, description, name and memory stay open to workspace members.
+	if (
+		(body.tools !== undefined || body.llm_config !== undefined) &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				"Only workspace admins can change another actor's tools or llm_config",
+			),
+			403,
+		)
 	}
 
 	const [updated] = await db
@@ -834,6 +878,10 @@ const regenerateApiKeyRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ api_key: z.string() }) } },
 			description: 'API key regenerated',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -843,7 +891,12 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+
+	if (id !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Not allowed'), 403)
+	}
 
 	const { key } = generateApiKey()
 
@@ -953,7 +1006,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		action: 'reset',
 		entityType: 'actor',
 		entityId: id,
-		data: updated,
+		data: actorEventData(updated),
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -1012,8 +1065,6 @@ app.openapi(deleteActorRoute, (async (c) => {
 	if (existing.type !== 'agent') {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
-
-	const existingData = { ...existing }
 
 	// Stop before delete. The cascade below removes this actor's session rows,
 	// but a sandbox already running on an agent-server keeps executing as an
@@ -1105,7 +1156,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		action: 'deleted',
 		entityType: 'agent',
 		entityId: id,
-		data: existingData,
+		data: actorEventData(existing),
 	})
 
 	return c.json({ deleted: true })

@@ -121,6 +121,15 @@ export class AgentServerClient {
 	}
 
 	/**
+	 * Switch the session's CLI onto another model for its next turns. The
+	 * agent-server writes the control request in order with the user turns
+	 * around it, so a switch followed by a turn applies to that turn.
+	 */
+	async setModel(sessionId: string, model: string): Promise<void> {
+		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, { model })
+	}
+
+	/**
 	 * Stop the remote sandbox for a session. Request carries the settle-side
 	 * `{ reason, source }` so the agent-server can log a legible provenance
 	 * on the forced-stop marker path. Response reports whether a sandbox was

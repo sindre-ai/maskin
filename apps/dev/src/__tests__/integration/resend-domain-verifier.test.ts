@@ -62,6 +62,7 @@ async function seedResendRow(args: {
 	createdAtMinutesAgo: number
 	lastPolledAt?: Date | null
 	verificationStatus?: 'pending' | 'verified' | 'failed'
+	integrationStatus?: 'awaiting_secret' | 'active'
 	dnsRecords?: ResendIntegrationConfig['resend'] extends infer T
 		? T extends { dns_records?: infer R }
 			? R
@@ -113,7 +114,7 @@ async function seedResendRow(args: {
 		.values({
 			workspaceId: args.workspaceId,
 			provider: 'resend',
-			status: 'awaiting_secret',
+			status: args.integrationStatus ?? 'awaiting_secret',
 			externalId: `resend-${randomBytes(6).toString('hex')}`,
 			credentials: encrypt(
 				JSON.stringify({ accessToken: args.accessToken ?? `re_${randomBytes(8).toString('hex')}` }),
@@ -279,6 +280,76 @@ describe('ResendDomainVerifier — cadence + status transitions (real Postgres)'
 		// stops picking up the row.
 		await verifier.tick()
 		expect(entries.filter((e) => e.msg === 'resend.domain.poll.timeout')).toHaveLength(1)
+	})
+
+	// Regression: /complete flips the row to 'active' before DNS verifies, and the
+	// verifier used to select only 'awaiting_secret', so such rows froze at pending.
+	it('flips an active row to verified when DNS verifies after /complete', async () => {
+		// Row was completed (status active) while DNS was still pending.
+		const { row, domainId, createdAt } = await seedResendRow({
+			workspaceId,
+			integrationStatus: 'active',
+			createdAtMinutesAgo: 2,
+			lastPolledAt: null,
+		})
+		const responses: ResendDomainGetResponse[] = [
+			{
+				id: domainId,
+				status: 'pending',
+				capabilities: { sending: 'pending', receiving: 'pending' },
+			},
+			{
+				id: domainId,
+				status: 'verified',
+				capabilities: { sending: 'verified', receiving: 'verified' },
+			},
+		]
+		let call = 0
+		const poll: PollFn = vi.fn(async () => ({ kind: 'ok', body: responses[call++] }))
+		let clock = new Date(createdAt.getTime() + 2 * 60 * 1000)
+		const { entries, logger } = buildLoggerCapture()
+		const verifier = new ResendDomainVerifier(db, { poll, logger, now: () => clock })
+
+		await verifier.tick()
+		expect((await readConfig(row.id)).resend?.verification_status).toBe('pending')
+
+		// Advance past the 60s cadence band; DNS has now verified.
+		clock = new Date(clock.getTime() + 2 * 60 * 1000)
+		await verifier.tick()
+
+		expect(poll).toHaveBeenCalledTimes(2)
+		const cfg = await readConfig(row.id)
+		expect(cfg.resend?.verification_status).toBe('verified')
+		expect(cfg.resend?.capabilities).toEqual({ sending: 'verified', receiving: 'verified' })
+		const [stored] = await db
+			.select({ status: integrations.status })
+			.from(integrations)
+			.where(eq(integrations.id, row.id))
+		expect(stored.status).toBe('active')
+		expect(entries.find((e) => e.msg === 'resend.domain.verified')).toBeDefined()
+	})
+
+	it('flips an active row that stays pending past 30 minutes to failed+timeout', async () => {
+		const { row } = await seedResendRow({
+			workspaceId,
+			integrationStatus: 'active',
+			createdAtMinutesAgo: 31,
+			lastPolledAt: null,
+		})
+		const poll: PollFn = vi.fn(async () => ({
+			kind: 'ok',
+			body: { id: 'x', status: 'pending' },
+		}))
+		const { entries, logger } = buildLoggerCapture()
+		const verifier = new ResendDomainVerifier(db, { poll, logger })
+
+		await verifier.tick()
+
+		expect(poll).toHaveBeenCalledTimes(0)
+		const cfg = await readConfig(row.id)
+		expect(cfg.resend?.verification_status).toBe('failed')
+		expect(cfg.resend?.verification_error).toBe('timeout')
+		expect(entries.find((e) => e.msg === 'resend.domain.poll.timeout')).toBeDefined()
 	})
 
 	it('writes per-record statuses + capabilities on partial verify and top-level verified on full verify', async () => {
