@@ -58,8 +58,7 @@ public final class SearchStore {
 	/// Results in the chosen scope, grouped in display order.
 	public var sections: [SearchSection] {
 		SearchKind.displayOrder.compactMap { kind in
-			guard scope.includes(kind) else { return nil }
-			let rows = allResults.filter { $0.kind == kind }
+			let rows = allResults.filter { $0.kind == kind && scope.includes($0) }
 			return rows.isEmpty ? nil : SearchSection(kind: kind, results: rows)
 		}
 	}
@@ -67,7 +66,7 @@ public final class SearchStore {
 	public var visibleCount: Int { sections.reduce(0) { $0 + $1.results.count } }
 
 	public func count(in scope: SearchScope) -> Int {
-		allResults.filter { scope.includes($0.kind) }.count
+		allResults.filter(scope.includes).count
 	}
 
 	// MARK: Input

@@ -140,6 +140,37 @@ struct SearchStoreTests {
 		#expect(await remote.objectQueries.count == 1)
 	}
 
+	@Test("type chips narrow objects by their type")
+	func typeChips() async {
+		let remote = FakeSearchRemote()
+		await remote.setObjects { _ in
+			[
+				SearchResult(kind: .object, entityId: "b1", title: "Launch bet", detail: "bet"),
+				SearchResult(kind: .object, entityId: "t1", title: "Launch task", detail: "task"),
+				SearchResult(kind: .object, entityId: "i1", title: "Launch insight", detail: "insight"),
+			]
+		}
+		await remote.setFiles { _ in [file("f1", "launch.md")] }
+		let store = makeStore(remote)
+		store.setQuery("launch")
+		await store.settle()
+		store.scope = .bets
+		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["b1"])
+		store.scope = .tasks
+		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["t1"])
+		store.scope = .insights
+		#expect(store.sections.flatMap(\.results).map(\.entityId) == ["i1"])
+		#expect(store.count(in: .bets) == 1)
+		#expect(store.count(in: .all) == 4)
+		store.scope = .all
+		#expect(store.visibleCount == 4)
+	}
+
+	@Test("the search tab offers All, Bets, Tasks, Insights, Files and Agents")
+	func chipOrder() {
+		#expect(SearchScope.chips.map(\.title) == ["All", "Bets", "Tasks", "Insights", "Files", "Agents"])
+	}
+
 	@Test("one failing source still yields results and flags the list as partial")
 	func partialFailure() async {
 		let remote = FakeSearchRemote()

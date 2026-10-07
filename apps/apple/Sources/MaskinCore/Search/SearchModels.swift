@@ -18,11 +18,14 @@ public enum SearchKind: String, Sendable, Equatable, Hashable, CaseIterable {
 	static let displayOrder: [SearchKind] = [.chat, .agent, .object, .file]
 }
 
-/// The scope chips: everything, or one kind.
+/// The scope chips: everything, one kind, or one object type.
 public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Identifiable {
-	case all, objects, chats, agents, files
+	case all, objects, chats, agents, files, bets, tasks, insights
 
 	public var id: String { rawValue }
+
+	/// The chips the search tab offers, in order. Chats are reached through All.
+	public static let chips: [SearchScope] = [.all, .bets, .tasks, .insights, .files, .agents]
 
 	public var title: String {
 		switch self {
@@ -31,17 +34,36 @@ public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Id
 		case .chats: "Chats"
 		case .agents: "Agents"
 		case .files: "Files"
+		case .bets: "Bets"
+		case .tasks: "Tasks"
+		case .insights: "Insights"
 		}
 	}
 
 	func includes(_ kind: SearchKind) -> Bool {
 		switch self {
 		case .all: true
-		case .objects: kind == .object
+		case .objects, .bets, .tasks, .insights: kind == .object
 		case .chats: kind == .chat
 		case .agents: kind == .agent
 		case .files: kind == .file
 		}
+	}
+
+	/// The object type a type chip narrows to.
+	private var objectType: String? {
+		switch self {
+		case .bets: "bet"
+		case .tasks: "task"
+		case .insights: "insight"
+		default: nil
+		}
+	}
+
+	func includes(_ result: SearchResult) -> Bool {
+		guard includes(result.kind) else { return false }
+		guard let objectType else { return true }
+		return result.detail == objectType
 	}
 }
 

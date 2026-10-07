@@ -1,5 +1,6 @@
 import MaskinCore
 import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 /// What a screen puts in the floating pill at the top right, besides its title.
@@ -55,17 +56,24 @@ extension View {
 	public func shellToolbar(
 		environment: AppEnvironment, title: String? = nil, actions: ShellActions = ShellActions()
 	) -> some View {
-		modifier(ShellToolbarModifier(title: title, actions: actions))
+		modifier(ShellToolbarModifier(environment: environment, title: title, actions: actions))
 	}
 }
 
 private struct ShellToolbarModifier: ViewModifier {
+	var environment: AppEnvironment
 	var title: String?
 	var actions: ShellActions
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
 	/// True once the content has scrolled away from the top: New and Search fold away.
 	@State private var scrolled = false
+
+	/// The avatar opens the profile/account entry that exists today: the More tab. Not shown on it.
+	private var showsAvatar: Bool {
+		guard let runtime, environment.auth.session != nil else { return false }
+		return runtime.selectedTab != .more
+	}
 
 	private var showsSearch: Bool { actions.search && !ShellTab.searchIsTab && runtime != nil }
 
@@ -102,7 +110,32 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 					}
 				}
+				if showsAvatar {
+					AvatarToolbarItem(name: environment.auth.session?.name ?? "") {
+						runtime?.selectedTab = .more
+					}
+				}
 			}
+	}
+}
+
+/// The profile button: the person's initials, 48pt, in a glass capsule of its own at the
+/// trailing edge, apart from the tool group before it.
+private struct AvatarToolbarItem: ToolbarContent {
+	let name: String
+	let action: () -> Void
+
+	var body: some ToolbarContent {
+		if #available(iOS 26, macOS 26, *) {
+			ToolbarSpacer(.fixed, placement: .primaryAction)
+		}
+		ToolbarItem(placement: .primaryAction) {
+			Button(action: action) {
+				ActorAvatar(name: name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s2)
+					.frame(width: MaskinSpace.touchMin + MaskinSpace.s2, height: MaskinSpace.touchMin + MaskinSpace.s2)
+			}
+			.accessibilityLabel("Account")
+		}
 	}
 }
 
