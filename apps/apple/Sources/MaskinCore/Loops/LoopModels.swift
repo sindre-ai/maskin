@@ -29,6 +29,36 @@ public enum LoopPill: String, Sendable, Equatable, CaseIterable, Codable {
 	}
 }
 
+/// One measurable target on a loop (`metadata.targets`): what it counts, where it stands, the goal.
+/// The API carries no due date or unit, so neither is modelled.
+public struct LoopTarget: Equatable, Sendable, Codable {
+	public var label: String
+	public var source: String?
+	public var actual: Double
+	public var target: Double
+	public var ownerID: String?
+	/// `strict` counts anything under target as behind; otherwise 90% still reads as on target.
+	public var isStrict: Bool
+
+	public init(
+		label: String, source: String? = nil, actual: Double, target: Double, ownerID: String? = nil,
+		isStrict: Bool = false
+	) {
+		self.label = label
+		self.source = source
+		self.actual = actual
+		self.target = target
+		self.ownerID = ownerID
+		self.isStrict = isStrict
+	}
+
+	/// Share of the goal reached, 0...1 (for a bar).
+	public var fraction: Double {
+		guard target > 0 else { return actual > 0 ? 1 : 0 }
+		return min(max(actual / target, 0), 1)
+	}
+}
+
 /// One loop in the list: an installed pipeline of agents with its derived stats.
 public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var id: String
@@ -48,17 +78,20 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var waitingCount: Int
 	public var createdAt: Date?
 	public var updatedAt: Date?
+	/// Nil (or empty) when the loop has no targets; optional so older cached snapshots still decode.
+	public var targets: [LoopTarget]?
 
 	public init(
 		id: String, name: String?, content: String? = nil, status: LoopPill = .learning,
 		pill: LoopPill? = nil, entryCondition: String? = nil, closeCondition: String? = nil,
 		inProgressCount: Int = 0, closedCount: Int = 0, medianTimeToClose: TimeInterval? = nil,
 		agentIDs: [String] = [], triggerIDs: [String] = [], waitingCount: Int = 0,
-		createdAt: Date? = nil, updatedAt: Date? = nil
+		createdAt: Date? = nil, updatedAt: Date? = nil, targets: [LoopTarget]? = nil
 	) {
 		self.id = id
 		self.name = name
 		self.content = content
+		self.targets = targets
 		self.status = status
 		self.pill = pill ?? status
 		self.entryCondition = entryCondition

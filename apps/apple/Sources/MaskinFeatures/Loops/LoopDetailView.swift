@@ -117,7 +117,10 @@ struct LoopDetailContent: View {
 				.pickerStyle(.segmented)
 				switch tab {
 				case .outcomes:
+					LoopTargetsSection(
+						cards: LoopOutcomes.cards(for: store.loop), directory: store.directory)
 					LoopBriefingsSection(loopID: store.loop.id)
+					LoopQualitySection(loop: store.loop, steps: store.steps)
 					OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName)
 					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this loop makes land here.") }
 				case .actions:

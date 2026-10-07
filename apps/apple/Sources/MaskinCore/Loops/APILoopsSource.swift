@@ -184,6 +184,7 @@ public struct APILoopsSource: LoopsAPI {
 		var waitingCount: Int
 		var createdAt: String?
 		var updatedAt: String?
+		var targets: [TargetWire]?
 
 		var model: LoopSummary {
 			LoopSummary(
@@ -192,7 +193,23 @@ public struct APILoopsSource: LoopsAPI {
 				closeCondition: closeCondition, inProgressCount: inProgressCount,
 				closedCount: closedCount, medianTimeToClose: medianTimeToCloseMs.map { $0 / 1000 },
 				agentIDs: agentIds, triggerIDs: triggerIds, waitingCount: waitingCount,
-				createdAt: AutomationDates.parse(createdAt), updatedAt: AutomationDates.parse(updatedAt))
+				createdAt: AutomationDates.parse(createdAt), updatedAt: AutomationDates.parse(updatedAt),
+				targets: targets?.map(\.model))
+		}
+	}
+
+	private struct TargetWire: Decodable {
+		var label: String
+		var source: String?
+		var actual: Double
+		var target: Double
+		var ownerActorId: String?
+		var pace_policy: String?
+
+		var model: LoopTarget {
+			LoopTarget(
+				label: label, source: source, actual: actual, target: target, ownerID: ownerActorId,
+				isStrict: pace_policy == "strict")
 		}
 	}
 
