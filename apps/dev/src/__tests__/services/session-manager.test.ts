@@ -3278,6 +3278,36 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('setSessionModel()', () => {
+		it('writes a set_model control request to a local container and persists nothing', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			const events: unknown[] = []
+			manager.on('log', (e) => events.push(e))
+
+			await manager.setSessionModel(session.id, 'deepseek/deepseek-v4-flash')
+
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'control_request',
+				request_id: expect.any(String),
+				request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+			})
+			// A control message is not a turn: nothing in the transcript, no log event.
+			expect(events).toEqual([])
+		})
+
+		it('refuses a model name that is not one, before anything is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			await expect(manager.setSessionModel(session.id, 'bad name')).rejects.toThrow(
+				'Invalid model name',
+			)
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+	})
+
 	describe('resumeSession()', () => {
 		it('throws when session not paused', async () => {
 			const session = buildSession({ status: 'running' })
