@@ -127,7 +127,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	{
 		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
 			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
-				.init(path: .init(id: workspaceId), body: .json(.init(actor_id: actorId, role: role.rawValue))))
+				.init(path: .init(id: workspaceId), body: .json(.init(actor_id: actorId, role: .init(rawValue: role.rawValue)))))
 		}
 		switch output {
 		case .created: return

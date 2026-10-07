@@ -2037,6 +2037,39 @@ describe('tool handlers', () => {
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
 			})
 
+			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { tags: ['Old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', tags: ['Sales', 'EMEA'] })
+				await handler({ id: 'loop-1', tags: [] })
+
+				expect(patches[0]?.metadata).toEqual({ tags: ['Sales', 'EMEA'] })
+				expect(patches[1]?.metadata).toEqual({ tags: [] })
+			})
+
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
 				const relationshipDeletes: string[] = []
 				let patchBody: Record<string, unknown> | undefined

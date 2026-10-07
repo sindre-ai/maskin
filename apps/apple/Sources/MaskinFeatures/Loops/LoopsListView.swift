@@ -22,6 +22,12 @@ struct LoopsListView: View {
 					.listRowBackground(Color.clear)
 					.listRowSeparator(.hidden)
 			}
+			if !store.allTags.isEmpty {
+				TagPills(tags: store.allTags, selection: Bindable(store).selectedTag)
+					.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s8, bottom: MaskinSpace.s2, trailing: MaskinSpace.s8))
+					.listRowBackground(Color.clear)
+					.listRowSeparator(.hidden)
+			}
 			if let notice = store.notice {
 				FormError(notice)
 					.listRowBackground(Color.clear)

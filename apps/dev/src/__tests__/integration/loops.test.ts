@@ -71,6 +71,37 @@ describe('Loops read API integration', () => {
 		expect(body.loops).toEqual([])
 	})
 
+	it('returns metadata.tags as clean labels, and [] when a loop has none', async () => {
+		const tagged = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Outbound',
+			// Padded, duplicated (case-insensitively), empty and non-string entries are
+			// all tolerated: a hand-edited metadata blob must not 500 the list.
+			metadata: { tags: [' Sales ', 'EMEA', 'sales', '', 42, null, 'x'.repeat(60)] },
+		})
+		const plain = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'No tags',
+		})
+		const malformed = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'Tags not an array',
+			metadata: { tags: 'sales' },
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: Array<{ id: string; tags: string[] }> }
+		const byId = new Map(body.loops.map((l) => [l.id, l.tags]))
+		expect(byId.get(tagged.id)).toEqual(['Sales', 'EMEA', 'x'.repeat(40)])
+		expect(byId.get(plain.id)).toEqual([])
+		expect(byId.get(malformed.id)).toEqual([])
+	})
+
 	it('returns loops filtered by workspace with the T3 render shape', async () => {
 		// Foreign workspace with its own loop — a workspace filter regression
 		// would leak this into the primary workspace's response. Guarded by

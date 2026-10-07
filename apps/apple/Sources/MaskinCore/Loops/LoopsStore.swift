@@ -83,10 +83,23 @@ public final class LoopsStore {
 		loop.agentIDs.compactMap { directory.name($0) }
 	}
 
+	/// The tag the list is narrowed to, or nil for every loop.
+	public var selectedTag: String?
+
+	/// Every tag in use, most common first (ties alphabetical), for the filter pills.
+	public var allTags: [String] {
+		var counts: [String: Int] = [:]
+		for tag in loops.flatMap(\.tags) { counts[tag, default: 0] += 1 }
+		return counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
+	}
+
 	/// Waiting on you first, then running loops, then drafts and paused ones.
 	public func sections(query: String = "") -> [Section] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		let matching = loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
+		let matching = loops.filter {
+			(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
+				&& (selectedTag.map($0.tags.contains) ?? true)
+		}
 		let waiting = matching.filter { $0.pill == .waitingOnYou }
 		let live = matching.filter { $0.pill.isLive && $0.pill != .waitingOnYou }
 		let idle = matching.filter { !$0.pill.isLive }

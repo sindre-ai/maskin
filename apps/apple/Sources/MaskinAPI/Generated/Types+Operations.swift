@@ -7277,15 +7277,23 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/tools/mcpServers`.
                         public var mcpServers: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.toolsPayload.mcpServersPayload?
+                        /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/tools/envFrom`.
+                        public var envFrom: [Swift.String]?
                         /// Creates a new `toolsPayload`.
                         ///
                         /// - Parameters:
                         ///   - mcpServers:
-                        public init(mcpServers: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.toolsPayload.mcpServersPayload? = nil) {
+                        ///   - envFrom:
+                        public init(
+                            mcpServers: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.toolsPayload.mcpServersPayload? = nil,
+                            envFrom: [Swift.String]? = nil
+                        ) {
                             self.mcpServers = mcpServers
+                            self.envFrom = envFrom
                         }
                         public enum CodingKeys: String, CodingKey {
                             case mcpServers
+                            case envFrom
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/tools`.
@@ -8815,15 +8823,23 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tools/mcpServers`.
                         public var mcpServers: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.toolsPayload.mcpServersPayload?
+                        /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tools/envFrom`.
+                        public var envFrom: [Swift.String]?
                         /// Creates a new `toolsPayload`.
                         ///
                         /// - Parameters:
                         ///   - mcpServers:
-                        public init(mcpServers: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.toolsPayload.mcpServersPayload? = nil) {
+                        ///   - envFrom:
+                        public init(
+                            mcpServers: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.toolsPayload.mcpServersPayload? = nil,
+                            envFrom: [Swift.String]? = nil
+                        ) {
                             self.mcpServers = mcpServers
+                            self.envFrom = envFrom
                         }
                         public enum CodingKeys: String, CodingKey {
                             case mcpServers
+                            case envFrom
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tools`.
@@ -18202,7 +18218,12 @@ public enum Operations {
                     /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/requestBody/json/actor_id`.
                     public var actor_id: Swift.String
                     /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/requestBody/json/role`.
-                    public var role: Swift.String?
+                    @frozen public enum rolePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                        case admin = "admin"
+                        case member = "member"
+                    }
+                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/requestBody/json/role`.
+                    public var role: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Input.Body.jsonPayload.rolePayload?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -18210,7 +18231,7 @@ public enum Operations {
                     ///   - role:
                     public init(
                         actor_id: Swift.String,
-                        role: Swift.String? = nil
+                        role: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Input.Body.jsonPayload.rolePayload? = nil
                     ) {
                         self.actor_id = actor_id
                         self.role = role
@@ -18302,6 +18323,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "created",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct BadRequest: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/POST/responses/400/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body
+                /// Creates a new `BadRequest`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest.Body) {
+                    self.body = body
+                }
+            }
+            /// Invalid body (role must be admin or member)
+            ///
+            /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            public var badRequest: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
                             response: self
                         )
                     }
@@ -18422,7 +18581,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Caller is not a workspace member, or the workspace has reached its seat cap
+            /// Caller is a member but not a human admin or owner, or the workspace has reached its seat cap
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/403`.
             ///
@@ -18560,7 +18719,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace or actor not found
+            /// Workspace not found, caller is not a member of it, or actor not found
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/404`.
             ///
@@ -26391,6 +26550,8 @@ public enum Operations {
                             public var entryCondition: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closeCondition`.
                             public var closeCondition: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/tags`.
+                            public var tags: [Swift.String]
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/inProgressCount`.
                             public var inProgressCount: Swift.Int
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closedCount`.
@@ -26535,6 +26696,7 @@ public enum Operations {
                             ///   - pill:
                             ///   - entryCondition:
                             ///   - closeCondition:
+                            ///   - tags:
                             ///   - inProgressCount:
                             ///   - closedCount:
                             ///   - medianTimeToCloseMs:
@@ -26554,6 +26716,7 @@ public enum Operations {
                                 pill: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.pillPayload,
                                 entryCondition: Swift.String? = nil,
                                 closeCondition: Swift.String? = nil,
+                                tags: [Swift.String],
                                 inProgressCount: Swift.Int,
                                 closedCount: Swift.Int,
                                 medianTimeToCloseMs: Swift.Int? = nil,
@@ -26573,6 +26736,7 @@ public enum Operations {
                                 self.pill = pill
                                 self.entryCondition = entryCondition
                                 self.closeCondition = closeCondition
+                                self.tags = tags
                                 self.inProgressCount = inProgressCount
                                 self.closedCount = closedCount
                                 self.medianTimeToCloseMs = medianTimeToCloseMs
@@ -26593,6 +26757,7 @@ public enum Operations {
                                 case pill
                                 case entryCondition
                                 case closeCondition
+                                case tags
                                 case inProgressCount
                                 case closedCount
                                 case medianTimeToCloseMs
@@ -28864,6 +29029,406 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "badGateway",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Update integration settings
+    ///
+    /// - Remark: HTTP `PATCH /api/integrations/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/patch`.
+    public enum patch_sol_api_sol_integrations_sol__lcub_id_rcub_ {
+        public static let id: Swift.String = "patch/api/integrations/{id}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/path/id`.
+                public var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Headers
+            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// When false, agent sessions get neither this integration token nor its MCP server; server-side use of the credential is unaffected
+                    ///
+                    /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/requestBody/json/expose_to_agent_sessions`.
+                    public var expose_to_agent_sessions: Swift.Bool
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - expose_to_agent_sessions: When false, agent sessions get neither this integration token nor its MCP server; server-side use of the credential is unaffected
+                    public init(expose_to_agent_sessions: Swift.Bool) {
+                        self.expose_to_agent_sessions = expose_to_agent_sessions
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case expose_to_agent_sessions
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/requestBody/content/application\/json`.
+                case json(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Body.jsonPayload)
+            }
+            public var body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            ///   - body:
+            public init(
+                path: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Path,
+                headers: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Headers,
+                body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Body? = nil
+            ) {
+                self.path = path
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/id`.
+                        public var id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/workspaceId`.
+                        public var workspaceId: Swift.String
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/provider`.
+                        public var provider: Swift.String
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/status`.
+                        public var status: Swift.String
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/externalId`.
+                        public var externalId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/config`.
+                        public struct configPayload: Codable, Hashable, Sendable {
+                            /// A container of undocumented properties.
+                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                            /// Creates a new `configPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - additionalProperties: A container of undocumented properties.
+                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                self.additionalProperties = additionalProperties
+                            }
+                            public init(from decoder: any Swift.Decoder) throws {
+                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/config`.
+                        public var config: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.configPayload?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/actorId`.
+                        public var actorId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/createdBy`.
+                        public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/createdAt`.
+                        public var createdAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/updatedAt`.
+                        public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/missingScopes`.
+                        public var missingScopes: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/needsReconnect`.
+                        public var needsReconnect: Swift.Bool?
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - workspaceId:
+                        ///   - provider:
+                        ///   - status:
+                        ///   - externalId:
+                        ///   - config:
+                        ///   - actorId:
+                        ///   - createdBy:
+                        ///   - createdAt:
+                        ///   - updatedAt:
+                        ///   - missingScopes:
+                        ///   - needsReconnect:
+                        public init(
+                            id: Swift.String,
+                            workspaceId: Swift.String,
+                            provider: Swift.String,
+                            status: Swift.String,
+                            externalId: Swift.String? = nil,
+                            config: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.configPayload? = nil,
+                            actorId: Swift.String? = nil,
+                            createdBy: Swift.String,
+                            createdAt: Swift.String? = nil,
+                            updatedAt: Swift.String? = nil,
+                            missingScopes: [Swift.String]? = nil,
+                            needsReconnect: Swift.Bool? = nil
+                        ) {
+                            self.id = id
+                            self.workspaceId = workspaceId
+                            self.provider = provider
+                            self.status = status
+                            self.externalId = externalId
+                            self.config = config
+                            self.actorId = actorId
+                            self.createdBy = createdBy
+                            self.createdAt = createdAt
+                            self.updatedAt = updatedAt
+                            self.missingScopes = missingScopes
+                            self.needsReconnect = needsReconnect
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case workspaceId
+                            case provider
+                            case status
+                            case externalId
+                            case config
+                            case actorId
+                            case createdBy
+                            case createdAt
+                            case updatedAt
+                            case missingScopes
+                            case needsReconnect
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Integration updated
+            ///
+            /// - Remark: Generated from `#/paths//api/integrations/{id}/patch/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/404/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Integration not found
+            ///
+            /// - Remark: Generated from `#/paths//api/integrations/{id}/patch/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
                             response: self
                         )
                     }

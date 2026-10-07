@@ -4632,6 +4632,12 @@
 													]
 												},
 												"default": {}
+											},
+											"envFrom": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
 											}
 										}
 									},
@@ -5587,6 +5593,12 @@
 													]
 												},
 												"default": {}
+											},
+											"envFrom": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
 											}
 										}
 									},
@@ -10844,7 +10856,11 @@
 										"format": "uuid"
 									},
 									"role": {
-										"type": "string"
+										"type": "string",
+										"enum": [
+											"admin",
+											"member"
+										]
 									}
 								},
 								"required": [
@@ -10873,8 +10889,65 @@
 							}
 						}
 					},
+					"400": {
+						"description": "Invalid body (role must be admin or member)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"403": {
-						"description": "Caller is not a workspace member, or the workspace has reached its seat cap",
+						"description": "Caller is a member but not a human admin or owner, or the workspace has reached its seat cap",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -10931,7 +11004,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace or actor not found",
+						"description": "Workspace not found, caller is not a member of it, or actor not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -16926,6 +16999,12 @@
 															"null"
 														]
 													},
+													"tags": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"inProgressCount": {
 														"type": "integer",
 														"minimum": 0
@@ -17040,6 +17119,7 @@
 													"pill",
 													"entryCondition",
 													"closeCondition",
+													"tags",
 													"inProgressCount",
 													"closedCount",
 													"medianTimeToCloseMs",
@@ -18921,6 +19001,192 @@
 									},
 									"required": [
 										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"patch": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Update integration settings",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"expose_to_agent_sessions": {
+										"type": "boolean",
+										"description": "When false, agent sessions get neither this integration token nor its MCP server; server-side use of the credential is unaffected"
+									}
+								},
+								"required": [
+									"expose_to_agent_sessions"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Integration updated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"provider": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string"
+										},
+										"externalId": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"actorId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"missingScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
+										"needsReconnect": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"provider",
+										"status",
+										"externalId",
+										"config",
+										"actorId",
+										"createdBy",
+										"createdAt",
+										"updatedAt"
 									]
 								}
 							}

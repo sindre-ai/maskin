@@ -294,6 +294,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/integrations/{provider}/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/{provider}/connect/post`.
     func post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output
+    /// Update integration settings
+    ///
+    /// - Remark: HTTP `PATCH /api/integrations/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/patch`.
+    func patch_sol_api_sol_integrations_sol__lcub_id_rcub_(_ input: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input) async throws -> Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output
     /// Disconnect an integration
     ///
     /// - Remark: HTTP `DELETE /api/integrations/{id}`.
@@ -1283,6 +1288,21 @@ extension APIProtocol {
         try await post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input(
             path: path,
             headers: headers
+        ))
+    }
+    /// Update integration settings
+    ///
+    /// - Remark: HTTP `PATCH /api/integrations/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/patch`.
+    public func patch_sol_api_sol_integrations_sol__lcub_id_rcub_(
+        path: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Headers,
+        body: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input.Body? = nil
+    ) async throws -> Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output {
+        try await patch_sol_api_sol_integrations_sol__lcub_id_rcub_(Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers,
+            body: body
         ))
     }
     /// Disconnect an integration

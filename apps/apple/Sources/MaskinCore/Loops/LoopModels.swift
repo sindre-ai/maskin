@@ -40,6 +40,8 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var pill: LoopPill
 	public var entryCondition: String?
 	public var closeCondition: String?
+	/// Team, business unit or part of the business this loop belongs to (`metadata.tags`).
+	public var tags: [String]
 	public var inProgressCount: Int
 	public var closedCount: Int
 	public var medianTimeToClose: TimeInterval?
@@ -52,6 +54,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public init(
 		id: String, name: String?, content: String? = nil, status: LoopPill = .learning,
 		pill: LoopPill? = nil, entryCondition: String? = nil, closeCondition: String? = nil,
+		tags: [String] = [],
 		inProgressCount: Int = 0, closedCount: Int = 0, medianTimeToClose: TimeInterval? = nil,
 		agentIDs: [String] = [], triggerIDs: [String] = [], waitingCount: Int = 0,
 		createdAt: Date? = nil, updatedAt: Date? = nil
@@ -63,6 +66,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 		self.pill = pill ?? status
 		self.entryCondition = entryCondition
 		self.closeCondition = closeCondition
+		self.tags = tags
 		self.inProgressCount = inProgressCount
 		self.closedCount = closedCount
 		self.medianTimeToClose = medianTimeToClose
