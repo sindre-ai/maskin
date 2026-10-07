@@ -868,6 +868,10 @@ const regenerateApiKeyRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ api_key: z.string() }) } },
 			description: 'API key regenerated',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -877,7 +881,12 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+
+	if (id !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Not allowed'), 403)
+	}
 
 	const { key } = generateApiKey()
 
