@@ -320,7 +320,7 @@ export function ListRow({
 				/>
 			)}
 			{showDriver && driver && (
-				// D2 · Driver avatar gains a violet conic-gradient ring when the
+				// D2 · Driver avatar gains a Patina conic-gradient ring when the
 				// object has an actively-running session on it. Replaces the old
 				// right-side <AgentWorkingBadge> — the ring is the row's only
 				// working indicator now, per the D2 acceptance criteria.

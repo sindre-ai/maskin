@@ -99,16 +99,13 @@
 	--color-border-subtle: var(--border-subtle);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
-	--color-brand: var(--brand);
-	--color-brand-foreground: var(--brand-foreground);
-	--color-brand-hover: var(--brand-hover);
 
-	/* v2 brand — indigo accent for small surfaces (chip, focus ring, left rule).
-	   Not the app-wide solid button; that stays on --primary per v2. */
-	--color-brand: var(--brand);
-	--color-brand-foreground: var(--brand-foreground);
-	--color-brand-subtle: var(--brand-subtle);
-	--color-brand-subtle-foreground: var(--brand-subtle-foreground);
+	/* Patina — the one brand colour, for signals only (unread, live, status,
+	   attention). Actions, links and selected states are ink (--primary). */
+	--color-sig: var(--sig);
+	--color-sig-hi: var(--sig-hi);
+	--color-sig-ink: var(--sig-ink);
+	--color-sig-tint: var(--sig-tint);
 	--color-ask-surface: var(--ask-surface);
 	--color-ask-border: var(--ask-border);
 
@@ -124,7 +121,6 @@
 	--color-success: var(--success);
 	--color-warning: var(--warning);
 	--color-error: var(--error);
-	--color-violet: var(--violet);
 
 	/* Status badge colors */
 	--color-status-new-bg: var(--st-new-bg);
@@ -266,10 +262,10 @@
 /* v2 tokens                                                                 */
 /*                                                                           */
 /* Palette source: `Maskin App v2 Standalone.html` (attached to the parent   */
-/* bet, 2026-08-14) — zinc neutrals (Tailwind zinc ramp) + indigo brand      */
-/* accent + amber warning, matching the maskin.io landing page. v2           */
+/* bet, 2026-08-14) — zinc neutrals (Tailwind zinc ramp) + Patina signal       */
+/* colour + amber warning, matching the maskin.io landing page. v2           */
 /* supersedes the 2026-08-11 cool-zinc palette in full — the neutral family  */
-/* is still zinc, but the exact hexes, the `--brand` / `--brand-subtle`      */
+/* is still zinc, but the exact hexes, the `--sig` / `--sig-tint`              */
 /* tokens, and the type/status badge remaps are all v2.                      */
 /* Raw hex values in this block are intentional — this is the sole place a  */
 /* colour literal is allowed; every consumer downstream must go through a   */
@@ -315,18 +311,16 @@
 	--input: #e4e4e7;
 	--ring: #a1a1aa;
 
-	/* Brand — the indigo used for links and primary actions on light surfaces */
-	--brand: #4f46e5;
-	--brand-foreground: #ffffff;
-	--brand-hover: #4338ca;
+	/* Patina (verdigris) — signals only: unread dots, live/running state,
+	   status text on a tint. Never a button, link or selected state (those are
+	   ink). Text on white: --sig-ink 5.6:1, --sig 4.9:1; never put --sig-hi
+	   text on white. */
+	--sig: #2f7d74;
+	--sig-hi: #7dbcb0;
+	--sig-ink: #2a7068;
+	--sig-tint: #e6f2ef;
 
-	/* v2 brand accent (indigo-600 / indigo-50 chip). */
-	--brand: #4f46e5;
-	--brand-foreground: #ffffff;
-	--brand-subtle: #eef2ff;
-	--brand-subtle-foreground: #4338ca;
-
-	/* v2 ask banner — warm parchment surface, semantically distinct from brand-subtle. */
+	/* v2 ask banner — warm parchment surface, semantically distinct from --sig-tint. */
 	--ask-surface: #fffdf7;
 	--ask-border: #f0e6d2;
 
@@ -352,13 +346,6 @@
 	--warning: #92400e;
 	--error: #dc2626;
 
-	/* Working-ring accent (violet-500). Named after the spec token, not the
-	   brand indigo — the driver-avatar ring is the ONE surface that carries it,
-	   and reusing --brand there would confuse the ring's "an agent is running
-	   right now" signal with the brand-action visual language it lives next to
-	   on a row. */
-	--violet: #8b5cf6;
-
 	/* Status badges */
 	--st-new-bg: #f4f4f5;
 	--st-new-text: #71717a;
@@ -374,8 +361,8 @@
 	--st-active-text: #15803d;
 	--st-signal-bg: #ede9fe;
 	--st-signal-text: #6d28d9;
-	--st-proposed-bg: #e0e7ff;
-	--st-proposed-text: #4338ca;
+	--st-proposed-bg: var(--sig-tint);
+	--st-proposed-text: var(--sig-ink);
 	--st-clustered-bg: #ccfbf1;
 	--st-clustered-text: #0f766e;
 	--st-done-bg: #dcfce7;
@@ -421,8 +408,8 @@
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
 	--tp-insight-text: #b45309;
-	--tp-bet-bg: #e0e7ff;
-	--tp-bet-text: #4338ca;
+	--tp-bet-bg: #f4f4f5;
+	--tp-bet-text: #3f3f46;
 	--tp-task-bg: #f4f4f5;
 	--tp-task-text: #71717a;
 	--tp-file-bg: #ecfeff;
@@ -447,9 +434,9 @@
 	/* v2 dark theme.
 	   The mockup only ships the light palette; dark values are derived by
 	   inverting the zinc neutral ramp (zinc-950/900/800/400/200/50) and
-	   lifting the indigo brand two stops (light `#4f46e5` → dark `#818cf8`)
-	   so it reads on a `#09090b` field. Same zinc + indigo family — the
-	   ramp is inverted, the character is not. */
+	   lifting Patina one stop (light `#2f7d74` → dark `#5fb3a6`) so it
+	   reads on a `#09090b` field. Same zinc family — the ramp is inverted,
+	   the character is not. */
 	--background: #09090b;
 	--foreground: #fafafa;
 	--card: #18181b;
@@ -480,12 +467,11 @@
 	--input: #27272a;
 	--ring: #52525b;
 
-	/* Brand stays indigo but shifts one stop lighter so it reads on dark. */
-	--brand: #818cf8;
-	--brand-foreground: #18181b;
-	--brand-hover: #a5b4fc;
-	--brand-subtle: #1e1b4b;
-	--brand-subtle-foreground: #a5b4fc;
+	/* Patina on dark: signal lifted so it reads on the zinc-950 field. */
+	--sig: #5fb3a6;
+	--sig-hi: #6cc4b5;
+	--sig-ink: #6cc4b5;
+	--sig-tint: #15302b;
 
 	/* v2 ask banner — warm parchment surface, dark derived by cooling the warm ramp one stop. */
 	--ask-surface: #1c1a14;
@@ -503,11 +489,6 @@
 	--warning: #fbbf24;
 	--error: #f87171;
 
-	/* Working-ring accent — violet-400, lifted one stop for legibility on the
-	   zinc-950 dark field (same one-stop lift pattern the brand indigo uses
-	   below). */
-	--violet: #a78bfa;
-
 	--st-new-bg: #27272a;
 	--st-new-text: #a1a1aa;
 	--st-backlog-bg: #1f1f23;
@@ -522,8 +503,8 @@
 	--st-active-text: #86efac;
 	--st-signal-bg: #2e1065;
 	--st-signal-text: #c4b5fd;
-	--st-proposed-bg: #1e1b4b;
-	--st-proposed-text: #a5b4fc;
+	--st-proposed-bg: var(--sig-tint);
+	--st-proposed-text: var(--sig-ink);
 	--st-clustered-bg: #042f2e;
 	--st-clustered-text: #5eead4;
 	--st-done-bg: #022c22;
@@ -565,8 +546,8 @@
 
 	--tp-insight-bg: #422006;
 	--tp-insight-text: #fbbf24;
-	--tp-bet-bg: #1e1b4b;
-	--tp-bet-text: #a5b4fc;
+	--tp-bet-bg: #27272a;
+	--tp-bet-text: #d4d4d8;
 	--tp-task-bg: #27272a;
 	--tp-task-text: #a1a1aa;
 	--tp-file-bg: #083344;
@@ -615,7 +596,7 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* Slim scrollbars — matches the v2 mockup's 9px indigo-neutral track. */
+	/* Slim scrollbars — matches the v2 mockup's 9px neutral track. */
 	* {
 		scrollbar-width: thin;
 		scrollbar-color: var(--border-strong) transparent;
@@ -669,18 +650,18 @@
 @layer base {
 	/* Search highlight (<mark>) — tuned to the v2 warm palette so the
 	   command palette and /search view highlights read cleanly in both
-	   themes. Light: soft amber wash + indigo text; dark: indigo tint with
-	   a lighter indigo text stop. Rounded so the highlight sits inside the
+	   themes. Light: soft Patina wash + Patina ink; dark: a stronger wash with
+	   a lighter Patina text stop. Rounded so the highlight sits inside the
 	   cell without touching the row edges. */
 	mark {
-		background-color: color-mix(in oklab, var(--brand) 12%, transparent);
-		color: var(--brand-hover);
+		background-color: color-mix(in oklab, var(--sig) 12%, transparent);
+		color: var(--sig-ink);
 		border-radius: var(--radius-sm);
 		padding: 0 2px;
 	}
 	.dark mark {
-		background-color: color-mix(in oklab, var(--brand) 20%, transparent);
-		color: var(--brand);
+		background-color: color-mix(in oklab, var(--sig) 20%, transparent);
+		color: var(--sig-ink);
 	}
 
 	/* Reduced motion — kill animations and transitions, don't just slow
@@ -727,7 +708,7 @@
 	}
 
 	/* D2 · Agent-working ring around the driver avatar on Objects list rows.
-	   The wrapper composes a 2px violet conic-gradient ring around its child
+	   The wrapper composes a 2px Patina conic-gradient ring around its child
 	   avatar, animating clockwise at ~1.6s/rev. The ring lives in a positioned
 	   ::before pseudo-element so it can spin without rotating the child
 	   avatar's initials.
@@ -755,8 +736,8 @@
 		border-radius: inherit;
 		background: conic-gradient(
 			from 0deg,
-			var(--violet) 0deg,
-			var(--violet) 300deg,
+			var(--sig) 0deg,
+			var(--sig) 300deg,
 			transparent 300deg,
 			transparent 360deg
 		);
@@ -812,7 +793,7 @@
 	}
 
 	/* Origin deep-link — the message that spawned a session, pulsing once on
-	   arrival + carrying a persistent vertical brand rail on its right edge.
+	   arrival + carrying a persistent vertical Patina rail on its right edge.
 	   Both attributes are stamped by `useOriginDeepLinkScroll` in the chat
 	   detail route from `?msg=<id>`, and read here as CSS selectors so no
 	   per-message-bubble prop threading is needed. The pulse attribute is
@@ -833,7 +814,7 @@
 		right: -6px;
 		width: 3px;
 		border-radius: 2px;
-		background-color: var(--brand);
+		background-color: var(--sig);
 		pointer-events: none;
 	}
 	[data-origin-pulse] {
@@ -841,10 +822,10 @@
 	}
 	@keyframes origin-spawn-pulse {
 		0% {
-			background-color: color-mix(in oklab, var(--brand) 22%, transparent);
+			background-color: color-mix(in oklab, var(--sig) 22%, transparent);
 		}
 		100% {
-			background-color: color-mix(in oklab, var(--brand) 0%, transparent);
+			background-color: color-mix(in oklab, var(--sig) 0%, transparent);
 		}
 	}
 }

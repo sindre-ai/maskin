@@ -122,7 +122,7 @@ function CollapsedUnreadDot({ count }: { count: number }) {
 	return (
 		<span
 			aria-hidden="true"
-			className="absolute right-1 top-1 hidden size-1.5 rounded-full bg-brand group-data-[collapsible=icon]:block"
+			className="absolute right-1 top-1 hidden size-1.5 rounded-full bg-sig group-data-[collapsible=icon]:block"
 		/>
 	)
 }

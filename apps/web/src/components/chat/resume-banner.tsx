@@ -16,7 +16,7 @@ interface ResumeBannerProps {
 	lastReadMessageId: number | null
 	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
 	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.banner`
-	 *  sub-flag. Off keeps the pre-v4 banner styling (brand-subtle card with a
+	 *  sub-flag. Off keeps the pre-v4 banner styling (sig-tint card with a
 	 *  RotateCcw icon plate). */
 	v4Polish?: boolean
 }
@@ -83,7 +83,7 @@ export function ResumeBanner({
 
 	if (v4Polish) {
 		return (
-			<div className="rounded-lg border-l-2 border-brand bg-muted p-3.5">
+			<div className="rounded-lg border-l-2 border-sig bg-muted p-3.5">
 				<div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
 					<span className="eyebrow">Picking up where you left off</span>
 					<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -94,7 +94,7 @@ export function ResumeBanner({
 				<ul className="flex flex-col gap-1 text-xs leading-normal text-muted-foreground">
 					{lines.map((m) => (
 						<li key={m.id} className="flex gap-2">
-							<span aria-hidden className="shrink-0 text-brand-subtle-foreground">
+							<span aria-hidden className="shrink-0 text-sig-ink">
 								→
 							</span>
 							<span className="min-w-0">
@@ -115,13 +115,13 @@ export function ResumeBanner({
 	// Pre-v4 styling (bet/bdda1c1e-chats-v4-polish). Kept verbatim behind the
 	// `.banner` sub-flag so a rollback is a flag flip, not a code change.
 	return (
-		<div className="rounded-xl border border-brand-subtle bg-brand-subtle px-4 py-3">
+		<div className="rounded-xl border border-sig-tint bg-sig-tint px-4 py-3">
 			<div className="flex items-center gap-2">
-				<span className="grid h-[17px] w-[17px] shrink-0 place-items-center rounded bg-brand-subtle-foreground text-primary-foreground">
+				<span className="grid h-[17px] w-[17px] shrink-0 place-items-center rounded bg-sig-ink text-primary-foreground">
 					<RotateCcw size={9} aria-hidden />
 				</span>
-				<span className="eyebrow text-brand-subtle-foreground">Picking up where you left off</span>
-				<span className="ml-auto flex shrink-0 items-center gap-1 text-[10.5px] text-brand-subtle-foreground">
+				<span className="eyebrow text-sig-ink">Picking up where you left off</span>
+				<span className="ml-auto flex shrink-0 items-center gap-1 text-[10.5px] text-sig-ink">
 					last spoke
 					<RelativeTime date={lastRead.createdAt} />
 				</span>
@@ -129,7 +129,7 @@ export function ResumeBanner({
 			<ul className="mt-2 flex flex-col gap-1.5">
 				{lines.map((m) => (
 					<li key={m.id} className="flex gap-2 text-xs leading-normal text-foreground">
-						<span aria-hidden className="shrink-0 text-brand-subtle-foreground">
+						<span aria-hidden className="shrink-0 text-sig-ink">
 							→
 						</span>
 						<span className="min-w-0">

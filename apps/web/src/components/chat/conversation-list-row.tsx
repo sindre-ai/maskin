@@ -93,9 +93,9 @@ export function ConversationListRow({ workspaceId, conversation }: ConversationL
 					{isUnread ? (
 						<span
 							aria-label={`${conversation.unread_count} unread`}
-							// Indigo, not ink (mockup 283): the row's title is already ink,
+							// Patina, not ink: the row's title is already ink,
 							// so an ink dot beside it reads as punctuation rather than state.
-							className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand"
+							className="h-1.5 w-1.5 shrink-0 rounded-full bg-sig"
 						/>
 					) : null}
 					<span

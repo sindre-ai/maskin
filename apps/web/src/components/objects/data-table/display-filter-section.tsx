@@ -98,7 +98,7 @@ export function DisplayFilterSection({
 								<span className="min-w-0 truncate">{option.label}</span>
 								<span className="flex-1" />
 								{option.active ? (
-									<span aria-hidden="true" className="font-bold text-brand">
+									<span aria-hidden="true" className="font-bold text-foreground">
 										✓
 									</span>
 								) : (
@@ -117,7 +117,7 @@ export function DisplayFilterSection({
 									onClick={() => onTogglePin(token)}
 									className={cn(
 										'shrink-0 rounded px-1 py-0.5 text-[10.5px] font-semibold transition-colors hover:bg-border hover:text-foreground',
-										pinned ? 'text-brand' : 'text-border-strong',
+										pinned ? 'text-foreground' : 'text-border-strong',
 									)}
 								>
 									{pinned ? 'Unpin' : 'Pin'}

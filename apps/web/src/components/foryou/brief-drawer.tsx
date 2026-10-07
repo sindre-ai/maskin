@@ -236,7 +236,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 									<button
 										type="button"
 										onClick={() => setListenMode((prev) => !prev)}
-										className="mt-3 inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-brand hover:text-brand-hover"
+										className="mt-3 inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-foreground underline underline-offset-2 hover:text-muted-foreground"
 									>
 										{readMode ? 'Listen instead' : 'Read instead'}
 									</button>

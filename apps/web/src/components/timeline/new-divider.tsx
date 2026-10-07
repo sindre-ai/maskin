@@ -21,11 +21,11 @@ export function NewDivider({
 			tabIndex={0}
 			className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 		>
-			<span aria-hidden="true" className="h-px w-3 bg-brand/40" />
-			<span className="rounded-full bg-brand/10 px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.11em] text-brand">
+			<span aria-hidden="true" className="h-px w-3 bg-sig/40" />
+			<span className="rounded-full bg-sig-tint px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.11em] text-sig-ink">
 				New — {count} {count === 1 ? 'item' : 'items'}
 			</span>
-			<span aria-hidden="true" className="h-px flex-1 bg-brand/40" />
+			<span aria-hidden="true" className="h-px flex-1 bg-sig/40" />
 			<button
 				type="button"
 				onClick={onMarkRead}

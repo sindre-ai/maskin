@@ -38,7 +38,7 @@ describe('useOriginDeepLinkScroll', () => {
 
 		expect(node.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
 		// Persistent marker set → picked up by the CSS rule that draws the
-		// vertical --brand rail on the right edge.
+		// vertical --sig rail on the right edge.
 		expect(node.dataset.originSpawn).toBe('true')
 		// Transient marker set → picked up by the 2.2s keyframe animation.
 		expect(node.dataset.originPulse).toBe('true')

@@ -75,10 +75,10 @@ export function LoopProposedEdit({
 	if (rows.length === 0) return null
 
 	return (
-		<div className="mb-3 overflow-hidden rounded-2xl border border-brand-subtle-foreground/30 bg-brand-subtle">
+		<div className="mb-3 overflow-hidden rounded-2xl border border-sig-ink/30 bg-sig-tint">
 			<div className="px-4 pb-3 pt-3.5">
 				<div className="flex flex-wrap items-center gap-2.5">
-					<span className="eyebrow text-brand-subtle-foreground">PROPOSED EDIT</span>
+					<span className="eyebrow text-sig-ink">PROPOSED EDIT</span>
 					<span className="min-w-0 flex-1 text-[13px] font-bold text-foreground">{utterance}</span>
 				</div>
 				<div className="mt-3 flex flex-wrap gap-2">
@@ -97,7 +97,7 @@ export function LoopProposedEdit({
 					{describeLoopPlan(nextPlan)}
 				</p>
 			</div>
-			<div className="flex flex-wrap items-center gap-2 border-t border-brand-subtle-foreground/20 bg-card px-4 py-2.5">
+			<div className="flex flex-wrap items-center gap-2 border-t border-sig-ink/20 bg-card px-4 py-2.5">
 				<Button size="sm" onClick={onApply} disabled={applying}>
 					{applying ? 'Applying…' : 'Make the change'}
 				</Button>

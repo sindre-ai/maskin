@@ -83,7 +83,7 @@ export function WorkspaceSwitcher() {
 	// tile, no double identity.
 	const label = (
 		<>
-			<div className="hidden aspect-square size-[30px] items-center justify-center rounded-lg bg-brand-subtle text-xs font-bold text-brand-subtle-foreground group-data-[collapsible=icon]:flex">
+			<div className="hidden aspect-square size-[30px] items-center justify-center rounded-lg bg-sig-tint text-xs font-bold text-sig-ink group-data-[collapsible=icon]:flex">
 				{initial}
 			</div>
 			<span className="truncate text-sm font-bold tracking-[-0.01em] group-data-[collapsible=icon]:hidden">

@@ -558,7 +558,7 @@ export function CommentInput({
 					className={cn(
 						'flex items-center gap-1.5',
 						isBar
-							? 'rounded-full border border-brand/25 bg-brand/10 px-2.5 py-1'
+							? 'rounded-full border border-border bg-muted px-2.5 py-1'
 							: 'rounded-lg border border-border bg-background px-2 py-1',
 					)}
 				>
@@ -574,7 +574,7 @@ export function CommentInput({
 					<span
 						className={cn(
 							'max-w-[180px] truncate text-[11.5px] font-semibold',
-							isBar ? 'text-brand' : 'text-foreground',
+							isBar ? 'text-foreground' : 'text-foreground',
 						)}
 					>
 						{ref.title}
@@ -585,7 +585,9 @@ export function CommentInput({
 						onClick={() => setReferences((prev) => prev.filter((r) => r.id !== ref.id))}
 						className={cn(
 							'transition-colors',
-							isBar ? 'text-brand/45 hover:text-brand' : 'text-border hover:text-destructive',
+							isBar
+								? 'text-muted-foreground hover:text-foreground'
+								: 'text-border hover:text-destructive',
 						)}
 					>
 						<X size={12} />

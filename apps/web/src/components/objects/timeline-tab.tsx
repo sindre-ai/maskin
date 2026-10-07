@@ -739,7 +739,7 @@ export function TimelineTab({
 							setFilter('all')
 							setJumpTick((t) => t + 1)
 						}}
-						className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-full bg-brand-subtle px-[11px] text-[11.5px] font-bold text-brand-subtle-foreground transition-colors hover:bg-brand/20"
+						className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-full bg-sig-tint px-[11px] text-[11.5px] font-bold text-sig-ink transition-colors hover:bg-sig/20"
 					>
 						{unreadCount} {unreadCount === 1 ? 'new update' : 'new updates'}
 						<ArrowDown size={12} aria-hidden="true" />

@@ -41,7 +41,7 @@ interface MessageBubbleProps {
 	 *  and no per-message Copy/Retry action row. */
 	v4Polish?: boolean
 	/** S2 · bet 34706e2f, task 5. When set, this message spawned an agent
-	 *  session — render the persistent vertical --brand bar to the bubble's
+	 *  session — render the persistent vertical --sig bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
 	/** Chat thread `HANDED OFF` sub-agent delegation strip
@@ -385,8 +385,8 @@ export function MessageBubble({
 /**
  * Renders an inline pill per mention on the message bubble. Each pill is an
  * inline-flex row with the actor's 14px avatar and name, `border-radius: 999px`,
- * no border (`bg-brand-subtle text-brand-subtle-foreground` maps to the spec's
- * brand-tinted chip). Self-mention swaps to `bg-warning/10 text-warning` so the
+ * no border (`bg-sig-tint text-sig-ink` maps to the spec's
+ * Patina-tinted chip). Self-mention swaps to `bg-warning/10 text-warning` so the
  * sender sees they've pinged themselves. Clicking a pill navigates to the
  * actor's detail route — the closest primitive we have to the "profile drawer"
  * spec, which doesn't ship in the app yet.
@@ -410,7 +410,7 @@ function MentionPills({
 				const isSelf = selfActorId === id
 				const chipClasses = cn(
 					'inline-flex max-w-full items-center gap-1.5 rounded-full px-[6px] pl-1 py-[1px] text-[11.5px] font-semibold',
-					isSelf ? 'bg-warning/10 text-warning' : 'bg-brand/10 text-brand',
+					isSelf ? 'bg-warning/10 text-warning' : 'bg-sig-tint text-sig-ink',
 				)
 				const label = (
 					<>

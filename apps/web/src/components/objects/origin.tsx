@@ -223,7 +223,7 @@ function CompactRow({
 				{lineage.conversation?.title ? (
 					<>
 						<span className="shrink-0">in</span>
-						<span className="min-w-0 max-w-full truncate font-medium text-brand-subtle-foreground">
+						<span className="min-w-0 max-w-full truncate font-medium text-sig-ink">
 							{lineage.conversation.title}
 						</span>
 					</>
@@ -263,7 +263,7 @@ function ExpandedCells({ lineage, workspaceId }: { lineage: Lineage; workspaceId
 						<Link
 							to="/$workspaceId/chats/$conversationId"
 							params={{ workspaceId, conversationId: lineage.conversation.id }}
-							className="block truncate text-[12.5px] font-medium text-foreground hover:text-brand"
+							className="block truncate text-[12.5px] font-medium text-foreground hover:underline"
 						>
 							{lineage.conversation.title ?? 'Untitled chat'}
 						</Link>
@@ -273,7 +273,7 @@ function ExpandedCells({ lineage, workspaceId }: { lineage: Lineage; workspaceId
 					<button
 						type="button"
 						onClick={() => setSessionOpen(true)}
-						className="block w-full truncate text-left text-[12.5px] font-medium text-foreground hover:text-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded"
+						className="block w-full truncate text-left text-[12.5px] font-medium text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded"
 					>
 						{lineage.sessionTitle ?? 'Untitled session'}
 					</button>
@@ -289,8 +289,8 @@ function ExpandedCells({ lineage, workspaceId }: { lineage: Lineage; workspaceId
 							: undefined
 					}
 					className={cn(
-						'inline-flex items-center gap-1.5 self-start text-[11.5px] font-medium text-brand',
-						'hover:text-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded',
+						'inline-flex items-center gap-1.5 self-start text-[11.5px] font-medium text-foreground underline underline-offset-2',
+						'hover:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded',
 					)}
 				>
 					Open chat at this moment

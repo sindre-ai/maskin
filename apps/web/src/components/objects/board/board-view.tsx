@@ -798,7 +798,7 @@ function BoardColumn({
 			className={cn(
 				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-xl border border-dashed border-transparent p-1 transition-colors',
 				'w-full sm:w-72 md:w-72 lg:w-80',
-				isValidTarget && 'border-brand bg-brand/5',
+				isValidTarget && 'border-primary bg-muted',
 			)}
 		>
 			<div className="flex items-baseline gap-2 px-1.5 pt-1 min-w-0">
