@@ -76,9 +76,24 @@
   --accent-fg-quietest-2: #acd6cd;   /* patina-200 */
 
   /* --- semantic --- */
-  /* Success is neutral: ink on zinc-100 with a check glyph, so Patina is
-     never read as "done". Names kept; values are the neutral set. */
-  --success: #18181b;                /* fg */
+  /* Done is ink on zinc-100 with a check glyph, never green and never Patina
+     (v4 brand rules). `--done-*` is the v4 family; `--success*` below is a
+     DEPRECATED alias kept with identical values so callers compile. */
+  --done-bg: #f4f4f5;
+  --done-bd: #e4e4e7;
+  --done-fg: #18181b;
+  --done-fg-2: #3f3f46;
+  --done-fg-3: #71717a;
+
+  /* Notice replaces the old amber set: a quiet Patina-tinted callout. */
+  --notice-bg: #eef6f4;
+  --notice-bd: #d5ebe6;
+  --notice-fg: #12302c;
+  --notice-fg-2: #20564f;
+  --notice-fg-3: #2a7068;
+
+  /* DEPRECATED: use --done-*. */
+  --success: #18181b;                /* done-fg */
   --success-strong: #3f3f46;         /* fg2 */
   --success-tint: #f4f4f5;           /* bg */
   --success-tint-2: #e4e4e7;         /* border */
@@ -178,6 +193,19 @@
   --accent-fg-quietest: #6cc4b5;
   --accent-fg-quietest-2: #2f7d74;
 
+  --done-bg: #1f1f22;
+  --done-bd: #27272a;
+  --done-fg: #fafafa;
+  --done-fg-2: #d4d4d8;
+  --done-fg-3: #a1a1aa;
+
+  --notice-bg: #15302b;
+  --notice-bd: #20564f;
+  --notice-fg: #d5ebe6;
+  --notice-fg-2: #acd6cd;
+  --notice-fg-3: #7dbcb0;
+
+  /* DEPRECATED: use --done-*. */
   --success: #fafafa;
   --success-strong: #d4d4d8;
   --success-tint: #1f1f22;
