@@ -55,12 +55,12 @@ private struct SearchScreenContent: View {
 		NavigationStack(path: $path) {
 			SearchContentView(
 				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
-				onSelect: select
+				onAskChiefOfStaff: askChiefOfStaff, onSelect: select
 			)
 				.shellToolbar(environment: environment, title: "Search")
 				.searchable(
 					text: Binding(get: { store.query }, set: { store.setQuery($0) }),
-					prompt: "Search or ask Chief of Staff"
+					prompt: "Search"
 				)
 				.onSubmit(of: .search) { Task { await store.commit() } }
 				.navigationDestination(for: SearchRoute.self) { route in
@@ -86,6 +86,12 @@ private struct SearchScreenContent: View {
 				id: $0.card.id, title: $0.card.headline,
 				type: $0.card.objectType?.replacingOccurrences(of: "_", with: " "))
 		}
+	}
+
+	/// Hands the query to a new chat (the same draft route the flow and agent builders use); the
+	/// person picks Chief of Staff there.
+	private func askChiefOfStaff(_ query: String) {
+		runtime?.buildInChat("Can you look into “\(query)”? ")
 	}
 
 	private func select(_ result: SearchResult) {

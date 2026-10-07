@@ -75,6 +75,19 @@ public struct APISearchRemote: SearchRemote {
 		}
 	}
 
+	public func flows() async throws -> [SearchResult] {
+		let workspace = await workspaceHeader()
+		do {
+			return try await APILoopsSource(client: client, workspaceID: workspace).loops().map { loop in
+				SearchResult(
+					kind: .object, entityId: loop.id, title: loop.displayName, subtitle: loop.pill.label,
+					snippet: loop.content ?? "", detail: "loop", updatedAt: loop.updatedAt)
+			}
+		} catch {
+			throw RemoteFailure.searchError(error)
+		}
+	}
+
 	static func convert<T: Decodable>(_ value: some Encodable, as: T.Type) throws -> T {
 		try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
 	}
