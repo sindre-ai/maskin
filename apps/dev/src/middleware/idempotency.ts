@@ -6,6 +6,7 @@ import { logger } from '../lib/logger'
 const TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+const KEY_ROTATION_PATH = /^\/api\/actors\/[^/]+\/api-keys$/
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null
 
@@ -90,15 +91,18 @@ export function createIdempotencyMiddleware(db: Database) {
 
 		await next()
 
+		// A freshly rotated key must never be written to the ledger. Other routes
+		// that return a key (invite accept, login) stay recorded so a retry after a
+		// lost reply gets the same answer instead of re-running a one-shot action.
+		if (KEY_ROTATION_PATH.test(c.req.path)) return
+
 		const contentType = c.res.headers.get('content-type')
 		if (!contentType?.includes('application/json')) return
 		if (c.res.status >= 500) return
 
 		try {
 			const cloned = c.res.clone()
-			const text = await cloned.text()
-			if (text.includes('"api_key"')) return
-			const body = JSON.parse(text) as unknown
+			const body = (await cloned.json()) as unknown
 
 			await db
 				.insert(idempotencyRecords)

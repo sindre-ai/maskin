@@ -20,6 +20,7 @@ function createApp(actorId = 'actor-1', dbCtx = createTestContext()) {
 	})
 
 	app.post('/key', (c) => c.json({ api_key: 'ank_fake_value' }))
+	app.post('/api/actors/:id/api-keys', (c) => c.json({ api_key: 'ank_fake_value' }))
 
 	app.get('/test', (c) => {
 		callCount++
@@ -99,21 +100,31 @@ describe('idempotency middleware', () => {
 		expect(getCallCount()).toBe(1) // handler NOT called again
 	})
 
-	it('does not write a response containing an api_key to the ledger', async () => {
+	it('does not write a key-rotation response to the ledger', async () => {
 		const dbCtx = createTestContext()
 		const { app } = createApp('actor-1', dbCtx)
 		dbCtx.mockResults.selectQueue = [[], []]
 
-		const keyed = await app.request('/key', {
+		const rotated = await app.request('/api/actors/actor-1/api-keys', {
 			method: 'POST',
 			headers: { 'Idempotency-Key': 'key-1' },
 		})
-		expect(keyed.status).toBe(200)
-		expect((await keyed.json()).api_key).toBe('ank_fake_value')
+		expect(rotated.status).toBe(200)
+		expect((await rotated.json()).api_key).toBe('ank_fake_value')
 		expect(dbCtx.calls.inserts).toHaveLength(0)
 
 		// Control: an ordinary response is still recorded.
 		await app.request('/test', { method: 'POST', headers: { 'Idempotency-Key': 'plain-1' } })
+		expect(dbCtx.calls.inserts).toHaveLength(1)
+	})
+
+	it('still records other responses that carry an api_key, so a retry gets the same answer', async () => {
+		const dbCtx = createTestContext()
+		const { app } = createApp('actor-1', dbCtx)
+		dbCtx.mockResults.selectQueue = [[]]
+
+		await app.request('/key', { method: 'POST', headers: { 'Idempotency-Key': 'accept-1' } })
+
 		expect(dbCtx.calls.inserts).toHaveLength(1)
 	})
 
