@@ -17,10 +17,16 @@
 
 import type { SeedAgent, SeedSkill, SeedTrigger } from './development-agents'
 
+/**
+ * Exa MCP server. The key is never stored in the actor row: the header is an
+ * envsubst placeholder, filled from the AGENT_SECRET_EXA_API_KEY process env on
+ * the API service via the actor's tools.envFrom (see resolveActorSecretEnv).
+ * Unset on the API service, the session still starts and the header is empty.
+ */
 export const EXA_MCP_PRESET = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http' as const,
-	headers: { 'x-api-key': 'dfe759f6-25fd-4d45-aff5-3feead16d585' },
+	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 } as const
 
 export const PLATFORM_MCP_PRESET = {
@@ -881,7 +887,10 @@ Falsified if: [specific observable result].
 
 **Bet D — "Redesign the onboarding checklist widget."** Classification: design / product / possibly some coding. Checklist: (design) breadboards, sketches, empty/error/loading states, interaction; (product) which onboarding milestones map to which checklist items; (coding) whether the existing widget component supports the new interaction or needs a rewrite. If no agent in this workspace owns design and the gap is real, escalate to the user with a capability-gap note rather than shipping without design. If the design direction is already clear from Signal Analyst's cluster on drop-off, note the gap as a rabbit hole and shape solo — and say so honestly in the lock-down.
 `,
-		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET } },
+		tools: {
+			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
+			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
+		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL, FOR_YOU_FORMAT_SKILL, SHAPED_BET_FORMAT_SKILL],
 	},
 	{
@@ -1085,7 +1094,10 @@ Skimmable wins. The requester should get the answer from the TL;DR alone and div
 **Person brief.** Request: "Background on Jane Doe, VP Eng at Acme." Check Maskin first (already a contact?), then Exa for public profile, published talks/posts. Cover: current role, prior roles (LinkedIn), published views (talks/blogs) indicating priorities. Confidence Medium — public sources only. Don't speculate on comp, personal life, or unpublished opinions.
 
 **Ambiguous request.** Request: "Research Notion." Ambiguous — the company? product features? competitive positioning? AI roadmap? Don't ping back. Pick the most likely interpretation from context (who asked, what object it's attached to), state it in the Interpretation line, research that. If the requester wanted a different angle, they'll say so and you'll rerun — cheaper than a round-trip.`,
-		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET } },
+		tools: {
+			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
+			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
+		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL],
 	},
 	{

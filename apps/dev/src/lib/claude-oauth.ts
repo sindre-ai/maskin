@@ -20,6 +20,63 @@ import { logger } from './logger'
  */
 export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
 
+/**
+ * Runtime kill-switch for keeping the Claude refresh token out of agent
+ * containers. Default is OFF: only the literal string `true` enables it, until
+ * the launch check (one real session start in the real image with no refresh
+ * token) has passed, so a missing env keeps today's behaviour. On, the platform refreshes at
+ * session launch with a session-sized buffer and the container is handed an
+ * access token only. Off restores today's behaviour exactly: the container gets
+ * the refresh token and the default 10 minute buffer.
+ */
+export const CLAUDE_PLATFORM_REFRESH_FLAG_ENV = 'MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED'
+
+/** Setting for how much access-token life a session launch must start with. */
+export const CLAUDE_LAUNCH_BUFFER_ENV = 'CLAUDE_LAUNCH_BUFFER_MS'
+
+/**
+ * Default launch buffer: 3 h. Covers the longest observed run (2.77 h) and the
+ * 2 h session timeout cap with headroom.
+ */
+export const DEFAULT_CLAUDE_LAUNCH_BUFFER_MS = 3 * 60 * 60 * 1000
+
+export function isClaudePlatformRefreshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return (env[CLAUDE_PLATFORM_REFRESH_FLAG_ENV] ?? '').trim().toLowerCase() === 'true'
+}
+
+/** The launch buffer setting; anything that is not a positive number falls back to the default. */
+export function readClaudeLaunchBufferMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = Number(env[CLAUDE_LAUNCH_BUFFER_ENV])
+	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CLAUDE_LAUNCH_BUFFER_MS
+}
+
+/**
+ * How far ahead of expiry a slot must be refreshed. A number is a fixed buffer.
+ * `{ launchMs }` is the session-launch policy: the setting, capped at half the
+ * slot's known access-token lifetime, and a slot with no known lifetime is
+ * refreshed once so the lifetime becomes known.
+ */
+export type RefreshBuffer = number | { launchMs: number }
+
+/**
+ * Access-token lifetime per workspace+slot, in memory only (no extra storage).
+ * Set by every refresh through refreshSlotSingleFlight, so only the first
+ * launch per slot after a restart pays for a forced refresh.
+ */
+const slotLifetimesMs = new Map<string, number>()
+
+/** Test seam: forget every learned lifetime. */
+export function resetClaudeSlotLifetimes(): void {
+	slotLifetimesMs.clear()
+}
+
+function needsRefresh(key: string, expiresAt: number, buffer: RefreshBuffer): boolean {
+	if (typeof buffer === 'number') return expiresAt <= Date.now() + buffer
+	const lifetime = slotLifetimesMs.get(key)
+	if (lifetime === undefined) return true
+	return expiresAt <= Date.now() + Math.min(buffer.launchMs, lifetime / 2)
+}
+
 export interface ClaudeOAuthTokens {
 	accessToken: string
 	refreshToken: string
@@ -194,6 +251,93 @@ export async function persistRefreshedSlot(
 	})
 }
 
+const slotRefreshTails = new Map<string, Promise<unknown>>()
+
+/**
+ * In-process mutex per workspace+slot. Callers queue behind the previous one
+ * for at most CLAUDE_CREDENTIAL_TIMEOUT_MS, so a hung refresh cannot stall
+ * every session start behind it. The timeout error carries no HTTP status, so
+ * the failover classifier reads it as a transient transport failure.
+ */
+async function withSlotRefreshLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+	const previous = slotRefreshTails.get(key)
+	const run = (async () => {
+		if (previous) {
+			let timer: ReturnType<typeof setTimeout> | undefined
+			const timedOut = new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error('Timed out waiting for a concurrent Claude token refresh')),
+					CLAUDE_CREDENTIAL_TIMEOUT_MS,
+				)
+			})
+			try {
+				await Promise.race([previous, timedOut])
+			} finally {
+				clearTimeout(timer)
+			}
+		}
+		return fn()
+	})()
+	const tail = run.then(
+		() => undefined,
+		() => undefined,
+	)
+	slotRefreshTails.set(key, tail)
+	void tail.then(() => {
+		if (slotRefreshTails.get(key) === tail) slotRefreshTails.delete(key)
+	})
+	return run
+}
+
+/**
+ * Single-flight refresh of one slot: the only path that may spend a slot's
+ * refresh token. Callers inside the expiry buffer queue per workspace+slot; the
+ * lock spans re-read, refresh and persist, and each waiter re-reads the slot so
+ * it skips the refresh when the caller ahead of it already wrote fresh tokens.
+ * The lock is never held across the subscription probe.
+ *
+ * If the token endpoint rejects the refresh token but the stored one has since
+ * changed (another process rotated it), the stored tokens are returned instead
+ * of the error, so the slot is not failed over for a race it did not lose.
+ */
+export async function refreshSlotSingleFlight(
+	db: Database,
+	workspaceId: string,
+	slot: OAuthSlotKind,
+	stored: EncryptedOAuthData,
+	bufferMs: RefreshBuffer = 10 * 60 * 1000,
+): Promise<{ tokens: ClaudeOAuthTokens; refreshed: boolean }> {
+	const key = `${workspaceId}:${slot}`
+	if (!needsRefresh(key, stored.expiresAt, bufferMs)) {
+		return { tokens: decryptOAuthData(stored), refreshed: false }
+	}
+	return withSlotRefreshLock(key, async () => {
+		const readStored = async () => {
+			const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+			const settings = (ws?.settings as Record<string, unknown>) ?? {}
+			return readSlots(settings.claude_oauth)[slot]
+		}
+		const tokens = decryptOAuthData((await readStored()) ?? stored)
+		try {
+			if (!needsRefresh(key, tokens.expiresAt, bufferMs)) return { tokens, refreshed: false }
+			logger.info('Claude OAuth token expiring soon, refreshing...')
+			const refreshedTokens = await refreshClaudeToken(tokens)
+			// Lower bound on the real lifetime (expires_in minus the call's own
+			// latency), so the half-life guard errs on the safe side.
+			const lifetimeMs = refreshedTokens.expiresAt - Date.now()
+			if (Number.isFinite(lifetimeMs) && lifetimeMs > 0) slotLifetimesMs.set(key, lifetimeMs)
+			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(refreshedTokens))
+			return { tokens: refreshedTokens, refreshed: true }
+		} catch (err) {
+			const latest = await readStored().catch(() => undefined)
+			if (latest && decrypt(latest.encryptedRefreshToken) !== tokens.refreshToken) {
+				return { tokens: decryptOAuthData(latest), refreshed: false }
+			}
+			throw err
+		}
+	})
+}
+
 /**
  * Load, refresh if needed, and persist OAuth tokens for a workspace.
  * Returns the fresh access token or null if no OAuth is configured.
@@ -209,13 +353,14 @@ export async function getValidOAuthToken(
 
 	if (!active) return null
 
-	const tokens = decryptOAuthData(active.data)
-	const { tokens: fresh, refreshed } = await refreshClaudeTokenIfNeeded(tokens, bufferMs)
-
-	if (refreshed) {
-		await persistRefreshedSlot(db, workspaceId, active.slot, encryptOAuthTokens(fresh))
-		logger.info('Refreshed Claude OAuth token', { workspaceId, slot: active.slot })
-	}
+	const { tokens: fresh, refreshed } = await refreshSlotSingleFlight(
+		db,
+		workspaceId,
+		active.slot,
+		active.data,
+		bufferMs,
+	)
+	if (refreshed) logger.info('Refreshed Claude OAuth token', { workspaceId, slot: active.slot })
 
 	return { accessToken: fresh.accessToken, tokens: fresh }
 }

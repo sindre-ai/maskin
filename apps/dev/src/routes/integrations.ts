@@ -1170,6 +1170,16 @@ app.openapi(connectRoute, (async (c) => {
 
 	const state = encodeState(statePayload)
 
+	// GitHub only: "install on another org". The authorize URL below lists just
+	// the installations the user already has, so an org without the App can never
+	// appear there. This sends them to the App's install page instead, carrying
+	// the same signed state, so the post-install callback matches the pending row
+	// minted below and handleCallback binds the new installation directly.
+	const installNewOrg =
+		providerName === 'github' &&
+		((await c.req.json().catch(() => ({}))) as { install_new_org?: boolean }).install_new_org ===
+			true
+
 	// Bind the state to *this* browser. `state` is a sealed envelope with no
 	// session binding, so on its own it authorizes whoever presents it — and the
 	// GitHub user-authorization endpoint returns without any prompt for a user
@@ -1217,7 +1227,9 @@ app.openapi(connectRoute, (async (c) => {
 			// dynamic client registration). The pending nonce row inserted above is
 			// left in place on failure: it is keyed by a fresh nonce, is never matched
 			// by a callback, and is what lets the user simply hit Connect again.
-			installUrl = await resolved.customAuth.getInstallUrl(state, redirectUri)
+			installUrl = installNewOrg
+				? buildAppInstallUrl(state)
+				: await resolved.customAuth.getInstallUrl(state, redirectUri)
 		} catch (err) {
 			const upstream = err instanceof ProviderUnreachableError
 			logger.error(`Failed to build install URL for provider ${providerName}`, {
