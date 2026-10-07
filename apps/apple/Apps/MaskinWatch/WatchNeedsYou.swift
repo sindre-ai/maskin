@@ -8,6 +8,7 @@ import SwiftUI
 /// shows the recommended one and hands the rest to the iPhone.
 struct WatchNeedsYou: View {
 	let store: ForYouStore?
+	let workspaceId: String?
 
 	private var entries: [FeedEntry] {
 		(store?.entries ?? []).filter { $0.section == .needs }
@@ -19,7 +20,7 @@ struct WatchNeedsYou: View {
 				if let store, !entries.isEmpty {
 					TabView {
 						ForEach(entries) { entry in
-							WatchDecisionPage(store: store, entry: entry)
+							WatchDecisionPage(store: store, entry: entry, workspaceId: workspaceId)
 						}
 					}
 					.tabViewStyle(.page)
@@ -45,6 +46,7 @@ struct WatchNeedsYou: View {
 private struct WatchDecisionPage: View {
 	let store: ForYouStore
 	let entry: FeedEntry
+	let workspaceId: String?
 	@State private var confirming: DecisionOption?
 
 	private var card: ForYouCard { entry.card }
@@ -66,6 +68,13 @@ private struct WatchDecisionPage: View {
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
+		}
+		// "More on iPhone": the phone picks up this card from the app switcher.
+		.userActivity(HandoffActivity.type, isActive: workspaceId != nil) { activity in
+			guard let workspaceId else { return }
+			activity.isEligibleForHandoff = true
+			activity.title = card.headline
+			activity.userInfo = HandoffActivity.userInfo(workspaceId: workspaceId, objectId: card.id)
 		}
 		.sheet(item: $confirming) { option in
 			WatchConfirm(option: option) {

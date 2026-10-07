@@ -12,7 +12,7 @@ struct WatchHome: View {
 
 	var body: some View {
 		TabView {
-			WatchNeedsYou(store: store)
+			WatchNeedsYou(store: store, workspaceId: environment.workspaceId)
 			WatchBriefing(store: store, firstName: firstName)
 			WatchFlows(loops: loops)
 		}

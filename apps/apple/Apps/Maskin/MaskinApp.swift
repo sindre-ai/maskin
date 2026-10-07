@@ -52,6 +52,10 @@ struct MaskinApp: App {
 				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
 				IntentDeepLinkRelay.attach(openAgent: { runtime.openAgent($0) }) { runtime.router.open($0) }
 			}
+			// "Open on iPhone" from the watch: the card the wearer was looking at.
+			.onContinueUserActivity(HandoffActivity.type) { activity in
+				if let url = HandoffActivity.link(from: activity.userInfo) { IntentDeepLinkRelay.open(url) }
+			}
 			.onContinueUserActivity(CSSearchableItemActionType) { activity in
 				guard
 					let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String
