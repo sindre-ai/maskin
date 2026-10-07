@@ -183,6 +183,12 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Serves list_objects sort=updatedAt, which orders and seeks on the UTC
+		// millisecond-truncated value. Built CONCURRENTLY in migration 0088.
+		index('objects_ws_updated_at_ms_idx').on(
+			t.workspaceId,
+			sql`date_trunc('milliseconds', ${t.updatedAt} AT TIME ZONE 'UTC')`,
+		),
 		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
 		// in migration 0083.
 		index('objects_active_session_idx')
