@@ -114,22 +114,27 @@ private struct LoopsContainer: View {
 					onNew: { showNewTrigger = true })
 			}
 		}
-		.safeAreaInset(edge: .top, spacing: 0) {
-			Picker("Show", selection: $mode) {
-				ForEach(AutomationMode.allCases) { Text($0.rawValue).tag($0) }
-			}
-			.pickerStyle(.segmented)
-			.padding(.horizontal, MaskinSpace.s9)
-			.padding(.vertical, MaskinSpace.s4)
-		}
 		.searchable(
 			text: $search, isPresented: $searchPresented,
-			prompt: mode == .triggers ? "Search triggers" : "Search loops"
+			prompt: mode == .triggers ? "Search triggers" : "Search flows"
 		)
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
 		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
 		.toolbar {
+			// Triggers are plumbing: they sit behind this menu instead of a permanent switcher.
+			ToolbarItem(placement: .automatic) {
+				Menu {
+					switch mode {
+					case .loops:
+						Button { mode = .triggers } label: { Label("Triggers", systemImage: "clock.arrow.circlepath") }
+					case .triggers:
+						Button { mode = .loops } label: { Label("Back to flows", systemImage: "arrow.uturn.backward") }
+					}
+				} label: {
+					Label("More", systemImage: "ellipsis.circle")
+				}
+			}
 			if mode == .triggers {
 				ToolbarItem(placement: .automatic) {
 					Button { showNewTrigger = true } label: { Label("New schedule", systemImage: "plus") }

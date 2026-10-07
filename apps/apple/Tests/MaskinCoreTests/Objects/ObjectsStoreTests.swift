@@ -22,9 +22,9 @@ struct ObjectsStoreTests {
 		#expect(store.phase == .loaded)
 		#expect(store.objects.count == 5)
 		let groups = store.groups
-		// Schema order across types: insight statuses, then bet, then task.
-		#expect(groups.map(\.id) == ["new", "active", "todo", "in_progress"])
-		#expect(groups.first { $0.id == "in_progress" }?.objects.map(\.id) == ["t1", "t3"])
+		// Schema order across types, each type's own statuses under it: insight, bet, then task.
+		#expect(groups.map(\.id) == ["insight/new", "bet/active", "task/todo", "task/in_progress"])
+		#expect(groups.first { $0.id == "task/in_progress" }?.objects.map(\.id) == ["t1", "t3"])
 		store.grouping = .none
 		#expect(store.groups.count == 1)
 		#expect(store.groups[0].objects.map(\.id) == ["t1", "b1", "t2", "t3", "i1"])
@@ -216,6 +216,22 @@ struct ObjectsStoreTests {
 		]
 		let groups = ObjectsGrouper.group(objects, by: .status, schema: .fallback, type: "task")
 		#expect(groups.map(\.id) == ["todo", "zeta"])
+	}
+
+	@Test("with no type chosen, objects group by type and then by that type's statuses")
+	func grouperPerType() {
+		let objects = [
+			WorkObject(id: "t", type: "task", status: "todo"),
+			WorkObject(id: "b", type: "bet", status: "active"),
+			WorkObject(id: "t2", type: "task", status: "done"),
+		]
+		let groups = ObjectsGrouper.group(objects, by: .status, schema: .fallback, type: nil)
+		#expect(groups.map(\.id).count == 3)
+		#expect(Set(groups.map(\.id)) == ["task/todo", "task/done", "bet/active"])
+		// A type's sections stay together, and the title names the type.
+		let types = groups.map { $0.id.split(separator: "/")[0] }
+		#expect(types == types.sorted { types.firstIndex(of: $0)! < types.firstIndex(of: $1)! })
+		#expect(groups.allSatisfy { ($0.title ?? "").contains(" · ") })
 	}
 }
 
