@@ -10,6 +10,7 @@ import {
 	isTransientCredentialError,
 	resolveClaudeCredentialsWithFailover,
 } from './claude-failover'
+import { isClaudePlatformRefreshEnabled, readClaudeLaunchBufferMs } from './claude-oauth'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterprise } from './enterprise'
 import { logger } from './logger'
@@ -67,6 +68,12 @@ export interface LlmRoutingResult {
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
 	oauthSlot?: OAuthSlotKind
+	/**
+	 * Access-token expiry (epoch ms) the container launched with. Set only when the
+	 * refresh token was withheld from it, so the settle path can tell a session
+	 * that outlived its token from a genuinely rejected credential.
+	 */
+	oauthExpiresAt?: number
 	/**
 	 * OpenRouter model id that will actually run this session. Populated on
 	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
@@ -542,12 +549,17 @@ export async function resolveLlmRoute(params: {
 		try {
 			/** Set by the resolver when a configured slot yields nothing usable. */
 			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
+			// On (default): the platform refreshes at launch with a session-sized
+			// buffer and the container never sees the refresh token. Off: today's
+			// behaviour exactly (10 minute buffer, refresh token in the env).
+			const platformRefresh = isClaudePlatformRefreshEnabled(params.env)
 			const oauthResult = await resolveClaudeCredentialsWithFailover({
 				db,
 				workspaceId,
 				actorId,
 				probe: claudeProbe,
 				env: params.env,
+				bufferMs: platformRefresh ? { launchMs: readClaudeLaunchBufferMs(params.env) } : undefined,
 				onUnusable: (info) => {
 					unusableRef.current = info
 				},
@@ -555,7 +567,9 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult) {
 				const envVars: Record<string, string> = {
 					CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
-					CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken,
+					...(platformRefresh
+						? {}
+						: { CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken }),
 					CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
 				}
 				if (oauthResult.tokens.scopes) {
@@ -566,7 +580,12 @@ export async function resolveLlmRoute(params: {
 				}
 				envVars.ANTHROPIC_MODEL = CLAUDE_SUBSCRIPTION_MODEL
 				envVars.MASKIN_CLAUDE_EFFORT = CLAUDE_SUBSCRIPTION_EFFORT
-				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
+				return {
+					route: LLM_ROUTE_OAUTH,
+					envVars,
+					oauthSlot: oauthResult.slot,
+					...(platformRefresh ? { oauthExpiresAt: oauthResult.tokens.expiresAt } : {}),
+				}
 			}
 
 			// `resolveClaudeCredentialsWithFailover` reports an unusable

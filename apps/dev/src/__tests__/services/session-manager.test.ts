@@ -4669,6 +4669,144 @@ describe('SessionManager', () => {
 			expect(startSpy).toHaveBeenCalledWith(retrySession.id)
 		})
 
+		describe('auth error at access-token expiry (refresh token withheld from the container)', () => {
+			const expiredAt = Date.now() - 5 * 60 * 1000
+			const workspaceWithTwoSlots = (workspaceId: string) => ({
+				id: workspaceId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_800_000_000_000,
+						},
+						backup: {
+							encryptedAccessToken: 'backup-access',
+							encryptedRefreshToken: 'backup-refresh',
+							expiresAt: 1_900_000_000_000,
+						},
+					},
+				},
+			})
+
+			async function settleWithNotLoggedIn(config: Record<string, unknown>) {
+				vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+				mockClassifyCreditExhaustion.mockReturnValue({
+					provider: 'anthropic',
+					reason_code: 'not_logged_in',
+					human_message: 'Claude credentials not connected',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: 'Not logged in',
+				})
+				const session = buildSession({ status: 'running', config })
+				;(
+					manager as unknown as {
+						activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+					}
+				).activeSessions.set(session.id, {
+					tempDir: '/tmp/test',
+					stdoutTail: 'Not logged in · Please run /login',
+				})
+				const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+				mockResults.selectQueue = [
+					[session], // handleCompletion: load session
+					[], // extractSessionUsage fallback
+					[], // hasOtherActiveSessions
+					[], // existing runtime failover retry lookup
+					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
+				]
+				mockResults.insertQueue = [[], [], [], [], [], []]
+				await (
+					manager as unknown as {
+						handleCompletion(
+							sessionId: string,
+							containerId: string,
+							exitCode: number,
+						): Promise<void>
+					}
+				).handleCompletion(session.id, 'container-abc', 1)
+				const movedSlot = calls.updates.some(
+					(u) =>
+						typeof u === 'object' &&
+						u !== null &&
+						Boolean(
+							(u as { settings?: { claude_oauth?: { failover?: { active_slot?: string } } } })
+								.settings?.claude_oauth?.failover?.active_slot,
+						),
+				)
+				return { movedSlot, startSpy }
+			}
+
+			describe('interactive turn failover', () => {
+				async function failOver(config: Record<string, unknown>) {
+					vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+					const session = buildSession({ status: 'running', config })
+					mockResults.selectQueue = [
+						[session], // failOverInteractiveSession: load session
+						[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
+					]
+					mockResults.insertQueue = [[], []]
+					const movedTo = await (
+						manager as unknown as {
+							failOverInteractiveSession(sessionId: string, reason: string): Promise<string | null>
+						}
+					).failOverInteractiveSession(session.id, 'not_logged_in')
+					return movedTo
+				}
+
+				it('leaves the slot alone when the turn failed after the access token expired', async () => {
+					expect(
+						await failOver({
+							llm_route: 'claude_oauth',
+							llm_oauth_slot: 'primary',
+							claude_oauth_expires_at: expiredAt,
+						}),
+					).toBeNull()
+				})
+
+				it('still moves to the next slot when the credential was rejected well before expiry', async () => {
+					expect(
+						await failOver({
+							llm_route: 'claude_oauth',
+							llm_oauth_slot: 'primary',
+							claude_oauth_expires_at: Date.now() + 3 * 60 * 60 * 1000,
+						}),
+					).toBe('backup')
+				})
+			})
+
+			it('does not move the workspace off the slot or start a retry when the session ended after its expiry', async () => {
+				const { movedSlot, startSpy } = await settleWithNotLoggedIn({
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+					claude_oauth_expires_at: expiredAt,
+				})
+
+				expect(movedSlot).toBe(false)
+				expect(startSpy).not.toHaveBeenCalled()
+			})
+
+			it('still fails over a rejected credential when the access token had hours left', async () => {
+				const { movedSlot } = await settleWithNotLoggedIn({
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+					claude_oauth_expires_at: Date.now() + 3 * 60 * 60 * 1000,
+				})
+
+				expect(movedSlot).toBe(true)
+			})
+
+			it('still fails over when the session carries no expiry stamp (flag off)', async () => {
+				const { movedSlot } = await settleWithNotLoggedIn({
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+				})
+
+				expect(movedSlot).toBe(true)
+			})
+		})
+
 		it('records backup OAuth runtime limits without starting another retry session', async () => {
 			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 			const sourceSessionId = randomUUID()
@@ -5183,5 +5321,38 @@ describe('mergeLaunchRouteConfig()', () => {
 		expect(
 			mergeLaunchRouteConfig({ llm_route: 'workspace_api_key' }, 'workspace_api_key', undefined),
 		).toBeNull()
+	})
+
+	it('stamps the access-token expiry of a launch whose container got no refresh token', () => {
+		const updated = mergeLaunchRouteConfig(
+			{ llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			'claude_oauth',
+			'primary',
+			1_800_000_000_000,
+		)
+		expect(updated).toMatchObject({ claude_oauth_expires_at: 1_800_000_000_000 })
+	})
+
+	it('returns null when the expiry stamp is already current', () => {
+		expect(
+			mergeLaunchRouteConfig(
+				{ llm_route: 'claude_oauth', llm_oauth_slot: 'primary', claude_oauth_expires_at: 5 },
+				'claude_oauth',
+				'primary',
+				5,
+			),
+		).toBeNull()
+	})
+
+	it('clears a stale expiry stamp when the launch can refresh itself', () => {
+		// A retry inherits the failed session's config; if its own launch hands the
+		// container a refresh token (flag off), the old expiry must not survive.
+		const updated = mergeLaunchRouteConfig(
+			{ llm_route: 'claude_oauth', llm_oauth_slot: 'backup', claude_oauth_expires_at: 5 },
+			'claude_oauth',
+			'backup',
+		)
+		expect(updated).not.toBeNull()
+		expect(updated).not.toHaveProperty('claude_oauth_expires_at')
 	})
 })
