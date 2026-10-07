@@ -19,6 +19,9 @@ import {
 	getEventMapRow,
 } from '../../lib/integrations/providers/linkedin-unipile/event-map'
 import { ingestUnipileEnvelope } from '../../lib/integrations/providers/linkedin-unipile/ingest'
+import { __resetSenderCachesForTests } from '../../lib/integrations/providers/linkedin-unipile/sender-resolution'
+import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import { __setLinkedInWebhookClientForTests } from '../../lib/integrations/providers/linkedin-unipile/webhook'
 import { commitWebhookDelivery } from '../../lib/integrations/webhooks/commit'
 import { insertActor, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
@@ -76,6 +79,7 @@ afterAll(() => {
 	}
 	_resetFeatureFlagConfig()
 	__resetLinkedInMcpRegistryForTests()
+	__setLinkedInWebhookClientForTests(null)
 })
 
 async function insertLinkedInIntegration(
@@ -108,7 +112,17 @@ beforeEach(async () => {
 
 	await sql`TRUNCATE webhook_deliveries`
 	__resetLinkedInMcpRegistryForTests()
+	__resetSenderCachesForTests()
 	vi.mocked(commitWebhookDelivery).mockClear()
+	// Sender lookup is covered in linkedin-unipile-reply-classification.test.ts.
+	// Here every lookup fails fast, so these tests never touch the network and a
+	// delivery lands as received_unresolved.
+	__setLinkedInWebhookClientForTests(
+		() =>
+			({
+				getProfile: async () => ({ status: 503, body: {}, headers: {} }),
+			}) as unknown as LinkedInClient,
+	)
 
 	// Distinct account id per test run is unnecessary: the workspace is fresh,
 	// and webhook_deliveries is unique per workspace.

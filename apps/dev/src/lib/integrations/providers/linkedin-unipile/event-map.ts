@@ -13,14 +13,17 @@
  * absent from the config definitions.
  */
 
+import type { Database } from '@maskin/db'
 import type { integrations } from '@maskin/db/schema'
 import { FLAGS, type FlagId } from '../../../feature-flags'
 import { decideDirection, readOwnLinkedinIds } from './direction'
 import type { UnipileEnvelope } from './envelope'
+import { resolveSender } from './sender-resolution'
 
 export type IntegrationRow = typeof integrations.$inferSelect
 
 export interface ClassifyContext {
+	db: Database
 	envelope: UnipileEnvelope
 	integration: IntegrationRow
 	/** Own ids the in-process registry holds for an integration (read only). */
@@ -69,16 +72,19 @@ export function resourceId(envelope: UnipileEnvelope): string | null {
 export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 	'message.new': {
 		entityType: 'linkedin.message',
-		actions: ['received_unresolved'],
+		actions: ['received', 'received_cold', 'received_unresolved'],
 		accountId: (envelope) => envelope.accountId,
 		deliveryKey: (envelope) => {
 			const messageId = resourceId(envelope)
 			return envelope.accountId && messageId ? `msg:${envelope.accountId}:${messageId}` : null
 		},
-		// Ids only. No message text, preview, display name or attachments.
-		// The sender-to-contact lookup arrives in the stacked sender-classification
-		// task, so every inbound message is received_unresolved for now.
-		classify: async ({ envelope, integration, ownIds }) => {
+		// Ids only (plus the contact's id, status and driver for a known sender). No
+		// message text, preview, display name, public identifier or attachments in a
+		// cold or unresolved row.
+		//   received            sender matched a contact; entityId is the contact id
+		//   received_cold       lookup succeeded, no contact matched
+		//   received_unresolved no public identifier could be obtained
+		classify: async ({ db, envelope, integration, ownIds }) => {
 			const message = envelope.resource ?? {}
 			const messageId = str(message.id)
 			if (!messageId) return { kind: 'drop', reason: 'malformed_payload' }
@@ -102,25 +108,61 @@ export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 				}
 			}
 
+			const data: Record<string, unknown> = {
+				provider: PROVIDER,
+				unipile_event_type: envelope.type,
+				integration_id: integration.id,
+				unipile_account_id: envelope.accountId,
+				external_id: messageId,
+				envelope_id: envelope.envelopeId,
+				provider_timestamp: str(message.timestamp),
+				chat_id: chatId,
+				message_id: messageId,
+				sender_provider_id: senderId,
+				direction: 'inbound',
+				direction_source: verdict.source,
+			}
+
+			const resolution = await resolveSender({
+				db,
+				integration,
+				message,
+				chatId,
+				senderId,
+				accountId: envelope.accountId,
+			})
+
+			if (resolution.kind === 'known') {
+				const { contact, publicIdentifier } = resolution
+				return {
+					kind: 'emit',
+					action: 'received',
+					entityId: contact.id,
+					data: {
+						...data,
+						...(publicIdentifier ? { sender_public_identifier: publicIdentifier } : {}),
+						contact_id: contact.id,
+						contact_status: contact.status,
+						contact_driver_id: contact.driverId,
+					},
+					log: { ...log, resolution: 'known', contact_id: contact.id },
+				}
+			}
+			if (resolution.kind === 'cold') {
+				return {
+					kind: 'emit',
+					action: 'received_cold',
+					entityId: integration.id,
+					data,
+					log: { ...log, resolution: 'cold' },
+				}
+			}
 			return {
 				kind: 'emit',
 				action: 'received_unresolved',
 				entityId: integration.id,
-				data: {
-					provider: PROVIDER,
-					unipile_event_type: envelope.type,
-					integration_id: integration.id,
-					unipile_account_id: envelope.accountId,
-					external_id: messageId,
-					envelope_id: envelope.envelopeId,
-					provider_timestamp: str(message.timestamp),
-					chat_id: chatId,
-					message_id: messageId,
-					sender_provider_id: senderId,
-					direction: 'inbound',
-					direction_source: verdict.source,
-				},
-				log,
+				data,
+				log: { ...log, resolution: 'unresolved', unresolved_reason: resolution.reason },
 			}
 		},
 		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,

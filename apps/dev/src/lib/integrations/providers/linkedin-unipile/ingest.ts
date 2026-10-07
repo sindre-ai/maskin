@@ -218,6 +218,7 @@ async function processRow(
 
 	try {
 		const result = await map.classify({
+			db,
 			envelope,
 			integration,
 			ownIds: readOwnLinkedinIds,
