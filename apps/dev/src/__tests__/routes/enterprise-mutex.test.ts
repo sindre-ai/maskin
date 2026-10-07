@@ -82,6 +82,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('cancels live Stripe sub and writes billing.plan=enterprise when setting llm_keys.anthropic', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 			[
 				{
 					id: wsId,
@@ -123,6 +124,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('cancels live Stripe sub when enabling custom_llm with an api_key', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 			[
 				{
 					id: wsId,
@@ -164,6 +166,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('does NOT call Stripe when llm_keys.anthropic is being deleted (null)', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 			[
 				{
 					id: wsId,
@@ -200,6 +203,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('skips Stripe call when there is no live subscription to cancel', async () => {
 		const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 			[
 				{
 					id: wsId,
@@ -224,6 +228,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		cancelMock.mockRejectedValue(Object.assign(new Error('rate_limited'), { code: 'rate_limit' }))
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 			[
 				{
 					id: wsId,
@@ -256,6 +261,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		)
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 			[
 				{
 					id: wsId,

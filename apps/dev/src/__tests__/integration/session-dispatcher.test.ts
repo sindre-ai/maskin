@@ -171,6 +171,37 @@ describe('SessionDispatcher.dispatch — sticky retry Integration', () => {
 		expect(updated.status).toBe('running')
 	})
 
+	// A row that waited in the capacity queue keeps session_state='queued' until
+	// the drain really dispatches it; the dispatcher's write is what takes it to
+	// running, with the sandbox name as its containerId.
+	it('takes a drained queued row to session_state=running with a containerId', async () => {
+		await insertServer({ url: 'http://drain:3001', max: 10 })
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'queued',
+			containerId: null,
+			startedAt: null,
+		})
+
+		const dispatcher = new SessionDispatcher({
+			db,
+			buildStartRequest: async (sessionId) => ({
+				sessionId,
+				image: 'agent-base:latest',
+				env: { SESSION_ID: sessionId },
+			}),
+			clientFactory: () => makeClient(),
+		})
+
+		const result = await dispatcher.dispatch(session.id, `dispatch:${session.id}`)
+
+		expect(result).toEqual({ kind: 'dispatched' })
+		const [updated] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(updated.status).toBe('running')
+		expect(updated.sessionState).toBe('running')
+		expect(updated.containerId).toBe(`sb-${session.id}`)
+	})
+
 	/**
 	 * getStickyAssignment() must not honor a pin to a server the operator has
 	 * since taken out of rotation — a bare `agent_servers.id` lookup with no

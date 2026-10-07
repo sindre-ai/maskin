@@ -4,10 +4,14 @@ import { createApiError } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
+import { createAuthCaches, resolveAuthCacheTtlMs } from './auth-cache'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export function authMiddleware(db: Database) {
+export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = {}) {
+	// Per-instance caches (see auth-cache.ts for the revocation contract).
+	const caches = createAuthCaches(options.cacheTtlMs ?? resolveAuthCacheTtlMs())
+
 	return createMiddleware(async (c, next) => {
 		const authHeader = c.req.header('Authorization')
 		if (!authHeader?.startsWith('Bearer ')) {
@@ -26,7 +30,11 @@ export function authMiddleware(db: Database) {
 
 		// API key auth
 		if (token.startsWith('ank_')) {
-			const result = await validateApiKey(db, token)
+			const result = await caches.apiKeys.get(
+				token,
+				() => validateApiKey(db, token),
+				(value) => value !== null,
+			)
 			if (!result) {
 				return c.json(
 					createApiError(
@@ -49,17 +57,24 @@ export function authMiddleware(db: Database) {
 				if (!UUID_RE.test(workspaceId)) {
 					return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 				}
-				const [member] = await db
-					.select({ actorId: workspaceMembers.actorId })
-					.from(workspaceMembers)
-					.where(
-						and(
-							eq(workspaceMembers.actorId, result.actorId),
-							eq(workspaceMembers.workspaceId, workspaceId),
-						),
-					)
-					.limit(1)
-				if (!member) {
+				const isMember = await caches.memberships.get(
+					`${result.actorId}|${workspaceId}`,
+					async () => {
+						const [member] = await db
+							.select({ actorId: workspaceMembers.actorId })
+							.from(workspaceMembers)
+							.where(
+								and(
+									eq(workspaceMembers.actorId, result.actorId),
+									eq(workspaceMembers.workspaceId, workspaceId),
+								),
+							)
+							.limit(1)
+						return Boolean(member)
+					},
+					(value) => value,
+				)
+				if (!isMember) {
 					return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 				}
 			}

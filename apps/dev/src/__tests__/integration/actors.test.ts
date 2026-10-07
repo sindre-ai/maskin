@@ -54,6 +54,9 @@ describe('Actors Integration — GET /:id', () => {
 			.values(buildWorkspaceSkill({ workspaceId: ws.id, createdBy: getTestActorId() }))
 			.returning()
 		await db.insert(agentSkills).values({ actorId: agent.id, workspaceSkillId: skill.id })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
 
 		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
 		expect(res.status).toBe(200)
@@ -63,7 +66,11 @@ describe('Actors Integration — GET /:id', () => {
 
 	it('returns an empty skills array when no skills are attached', async () => {
 		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
 		const agent = await insertActor(db, { type: 'agent', name: 'Skill-less Agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
 
 		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
 		expect(res.status).toBe(200)
@@ -106,6 +113,160 @@ Never ship on a Friday.`
 			}),
 		)
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('Actors Integration — by-id routes are scoped to the caller workspaces', () => {
+	const fakeTools = {
+		mcpServers: { fake: { type: 'http', url: 'https://example.invalid/mcp' } },
+	}
+
+	async function seedAgentInWorkspaceOf(ownerId: string, callerRole?: 'member' | 'admin') {
+		const ws = await insertWorkspace(db, ownerId)
+		const agent = await insertActor(db, {
+			type: 'agent',
+			name: 'Scoped Agent',
+			systemPrompt: 'original prompt',
+			tools: { mcpServers: {} },
+			llmConfig: { model: 'original-model' },
+		})
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+		if (callerRole) {
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: getTestActorId(), role: callerRole })
+		}
+		return { ws, agent }
+	}
+
+	async function readAgent(id: string) {
+		const [row] = await db.select().from(actors).where(eq(actors.id, id))
+		return row
+	}
+
+	it('GET returns 404 for an agent that only lives in a workspace the caller is not in', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+
+		expect(res.status).toBe(404)
+	})
+
+	it('GET returns 404 when the header names a workspace the caller is in but the agent is not', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+		const mine = await insertWorkspace(db, getTestActorId())
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': mine.id }))
+
+		expect(res.status).toBe(404)
+	})
+
+	it('GET returns 200 for an agent in a shared workspace, with and without the header', async () => {
+		const app = createApp()
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId())
+
+		const bare = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		const headed = await app.request(
+			jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }),
+		)
+
+		expect(bare.status).toBe(200)
+		expect(headed.status).toBe(200)
+	})
+
+	it('PATCH returns 404 and leaves the row unchanged for an agent in a workspace the caller is not in', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+				system_prompt: 'changed prompt',
+				tools: fakeTools,
+				llm_config: { model: 'changed-model' },
+			}),
+		)
+
+		expect(res.status).toBe(404)
+		const row = await readAgent(agent.id)
+		expect(row.systemPrompt).toBe('original prompt')
+		expect(row.tools).toEqual({ mcpServers: {} })
+		expect(row.llmConfig).toEqual({ model: 'original-model' })
+	})
+
+	it('PATCH returns 403 and leaves tools and llm_config unchanged for a plain member of the shared workspace', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+
+		const toolsRes = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { tools: fakeTools }),
+		)
+		const llmRes = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { llm_config: { model: 'changed-model' } }),
+		)
+
+		expect(toolsRes.status).toBe(403)
+		expect(llmRes.status).toBe(403)
+		const row = await readAgent(agent.id)
+		expect(row.tools).toEqual({ mcpServers: {} })
+		expect(row.llmConfig).toEqual({ model: 'original-model' })
+	})
+
+	it('PATCH lets a plain member change the system prompt and description of the shared agent', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+				system_prompt: 'retuned prompt',
+				description: 'retuned description',
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const row = await readAgent(agent.id)
+		expect(row.systemPrompt).toBe('retuned prompt')
+		expect(row.description).toBe('retuned description')
+	})
+
+	it('PATCH lets an admin of the shared workspace change tools and llm_config', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'admin')
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+				tools: fakeTools,
+				llm_config: { model: 'changed-model' },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const row = await readAgent(agent.id)
+		expect(row.tools).toMatchObject(fakeTools)
+		expect(row.llmConfig).toEqual({ model: 'changed-model' })
+	})
+
+	it('PATCH refuses when the caller is admin in one workspace and only a member in the one the agent is in', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+		await insertWorkspace(db, getTestActorId()) // caller owns an unrelated workspace
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { tools: fakeTools }),
+		)
+
+		expect(res.status).toBe(403)
+		expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
 	})
 })
 

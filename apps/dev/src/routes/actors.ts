@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -47,7 +47,11 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	actorsShareWorkspace,
+	isAdminOfSharedWorkspace,
+	isWorkspaceMember,
+} from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
@@ -662,8 +666,13 @@ const getActorRoute = createRoute({
 
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
 
 	const [[actor], skills, [membership]] = await Promise.all([
 		db
@@ -736,6 +745,10 @@ const updateActorRoute = createRoute({
 			content: { 'application/json': { schema: actorResponseSchema } },
 			description: 'Actor updated',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller may not update this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -760,6 +773,10 @@ app.openapi(updateActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	if (existing.type === 'agent' && !(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
 	if (existing.type === 'human' && id !== actorId) {
 		if (!workspaceId) {
 			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
@@ -780,6 +797,23 @@ app.openapi(updateActorRoute, (async (c) => {
 		if (!(await isWorkspaceMember(db, id, workspaceId))) {
 			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 		}
+	}
+
+	// tools and llm_config decide what runs in the agent's sessions and with
+	// which credentials, so changing another actor's needs owner/admin.
+	// Prompt, description, name and memory stay open to workspace members.
+	if (
+		(body.tools !== undefined || body.llm_config !== undefined) &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				"Only workspace admins can change another actor's tools or llm_config",
+			),
+			403,
+		)
 	}
 
 	const [updated] = await db
@@ -834,6 +868,10 @@ const regenerateApiKeyRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ api_key: z.string() }) } },
 			description: 'API key regenerated',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -843,7 +881,12 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+
+	if (id !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Not allowed'), 403)
+	}
 
 	const { key } = generateApiKey()
 
@@ -856,6 +899,9 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
+
+	// The old key must stop authenticating now, not when its cached lookup expires.
+	evictActor(id)
 
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
@@ -1094,6 +1140,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
+	evictActor(id)
 
 	await recordEvent(db, {
 		workspaceId,

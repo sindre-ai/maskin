@@ -2837,6 +2837,49 @@ describe('stall detection wiring', () => {
 		expect(stallTracker.counts().undelivered).toBe(1)
 	})
 
+	it('queues a model switch as a control request without opening a pending turn', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-model', { interactive: true })
+
+		const res = await app.request('/sessions/sess-wire-model/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ model: 'deepseek/deepseek-v4-flash' }),
+		})
+		expect(res.status).toBe(200)
+
+		// Delivered to the CLI verbatim and in order with the turns around it.
+		const stream = await app.request('/sessions/sess-wire-model/input/stream')
+		const reader = stream.body?.getReader()
+		if (!reader) throw new Error('stream response has no body')
+		const first = await reader.read()
+		const framed = JSON.parse(new TextDecoder().decode(first.value))
+		const control = JSON.parse(framed.turn)
+		expect(control).toMatchObject({
+			type: 'control_request',
+			request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+		})
+		expect(typeof control.request_id).toBe('string')
+		await reader.cancel()
+
+		// Nothing is waiting on the CLI for a reply, so the stall tracker has no
+		// turn to count as undelivered however long this sits.
+		advance(120_000)
+		expect(stallTracker.counts().undelivered).toBe(0)
+	})
+
+	it('rejects a model switch whose model name is not a model name', async () => {
+		const { app } = setup()
+		for (const model of ['', 'a b', 'x"y', 42, null]) {
+			const res = await app.request('/sessions/sess-wire-model-bad/input', {
+				method: 'POST',
+				headers: auth,
+				body: JSON.stringify({ model }),
+			})
+			expect(res.status).toBe(400)
+		}
+	})
+
 	it('records the guest ack from the input stream, moving the session to no_output', async () => {
 		const { app, stallTracker, advance } = setup()
 		stallTracker.trackSession('sess-wire-2', { interactive: true })

@@ -1,4 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { evictMembership } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -72,7 +73,9 @@ const memberResponseSchema = z.object({
 
 const addMemberBodySchema = z.object({
 	actor_id: z.string().uuid(),
-	role: z.string().optional(),
+	// 'owner' is never grantable here; ownership moves through the dedicated
+	// transfer flow, not through add-member.
+	role: z.enum(['admin', 'member']).optional(),
 })
 
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
@@ -335,6 +338,10 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	// claude_oauth has its own locked, slot-aware, audited read-modify-write
 	// routes (POST /api/claude-oauth/import, DELETE /api/claude-oauth,
@@ -654,12 +661,17 @@ const addMemberRoute = createRoute({
 			description: 'Member added (or already a member — idempotent)',
 			content: { 'application/json': { schema: z.object({ added: z.boolean() }) } },
 		},
+		400: {
+			description: 'Invalid body (role must be admin or member)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: {
-			description: 'Caller is not a workspace member, or the workspace has reached its seat cap',
+			description:
+				'Caller is a member but not a human admin or owner, or the workspace has reached its seat cap',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace or actor not found',
+			description: 'Workspace not found, caller is not a member of it, or actor not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -671,8 +683,16 @@ app.openapi(addMemberRoute, (async (c) => {
 	const { id: workspaceId } = c.req.valid('param')
 	const { actor_id, role } = c.req.valid('json')
 
+	// Non-members get the same 404 as a missing workspace, so the response does
+	// not confirm the id exists. Members who are not human admins/owners get 403.
 	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
-		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human admin or owner can add workspace members'),
+			403,
+		)
 	}
 
 	const [targetActor] = await db
@@ -780,12 +800,21 @@ const listMembersRoute = createRoute({
 			description: 'List of members',
 			content: { 'application/json': { schema: z.array(memberResponseSchema) } },
 		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(listMembersRoute, async (c) => {
+app.openapi(listMembersRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	const members = await db
 		.select({
@@ -800,7 +829,7 @@ app.openapi(listMembersRoute, async (c) => {
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
-})
+}) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership
 const transferOwnershipRoute = createRoute({
@@ -1223,6 +1252,9 @@ app.openapi(removeMemberRoute, (async (c) => {
 				409,
 			)
 		case 'removed':
+			// Takes effect on the member's next request, not when its cached auth
+			// lookup expires.
+			evictMembership(targetActorId, workspaceId)
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

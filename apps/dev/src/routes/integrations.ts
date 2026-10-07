@@ -973,6 +973,7 @@ app.openapi(connectRoute, (async (c) => {
 		const rawBody = (await c.req.json().catch(() => ({}))) as {
 			api_key?: unknown
 			receive_subdomain?: unknown
+			expose_to_agent_sessions?: unknown
 		}
 		const resendApiKey =
 			typeof rawBody.api_key === 'string' && rawBody.api_key.trim().length > 0
@@ -981,6 +982,11 @@ app.openapi(connectRoute, (async (c) => {
 		const resendSubdomain =
 			typeof rawBody.receive_subdomain === 'string' && rawBody.receive_subdomain.trim().length > 0
 				? rawBody.receive_subdomain.trim()
+				: null
+		// Opt out of agent-session exposure at connect time; absent keeps the default (true).
+		const exposeToAgentSessions =
+			typeof rawBody.expose_to_agent_sessions === 'boolean'
+				? rawBody.expose_to_agent_sessions
 				: null
 
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
@@ -1058,6 +1064,7 @@ app.openapi(connectRoute, (async (c) => {
 
 			const resendConfig: IntegrationConfig = {
 				system_actor_id: systemActor.id,
+				...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
 				resend: {
 					receive_subdomain: resendSubdomain,
 					resend_domain_id: registration.resendDomainId,
@@ -1113,7 +1120,10 @@ app.openapi(connectRoute, (async (c) => {
 			})
 		}
 
-		const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
+		const activeConfig: IntegrationConfig = {
+			system_actor_id: systemActor.id,
+			...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
+		}
 
 		const [row] = await db
 			.insert(integrations)
@@ -1160,6 +1170,16 @@ app.openapi(connectRoute, (async (c) => {
 
 	const state = encodeState(statePayload)
 
+	// GitHub only: "install on another org". The authorize URL below lists just
+	// the installations the user already has, so an org without the App can never
+	// appear there. This sends them to the App's install page instead, carrying
+	// the same signed state, so the post-install callback matches the pending row
+	// minted below and handleCallback binds the new installation directly.
+	const installNewOrg =
+		providerName === 'github' &&
+		((await c.req.json().catch(() => ({}))) as { install_new_org?: boolean }).install_new_org ===
+			true
+
 	// Bind the state to *this* browser. `state` is a sealed envelope with no
 	// session binding, so on its own it authorizes whoever presents it — and the
 	// GitHub user-authorization endpoint returns without any prompt for a user
@@ -1191,7 +1211,6 @@ app.openapi(connectRoute, (async (c) => {
 			logger.info(`Re-used pending integration nonce for ${providerName}`, {
 				workspaceId,
 				actorId,
-				nonce,
 			})
 		} else {
 			throw err
@@ -1208,7 +1227,9 @@ app.openapi(connectRoute, (async (c) => {
 			// dynamic client registration). The pending nonce row inserted above is
 			// left in place on failure: it is keyed by a fresh nonce, is never matched
 			// by a callback, and is what lets the user simply hit Connect again.
-			installUrl = await resolved.customAuth.getInstallUrl(state, redirectUri)
+			installUrl = installNewOrg
+				? buildAppInstallUrl(state)
+				: await resolved.customAuth.getInstallUrl(state, redirectUri)
 		} catch (err) {
 			const upstream = err instanceof ProviderUnreachableError
 			logger.error(`Failed to build install URL for provider ${providerName}`, {
@@ -1803,6 +1824,87 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
+
+// ── PATCH /api/integrations/:id ───────────────────────────────────────
+// Only setting today: whether agent sessions receive this integration's token
+// and auto-inject MCP server. Stored as config.expose_to_agent_sessions and
+// merged into the existing config, so system_actor_id and provider keys stay.
+
+const updateIntegrationRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	tags: ['integrations'],
+	summary: 'Update integration settings',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						expose_to_agent_sessions: z
+							.boolean()
+							.describe(
+								'When false, agent sessions get neither this integration token nor its MCP server; server-side use of the credential is unaffected',
+							),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Integration updated',
+			content: { 'application/json': { schema: integrationResponseSchema } },
+		},
+		404: {
+			description: 'Integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateIntegrationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { expose_to_agent_sessions } = c.req.valid('json')
+
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	const nextConfig: IntegrationConfig = {
+		...((existing.config as IntegrationConfig | null) ?? {}),
+		expose_to_agent_sessions,
+	}
+
+	const updated = await db.transaction(async (tx) => {
+		const [row] = await tx
+			.update(integrations)
+			.set({ config: nextConfig, updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+			.returning()
+		await recordEvent(tx, {
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { expose_to_agent_sessions },
+		})
+		return row
+	})
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	// Never expose credentials
+	const { credentials: _credentials, ...safe } = updated
+	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
+}) as RouteHandler<typeof updateIntegrationRoute, Env>)
 
 // ── POST /api/integrations/:id/complete ─────────────────────────────────
 // Finishes a manual-auth handshake: the user pastes the provider-generated
@@ -3007,6 +3109,28 @@ webhookApp.post('/resend/:token', async (c) => {
 			})
 			.returning({ id: webhookDeliveries.id })
 		if (rows.length === 0) {
+			// Only ack a retry once the original has finished. If the claim is still
+			// unprocessed the first body-fetch is in flight and may yet fail and
+			// release it — a 2xx here would tell Resend the email was delivered and
+			// nothing would ever retry it. A non-2xx makes Resend retry again.
+			const [existing] = await db
+				.select({ processedAt: webhookDeliveries.processedAt })
+				.from(webhookDeliveries)
+				.where(
+					and(
+						eq(webhookDeliveries.provider, 'resend'),
+						eq(webhookDeliveries.externalId, emailId),
+						eq(webhookDeliveries.workspaceId, integration.workspaceId),
+					),
+				)
+				.limit(1)
+			if (!existing?.processedAt) {
+				logger.info('resend.dedupe.in_flight', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+				})
+				return c.json(createApiError('CONFLICT', 'Delivery still in flight — will retry'), 409)
+			}
 			logger.info('resend.dedupe.hit', {
 				email_id: emailId,
 				workspace_id: integration.workspaceId,

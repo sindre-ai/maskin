@@ -1328,6 +1328,88 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('buildLaunchSpec() — actor tools.envFrom (AGENT_SECRET_ only)', () => {
+		const FAKE_SECRET = 'fake-secret-value-for-test'
+		const FAKE_DB_URL = 'postgres://fake-db-url-for-test'
+
+		function launchWith(tools: unknown) {
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = {
+				id: session.actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+			mockResults.selectQueue = [[agent], [workspace], []]
+			return manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			vi.stubEnv('AGENT_SECRET_X', FAKE_SECRET)
+			vi.stubEnv('DATABASE_URL', FAKE_DB_URL)
+			vi.stubEnv('AGENT_SECRET_UNSET', undefined as unknown as string)
+		})
+
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it('copies a listed AGENT_SECRET_ name into the session env and leaves the header as a reference', async () => {
+			const spec = await launchWith({
+				envFrom: ['AGENT_SECRET_X'],
+				mcpServers: {
+					coolify: {
+						type: 'http',
+						url: 'https://example.test/mcp',
+						headers: { Authorization: 'Bearer ${AGENT_SECRET_X}' },
+					},
+				},
+			})
+
+			expect(spec.env.AGENT_SECRET_X).toBe(FAKE_SECRET)
+			// Expansion happens later, in-container (envsubst); the launch env keeps the reference.
+			expect(spec.env.AGENT_MCP_JSON).toContain('${AGENT_SECRET_X}')
+			expect(spec.env.AGENT_MCP_JSON).not.toContain(FAKE_SECRET)
+		})
+
+		it('never copies a listed name without the AGENT_SECRET_ prefix', async () => {
+			const spec = await launchWith({ envFrom: ['DATABASE_URL', 'AGENT_SECRET_X'] })
+
+			expect(spec.env).not.toHaveProperty('DATABASE_URL')
+			expect(Object.values(spec.env)).not.toContain(FAKE_DB_URL)
+			expect(spec.env.AGENT_SECRET_X).toBe(FAKE_SECRET)
+		})
+
+		it('skips an unset name with a log line naming it, never a value', async () => {
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			const spec = await launchWith({ envFrom: ['AGENT_SECRET_UNSET', 'AGENT_SECRET_X'] })
+
+			expect(spec.env).not.toHaveProperty('AGENT_SECRET_UNSET')
+			const warnCalls = warnSpy.mock.calls
+			const unsetCall = warnCalls.find(([msg]) => String(msg).includes('unset'))
+			expect(unsetCall?.[1]).toMatchObject({ names: ['AGENT_SECRET_UNSET'] })
+			expect(JSON.stringify(warnCalls)).not.toContain(FAKE_SECRET)
+			warnSpy.mockRestore()
+		})
+
+		it('adds no AGENT_SECRET_ vars for an actor without envFrom', async () => {
+			const spec = await launchWith(null)
+
+			expect(Object.keys(spec.env).filter((k) => k.startsWith('AGENT_SECRET_'))).toEqual([])
+		})
+	})
+
 	describe('buildLaunchSpec() — persists model_name + llm_route on maskin_plan dispatch', () => {
 		// Foundational task for the session-cost accounting bet: every maskin_plan
 		// session must land with `sessions.model_name` non-null (the OpenRouter
@@ -1669,6 +1751,44 @@ describe('SessionManager', () => {
 			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(2)
 			expect(mcpKeys).toContain('github-sindre-ai')
 			expect(mcpKeys).toContain('github-vaerksted-ai')
+		})
+
+		describe('auto-injected github-<owner> entries', () => {
+			const officialSpec = {
+				command: 'github-mcp-server',
+				args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+			}
+
+			it('emits the shared official spec with the entry name and token env unchanged', async () => {
+				const wsId = randomUUID()
+				const fixtures = buildLaunchFixtures([
+					buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-aaa',
+						config: { owner_login: 'Sindre-AI' },
+					}),
+				])
+				fixtures.session.workspaceId = wsId
+				fixtures.workspace.id = wsId
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, unknown>
+				}
+				const entries = Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-'))
+				expect(entries.map(([k]) => k)).toEqual(['github-sindre-ai'])
+				expect(entries[0]?.[1]).toEqual({
+					type: 'stdio',
+					...officialSpec,
+					env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
+				})
+			})
 		})
 
 		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
@@ -2015,6 +2135,73 @@ describe('SessionManager', () => {
 					: []
 				expect(mcpKeys).not.toContain('integration-posthog')
 			})
+		})
+
+		describe('expose_to_agent_sessions switch (Resend-shaped auto-inject provider)', () => {
+			const resendProviderConfig = {
+				config: {
+					name: 'resend',
+					mcp: {
+						envKey: 'RESEND_API_KEY',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: 'https://mcp.resend.com/mcp',
+							headers: { Authorization: 'Bearer ${RESEND_API_KEY}' },
+						},
+					},
+				},
+			}
+
+			const mcpKeysOf = (env: Record<string, string>) =>
+				env.MCP_SERVERS_JSON
+					? Object.keys((JSON.parse(env.MCP_SERVERS_JSON) as { mcpServers: object }).mcpServers)
+					: []
+
+			it('injects neither RESEND_API_KEY nor the Resend MCP server when the switch is false', async () => {
+				const integration = buildIntegration({
+					provider: 'resend',
+					config: { expose_to_agent_sessions: false },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(resendProviderConfig as never)
+				mockGetValidToken.mockResolvedValue('re_live_key')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.RESEND_API_KEY).toBeUndefined()
+				expect(mcpKeysOf(createArgs.env)).not.toContain('integration-resend')
+				// The credential is never even read for the session
+				expect(mockGetValidToken).not.toHaveBeenCalled()
+			})
+
+			it.each([
+				['absent', {}],
+				['true', { expose_to_agent_sessions: true }],
+			])(
+				'still injects both when the switch is %s (existing behaviour)',
+				async (_label, config) => {
+					const integration = buildIntegration({ provider: 'resend', config })
+					const fixtures = buildLaunchFixtures([integration])
+
+					vi.mocked(getProvider).mockReturnValue(resendProviderConfig as never)
+					mockGetValidToken.mockResolvedValueOnce('re_live_key')
+
+					setupLaunchMocks(fixtures)
+					await manager.startSession(fixtures.session.id)
+
+					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+						env: Record<string, string>
+					}
+					expect(createArgs.env.RESEND_API_KEY).toBe('re_live_key')
+					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
+				},
+			)
 		})
 
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
@@ -2621,12 +2808,11 @@ describe('SessionManager', () => {
 		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
 			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
-			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found". 2nd select: the stdout
-			// tail read for credit classification (also session_logs; empty means
-			// nothing to classify). 3rd select: the best-effort lookup used only to
-			// enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [], [session]]
+			// 1st select: the single stdout read from session_logs that serves both
+			// the usage parse and the credit classification — empty means "no usage
+			// found, nothing to classify". 2nd select: the best-effort lookup used
+			// only to enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -2643,15 +2829,16 @@ describe('SessionManager', () => {
 			)
 		})
 
-		it('still reaches a terminal state when the stdout tail read for classification throws', async () => {
-			// The tail read added for credit classification is best-effort: it runs
-			// before the CAS update, and stopSession() calls this method after the
-			// remote sandbox is already dead. A throw escaping here would surface
-			// as a spurious "stop failed" 400 for a stop that actually succeeded.
+		it('still reaches a terminal state when the stdout read for usage and classification throws', async () => {
+			// The stdout read (shared by usage parsing and credit classification) is
+			// best-effort: it runs before the CAS update, and stopSession() calls this
+			// method after the remote sandbox is already dead. A throw escaping here
+			// would surface as a spurious "stop failed" 400 for a stop that actually
+			// succeeded.
 			const session = buildSession({ status: 'running' })
 			mockResults.updateQueue = [[session], []]
-			// 1st select: usage extraction. 2nd select: the tail read, which throws.
-			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+			// 1st select: the stdout read, which throws.
+			mockResults.selectErrorQueue = [new Error('connection reset')]
 
 			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(true)
 
@@ -2729,12 +2916,11 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: usage extraction (empty = no-op). 2nd select: the stdout
-			// tail read for credit classification (also a no-op here; it swallows
-			// its own errors). 3rd select: the fallback lookup itself throws — the
-			// DB is still unreachable.
+			// 1st select: the stdout read for usage and credit classification (empty
+			// = no-op). 2nd select: the fallback lookup itself throws — the DB is
+			// still unreachable.
 			mockResults.selectQueue = [[]]
-			mockResults.selectErrorQueue = [undefined, undefined, new Error('connection reset')]
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
@@ -3055,6 +3241,36 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('setSessionModel()', () => {
+		it('writes a set_model control request to a local container and persists nothing', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			const events: unknown[] = []
+			manager.on('log', (e) => events.push(e))
+
+			await manager.setSessionModel(session.id, 'deepseek/deepseek-v4-flash')
+
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'control_request',
+				request_id: expect.any(String),
+				request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+			})
+			// A control message is not a turn: nothing in the transcript, no log event.
+			expect(events).toEqual([])
+		})
+
+		it('refuses a model name that is not one, before anything is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			await expect(manager.setSessionModel(session.id, 'bad name')).rejects.toThrow(
+				'Invalid model name',
+			)
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+	})
+
 	describe('resumeSession()', () => {
 		it('throws when session not paused', async () => {
 			const session = buildSession({ status: 'running' })
@@ -3342,10 +3558,10 @@ describe('SessionManager', () => {
 			expect(result).toBe(true)
 		})
 
-		it('uses the default cap of 3 when workspace has no max_concurrent_sessions setting', async () => {
+		it('uses the default cap of 10 when workspace has no max_concurrent_sessions setting', async () => {
 			mockResults.selectQueue = [
 				[{ settings: {} }], // workspace with no cap setting
-				[{ count: 3 }], // three sessions active = at default cap
+				[{ count: 10 }], // ten sessions active = at default cap
 			]
 
 			const result = await (

@@ -2,7 +2,9 @@ import { events, agentServers, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
-import { configureSessionLifecycle } from '../../services/session-lifecycle'
+import { logger } from '../../lib/logger'
+import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
+import { _driveToRunning, configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
@@ -397,8 +399,20 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		workspaceId = ws.id
 	})
 
-	async function tickReaper(): Promise<SessionManager> {
-		const manager = new SessionManager(db, stubStorage())
+	// Telemetry that records every runtime_session_ended it is asked to send.
+	function captureSessionEnded(): { telemetry: RuntimeTelemetry; endedFor: string[] } {
+		const endedFor: string[] = []
+		const client: TelemetryClient = {
+			capture(payload) {
+				if (payload.event === 'runtime_session_ended') endedFor.push(payload.distinctId)
+			},
+			shutdown: async () => {},
+		}
+		return { telemetry: new RuntimeTelemetry({ client }), endedFor }
+	}
+
+	async function tickReaper(telemetry?: RuntimeTelemetry): Promise<SessionManager> {
+		const manager = new SessionManager(db, stubStorage(), telemetry)
 		configureSessionLifecycle({ db, sessionManager: manager })
 		// The last runWatchdog section drains every workspace with queued rows;
 		// that path invokes real container/dispatcher machinery which is far out
@@ -542,6 +556,155 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		).toBe(true)
 	})
 
+	// (c2) A session whose status is already 'running' but whose session_state
+	// never advanced is alive, not boot-stalled. Regression for sessions failed
+	// as startup_stalled (~415s in 'starting') while their heartbeats still
+	// arrived: the reaper heals the state instead of settling the row.
+	it.each(['starting', 'queued'] as const)(
+		'a running row stuck in session_state=%s past BOOT_STALL_MS is healed to running, not failed',
+		async (staleState) => {
+			const sevenMinAgo = new Date(Date.now() - 7 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				sessionState: staleState,
+				stateEnteredAt: sevenMinAgo,
+				startedAt: sevenMinAgo,
+				containerId: 'sandbox-live',
+				timeoutAt: null,
+			})
+
+			const manager = await tickReaper()
+			try {
+				// no-op
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+			expect(row?.sessionState).toBe('running')
+			expect(row?.completedAt).toBeNull()
+
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+		},
+	)
+
+	// (c3) Boot-stall now stops the sandbox. The slot claim sets agent_server_id
+	// before any sandbox exists and container_id is written only after the
+	// launch returns, so a stalled remote row is stopped by session id even
+	// with no container_id. A row healed to running (c2) must never be stopped.
+	describe('boot-stall sandbox stop', () => {
+		async function insertStalledRemoteRow(status: 'starting' | 'running') {
+			await sql`TRUNCATE agent_servers CASCADE`
+			const server = await insertAgentServer()
+			const sevenMinAgo = new Date(Date.now() - 7 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status,
+				sessionState: 'starting',
+				stateEnteredAt: sevenMinAgo,
+				startedAt: sevenMinAgo,
+				agentServerId: server.id,
+				timeoutAt: null,
+			})
+			return { server, session }
+		}
+
+		async function tickWithStopResponse(respond: () => Response | Promise<Response>) {
+			const stopCalls: string[] = []
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+				const url = String(input)
+				if (url.endsWith('/stop')) {
+					stopCalls.push(url)
+					return respond()
+				}
+				return new Response('{}', { status: 200 })
+			})
+			const manager = await tickReaper()
+			try {
+				// no-op
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+			return stopCalls
+		}
+
+		const jsonResponse = (body: unknown, status = 200) =>
+			new Response(JSON.stringify(body), {
+				status,
+				headers: { 'content-type': 'application/json' },
+			})
+
+		it('a boot-stalled remote row calls the stop RPC once and ends failed/startup_stalled', async () => {
+			const { server, session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() =>
+				jsonResponse({ stopped: 'sandbox-stopped' }),
+			)
+
+			expect(stopCalls).toEqual([`${server.url}/sessions/${session.id}/stop`])
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+			expect(
+				(row?.result as { failure_reason?: { reason_code?: string } } | null)?.failure_reason
+					?.reason_code,
+			).toBe('startup_stalled')
+		})
+
+		it('sandbox-not-found still ends failed with no throw', async () => {
+			const { session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() =>
+				jsonResponse({ stopped: 'sandbox-not-found' }),
+			)
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+		})
+
+		it('a stop error (HTTP 500) still ends failed', async () => {
+			const { session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() => jsonResponse({ error: 'boom' }, 500))
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+		})
+
+		it('a stop that times out (abort) still ends failed', async () => {
+			const { session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() => {
+				throw new DOMException('The operation timed out.', 'TimeoutError')
+			})
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+		})
+
+		it('a running row stuck in starting is healed and its sandbox is never stopped', async () => {
+			const { session } = await insertStalledRemoteRow('running')
+
+			const stopCalls = await tickWithStopResponse(() =>
+				jsonResponse({ stopped: 'sandbox-stopped' }),
+			)
+
+			expect(stopCalls).toHaveLength(0)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+			expect(row?.sessionState).toBe('running')
+			expect(row?.completedAt).toBeNull()
+		})
+	})
+
 	// (d) A row in session_state='queued' past 2 minutes with a stale (or
 	// null) driver_heartbeat_at is re-fired via _driveToRunning() — proof
 	// that the reaper distinguishes a dead-driver rescue from a rightfully-
@@ -571,11 +734,11 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			manager as unknown as { drainQueue: (id: string) => Promise<void> },
 			'drainQueue',
 		).mockResolvedValue(undefined)
-		const driveSpy = vi
-			.spyOn(manager, 'startSession')
-			.mockImplementation(
-				async () => undefined as unknown as Awaited<ReturnType<SessionManager['startSession']>>,
-			)
+		// Stands in for a successful dispatch: the row leaves 'queued' the way the
+		// real startSession moves it to 'starting' once capacity is available.
+		const driveSpy = vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db.update(sessions).set({ status: 'starting' }).where(eq(sessions.id, id))
+		})
 
 		try {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -604,6 +767,165 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		// state is proof the driver actually re-fired (vs. the row being left
 		// stuck in 'queued', which would mean rescue silently no-op'd).
 		expect(['starting', 'running']).toContain(row?.sessionState)
+	})
+
+	// (d3) startSession returns normally when the workspace has no capacity: it
+	// only parks the row at status='queued'. _driveToRunning used to stamp
+	// session_state='running' on that return, so 10 min later idle-pause saw a
+	// containerless "running" row with a stale log line and failed it as
+	// "Container disappeared". The row must stay queued and survive the reaper.
+	it('a capacity-queued row stays queued past 10 min: the driver does not advance it and the reaper does not fail it', async () => {
+		const elevenMinAgo = new Date(Date.now() - 11 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'pending',
+			sessionState: 'queued',
+			stateEnteredAt: elevenMinAgo,
+			startedAt: null,
+			timeoutAt: null,
+			containerId: null,
+			interactive: false,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		// What the real startSession does with no capacity: mark queued, return.
+		vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db.update(sessions).set({ status: 'queued' }).where(eq(sessions.id, id))
+		})
+
+		try {
+			await _driveToRunning(session.id)
+			await insertSessionLog(db, session.id, {
+				stream: 'system',
+				content: 'Session queued — waiting for capacity',
+				createdAt: elevenMinAgo,
+			})
+
+			const [afterDrive] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(afterDrive?.status).toBe('queued')
+			expect(afterDrive?.sessionState).toBe('queued')
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('queued')
+		expect(row?.sessionState).toBe('queued')
+		expect(row?.completedAt).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (d4) The dispatch path still advances a row that startSession really
+	// started: the driver's running write is only skipped for a queued row.
+	it('a row that startSession dispatched is advanced to session_state=running', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'pending',
+			sessionState: 'queued',
+			startedAt: null,
+			timeoutAt: null,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db
+				.update(sessions)
+				.set({ status: 'running', containerId: 'sandbox-live', startedAt: new Date() })
+				.where(eq(sessions.id, id))
+		})
+
+		try {
+			await _driveToRunning(session.id)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('running')
+		expect(row?.sessionState).toBe('running')
+		expect(row?.containerId).toBe('sandbox-live')
+	})
+
+	// (d5) A running row that somehow has no containerId is still failed, but
+	// with a message that says no container was ever assigned instead of the
+	// misleading "Container disappeared".
+	it('a running row with no containerId is failed with a no-container-assigned message', async () => {
+		const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: twentyMinAgo,
+			startedAt: twentyMinAgo,
+			timeoutAt: null,
+			containerId: null,
+			interactive: false,
+		})
+
+		const manager = await tickReaper()
+		await manager.stop()
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		const error = (row?.result as { error?: string } | null)?.error ?? ''
+		expect(error).toMatch(/No container was ever assigned/)
+		expect(error).not.toMatch(/Container disappeared/)
+	})
+
+	// (d2) A failed row still stamped session_state='queued' with a stale
+	// heartbeat must not be re-fired by the queued rescue. The finished-rows
+	// heal moves it to 'done' first, and the rescue query filters on status.
+	it('a failed row stuck in session_state=queued is not rescued: no startSession, no Queued rescue warn', async () => {
+		const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'failed',
+			sessionState: 'queued',
+			stateEnteredAt: threeMinAgo,
+			driverHeartbeatAt: threeMinAgo,
+			startedAt: null,
+			timeoutAt: null,
+			completedAt: threeMinAgo,
+		})
+
+		const warnSpy = vi.spyOn(logger, 'warn')
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		const startSpy = vi
+			.spyOn(manager, 'startSession')
+			.mockImplementation(
+				async () => undefined as unknown as Awaited<ReturnType<SessionManager['startSession']>>,
+			)
+
+		let rescueWarned = true
+		try {
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			// _driveToRunning is fire-and-forget; give a wrongly re-fired driver
+			// time to reach startSession before asserting it never did.
+			await new Promise((r) => setTimeout(r, 200))
+			rescueWarned = warnSpy.mock.calls.some(([message]) =>
+				String(message).startsWith('Queued rescue'),
+			)
+		} finally {
+			await manager.stop()
+			warnSpy.mockRestore()
+		}
+
+		expect(startSpy).not.toHaveBeenCalled()
+		expect(rescueWarned).toBe(false)
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		expect(row?.sessionState).toBe('done')
 	})
 
 	// (e) A running row past the 2h wall-timeout is settled via settleSession
@@ -649,5 +971,319 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		expect((timeoutEvent?.data as { classification?: string } | null)?.classification).toBe(
 			'wall_timeout',
 		)
+	})
+
+	// (f) A row that already reached a terminal status but whose session_state
+	// was never stamped done (settleSession skipped its transaction on the
+	// already-terminal path) is healed to done by the first reaper step. It must
+	// never reach settleSession: no event, no status change. The 'running' case
+	// is also past the wall-timeout, so without the heal and the status filter
+	// step 1 would settle it again.
+	it.each(['starting', 'queued', 'running'] as const)(
+		'a completed row stuck in session_state=%s is healed to done and never reaches settle',
+		async (staleState) => {
+			const longAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'completed',
+				sessionState: staleState,
+				stateEnteredAt: longAgo,
+				startedAt: longAgo,
+				completedAt: longAgo,
+				timeoutAt: longAgo,
+			})
+
+			const manager = await tickReaper()
+			try {
+				// no-op
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.sessionState).toBe('done')
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows).toEqual([])
+		},
+	)
+
+	// (g) The boot-stall read must never settle a row that turned running after
+	// the heal step. The race is forced deterministically: step 8 awaits a
+	// PostHog capture (a fetch) on the waiting-too-long row, and that fetch flips
+	// the starting row to status running, between the heal and the boot-stall
+	// read.
+	it('a row that turns running after the heal is not failed by boot-stall', async () => {
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+		await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'queued',
+			sessionState: 'waiting_for_machine',
+			stateEnteredAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+			startedAt: null,
+			timeoutAt: null,
+		})
+
+		const originalKey = process.env.POSTHOG_API_KEY
+		process.env.POSTHOG_API_KEY = 'phc_test'
+		let captureCalls = 0
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			captureCalls++
+			await db.update(sessions).set({ status: 'running' }).where(eq(sessions.id, session.id))
+			return new Response('{}', { status: 200 })
+		})
+
+		const manager = await tickReaper()
+		try {
+			// no-op
+		} finally {
+			fetchSpy.mockRestore()
+			if (originalKey === undefined) Reflect.deleteProperty(process.env, 'POSTHOG_API_KEY')
+			else process.env.POSTHOG_API_KEY = originalKey
+			await manager.stop()
+		}
+
+		// The hook fired, so the row really turned running mid-pass.
+		expect(captureCalls).toBe(1)
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('running')
+		expect(row?.completedAt).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (g2) A failed session reports runtime_session_ended once, however many
+	// reaper passes follow. Before the terminal-row filters and the heal, a
+	// failed row kept session_state starting and every 60s pass redid it.
+	it('a boot-stalled session emits runtime_session_ended once across repeated passes', async () => {
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+		const { telemetry, endedFor } = captureSessionEnded()
+
+		for (let pass = 0; pass < 3; pass++) {
+			const manager = await tickReaper(telemetry)
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		expect(endedFor.filter((id) => id === session.id)).toEqual([session.id])
+	})
+
+	// (g3) The emit is tied to winning the terminal transition. The race is
+	// forced deterministically: the usage write that precedes the timeout settle
+	// also fails the row, as a concurrent writer would. The watchdog's settle
+	// then reports alreadySettled and must not emit.
+	it('a timed-out row another writer already failed does not emit runtime_session_ended', async () => {
+		const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: threeHoursAgo,
+			startedAt: threeHoursAgo,
+			timeoutAt: null,
+		})
+		const { telemetry, endedFor } = captureSessionEnded()
+
+		let raced = 0
+		const usageSpy = vi
+			.spyOn(
+				SessionManager.prototype as unknown as {
+					accumulateSessionUsage: (id: string) => Promise<unknown>
+				},
+				'accumulateSessionUsage',
+			)
+			.mockImplementation(async (id: string) => {
+				raced++
+				await db.update(sessions).set({ status: 'failed' }).where(eq(sessions.id, id))
+				return null
+			})
+
+		let manager: SessionManager | undefined
+		try {
+			manager = await tickReaper(telemetry)
+		} finally {
+			usageSpy.mockRestore()
+			await manager?.stop()
+		}
+
+		// The hook fired, so the row really went terminal between select and settle.
+		expect(raced).toBe(1)
+		expect(endedFor.filter((id) => id === session.id)).toEqual([])
+	})
+
+	// (h) One step throwing must not skip the steps after it. Step 1 throws on
+	// the wall-timed-out row; the boot-stalled row, handled by step 9, still
+	// settles.
+	it('a throw in one reaper step still lets later steps run', async () => {
+		const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+		await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: threeHoursAgo,
+			startedAt: threeHoursAgo,
+			timeoutAt: threeHoursAgo,
+		})
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const stalled = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		vi.spyOn(
+			manager as unknown as { accumulateSessionUsage: (id: string) => Promise<unknown> },
+			'accumulateSessionUsage',
+		).mockRejectedValue(new Error('step 1 boom'))
+		try {
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, stalled.id))
+		expect(row?.status).toBe('failed')
+		expect(row?.sessionState).toBe('done')
+	})
+
+	// (i) A tick that finds the previous pass still running is skipped.
+	it('a tick is skipped while the previous pass is still running', async () => {
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		let releasePrune: () => void = () => {}
+		const pruneSpy = vi
+			.spyOn(manager as unknown as { pruneSessionLogs: () => Promise<void> }, 'pruneSessionLogs')
+			.mockImplementation(
+				() =>
+					new Promise<void>((resolve) => {
+						releasePrune = resolve
+					}),
+			)
+		const tick = () => (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+		try {
+			const first = tick()
+			// Wait until the first pass is parked inside the prune step.
+			while (pruneSpy.mock.calls.length === 0) await new Promise((r) => setTimeout(r, 10))
+			await tick()
+			expect(pruneSpy).toHaveBeenCalledTimes(1)
+
+			releasePrune()
+			await first
+			// The flag is released once the pass ends, so the next tick runs.
+			const third = tick()
+			while (pruneSpy.mock.calls.length < 2) await new Promise((r) => setTimeout(r, 10))
+			releasePrune()
+			await third
+			expect(pruneSpy).toHaveBeenCalledTimes(2)
+		} finally {
+			await manager.stop()
+		}
+	})
+
+	it('heals at most one batch per pass and stops once the backlog is drained', async () => {
+		const statics = SessionManager as unknown as { TERMINAL_HEAL_BATCH: number }
+		const original = statics.TERMINAL_HEAL_BATCH
+		statics.TERMINAL_HEAL_BATCH = 2
+		try {
+			const rows = await Promise.all(
+				[1, 2, 3].map(() =>
+					insertSession(db, workspaceId, actorId, actorId, {
+						status: 'completed',
+						sessionState: 'starting',
+						stateEnteredAt: new Date(),
+						timeoutAt: null,
+					}),
+				),
+			)
+			const countDone = async () => {
+				const found = await db
+					.select({ sessionState: sessions.sessionState })
+					.from(sessions)
+					.where(eq(sessions.workspaceId, workspaceId))
+				expect(found).toHaveLength(rows.length)
+				return found.filter((r) => r.sessionState === 'done').length
+			}
+
+			const manager = new SessionManager(db, stubStorage())
+			configureSessionLifecycle({ db, sessionManager: manager })
+			vi.spyOn(
+				manager as unknown as { drainQueue: (id: string) => Promise<void> },
+				'drainQueue',
+			).mockResolvedValue(undefined)
+			const tick = () => (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			await tick()
+			expect(await countDone()).toBe(2)
+			await tick()
+			expect(await countDone()).toBe(3)
+
+			// Drained: the heal no longer runs, so it does not scan on every tick.
+			await sql`UPDATE sessions SET session_state = 'starting' WHERE id = ${rows[0].id}`
+			await tick()
+			expect(await countDone()).toBe(2)
+			await manager.stop()
+		} finally {
+			statics.TERMINAL_HEAL_BATCH = original
+		}
+	})
+
+	it('a pass that never settles stops blocking ticks once it is stale', async () => {
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		let release: () => void = () => {}
+		const passSpy = vi
+			.spyOn(manager as unknown as { runWatchdogPass: () => Promise<void> }, 'runWatchdogPass')
+			.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						release = resolve
+					}),
+			)
+			.mockResolvedValue(undefined)
+		const tick = () => (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+		const hung = tick()
+		await tick()
+		expect(passSpy).toHaveBeenCalledTimes(1)
+
+		// Pretend the hung pass started 10 minutes ago: the next tick must run.
+		;(manager as unknown as { watchdogStartedAt: number }).watchdogStartedAt =
+			Date.now() - 10 * 60 * 1000
+		await tick()
+		expect(passSpy).toHaveBeenCalledTimes(2)
+
+		// The hung pass finishing late must not clear a newer pass's flag.
+		// +1 so the newer pass can never share a millisecond with the hung one.
+		;(manager as unknown as { watchdogStartedAt: number }).watchdogStartedAt = Date.now() + 1
+		release()
+		await hung
+		expect(
+			(manager as unknown as { watchdogStartedAt: number | null }).watchdogStartedAt,
+		).not.toBeNull()
+		await manager.stop()
 	})
 })
