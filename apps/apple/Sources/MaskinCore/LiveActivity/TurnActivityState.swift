@@ -116,12 +116,14 @@ public struct LiveTurn: Equatable, Sendable {
 	/// come from `agentName`; an unresolved actor reads "Agent", never an id.
 	public static func turns(
 		from sessions: [ChatAgentSession], workspaceId: String, conversationId: String,
-		agentName: (String) -> String?, now: Date
+		agentName: (String) -> String?, now: Date, replyInFlight: Bool = true
 	) -> [LiveTurn] {
 		sessions.compactMap { session in
 			let status: TurnActivityStatus
 			switch session.status {
-			case .pending, .starting, .running: status = .running
+			// A chat session stays running between turns: once the reply has landed it is idle,
+			// so the card ends instead of hanging on "Working".
+			case .pending, .starting, .running: status = replyInFlight ? .running : .done
 			case .paused: status = .needsYou
 			case .completed: status = .done
 			case .failed, .timeout: status = .failed

@@ -73,6 +73,13 @@ struct LiveTurnTests {
 		#expect(turns.first?.state.agentName == "Forge")
 	}
 
+	@Test func aRunningChatSessionWithNoReplyOwedIsIdle() {
+		let turns = LiveTurn.turns(
+			from: [session("1", status: .running), session("2", status: .paused)], workspaceId: "ws",
+			conversationId: "c1", agentName: { _ in nil }, now: t0, replyInFlight: false)
+		#expect(turns.map(\.state.status) == [.done, .needsYou])
+	}
+
 	@Test func unresolvedAgentNeverShowsAnId() {
 		let turn = map([session("1", status: .running, actor: "9f1c-uuid")])[0]
 		#expect(turn.state.agentName == "Agent")
@@ -142,6 +149,26 @@ struct TurnActivityCoordinatorTests {
 		await coordinator.reconcile([turn("s1", .done)])
 		await coordinator.reconcile([turn("s1", .done)])  // already ended
 		#expect(host.log == ["start:s1:running", "update:s1:running", "end:s1:done:120"])
+	}
+
+	@Test func aChatSessionGetsAFreshCardForEachTurn() async {
+		let host = FakeHost()
+		let coordinator = TurnActivityCoordinator(host: host, tokens: FakeTokens())
+		await coordinator.reconcile([turn("s1", .running)])
+		await coordinator.reconcile([turn("s1", .done)])  // reply landed: session idle, card ends
+		await coordinator.reconcile([turn("s1", .done)])  // idle refresh re-arms the session
+		await coordinator.reconcile([turn("s1", .running)])  // next message: new card
+		#expect(host.log == ["start:s1:running", "end:s1:done:120", "start:s1:running"])
+	}
+
+	@Test func aCardTheServerEndedDoesNotComeBackWhileTheTurnIsStillRunning() async {
+		let host = FakeHost()
+		let coordinator = TurnActivityCoordinator(host: host, tokens: FakeTokens())
+		await coordinator.reconcile([turn("s1", .running)])
+		host.active = []
+		await coordinator.activityEnded(sessionId: "s1")
+		await coordinator.reconcile([turn("s1", .running)])
+		#expect(host.log == ["start:s1:running"])
 	}
 
 	@Test func failedLingersLongerThanDone() async {

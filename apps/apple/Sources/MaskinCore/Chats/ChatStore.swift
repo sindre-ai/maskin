@@ -224,6 +224,15 @@ public final class ChatStore {
 		return participants.filter { $0.kind == .agent && $0.id != currentActorID }
 	}
 
+	/// A reply is still owed: the user just sent something, or the newest message is not from an
+	/// agent. A chat session stays `running` between turns, so session status alone cannot say
+	/// whether a turn is in flight; the Live Activity uses this to end the card when the reply lands.
+	public var replyInFlight: Bool {
+		if awaitingReplySince != nil { return true }
+		guard let last = confirmed.last(where: { $0.kind == "message" }) else { return false }
+		return last.author != .agent
+	}
+
 	/// What a working agent is doing right now, when the session says.
 	public func activity(for agentID: String) -> String? {
 		liveSessions().first { $0.actorID == agentID }?.currentActivity.flatMap { $0.isEmpty ? nil : $0 }

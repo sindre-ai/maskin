@@ -65,8 +65,12 @@ public final class TurnActivityCoordinator {
 		for turn in turns {
 			let id = turn.identity.sessionId
 			let state = turn.state
-			guard !ended.contains(id) else { continue }
 			let tracked = existing.contains(id) || lastState[id] != nil
+			if ended.contains(id) {
+				// The turn is over; once it reads idle again the session may start a new card.
+				if state.status.isTerminal, !tracked { ended.remove(id) }
+				continue
+			}
 			if state.status.isTerminal {
 				guard tracked else { continue }
 				lastState[id] = nil

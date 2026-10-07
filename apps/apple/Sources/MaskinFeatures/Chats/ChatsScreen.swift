@@ -182,7 +182,7 @@ private struct ChatThreadHost: View {
 			let turns = LiveTurn.turns(
 				from: sessions, workspaceId: workspaceId, conversationId: conversationID,
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
-				now: Date())
+				now: Date(), replyInFlight: chat.replyInFlight)
 			Task { await coordinator.reconcile(turns) }
 		}
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
