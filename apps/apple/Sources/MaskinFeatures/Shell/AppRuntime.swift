@@ -3,8 +3,8 @@ import Observation
 import SwiftUI
 
 /// The signed-in app's long-lived state, created once by `RootView` and shared through the SwiftUI
-/// environment: the notification inbox, the deep-link router, the optional push registrar, and
-/// what the shell is presenting (selected tab, object sheet, inbox sheet, requested chat).
+/// environment: the deep-link router, the optional push registrar, and
+/// what the shell is presenting (selected tab, object sheet, requested chat).
 @MainActor
 @Observable
 public final class AppRuntime {
@@ -15,14 +15,19 @@ public final class AppRuntime {
 	}
 
 	public let environment: AppEnvironment
-	public let notifications: NotificationsStore
 	public let router: DeepLinkRouter
 	public let push: PushRegistrar?
 
-	var selectedTab: ShellTab = .forYou
+	/// The first time the person lands in Chats is the first moment the app asks about push
+	/// permission (see `requestPushPermission()`): by then they have seen what a conversation is.
+	var selectedTab: ShellTab = .forYou {
+		didSet {
+			if selectedTab == .chats, oldValue != .chats { Task { await requestPushPermission() } }
+		}
+	}
 
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
-	/// presentations requested in the same tick (an inbox tap that opens an object) replace each
+	/// presentations requested in the same tick (a tap that opens an object) replace each
 	/// other deterministically instead of racing, and the sheet can't outlive its workspace.
 	public enum Presentation: Identifiable, Equatable, Sendable {
 		case object(String)
@@ -32,7 +37,6 @@ public final class AppRuntime {
 		case files
 		case agents
 		case settings
-		case notifications
 
 		public var id: String {
 			switch self {
@@ -43,21 +47,12 @@ public final class AppRuntime {
 			case .files: "files"
 			case .agents: "agents"
 			case .settings: "settings"
-			case .notifications: "notifications"
 			}
 		}
 	}
 
-	/// The sheet currently requested. Asking for the inbox is the first moment the app asks about
-	/// push permission (see `requestPushPermission()`): by then the person has seen what a
-	/// notification is.
-	public var presentation: Presentation? {
-		didSet {
-			if presentation == .notifications, oldValue != .notifications {
-				Task { await requestPushPermission() }
-			}
-		}
-	}
+	/// The sheet currently requested.
+	public var presentation: Presentation?
 
 	// Per-sheet accessors over `presentation` (the surface existing callers and tests use).
 	public var presentedObject: ObjectPresentation? {
@@ -76,10 +71,6 @@ public final class AppRuntime {
 		get { presentation == .settings }
 		set { presentation = newValue ? .settings : clearing(.settings) }
 	}
-	public var showNotifications: Bool {
-		get { presentation == .notifications }
-		set { presentation = newValue ? .notifications : clearing(.notifications) }
-	}
 	public var showAgents: Bool {
 		get { presentation == .agents }
 		set { presentation = newValue ? .agents : clearing(.agents) }
@@ -93,13 +84,13 @@ public final class AppRuntime {
 		set { presentation = newValue ? .search : clearing(.search) }
 	}
 
-	private enum Kind { case object, agent, file, files, agents, settings, notifications, search }
+	private enum Kind { case object, agent, file, files, agents, settings, search }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
 		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
-			(.notifications, .notifications), (.search, .search), (.files, .files), (.agents, .agents):
+			(.search, .search), (.files, .files), (.agents, .agents):
 			return nil
 		default:
 			return presentation
@@ -142,13 +133,12 @@ public final class AppRuntime {
 
 	public init(
 		environment: AppEnvironment, push: PushRegistrar? = nil,
-		notifications: NotificationsStore? = nil, router: DeepLinkRouter? = nil,
+		router: DeepLinkRouter? = nil,
 		signOutTimeout: Duration = .seconds(3), forYouDirectory: URL? = nil
 	) {
 		self.forYouDirectory = forYouDirectory
 		self.environment = environment
 		self.push = push
-		self.notifications = notifications ?? NotificationsStore(environment: environment)
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
 	}
@@ -178,7 +168,7 @@ public final class AppRuntime {
 
 	// MARK: Workspace sync
 
-	/// What `RootView` keys its sync task on: any change re-points the inbox and gives a held
+	/// What `RootView` keys its sync task on: any change re-points the shell and gives a held
 	/// deep link another chance (the workspace list may just have loaded, or the user just
 	/// signed in).
 	struct SyncKey: Hashable {
@@ -200,7 +190,7 @@ public final class AppRuntime {
 			return
 		}
 		// Anything open (an object, an agent, a file, a thread) belongs to the OLD workspace and
-		// would fetch with the new one's header and 404. Settings and the inbox are workspace
+		// would fetch with the new one's header and 404. Settings is workspace
 		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
 		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
 			switch presentation {
@@ -210,7 +200,6 @@ public final class AppRuntime {
 			requestedConversationId = nil
 		}
 		lastSyncedWorkspaceId = environment.workspaceId
-		notifications.activate(workspaceId: environment.workspaceId, events: environment.events)
 		// Start the chat runtime now (not when the Chats tab first appears) so messages queued
 		// offline, or before the app was last killed, replay as soon as the user is signed in.
 		_ = ChatsRuntime.shared(environment: environment)
@@ -265,8 +254,6 @@ public final class AppRuntime {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
 		stopSyncCoordinator()
-		notifications.stop()
-		notifications.reset()
 		router.reset()
 		environment.workspaces.reset()
 		environment.events.disconnect()
@@ -284,7 +271,7 @@ public final class AppRuntime {
 	}
 
 	/// Ask for notification permission (the OS prompt shows only while undecided; a denied user is
-	/// never re-prompted). Called when the inbox first opens, and available to a settings screen
+	/// never re-prompted). Called when Chats first opens, and available to a settings screen
 	/// or an explicit "turn on notifications" prompt. Not called at sign-in: asking before the
 	/// person has seen a single notification gets reflexively denied, and a denial is permanent.
 	public func requestPushPermission() async {
@@ -311,7 +298,7 @@ public final class AppRuntime {
 	}
 
 	/// Where each kind of link lands. Objects open in a sheet (own navigation stack) over the
-	/// current tab; chats select the Chats tab and request the thread; the inbox opens as a sheet.
+	/// current tab; chats select the Chats tab and request the thread; the old inbox link lands on For You.
 	public func present(_ link: DeepLink) {
 		switch link {
 		case .object(_, let id):
@@ -321,7 +308,9 @@ public final class AppRuntime {
 			selectedTab = .chats
 			requestedConversationId = id
 		case .notifications:
-			presentation = .notifications
+			// The old inbox link: its replacement is the For You tab.
+			presentation = nil
+			selectedTab = .forYou
 		}
 	}
 
@@ -364,7 +353,7 @@ public final class AppRuntime {
 	/// 3. discard the user's persisted outbox and cached For You runtime, so queued writes from
 	///    this account can never replay as another (deleted by path, so it goes even if the
 ///    feed never opened this launch),
-	/// 4. reset the inbox, router and presentation state, and clear the icon badge.
+	/// 4. reset the router and presentation state, and clear the icon badge.
 	public func signOut() async {
 		guard !isSigningOut else { return }
 		isSigningOut = true
@@ -381,8 +370,6 @@ public final class AppRuntime {
 		ForYouRuntime.deletePersistedOutbox(actorId: actorId, directory: forYouDirectory)
 		// Queued chat messages belong to this account and must never replay as another.
 		ChatsRuntime.signOut(actorId: actorId)
-		notifications.stop()
-		notifications.reset()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
@@ -391,7 +378,7 @@ public final class AppRuntime {
 		SearchRecents.clearAll()
 		FileStore.clearExports()
 		stopSyncCoordinator()
-		// The cached copy of this account's data (feed, objects, inbox...) goes with the session.
+		// The cached copy of this account's data (feed, objects...) goes with the session.
 		DiskCache.clearAll()
 		push?.setBadge(0)
 	}

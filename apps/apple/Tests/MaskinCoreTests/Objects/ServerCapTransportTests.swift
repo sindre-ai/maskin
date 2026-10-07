@@ -60,18 +60,4 @@ struct ServerCapTransportTests {
 		_ = try await remote.list(ObjectsQuery(limit: 500))
 		#expect(transport.seen.compactMap { $0.query["limit"].flatMap(Int.init) }.allSatisfy { $0 <= 100 })
 	}
-
-	@Test("APINotificationsSource.actors chunks 250 ids into requests of at most 100")
-	func notificationActors() async throws {
-		let transport = CapTransport()
-		let source = APINotificationsSource(client: makeClient(transport)) { "ws" }
-		let ids = (0..<250).map { _ in UUID().uuidString }
-		_ = try await source.actors(ids: ids)
-		let requests = transport.seen.filter { $0.path.hasSuffix("/actors") }
-		#expect(requests.count == 3)
-		#expect(requests.allSatisfy { Int($0.query["limit"] ?? "") ?? 999 <= 100 })
-		let sent = requests.flatMap { ($0.query["ids"] ?? "").split(separator: ",") }
-		#expect(sent.count == 250)
-		#expect(requests.allSatisfy { ($0.query["ids"] ?? "").split(separator: ",").count <= 100 })
-	}
 }

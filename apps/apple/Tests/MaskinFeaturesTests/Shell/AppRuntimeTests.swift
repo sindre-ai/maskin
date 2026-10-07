@@ -6,19 +6,6 @@ import Testing
 
 // MARK: - Fakes
 
-private struct StubSource: NotificationsSource {
-	var rows: [AppNotification] = []
-	func list() async throws -> [AppNotification] { rows }
-	func setStatus(id: String, status: AppNotification.Status) async throws -> AppNotification {
-		throw NotificationsError("unused")
-	}
-	func delete(id: String) async throws {}
-	func respond(id: String, response: JSONValue) async throws -> AppNotification {
-		throw NotificationsError("unused")
-	}
-	func actors(ids: [String]) async throws -> [NotificationActor] { [] }
-}
-
 private final class FakeSystem: PushSystem, @unchecked Sendable {
 	var badges: [Int] = []
 	var permission: PushPermission = .authorized
@@ -55,19 +42,13 @@ private final class FakeDevices: DeviceRegistering, @unchecked Sendable {
 	}
 }
 
-private func unread(_ id: String) -> AppNotification {
-	AppNotification(id: id, workspaceId: "ws-1", kind: .alert, title: "T", sourceActorId: "a")
-}
-
 @MainActor
 private func makeRuntime(
-	signedIn: Bool = true, push: PushRegistrar? = nil, rows: [AppNotification] = []
+	signedIn: Bool = true, push: PushRegistrar? = nil
 ) async -> (AppRuntime, AppEnvironment) {
 	let environment = AppEnvironment.preview(signedIn: signedIn)
 	await environment.workspaces.refresh()
-	let store = NotificationsStore(
-		source: StubSource(rows: rows), currentActorId: { environment.auth.session?.actorId })
-	return (AppRuntime(environment: environment, push: push, notifications: store), environment)
+	return (AppRuntime(environment: environment, push: push), environment)
 }
 
 // MARK: - Deep links
@@ -93,11 +74,13 @@ struct AppRuntimeDeepLinkTests {
 		#expect(runtime.presentedObject == nil)
 	}
 
-	@Test("a notifications link opens the inbox")
+	@Test("a notifications link lands on For You")
 	func inboxLink() async {
 		let (runtime, _) = await makeRuntime()
+		runtime.selectedTab = .chats
 		runtime.open(URL(string: "maskin://ws-1/notifications")!)
-		#expect(runtime.showNotifications)
+		#expect(runtime.selectedTab == .forYou)
+		#expect(runtime.presentation == nil)
 	}
 
 	@Test("a link into another workspace you belong to switches first, then opens")
@@ -134,7 +117,6 @@ struct AppRuntimeDeepLinkTests {
 		#expect(!accepted)
 		#expect(runtime.presentedObject == nil)
 		#expect(runtime.requestedConversationId == nil)
-		#expect(!runtime.showNotifications)
 		#expect(environment.workspaceId == "ws-1")
 		#expect(runtime.router.rejection == .unrecognized)
 	}
@@ -142,9 +124,7 @@ struct AppRuntimeDeepLinkTests {
 	@Test("a link that arrives before the workspace list loads waits for it")
 	func heldUntilWorkspacesLoad() async {
 		let environment = AppEnvironment.preview()
-		let runtime = AppRuntime(
-			environment: environment,
-			notifications: NotificationsStore(source: StubSource(), currentActorId: { nil }))
+		let runtime = AppRuntime(environment: environment)
 		runtime.open(URL(string: "maskin://ws-2/objects/obj-1")!)
 		#expect(runtime.presentedObject == nil)
 
@@ -161,18 +141,16 @@ struct AppRuntimeDeepLinkTests {
 @MainActor
 @Suite("AppRuntime badge")
 struct AppRuntimeBadgeTests {
-	@Test("the app icon stays clear even with unread notifications")
+	@Test("the app icon carries no badge")
 	func badge() async {
 		let system = FakeSystem()
 		let devices = FakeDevices { true }
 		let push = PushRegistrar(
 			system: system, devices: devices, environment: .sandbox, platform: .ios,
 			pendingStore: InMemoryPendingUnregisterStore())
-		let (runtime, _) = await makeRuntime(push: push, rows: [unread("1"), unread("2")])
-		await runtime.notifications.reload()
+		let (runtime, _) = await makeRuntime(push: push)
 		runtime.updateBadge()
 		#expect(system.badges.last == 0)
-		#expect(runtime.notifications.unreadCount == 2)
 	}
 }
 
@@ -181,7 +159,7 @@ struct AppRuntimeBadgeTests {
 @MainActor
 @Suite("AppRuntime push permission")
 struct AppRuntimePushPermissionTests {
-	@Test("signing in does not prompt; opening the inbox does")
+	@Test("signing in does not prompt; opening Chats does")
 	func promptDeferredToInbox() async {
 		let system = FakeSystem()
 		system.permission = .notDetermined
@@ -220,15 +198,11 @@ struct AppRuntimeSignOutTests {
 			pendingStore: InMemoryPendingUnregisterStore())
 		await push.actorChanged("actor-1")
 		await push.didReceive(deviceToken: Data(repeating: 1, count: 32))
-		let store = NotificationsStore(
-			source: StubSource(rows: [unread("1")]), currentActorId: { "actor-1" })
 		let dir = tempDirectory()
 		let runtime = AppRuntime(
-			environment: environment, push: push, notifications: store, forYouDirectory: dir)
-		await store.reload()
-		#expect(store.unreadCount == 1)
+			environment: environment, push: push, forYouDirectory: dir)
 		runtime.open(URL(string: "maskin://ws-1/objects/o")!)
-		runtime.showNotifications = true
+		runtime.presentation = .settings
 
 		let queue = runtime.forYou
 		try queue.outbox.enqueue(
@@ -242,10 +216,9 @@ struct AppRuntimeSignOutTests {
 		#expect(environment.auth.session == nil)
 		#expect(!FileManager.default.fileExists(atPath: file.path), "queued writes are deleted")
 		#expect(queue.outbox.entries.isEmpty)
-		#expect(store.notifications.isEmpty)
 		#expect(runtime.router.pending == nil && runtime.router.incoming == nil)
 		#expect(runtime.presentedObject == nil)
-		#expect(!runtime.showNotifications)
+		#expect(runtime.presentation == nil)
 		#expect(system.badges.last == 0)
 		#expect(!runtime.isSigningOut)
 	}
@@ -259,7 +232,6 @@ struct AppRuntimeSignOutTests {
 		try Data("{}".utf8).write(to: file)
 		let runtime = AppRuntime(
 			environment: environment,
-			notifications: NotificationsStore(source: StubSource(), currentActorId: { nil }),
 			forYouDirectory: dir)
 
 		await runtime.signOut()
@@ -273,7 +245,6 @@ struct AppRuntimeSignOutTests {
 		let dir = tempDirectory()
 		let runtime = AppRuntime(
 			environment: environment,
-			notifications: NotificationsStore(source: StubSource(), currentActorId: { nil }),
 			forYouDirectory: dir)
 		let queue = runtime.forYou
 		try queue.outbox.enqueue(
@@ -309,8 +280,7 @@ struct AppRuntimeSignOutTests {
 				baseURL: preview.baseURL, clientSource: "test", auth: auth,
 				workspaces: WorkspaceStore(source: StaticWorkspaceSource([]), auth: auth),
 				client: preview.client, events: EventHub(client: nil))
-			let notes = NotificationsStore(source: StubSource(), currentActorId: { nil })
-			let runtime = AppRuntime(environment: environment, notifications: notes, forYouDirectory: dir)
+			let runtime = AppRuntime(environment: environment, forYouDirectory: dir)
 			try runtime.forYou.outbox.enqueue(
 				kind: "decision.reply", lane: "o", summary: "Reply", payload: "hi", holdFor: 3600)
 			let file = ForYouRuntime.outboxFileURL(actorId: "actor-1", directory: dir)
@@ -328,7 +298,7 @@ struct AppRuntimeSignOutTests {
 				baseURL: preview.baseURL, clientSource: "test", auth: again,
 				workspaces: WorkspaceStore(source: StaticWorkspaceSource([]), auth: again),
 				client: preview.client, events: EventHub(client: nil))
-			let runtime2 = AppRuntime(environment: env2, notifications: notes, forYouDirectory: dir)
+			let runtime2 = AppRuntime(environment: env2, forYouDirectory: dir)
 			let resumed = runtime2.forYou
 
 			#expect((resumed.outbox.entries.count == 1) == survives)
@@ -344,7 +314,6 @@ struct AppRuntimeSignOutTests {
 		let dir = tempDirectory()
 		let runtime = AppRuntime(
 			environment: environment,
-			notifications: NotificationsStore(source: StubSource(), currentActorId: { nil }),
 			forYouDirectory: dir)
 		let a = runtime.forYou
 		let b = runtime.forYou
@@ -358,7 +327,6 @@ struct AppRuntimeSignOutTests {
 		let environment = AppEnvironment.preview()
 		let runtime = AppRuntime(
 			environment: environment,
-			notifications: NotificationsStore(source: StubSource(), currentActorId: { nil }),
 			forYouDirectory: tempDirectory())
 		#expect(runtime.forYou === runtime.forYou)
 	}
@@ -376,7 +344,6 @@ struct AppRuntimeSignOutTests {
 		await push.didReceive(deviceToken: Data(repeating: 2, count: 32))
 		let runtime = AppRuntime(
 			environment: environment, push: push,
-			notifications: NotificationsStore(source: StubSource(), currentActorId: { nil }),
 			signOutTimeout: .milliseconds(50))
 
 		await runtime.signOut()
@@ -497,10 +464,10 @@ struct AppRuntimePresentationTests {
 	@Test("a second presentation replaces the first instead of stacking")
 	func replaces() async {
 		let (runtime, _) = await makeRuntime()
-		runtime.showNotifications = true
-		runtime.openObject("obj-1")  // an inbox tap opening an object, in the same tick
+		runtime.showSettings = true
+		runtime.openObject("obj-1")  // a sheet action opening an object, in the same tick
 		#expect(runtime.presentation == .object("obj-1"))
-		#expect(runtime.showNotifications == false)
+		#expect(runtime.showSettings == false)
 	}
 
 	@Test("closing a sheet that was already replaced does not close its replacement")

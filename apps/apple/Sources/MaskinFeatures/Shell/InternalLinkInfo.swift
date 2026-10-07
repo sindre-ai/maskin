@@ -16,7 +16,7 @@ extension InternalLinkDirectory {
 		case .chat:
 			return MarkdownLinkInfo(symbol: "bubble.left", kindLabel: "Chat")
 		case .notifications:
-			return MarkdownLinkInfo(symbol: "bell", kindLabel: "Inbox")
+			return MarkdownLinkInfo(symbol: "sparkles", kindLabel: "For you")
 		}
 	}
 

@@ -21,7 +21,6 @@ spinners on a repeat launch, no blank screen offline, and a failed refresh never
 | `ForYouStore` | `foryou.feed` | actor + workspace | up to 100 cards + sender names | decisions in flight, the daily brief |
 | `ObjectsStore` | `objects.list` | actor + workspace | the UNFILTERED first page (<= 50) | filtered/searched lists, later pages |
 | `ObjectDetailStore` | `object.<id>` | actor + workspace | the object and its links | activity stream (comment text) |
-| `NotificationsStore` | `notifications.inbox` | actor + workspace | up to 200 rows + sender names | in-flight mutations |
 | `LoopsStore` | `loops.list` | actor + workspace | loops + the names their rows show | steps, activity, install flags |
 | `TriggersStore` | `triggers.list` | actor + workspace | triggers + agent names | |
 | `AgentsStore` | `agents.list` | actor + workspace | agent summaries with latest session | agent detail, session logs |

@@ -89,19 +89,13 @@ struct MoreScreen: View {
 	/// The destinations that don't have a tab of their own.
 	private var placesCard: some View {
 		VStack(spacing: 0) {
-			MoreRow(
-				title: "Notifications", symbol: "bell",
-				tint: MaskinColor.accentTint, tone: MaskinColor.accentFgStrong,
-				badge: runtime.notifications.unreadCount
-			) { runtime.showNotifications = true }
 			if sizeClass == .compact {
-				separator()
 				MoreRow(
 					title: "Agents", symbol: "person.2",
 					tint: MaskinColor.agentRelayTint, tone: MaskinColor.agentRelayFg
 				) { runtime.showAgents = true }
+				separator()
 			}
-			separator()
 			MoreRow(
 				title: "Files", symbol: "doc.text",
 				tint: MaskinColor.infoTint, tone: MaskinColor.infoStrong

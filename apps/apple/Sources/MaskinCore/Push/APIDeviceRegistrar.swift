@@ -34,3 +34,9 @@ public struct APIDeviceRegistrar: DeviceRegistering {
 		}
 	}
 }
+
+/// What the push registration calls throw when the server or network refuses.
+public struct NotificationsError: Error, Equatable, Sendable {
+	public var message: String
+	public init(_ message: String) { self.message = message }
+}

@@ -3,31 +3,23 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// What needs the user right now: unread notifications and open decisions, newest first.
+/// What needs the user right now: open decisions and unread mentions from For You, newest first.
 struct GlanceInbox<Extra: View>: View {
 	let environment: AppEnvironment
-	let store: NotificationsStore
+	let store: ForYouStore?
 	@ViewBuilder let extra: () -> Extra
 
-	private var items: [AppNotification] {
-		store.notifications.filter { $0.isUnread || $0.canRespond }
+	private var items: [FeedEntry] {
+		(store?.entries ?? []).filter { $0.bucket == .needs || $0.bucket == .fyi }
 	}
 
 	var body: some View {
 		NavigationStack {
 			List {
-				if store.phase == .loading && store.isEmpty {
-					LoadingSkeleton(rows: 3)
-				} else if case .failed(let message) = store.phase, store.isEmpty {
-					EmptyState(symbol: "wifi.exclamationmark", title: "Can't load", message: message) {
-						Button("Retry") { Task { await store.reload() } }
-					}
-				} else if items.isEmpty {
-					EmptyState(symbol: "checkmark.circle", title: "All caught up", message: "Nothing needs you.")
+				if let store {
+					feed(store)
 				} else {
-					ForEach(items) { n in
-						NavigationLink(value: n.id) { GlanceRow(notification: n) }
-					}
+					LoadingSkeleton(rows: 3)
 				}
 				extra()
 				Section(environment.workspaces.selected?.name ?? "Account") {
@@ -36,7 +28,24 @@ struct GlanceInbox<Extra: View>: View {
 			}
 			.navigationTitle(title)
 			.navigationDestination(for: String.self) { id in
-				GlanceDetail(store: store, id: id)
+				if let store { GlanceDetail(store: store, id: id) }
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func feed(_ store: ForYouStore) -> some View {
+		if store.phase == .loading && store.cards.isEmpty {
+			LoadingSkeleton(rows: 3)
+		} else if case .failed(let message) = store.phase, store.cards.isEmpty {
+			EmptyState(symbol: "wifi.exclamationmark", title: "Can't load", message: message) {
+				Button("Retry") { Task { await store.load() } }
+			}
+		} else if items.isEmpty {
+			EmptyState(symbol: "checkmark.circle", title: "All caught up", message: "Nothing needs you.")
+		} else {
+			ForEach(items) { entry in
+				NavigationLink(value: entry.id) { GlanceRow(card: entry.card) }
 			}
 		}
 	}
@@ -48,18 +57,20 @@ struct GlanceInbox<Extra: View>: View {
 }
 
 struct GlanceRow: View {
-	let notification: AppNotification
+	let card: ForYouCard
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			HStack(spacing: MaskinSpace.s3) {
-				Image(systemName: notification.kind.symbol)
-					.foregroundStyle(notification.kind.tint)
-				RelativeTime(notification.createdAt)
-					.font(.caption2)
-					.foregroundStyle(MaskinColor.ink4)
+				Image(systemName: card.kind.symbol)
+					.foregroundStyle(card.kind.tint)
+				if let when = card.latestActivityAt {
+					RelativeTime(when)
+						.font(.caption2)
+						.foregroundStyle(MaskinColor.ink4)
+				}
 			}
-			Text(notification.title)
+			Text(card.headline)
 				.font(.headline)
 				.lineLimit(3)
 		}
@@ -67,79 +78,84 @@ struct GlanceRow: View {
 	}
 }
 
-/// One notification: its text and, for a decision, a button per option and (when the agent asked
-/// for words) a text reply. Answering is the same optimistic `NotificationsStore.respond` the phone
-/// uses. A destructive option asks first, as on the phone: one stray tap on a wrist must not send
-/// something that can't be undone.
+/// One card: its text and, for a decision, a button per option and a text reply. Answering is the
+/// same optimistic `ForYouStore.choose`/`reply` the phone uses. A destructive option asks first, as
+/// on the phone: one stray tap on a wrist must not send something that can't be undone.
 struct GlanceDetail: View {
-	let store: NotificationsStore
+	let store: ForYouStore
 	let id: String
 	@Environment(\.dismiss) private var dismiss
-	@State private var pendingDestructive: AppNotification.Action?
+	@State private var pendingDestructive: DecisionOption?
 	@State private var reply = ""
 
-	/// Sends `response` and leaves, but only when it went through: a refusal reverts the row and
-	/// leaves `actionError`, which this screen must still be showing.
-	private func send(_ response: JSONValue, for n: AppNotification) {
-		Task {
-			await store.respond(to: n.id, with: response)
-			if GlanceAnswer.shouldDismiss(actionError: store.actionError) { dismiss() }
-		}
+	private var card: ForYouCard? { store.entries.first { $0.id == id }?.card }
+
+	private func choose(_ option: DecisionOption, on card: ForYouCard) {
+		store.choose(option, on: card)
+		dismiss()
+	}
+
+	private func send(_ text: String, on card: ForYouCard) {
+		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return }
+		store.reply(trimmed, on: card)
+		dismiss()
 	}
 
 	@ViewBuilder
-	private func answerButton(_ action: AppNotification.Action, for n: AppNotification) -> some View {
-		let button = Button(action.label) {
-			switch GlanceAnswer.step(for: action) {
-			case .send(let response): send(response, for: n)
-			case .confirm(let action): pendingDestructive = action
-			}
+	private func optionButton(_ option: DecisionOption, on card: ForYouCard) -> some View {
+		let button = Button(option.label) {
+			if option.destructive { pendingDestructive = option } else { choose(option, on: card) }
 		}
-		switch action.style {
-		case .primary: button.buttonStyle(PrimaryActionButtonStyle())
-		case .secondary: button.buttonStyle(SecondaryActionButtonStyle())
-		case .destructive: button.buttonStyle(SecondaryActionButtonStyle()).tint(MaskinColor.danger)
+		if option.recommended {
+			button.buttonStyle(PrimaryActionButtonStyle())
+		} else if option.destructive {
+			button.buttonStyle(SecondaryActionButtonStyle()).tint(MaskinColor.danger)
+		} else {
+			button.buttonStyle(SecondaryActionButtonStyle())
 		}
 	}
 
 	var body: some View {
-		if let n = store.notifications.first(where: { $0.id == id }) {
+		if let card {
 			ScrollView {
 				VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-					Text(n.title).font(.headline)
-					if let content = n.content, !content.isEmpty {
-						Text(content).font(.footnote).foregroundStyle(MaskinColor.ink3)
+					Text(card.headline).font(.headline)
+					if let summary = card.decision?.summary, !summary.isEmpty {
+						Text(summary).font(.footnote).foregroundStyle(MaskinColor.ink3)
+					} else if !card.body.isEmpty {
+						Text(card.body).font(.footnote).foregroundStyle(MaskinColor.ink3)
 					}
-					if n.canRespond {
-						ForEach(n.actions) { action in
-							answerButton(action, for: n)
-						}
-						if n.wantsText {
-							// Dictation, scribble or keyboard, whichever the watch offers.
-							TextField(n.placeholder ?? "Reply", text: $reply)
-								.submitLabel(.send)
-								.onSubmit { if let response = GlanceAnswer.reply(from: reply) { send(response, for: n) } }
-							Button("Send reply") {
-								if let response = GlanceAnswer.reply(from: reply) { send(response, for: n) }
-							}
-							.buttonStyle(PrimaryActionButtonStyle())
-							.disabled(GlanceAnswer.reply(from: reply) == nil)
-						}
+					if let ask = card.decision?.ask, !ask.isEmpty {
+						Text(ask).font(.footnote.weight(.semibold))
 					}
-					if let error = store.actionError {
-						Text(error).font(.footnote).foregroundStyle(MaskinColor.danger)
+					if let options = card.decision?.options {
+						ForEach(options) { optionButton($0, on: card) }
+					}
+					// Dictation, scribble or keyboard, whichever the device offers.
+					TextField(card.kind == .decision ? "Or answer in words" : "Reply", text: $reply)
+						.submitLabel(.send)
+						.onSubmit { send(reply, on: card) }
+					Button("Send reply") { send(reply, on: card) }
+						.buttonStyle(PrimaryActionButtonStyle())
+						.disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+					if card.kind == .thread {
+						Button("Mark read") {
+							store.dismiss(card)
+							dismiss()
+						}
+						.buttonStyle(SecondaryActionButtonStyle())
 					}
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
-			.task { await store.markRead(id) }
 			.confirmationDialog(
 				"Are you sure?",
 				isPresented: Binding(
 					get: { pendingDestructive != nil }, set: { if !$0 { pendingDestructive = nil } }),
 				titleVisibility: .visible, presenting: pendingDestructive
-			) { action in
-				Button("Yes, \(action.label)", role: .destructive) { send(action.response, for: n) }
+			) { option in
+				Button("Yes, \(option.label)", role: .destructive) { choose(option, on: card) }
 				Button("Cancel", role: .cancel) {}
 			}
 		} else {
@@ -148,24 +164,18 @@ struct GlanceDetail: View {
 	}
 }
 
-extension AppNotification.Kind {
+extension ForYouCard.Kind {
 	var symbol: String {
 		switch self {
-		case .needsInput: "questionmark.bubble.fill"
-		case .recommendation: "lightbulb.fill"
-		case .goodNews: "checkmark.seal.fill"
-		case .alert: "exclamationmark.triangle.fill"
-		case .other: "bell.fill"
+		case .decision: "questionmark.bubble.fill"
+		case .thread: "text.bubble.fill"
 		}
 	}
 
 	var tint: Color {
 		switch self {
-		case .needsInput: MaskinColor.accent
-		case .recommendation: MaskinColor.warning
-		case .goodNews: MaskinColor.success
-		case .alert: MaskinColor.danger
-		case .other: MaskinColor.ink4
+		case .decision: MaskinColor.accent
+		case .thread: MaskinColor.ink4
 		}
 	}
 }
