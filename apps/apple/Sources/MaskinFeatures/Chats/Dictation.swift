@@ -31,53 +31,32 @@ final class Dictation {
 	@ObservationIgnored private var onText: (@MainActor (String) -> Void)?
 	/// Bumped on every start and stop, so a cancelled task's late callback can't end a newer session.
 	@ObservationIgnored private var generation = 0
+	@ObservationIgnored private var continuous = false
+	@ObservationIgnored private var accumulator = DictationAccumulator()
+	@ObservationIgnored private var restartPolicy = DictationRestartPolicy()
+	@ObservationIgnored private var taskStartedAt = Date()
+	@ObservationIgnored private var heardText = false
 
 	/// Start listening; `onText` gets the running transcript (the whole utterance so far).
-	func start(onText: @escaping @MainActor (String) -> Void) async {
+	///
+	/// `continuous` keeps recording across the recogniser ending on a pause, until `stop()`: the
+	/// transcript then accumulates across restarts. Without it (a live conversation, which treats
+	/// the end of an utterance as a turn) the session ends when the recogniser does.
+	func start(continuous: Bool = false, onText: @escaping @MainActor (String) -> Void) async {
 		guard state != .listening else { return }
 		self.onText = onText
+		self.continuous = continuous
+		accumulator = DictationAccumulator()
+		restartPolicy = DictationRestartPolicy()
 		guard await requestPermissions() else { return }
-		guard let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(),
-			recognizer.isAvailable
-		else {
+		guard let recognizer = Self.makeRecognizer() else {
 			state = .unavailable("Dictation isn't available for this language right now.")
 			return
 		}
 		// The speaker and the microphone never run together.
 		SpeechReader.shared.inputDidBegin()
 		do {
-			let session = AVAudioSession.sharedInstance()
-			try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-			try session.setActive(true, options: .notifyOthersOnDeactivation)
-			let request = SFSpeechAudioBufferRecognitionRequest()
-			request.shouldReportPartialResults = true
-			request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-			self.request = request
-			generation += 1
-			let current = generation
-			let engine = AVAudioEngine()
-			self.engine = engine
-			let input = engine.inputNode
-			let format = input.outputFormat(forBus: 0)
-			guard format.sampleRate > 0, format.channelCount > 0 else { throw DictationError.noInput }
-			input.installTap(
-				onBus: 0, bufferSize: 1024, format: format,
-				block: Self.makeTap(AudioFeed(request: request)))
-			engine.prepare()
-			try engine.start()
-			task = recognizer.recognitionTask(
-				with: request,
-				resultHandler: Self.makeHandler { [weak self] text, finished, error in
-					Task { @MainActor in
-						guard let self, self.generation == current else { return }
-						if let text { self.onText?(text) }
-						guard finished else { return }
-						self.stop()
-						if let error, text == nil, let message = Self.message(for: error) {
-							self.state = .unavailable(message)
-						}
-					}
-				})
+			try launch(recognizer)
 			state = .listening
 		} catch {
 			stop()
@@ -85,6 +64,77 @@ final class Dictation {
 				(error as? DictationError)?.message
 					?? "Couldn't start the microphone (\(error.localizedDescription)).")
 		}
+	}
+
+	private static func makeRecognizer() -> SFSpeechRecognizer? {
+		guard let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(),
+			recognizer.isAvailable
+		else { return nil }
+		return recognizer
+	}
+
+	/// Builds one engine, request and recognition task. Called again for each restart.
+	private func launch(_ recognizer: SFSpeechRecognizer) throws {
+		let session = AVAudioSession.sharedInstance()
+		try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+		try session.setActive(true, options: .notifyOthersOnDeactivation)
+		let request = SFSpeechAudioBufferRecognitionRequest()
+		request.shouldReportPartialResults = true
+		request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+		self.request = request
+		generation += 1
+		let current = generation
+		let engine = AVAudioEngine()
+		self.engine = engine
+		let input = engine.inputNode
+		let format = input.outputFormat(forBus: 0)
+		guard format.sampleRate > 0, format.channelCount > 0 else { throw DictationError.noInput }
+		input.installTap(
+			onBus: 0, bufferSize: 1024, format: format,
+			block: Self.makeTap(AudioFeed(request: request)))
+		engine.prepare()
+		try engine.start()
+		taskStartedAt = Date()
+		heardText = false
+		task = recognizer.recognitionTask(
+			with: request,
+			resultHandler: Self.makeHandler { [weak self] text, finished, error in
+				Task { @MainActor in
+					guard let self, self.generation == current else { return }
+					if let text {
+						self.heardText = self.heardText || !text.isEmpty
+						self.accumulator.update(text)
+						self.onText?(self.accumulator.text)
+					}
+					guard finished else { return }
+					self.taskEnded(error: error, hadText: text != nil)
+				}
+			})
+	}
+
+	/// The recogniser finished (a pause, its time limit, or an error). Continuous dictation starts
+	/// a fresh task, keeping the text so far; anything else ends the session.
+	private func taskEnded(error: Error?, hadText: Bool) {
+		let message = error.flatMap { Self.message(for: $0) }
+		if continuous {
+			let decision = restartPolicy.taskEnded(
+				ranFor: Date().timeIntervalSince(taskStartedAt), heardText: heardText,
+				fatal: message != nil)
+			if decision == .restart, let recognizer = Self.makeRecognizer() {
+				accumulator.roll()
+				teardownAudio()
+				do {
+					try launch(recognizer)
+					return
+				} catch {
+					stop()
+					state = .unavailable("Dictation stopped: \(error.localizedDescription)")
+					return
+				}
+			}
+		}
+		stop()
+		if let message, !hadText { state = .unavailable(message) }
 	}
 
 	// The audio tap and the recogniser's callback fire on background queues. Closures written inside
@@ -125,7 +175,8 @@ final class Dictation {
 		}
 	}
 
-	func stop() {
+	/// Releases the engine, request and task of the current recognition without ending the session.
+	private func teardownAudio() {
 		generation += 1
 		if let engine {
 			if engine.isRunning { engine.stop() }
@@ -136,6 +187,10 @@ final class Dictation {
 		task?.cancel()
 		task = nil
 		request = nil
+	}
+
+	func stop() {
+		teardownAudio()
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 		if state == .listening { state = .idle }
 		SpeechReader.shared.inputDidEnd()

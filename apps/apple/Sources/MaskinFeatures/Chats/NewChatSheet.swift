@@ -20,6 +20,8 @@ struct NewChatSheet: View {
 	#if os(iOS)
 	@State private var dictation = Dictation()
 	@State private var dictationBase = ""
+	/// The message from before the mic opened, put back by Discard.
+	@State private var textBeforeDictation = ""
 	#endif
 
 	private var recipients: [ChatActor] {
@@ -130,32 +132,65 @@ struct NewChatSheet: View {
 		}
 	}
 
+	private var isDictating: Bool {
+		#if os(iOS)
+		dictation.isListening
+		#else
+		false
+		#endif
+	}
+
 	private var messageBox: some View {
 		VStack(spacing: MaskinSpace.s5) {
-			TextField(
-				recipients.isEmpty ? "Message" : "Message \(recipients.map(\.participant.name).joined(separator: ", "))",
-				text: $message, axis: .vertical
-			)
-			.focused($messageFocused)
-			.font(MaskinTypeface.sans(MaskinFontSize.t17))
-			.lineLimit(5...5)
-			.frame(maxWidth: .infinity, alignment: .topLeading)
-			HStack {
-				micButton
-				Spacer()
-				Button {
-					Task { await create() }
-				} label: {
-					Label("Send", systemImage: "arrow.up").labelStyle(.titleAndIcon)
+			if isDictating {
+				dictatingRow
+			} else {
+				messageField
+				HStack {
+					micButton
+					Spacer()
+					Button {
+						Task { await create() }
+					} label: {
+						Label("Send", systemImage: "arrow.up").labelStyle(.titleAndIcon)
+					}
+					.buttonStyle(.borderedProminent)
+					.tint(MaskinSurface.inverse)
+					.disabled(!canSend)
+					.keyboardShortcut(.return, modifiers: .command)
 				}
-				.buttonStyle(.borderedProminent)
-				.tint(MaskinSurface.inverse)
-				.disabled(!canSend)
-				.keyboardShortcut(.return, modifiers: .command)
 			}
 		}
 		.padding(MaskinSpace.s8)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+	}
+
+	private var messageField: some View {
+		TextField(
+			recipients.isEmpty ? "Message" : "Message \(recipients.map(\.participant.name).joined(separator: ", "))",
+			text: $message, axis: .vertical
+		)
+		.focused($messageFocused)
+		.font(MaskinTypeface.sans(MaskinFontSize.t17))
+		.lineLimit(5...5)
+		.frame(maxWidth: .infinity, alignment: .topLeading)
+	}
+
+	/// Recording, as in the chat composer: Discard, a red waveform with the editable transcript, Done.
+	private var dictatingRow: some View {
+		HStack(alignment: .top, spacing: MaskinSpace.s5) {
+			DictationDiscardButton { discardDictation() }
+			HStack(alignment: .top, spacing: MaskinSpace.s5) {
+				VoiceWaveform(bars: 5, height: 22, tint: MaskinColor.dangerMic)
+					.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s3)
+				TextField("Listening…", text: $message, axis: .vertical)
+					.focused($messageFocused)
+					.font(MaskinTypeface.sans(MaskinFontSize.t17))
+					.lineLimit(5...5)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.s14 + MaskinSpace.s3, alignment: .topLeading)
+			}
+			DictationDoneButton { finishDictation() }
+		}
 	}
 
 	@ViewBuilder
@@ -164,25 +199,26 @@ struct NewChatSheet: View {
 		Button {
 			toggleDictation()
 		} label: {
-			Image(systemName: dictation.isListening ? "waveform" : "mic.fill")
-				.foregroundStyle(dictation.isListening ? MaskinColor.dangerMic : MaskinColor.ink3)
+			Image(systemName: "mic.fill")
+				.foregroundStyle(MaskinColor.ink3)
 				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 				.background(MaskinSurface.fill, in: Circle())
 		}
 		.buttonStyle(.plain)
-		.accessibilityLabel(dictation.isListening ? "Stop dictating" : "Dictate")
+		.accessibilityLabel("Dictate")
 		#endif
 	}
 
 	#if os(iOS)
 	private func toggleDictation() {
 		if dictation.isListening {
-			dictation.stop()
+			finishDictation()
 			return
 		}
+		textBeforeDictation = message
 		dictationBase = message
 		Task {
-			await dictation.start { message = DictationText.merge(base: dictationBase, transcript: $0) }
+			await dictation.start(continuous: true) { message = DictationText.merge(base: dictationBase, transcript: $0) }
 			if case .unavailable(let reason) = dictation.state {
 				error = reason
 				dictation.clearError()
@@ -190,6 +226,22 @@ struct NewChatSheet: View {
 		}
 	}
 	#endif
+
+	/// Done: keep the text, ready to edit or send.
+	private func finishDictation() {
+		#if os(iOS)
+		dictation.stop()
+		#endif
+		messageFocused = true
+	}
+
+	/// Discard: stop and put back the message from before the mic opened.
+	private func discardDictation() {
+		#if os(iOS)
+		dictation.stop()
+		message = textBeforeDictation
+		#endif
+	}
 
 	private func create() async {
 		let people = recipients
