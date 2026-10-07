@@ -2533,17 +2533,11 @@ export class SessionManager extends EventEmitter {
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
-		// MASKIN_GITHUB_MCP is the kill-switch between the deprecated npx server and
-		// the official binary. Anything but "official" resolves to legacy.
-		const githubMcpSpec =
-			process.env.MASKIN_GITHUB_MCP === 'official'
-				? GITHUB_MCP_SERVER_SPEC
-				: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
 		for (const { ownerLogin, token } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
-				command: githubMcpSpec.command,
-				args: githubMcpSpec.args,
+				command: GITHUB_MCP_SERVER_SPEC.command,
+				args: GITHUB_MCP_SERVER_SPEC.args,
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
