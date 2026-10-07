@@ -40,8 +40,8 @@ struct LoopsStoreTests {
 
 	@Test("an untitled loop gets a plain name")
 	func untitled() {
-		#expect(loopRow("a", name: nil).displayName == "Untitled loop")
-		#expect(loopRow("a", name: "  ").displayName == "Untitled loop")
+		#expect(loopRow("a", name: nil).displayName == "Untitled flow")
+		#expect(loopRow("a", name: "  ").displayName == "Untitled flow")
 	}
 
 	@Test("agent names resolve through the directory and skip unknown ids")
@@ -89,7 +89,7 @@ struct LoopsStoreTests {
 		#expect(store.notice?.contains("Couldn't pause") == true)
 	}
 
-	@Test("resuming a loop with unread work shows waiting on you again")
+	@Test("resuming a loop with unread work shows needs you again")
 	func resumeWaiting() {
 		let paused = loopRow("a", status: .paused, waiting: 3)
 		#expect(paused.with(status: .learning).pill == .waitingOnYou)

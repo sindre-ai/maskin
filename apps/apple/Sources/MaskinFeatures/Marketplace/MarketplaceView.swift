@@ -53,7 +53,7 @@ struct MarketplaceContent: View {
 				#if os(iOS)
 				.toolbarTitleDisplayMode(.inlineLarge)
 				#endif
-				.searchable(text: $search, prompt: "Search loops")
+				.searchable(text: $search, prompt: "Search flows")
 				.toolbar {
 					ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
 				}
@@ -113,7 +113,7 @@ struct MarketplaceContent: View {
 				if search.isEmpty && useCase == nil {
 					EmptyState(
 						symbol: "square.grid.2x2", title: "Nothing here yet",
-						message: "The marketplace has no loops right now.")
+						message: "The marketplace has no flows right now.")
 				} else {
 					ContentUnavailableView.search(text: search)
 				}

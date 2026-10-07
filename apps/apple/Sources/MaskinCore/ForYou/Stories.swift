@@ -218,7 +218,7 @@ public final class StoriesStore {
 			for loop in all {
 				group.addTask {
 					let overview = try? await loops.overview(loopID: loop.id)
-					return (overview?.outputs ?? []).map { (loop.name ?? "Loop", loop.id, $0) }
+					return (overview?.outputs ?? []).map { (loop.name ?? "Flow", loop.id, $0) }
 				}
 			}
 			var result: [(String, String, LoopOutput)] = []

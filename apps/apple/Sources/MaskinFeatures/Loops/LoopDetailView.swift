@@ -45,10 +45,10 @@ struct LoopDetailView: View {
 				Menu {
 					Toggle("Under the hood", systemImage: "wrench.and.screwdriver", isOn: $underTheHood)
 					Button {
-						runtime?.buildInChat("I'd like to change the loop \(store.loop.displayName). ")
+						runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). ")
 					} label: { Label("Change in chat", systemImage: "bubble.left") }
 					Button(role: .destructive) { confirmDelete = true } label: {
-						Label("Delete loop", systemImage: "trash")
+						Label("Delete flow", systemImage: "trash")
 					}
 				} label: {
 					Label("More", systemImage: "ellipsis.circle")
@@ -56,9 +56,9 @@ struct LoopDetailView: View {
 			}
 		}
 		.confirmationDialog(
-			"Delete this loop?", isPresented: $confirmDelete, titleVisibility: .visible
+			"Delete this flow?", isPresented: $confirmDelete, titleVisibility: .visible
 		) {
-			Button("Delete loop", role: .destructive) { Task { await store.delete() } }
+			Button("Delete flow", role: .destructive) { Task { await store.delete() } }
 			Button("Cancel", role: .cancel) {}
 		} message: {
 			Text("Its agents and triggers stay. This can't be undone.")
@@ -122,7 +122,7 @@ struct LoopDetailContent: View {
 					LoopBriefingsSection(loopID: store.loop.id)
 					LoopQualitySection(loop: store.loop, steps: store.steps)
 					OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName)
-					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this loop makes land here.") }
+					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this flow makes land here.") }
 				case .actions:
 					LoopActionsSection(store: store)
 				case .activity:
@@ -204,7 +204,7 @@ struct LoopDetailContent: View {
 		let tiles: [(String, String)] = [
 			("In progress", "\(store.loop.inProgressCount)"),
 			("Closed", "\(store.loop.closedCount)"),
-			("Waiting on you", "\(store.loop.waitingCount)"),
+			("Needs you", "\(store.loop.waitingCount)"),
 			("Median time", store.loop.medianTimeToClose.map(LoopDurationText.string) ?? "—"),
 		]
 		return LazyVGrid(
@@ -237,7 +237,7 @@ struct LoopDetailContent: View {
 				}
 			default:
 				if store.steps.isEmpty {
-					Text("This loop has no steps yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					Text("This flow has no steps yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				} else {
 					VStack(spacing: 0) {
 						ForEach(Array(store.steps.enumerated()), id: \.element.id) { index, step in

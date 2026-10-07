@@ -41,7 +41,7 @@ public struct ChatsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "bubble.left.and.bubble.right", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Chats")
+					.shellToolbar(environment: environment, title: "Team")
 			}
 		}
 	}
@@ -77,7 +77,7 @@ private struct ChatsContainer: View {
 				onNewChat: { showNewChat = true }
 			)
 			.shellToolbar(
-				environment: environment, title: store.scope == .archived ? "Archived" : "Chats",
+				environment: environment, title: store.scope == .archived ? "Archived" : "Team",
 				actions: ShellActions(
 					compose: ShellCompose(
 						action: { showNewChat = true },

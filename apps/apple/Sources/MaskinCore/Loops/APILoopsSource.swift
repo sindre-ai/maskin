@@ -60,7 +60,7 @@ public struct APILoopsSource: LoopsAPI {
 	public func loops() async throws -> [LoopSummary] {
 		let output = try await client.get_sol_api_sol_loops(
 			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
-		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load loops.") }
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load flows.") }
 		return try Self.decode(LoopsWire.self, from: ok.body.json).loops.map(\.model)
 	}
 
@@ -68,7 +68,7 @@ public struct APILoopsSource: LoopsAPI {
 		let output = try await client.get_sol_api_sol_loops_sol__lcub_id_rcub__sol_steps(
 			.init(
 				path: .init(id: loopID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
-		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this loop's steps.") }
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this flow's steps.") }
 		return try Self.decode(StepsWire.self, from: ok.body.json).steps.map(\.model)
 	}
 
@@ -77,7 +77,7 @@ public struct APILoopsSource: LoopsAPI {
 			.init(
 				path: .init(id: loopID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		guard case .ok(let ok) = output else {
-			throw AutomationError("Couldn't load this loop's activity.")
+			throw AutomationError("Couldn't load this flow's activity.")
 		}
 		return try Self.decode(ActivityWire.self, from: ok.body.json).events.map(\.model)
 	}
@@ -89,7 +89,7 @@ public struct APILoopsSource: LoopsAPI {
 	public func installs() async throws -> [LoopInstall] {
 		let output = try await client.get_sol_api_sol_installed_hyphen_loops(
 			.init(query: .init(workspaceId: workspaceID)))
-		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load installed loops.") }
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load installed flows.") }
 		return try Self.decode(InstallsWire.self, from: ok.body.json).installs.map {
 			LoopInstall(
 				objectID: $0.objectId, hasUpdate: $0.hasUpdate, availableVersion: $0.availableVersion,
@@ -106,7 +106,7 @@ public struct APILoopsSource: LoopsAPI {
 		}
 		switch output {
 		case .ok: return
-		case .notFound: throw AutomationError("This loop no longer exists.")
+		case .notFound: throw AutomationError("This flow no longer exists.")
 		default: throw AutomationError("The server refused the change.")
 		}
 	}
@@ -124,7 +124,7 @@ public struct APILoopsSource: LoopsAPI {
 							status: LoopPill.learning.rawValue))))
 		}
 		guard case .created(let created) = output else {
-			throw AutomationError("Couldn't create the loop.")
+			throw AutomationError("Couldn't create the flow.")
 		}
 		return try created.body.json.id
 	}
@@ -138,7 +138,7 @@ public struct APILoopsSource: LoopsAPI {
 		}
 		switch output {
 		case .ok: return
-		case .notFound: throw AutomationError("This loop no longer exists.")
+		case .notFound: throw AutomationError("This flow no longer exists.")
 		default: throw AutomationError("The server refused the change.")
 		}
 	}
@@ -148,8 +148,8 @@ public struct APILoopsSource: LoopsAPI {
 			.init(path: .init(id: loopID)))
 		switch output {
 		case .ok: return
-		case .notFound: throw AutomationError("This loop no longer exists.")
-		default: throw AutomationError("Couldn't delete the loop.")
+		case .notFound: throw AutomationError("This flow no longer exists.")
+		default: throw AutomationError("Couldn't delete the flow.")
 		}
 	}
 

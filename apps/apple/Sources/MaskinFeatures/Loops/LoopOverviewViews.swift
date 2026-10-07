@@ -132,10 +132,10 @@ struct LoopPostsSection: View {
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			.buttonStyle(.plain)
-			.accessibilityHint("Opens the loop's timeline")
+			.accessibilityHint("Opens the flow's timeline")
 			HStack(spacing: MaskinSpace.s6) {
 				Button {
-					runtime?.buildInChat("About \(name)'s update on this loop: ")
+					runtime?.buildInChat("About \(name)'s update on this flow: ")
 				} label: {
 					Label("Discuss", systemImage: "bubble.left")
 						.maskinText(.subhead).fontWeight(.semibold)
@@ -162,7 +162,7 @@ struct LoopFlowSection: View {
 		let phases = store.phases
 		if !phases.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				SectionHeader("The loop, right now") {
+				SectionHeader("The flow, right now") {
 					Text("\(phases.reduce(0) { $0 + $1.count }) objects")
 						.maskinText(.mono).foregroundStyle(MaskinColor.ink4)
 				}
@@ -274,7 +274,7 @@ struct LoopActionsSection: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			SectionHeader("Needs you")
 			if decisions.isEmpty {
-				Text("Nothing needs you on this loop right now.")
+				Text("Nothing needs you on this flow right now.")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 					.loopNote()
 			} else {
@@ -300,7 +300,7 @@ struct LoopActionsSection: View {
 						.contentShape(Rectangle())
 					}
 					.buttonStyle(.plain)
-					.accessibilityHint("Opens the loop's timeline")
+					.accessibilityHint("Opens the flow's timeline")
 				}
 			}
 		}
@@ -358,7 +358,7 @@ struct LoopActionsSection: View {
 		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			SectionHeader("Coming up")
 			if items.isEmpty {
-				Text("This loop runs on its triggers.")
+				Text("This flow runs on its triggers.")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 					.loopNote()
 			} else {

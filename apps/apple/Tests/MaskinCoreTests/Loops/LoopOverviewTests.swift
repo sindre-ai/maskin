@@ -144,7 +144,7 @@ struct LoopDetailOverviewTests {
 		let api = FakeLoopsAPI([loopRow("a", waiting: 2, inProgress: 3)])
 		let store = LoopDetailStore(loop: loopRow("a", waiting: 2, inProgress: 3), api: api, events: nil)
 		await store.refresh()
-		#expect(store.verdict == "2 waiting on you · 3 in progress")
+		#expect(store.verdict == "2 need you · 3 in progress")
 		let ok = LoopDetailStore(loop: loopRow("b", inProgress: 1), api: FakeLoopsAPI([loopRow("b", inProgress: 1)]), events: nil)
 		await ok.refresh()
 		#expect(ok.verdict == "Healthy · 1 in progress")

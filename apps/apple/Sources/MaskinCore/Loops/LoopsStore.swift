@@ -211,7 +211,7 @@ public final class LoopsStore {
 			if let i = loops.firstIndex(where: { $0.id == id }) {
 				loops[i] = loops[i].with(status: before.status)
 			}
-			notice = "Couldn't \(target == .paused ? "pause" : "resume") this loop. \(AutomationError.message(error))"
+			notice = "Couldn't \(target == .paused ? "pause" : "resume") this flow. \(AutomationError.message(error))"
 		}
 	}
 
@@ -238,7 +238,7 @@ public final class LoopsStore {
 			await refresh()
 			return id
 		} catch {
-			notice = "Couldn't create this loop. \(AutomationError.message(error))"
+			notice = "Couldn't create this flow. \(AutomationError.message(error))"
 			return nil
 		}
 	}

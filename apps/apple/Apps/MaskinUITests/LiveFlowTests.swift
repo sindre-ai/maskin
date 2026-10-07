@@ -28,7 +28,7 @@ final class LiveFlowTests: LiveTestCase {
 
 	func test2_Chats() throws {
 		try signInIfNeeded()
-		openSidebarTab("Chats")
+		openSidebarTab("Team")
 		let row = el("Launch planning")
 		if !row.waitForExistence(timeout: 15) {
 			shot("chats-missing-row")

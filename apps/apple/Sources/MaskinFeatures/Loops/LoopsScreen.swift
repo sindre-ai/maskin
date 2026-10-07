@@ -22,14 +22,14 @@ public struct LoopsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "arrow.triangle.2.circlepath", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Loops")
+					.shellToolbar(environment: environment, title: "Flows")
 			}
 		}
 	}
 }
 
 enum AutomationMode: String, CaseIterable, Identifiable {
-	case loops = "Loops"
+	case loops = "Flows"
 	case triggers = "Triggers"
 	var id: String { rawValue }
 }
@@ -95,7 +95,7 @@ private struct LoopsContainer: View {
 
 	/// Loops are built by describing them in chat, never through a form.
 	private func buildLoopInChat() {
-		runtime?.buildInChat("I'd like to build a new loop. ")
+		runtime?.buildInChat("I'd like to build a new flow. ")
 	}
 
 	private var isLive: Bool { environment.events.connection != .failed }
@@ -124,7 +124,7 @@ private struct LoopsContainer: View {
 		}
 		.searchable(
 			text: $search, isPresented: $searchPresented,
-			prompt: mode == .triggers ? "Search triggers" : "Search loops"
+			prompt: mode == .triggers ? "Search triggers" : "Search flows"
 		)
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
@@ -151,7 +151,7 @@ private struct LoopsContainer: View {
 				.zoomDestination(id: id, in: zoom)
 			} else {
 				EmptyState(
-					symbol: "arrow.triangle.2.circlepath", title: "Select a loop",
+					symbol: "arrow.triangle.2.circlepath", title: "Select a flow",
 					message: "See its steps, what the agents did, and pause or resume it.")
 			}
 		case .triggers:
@@ -197,7 +197,7 @@ private struct LoopDetailHost: View {
 
 	var body: some View {
 		if store.isGone {
-			EmptyState(symbol: "tray", title: "This loop is gone", message: "It was removed elsewhere.")
+			EmptyState(symbol: "tray", title: "This flow is gone", message: "It was removed elsewhere.")
 		} else {
 			LoopDetailView(store: store, install: install, onOpenTrigger: onOpenTrigger)
 		}

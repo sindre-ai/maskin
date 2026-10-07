@@ -1,6 +1,6 @@
 import Foundation
 
-/// A loop's stored lifecycle rung, plus the per-viewer "waiting on you" overlay the list shows
+/// A loop's stored lifecycle rung, plus the per-viewer "needs you" overlay the list shows
 /// as one badge. Mirrors `loopPillSchema`.
 public enum LoopPill: String, Sendable, Equatable, CaseIterable, Codable {
 	case draft, paused, learning, supervised
@@ -16,7 +16,7 @@ public enum LoopPill: String, Sendable, Equatable, CaseIterable, Codable {
 		case .learning: "Learning"
 		case .supervised: "Supervised"
 		case .fullyAutonomous: "Fully autonomous"
-		case .waitingOnYou: "Waiting on you"
+		case .waitingOnYou: "Needs you"
 		}
 	}
 
@@ -108,7 +108,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 
 	public var displayName: String {
 		let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return trimmed.isEmpty ? "Untitled loop" : trimmed
+		return trimmed.isEmpty ? "Untitled flow" : trimmed
 	}
 
 	public var isPaused: Bool { status == .paused }

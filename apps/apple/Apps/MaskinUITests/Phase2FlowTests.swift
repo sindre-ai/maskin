@@ -21,7 +21,7 @@ final class Phase2FlowTests: LiveTestCase {
 
 	func test10_LoopsAndTriggers() throws {
 		try signInIfNeeded()
-		openSidebarTab("Loops")
+		openSidebarTab("Flows")
 		let loops = try list("/loops")
 		let name = try XCTUnwrap(loops.first?["name"] as? String)
 		let row = el(name)

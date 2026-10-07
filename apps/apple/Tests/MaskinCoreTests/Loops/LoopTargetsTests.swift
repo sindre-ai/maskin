@@ -92,7 +92,7 @@ struct LoopTargetsTests {
 		row.medianTimeToClose = 3600
 		let stats = LoopQuality.stats(
 			for: row, nextRun: nil, duration: { "\(Int($0 / 60))m" }, date: { _ in "soon" })
-		#expect(stats.map(\.label) == ["In progress", "Closed", "Median time", "Waiting", "Next run"])
+		#expect(stats.map(\.label) == ["In progress", "Closed", "Median time", "Needs you", "Next run"])
 		#expect(stats.map(\.value) == ["3", "12", "60m", "2", "—"])
 		row.medianTimeToClose = nil
 		let later = LoopQuality.stats(

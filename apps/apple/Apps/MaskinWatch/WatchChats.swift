@@ -8,7 +8,7 @@ struct WatchChatsSection: View {
 	let environment: AppEnvironment
 
 	var body: some View {
-		Section("Chats") {
+		Section("Team") {
 			NavigationLink {
 				WatchChatsList(environment: environment)
 			} label: {
@@ -45,7 +45,7 @@ struct WatchChatsList: View {
 				}
 			}
 		}
-		.navigationTitle("Chats")
+		.navigationTitle("Team")
 		.task { await store.start() }
 		.onDisappear { store.stop() }
 	}

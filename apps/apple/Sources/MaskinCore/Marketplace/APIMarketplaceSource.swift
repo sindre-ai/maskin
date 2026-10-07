@@ -28,15 +28,15 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 		case .ok(let ok):
 			let wire = try Self.decode(DetailWire.self, from: ok.body.json)
 			return MarketplaceLoopDetail(loop: wire.loop.model, items: wire.items.map(\.model))
-		case .notFound: throw AutomationError("This loop is no longer in the marketplace.")
-		default: throw AutomationError("Couldn't load this loop.")
+		case .notFound: throw AutomationError("This flow is no longer in the marketplace.")
+		default: throw AutomationError("Couldn't load this flow.")
 		}
 	}
 
 	public func installs() async throws -> [InstalledLoop] {
 		let output = try await client.get_sol_api_sol_installed_hyphen_loops(
 			.init(query: .init(workspaceId: workspaceID)))
-		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load installed loops.") }
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load installed flows.") }
 		return try Self.decode(InstallsWire.self, from: ok.body.json).installs.map(\.model)
 	}
 
@@ -53,9 +53,9 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 				id: row.id, sourceLoopID: row.sourceLoopId, objectID: row.objectId,
 				installedVersion: row.installedVersion, availableVersion: row.installedVersion,
 				isForked: row.forkedAt != nil)
-		case .conflict: throw AutomationError("This loop is already installed.")
-		case .forbidden: throw AutomationError("You don't have permission to install loops here.")
-		case .notFound: throw AutomationError("This loop is no longer in the marketplace.")
+		case .conflict: throw AutomationError("This flow is already installed.")
+		case .forbidden: throw AutomationError("You don't have permission to install flows here.")
+		case .notFound: throw AutomationError("This flow is no longer in the marketplace.")
 		default: throw AutomationError("The install failed. Try again in a moment.")
 		}
 	}
@@ -67,9 +67,9 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 		}
 		switch output {
 		case .ok: return
-		case .conflict: throw AutomationError("This loop is already a fork.")
+		case .conflict: throw AutomationError("This flow is already a fork.")
 		case .notFound: throw AutomationError("This install no longer exists.")
-		default: throw AutomationError("Couldn't fork this loop.")
+		default: throw AutomationError("Couldn't fork this flow.")
 		}
 	}
 
@@ -85,7 +85,7 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 		switch output {
 		case .ok: return
 		case .notFound: throw AutomationError("This install no longer exists.")
-		default: throw AutomationError("Couldn't remove this loop.")
+		default: throw AutomationError("Couldn't remove this flow.")
 		}
 	}
 
