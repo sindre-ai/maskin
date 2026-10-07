@@ -1,8 +1,18 @@
 import { createHmac, randomUUID } from 'node:crypto'
-import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
-import { __resetLinkedInMcpRegistryForTests } from '@maskin/mcp/linkedin'
+import {
+	events,
+	INTEGRATION_STATUS_ACTIVE,
+	integrations,
+	webhookDeliveries,
+} from '@maskin/db/schema'
+import {
+	__resetLinkedInMcpRegistryForTests,
+	registerLinkedInMcpInstance,
+} from '@maskin/mcp/linkedin'
+import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
+import { recordEvents } from '../../lib/events/record-event'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { commitWebhookDelivery } from '../../lib/integrations/webhooks/commit'
 import { logger } from '../../lib/logger'
@@ -19,6 +29,12 @@ vi.mock('../../lib/integrations/webhooks/commit', async (importOriginal) => {
 	return { ...actual, commitWebhookDelivery: vi.fn(actual.commitWebhookDelivery) }
 })
 
+// Lets one test make the direction-drop write fail, with every other call real.
+vi.mock('../../lib/events/record-event', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../lib/events/record-event')>()
+	return { ...actual, recordEvents: vi.fn(actual.recordEvents) }
+})
+
 /**
  * Every webhook delivery, whatever its outcome, produces exactly one structured
  * log line and (when an integration row was resolved) one PostHog event.
@@ -29,6 +45,7 @@ vi.mock('../../lib/integrations/webhooks/commit', async (importOriginal) => {
 const SECRET = 'wes_test_secret'
 const ACCOUNT_ID = 'acc_unipile_obs_01'
 const OTHER_SENDER = 'ACoAAExampleSenderProviderId'
+const OWN_SENDER = 'ACoAAExampleOwnProviderId'
 const FLAG = 'linkedin-unipile-events'
 const LINE = 'linkedin-unipile webhook: delivery'
 
@@ -300,5 +317,126 @@ describe('one log line and one PostHog event per delivery', () => {
 			event_type: 'chat.something_else',
 		})
 		expect(captured()).toHaveLength(0)
+	})
+})
+
+async function webhookRows(action: string) {
+	return db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityType, 'linkedin.webhook'),
+				eq(events.action, action),
+			),
+		)
+}
+
+function registerOwnIdentity() {
+	registerLinkedInMcpInstance({
+		workspaceId,
+		actorId: ownerActorId,
+		integrationId,
+		unipileAccountId: ACCOUNT_ID,
+		unipileAccSlug: 'own-slug',
+		identityType: 'personal',
+		identityUrn: `urn:li:person:${OWN_SENDER}`,
+		identitySlug: 'personal',
+		displayName: 'Own Member',
+		mailboxId: null,
+		messagingEnabled: true,
+	})
+}
+
+describe('direction drops leave one durable events row (query e)', () => {
+	it('direction_unknown: one dropped row with ids only, and the reason reaches the PostHog capture', async () => {
+		const body = messageNew({
+			envelopeId: 'evt_obs_unknown',
+			messageId: 'msg_obs_unknown',
+			message: { is_sender: undefined },
+		})
+		const res = await deliver(body)
+		expect(await res.json()).toEqual({ ok: true, skipped: 'direction_unknown' })
+
+		const rows = await webhookRows('dropped')
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({ entityId: integrationId })
+		expect(rows[0]?.data).toEqual({
+			reason: 'direction_unknown',
+			unipile_event_type: 'message.new',
+			external_id: 'msg_obs_unknown',
+			envelope_id: 'evt_obs_unknown',
+			account_id: ACCOUNT_ID,
+		})
+		expect(JSON.stringify(rows[0]?.data)).not.toContain('secret message text')
+
+		// Smoke check for the PostHog side: the reason property is on the capture call.
+		expect(captured()).toHaveLength(1)
+		expect(captured()[0]?.[2]).toMatchObject({ outcome: 'dropped', reason: 'direction_unknown' })
+	})
+
+	it('direction_conflict: one dropped row with its reason', async () => {
+		registerOwnIdentity()
+		const res = await deliver(
+			messageNew({
+				envelopeId: 'evt_obs_conflict',
+				messageId: 'msg_obs_conflict',
+				message: { is_sender: false, sender_id: OWN_SENDER },
+			}),
+		)
+		expect(await res.json()).toEqual({ ok: true, skipped: 'direction_conflict' })
+
+		const rows = await webhookRows('dropped')
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.data).toMatchObject({
+			reason: 'direction_conflict',
+			envelope_id: 'evt_obs_conflict',
+			external_id: 'msg_obs_conflict',
+		})
+	})
+
+	it('own_message, flag_off and no_active_integration write no row', async () => {
+		await deliver(messageNew({ message: { is_sender: true } }))
+		await deliver({ ...messageNew(), account_id: 'acc_nobody' })
+		process.env.FF_TESTER_FEATURES = ''
+		_resetFeatureFlagConfig()
+		await deliver(messageNew())
+
+		expect(deliveryLines().map((l) => l.reason)).toEqual([
+			'own_message',
+			'no_active_integration',
+			'flag_off',
+		])
+		expect(await webhookRows('dropped')).toHaveLength(0)
+	})
+
+	it('a failed write changes neither the answer, the claims nor the log line', async () => {
+		vi.mocked(recordEvents).mockRejectedValueOnce(new Error('events insert failed'))
+		const body = messageNew({
+			envelopeId: 'evt_obs_guard',
+			messageId: 'msg_obs_guard',
+			message: { is_sender: undefined },
+		})
+		const res = await deliver(body)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true, skipped: 'direction_unknown' })
+		expect(await webhookRows('dropped')).toHaveLength(0)
+		expect(spies.error.mock.calls.map(([m]) => m)).toContain(
+			'linkedin-unipile webhook: failed to write direction drop event',
+		)
+		// Claims untouched: still unprocessed, so a retry dedupes instead of reprocessing.
+		const claims = await db
+			.select()
+			.from(webhookDeliveries)
+			.where(eq(webhookDeliveries.workspaceId, workspaceId))
+		expect(claims).toHaveLength(2)
+		expect(claims.every((c) => c.processedAt === null)).toBe(true)
+		expect(deliveryLines()).toHaveLength(1)
+		expect(deliveryLines()[0]).toMatchObject({ outcome: 'dropped', reason: 'direction_unknown' })
+
+		const retry = await deliver(body)
+		expect(await retry.json()).toEqual({ ok: true, skipped: 'duplicate' })
 	})
 })

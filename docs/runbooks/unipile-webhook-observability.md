@@ -6,9 +6,9 @@ Every Unipile webhook delivery leaves three traces:
 
 1. One structured log line, message "linkedin-unipile webhook: delivery", with event_type, integration_id, account_id, external_id, envelope_id, outcome (emitted, duplicate, dropped, failed), reason, classification, direction_source and latency_ms (ingest time minus provider_timestamp). Ids and codes only, never message text or names. Failed deliveries also carry an error message and log at error level.
 2. One PostHog event, unipile_webhook_received, with event_type, mapped, deduped, outcome, reason, workspace_id and account_id. It fires only when an integration row was resolved (no workspace otherwise, so unknown event types and accounts with no active integration are log-only). The reason property is an addition to the property list in the tech spec, needed so drop reasons can be counted (see query e).
-3. An events row (entityType linkedin.message) for every delivery that was emitted, and a dead-letter events row (entityType linkedin.webhook, action failed) for every failure after the claim.
+3. An events row (entityType linkedin.message) for every delivery that was emitted, a dead-letter events row (entityType linkedin.webhook, action failed) for every failure after the claim, and a dropped events row (entityType linkedin.webhook, action dropped) for each direction_unknown or direction_conflict drop.
 
-Wake latency, duplicates and coverage are read from the database, not PostHog, because PostHog has no webhook events before this task. The queries below are plain SQL against the app database. Change the 7 days window where needed. Each query was run once against a real Postgres seeded with fixture events (see the PR for the output).
+Wake latency, duplicates, webhook misses and direction drops are read from the database, not PostHog, because PostHog has no webhook events before this task. The queries below are plain SQL against the app database. Change the 7 days window where needed. Each query was run once against a real Postgres seeded with fixture events (see the PR for the output).
 
 ## a. Wake latency
 
@@ -98,34 +98,35 @@ b2: more than one session whose prompt carries the same message id. The trigger 
     GROUP BY 1, 2
     HAVING count(DISTINCT s.id) > 1;
 
-## c. Webhook coverage
+## c. Webhook misses
 
-Replies the agents answered (the claim-before-send ledger key inbound:CHAT_ID:MESSAGE_ID, defined in the tech spec section 6 and used by both the webhook and the sweep path) versus how many of those messages had already arrived by webhook. Coverage is webhook_delivered over answered.
+Replies an agent answered that never arrived by webhook. The answered side is the claim-before-send ledger (idempotency_records), key linkedin-unipile:ACTOR_ID:POST:/api/integrations/linkedin-unipile/send-message:inbound:CHAT_ID:MESSAGE_ID, status 200 once the send finished. The reply tool builds that key on the server from the chat and the inbound message being answered, so the webhook path and the sweep path write the same key. Each answered key with no linkedin.message event carrying that message id is a webhook miss, whoever answered it. Target: zero rows. There is no percentage and no snapshot table.
 
-Two limits to know. The ledger (idempotency_records) is purged after 24 hours, so run this daily and keep the numbers, it cannot look back a week. And it depends on the shared inbound key from the double-send guard task being in use by both paths; until then this returns nothing.
+Valid only after the double-send guard task has merged. The key format and the 24 hour expiry (LINKEDIN_TOOL_CALLS_TTL_MS in operations.ts) were read on that task's branch (feat/task-01d040b1-double-send-guard, commit e3f31d9fd), not on this PR's base: the bet branch has no inbound: key yet, so until that task lands this returns nothing, and an empty result means nothing. Re-check the key format and the expiry in operations.ts once it has merged.
+
+The ledger is purged after 24 hours, so the Product Validator runs this daily inside that window and records the day's row count in this runbook. The full comparison of what the sweep found against what the webhook delivered happens once, in the shadow week, against the Unipile list-messages API. It is not a standing query.
 
     -- query: c
     WITH answered AS (
-      SELECT substring(key from 'inbound:([^:]+):') AS chat_id,
-             substring(key from 'inbound:[^:]+:(.+)$') AS message_id,
-             created_at
-      FROM idempotency_records
-      WHERE key LIKE 'linkedin-unipile:%:inbound:%'
-        AND status = 200
-        AND created_at > now() - interval '24 hours'
+      SELECT m[1] AS chat_id,
+             m[2] AS message_id,
+             r.created_at AS answered_at
+      FROM idempotency_records r
+      CROSS JOIN LATERAL regexp_match(r.key, ':inbound:([^:]+):(.+)$') AS m
+      WHERE r.key LIKE 'linkedin-unipile:%:inbound:%'
+        AND r.status = 200
+        AND r.created_at > now() - interval '24 hours'
     )
-    SELECT count(*) AS answered_replies,
-           count(*) FILTER (WHERE EXISTS (
-             SELECT 1 FROM events m
-             WHERE m.entity_type = 'linkedin.message'
-               AND m.data->>'message_id' = a.message_id
-           )) AS webhook_delivered,
-           round(100.0 * count(*) FILTER (WHERE EXISTS (
-             SELECT 1 FROM events m
-             WHERE m.entity_type = 'linkedin.message'
-               AND m.data->>'message_id' = a.message_id
-           )) / NULLIF(count(*), 0), 1) AS webhook_coverage_pct
-    FROM answered a;
+    SELECT a.chat_id, a.message_id, a.answered_at
+    FROM answered a
+    WHERE NOT EXISTS (
+      SELECT 1 FROM events m
+      WHERE m.entity_type = 'linkedin.message'
+        AND m.data->>'message_id' = a.message_id
+    )
+    ORDER BY a.answered_at;
+
+Daily counts (Product Validator fills in, one line per day): date, rows returned.
 
 ## d. Chat-level repeat wakes
 
@@ -160,31 +161,21 @@ The same chat producing 2 or more wakes within 5 minutes. This decides whether t
 
 ## e. Direction drops (direction_unknown, direction_conflict)
 
-Drops are not written to the database, so the full count comes from PostHog (reason is on every unipile_webhook_received event). HogQL, run in PostHog SQL insights:
+Both drops write one events row (entityType linkedin.webhook, action dropped, entity id the integration id), with the reason, event_type, external_id, envelope_id and account_id in data. Ids only, no message text. own_message, flag_off and no_active_integration are expected and frequent, so they write no row. The write is guarded like the dead-letter write: if it fails the delivery's answer, claims and dedupe are unchanged and an error line "failed to write direction drop event" is logged. A retry can write a second row for the same delivery, so the count is of distinct envelope_id. Expected volume is zero.
 
-    -- not run: PostHog HogQL, no PostHog access from the build session
-    SELECT properties.reason AS reason, count() AS drops
+    -- query: e
+    SELECT date_trunc('day', created_at) AS day,
+           workspace_id,
+           data->>'reason' AS reason,
+           count(DISTINCT data->>'envelope_id') AS drops
     FROM events
-    WHERE event = 'unipile_webhook_received'
-      AND properties.outcome = 'dropped'
-      AND properties.reason IN ('direction_unknown', 'direction_conflict')
-      AND timestamp > now() - INTERVAL 7 DAY
-    GROUP BY reason
+    WHERE entity_type = 'linkedin.webhook'
+      AND action = 'dropped'
+      AND created_at > now() - interval '7 days'
+    GROUP BY 1, 2, 3
+    ORDER BY 1 DESC;
 
-The log line carries the same reason, so a log search on outcome dropped and reason direction_unknown or direction_conflict gives the same count.
-
-Database proxy for direction_unknown only. That drop keeps its claim unprocessed (processed_at stays null) so a retry still dedupes and the sweep can recover it. The reconciler releases unfinished claims after 15 minutes, so this shows only the last 15 minutes, not history. direction_conflict leaves a processed claim identical to an own message, so it cannot be told apart in the database.
-
-    -- query: e-proxy
-    SELECT workspace_id,
-           count(*) AS unprocessed_message_claims,
-           min(received_at) AS oldest
-    FROM webhook_deliveries
-    WHERE provider = 'linkedin-unipile'
-      AND external_id LIKE 'msg:%'
-      AND processed_at IS NULL
-      AND received_at < now() - interval '1 minute'
-    GROUP BY 1;
+The reason is also on every unipile_webhook_received PostHog event and on the log line. PostHog is a secondary view only. The test suite asserts the capture call carries the reason, but nothing in CI or in the build session can assert the event lands in PostHog (no PostHog access, and sampling or dropping on the PostHog side is not visible from here). Treat any PostHog-only version of this alert as blind to a PostHog-side loss. The alert reads this query.
 
 ## f. Dead-letter events
 
@@ -226,4 +217,4 @@ Wiring these into Sentry or Grafana is not part of this task. The thresholds bel
 
 1. Dead letters: query f returns any row for the current day (count above 0 in a day).
 2. Secret drift: a spike of 401 responses on the webhook route. The route logs "linkedin-unipile webhook: signature verification failed" at warn on each one. Proposed threshold: more than 5 in any 10 minutes (a healthy deployment has none). The number is a proposal, not set by the spec.
-3. Direction drops: any direction_unknown or direction_conflict count above 0 (query e, or the PostHog version of it). The tech spec treats any of these as a sign that is_sender is not reliable on real payloads.
+3. Direction drops: any direction_unknown or direction_conflict count above 0 (query e). The tech spec treats any of these as a sign that is_sender is not reliable on real payloads.

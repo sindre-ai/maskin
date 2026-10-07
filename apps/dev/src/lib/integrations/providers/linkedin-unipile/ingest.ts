@@ -180,6 +180,48 @@ async function failDelivery(
 	}
 }
 
+/** The only two drops worth a durable row: they signal is_sender is unreliable, and the alert counts them. */
+const PERSISTED_DROP_REASONS = new Set(['direction_unknown', 'direction_conflict'])
+
+/**
+ * Durable record of a direction drop (ids and the reason only, never a body), so
+ * the alert has a database source instead of resting on PostHog capture. Guarded
+ * like the dead-letter write: a failed write must not change the outcome, the
+ * claims or dedupe. A retry can write a second row for the same delivery, so
+ * readers count distinct envelope_id.
+ */
+async function recordDirectionDrop(
+	db: Database,
+	integration: IntegrationRow,
+	envelope: UnipileEnvelope,
+	reason: string,
+): Promise<void> {
+	try {
+		await recordEvents(db, [
+			{
+				workspaceId: integration.workspaceId,
+				actorId: eventActorId(integration),
+				action: 'dropped',
+				entityType: 'linkedin.webhook',
+				entityId: integration.id,
+				data: {
+					reason,
+					unipile_event_type: envelope.type,
+					external_id: resourceId(envelope),
+					envelope_id: envelope.envelopeId,
+					account_id: envelope.accountId,
+				},
+			},
+		])
+	} catch (err) {
+		logger.error('linkedin-unipile webhook: failed to write direction drop event', {
+			integration_id: integration.id,
+			reason,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
+
 async function processRow(
 	db: Database,
 	map: EventMapRow,
@@ -228,6 +270,9 @@ async function processRow(
 					claimRowId: primaryClaim ?? null,
 					additionalClaimRowIds: otherClaims,
 				})
+			}
+			if (PERSISTED_DROP_REASONS.has(result.reason)) {
+				await recordDirectionDrop(db, integration, envelope, result.reason)
 			}
 			entry.settled = true
 			reporter.report(integration, {
