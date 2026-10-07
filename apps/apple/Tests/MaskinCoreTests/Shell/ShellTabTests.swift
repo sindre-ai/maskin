@@ -46,12 +46,12 @@ struct ProfileMenuTests {
 				== ["Agents", "Marketplace", "Artefacts"])
 		#expect(
 			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
-				== ["Settings", "Notifications", "Triggers"])
+				== ["Settings", "Triggers"])
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
 		#expect(ProfileMenu.items(in: .workspace, hasWorkspace: false) == [.agents, .artefacts])
-		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings, .notifications])
+		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings])
 	}
 
 	@Test func everyItemIsInExactlyOneGroup() {

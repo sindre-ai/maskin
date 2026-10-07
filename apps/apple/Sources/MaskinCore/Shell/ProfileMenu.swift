@@ -15,7 +15,7 @@ public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Send
 }
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case agents, marketplace, artefacts, settings, notifications, triggers
+	case agents, marketplace, artefacts, settings, triggers
 
 	public var id: String { rawValue }
 
@@ -25,7 +25,6 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .marketplace: "Marketplace"
 		case .artefacts: "Artefacts"
 		case .settings: "Settings"
-		case .notifications: "Notifications"
 		case .triggers: "Triggers"
 		}
 	}
@@ -33,7 +32,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 	public var group: ProfileMenuGroup {
 		switch self {
 		case .agents, .marketplace, .artefacts: .workspace
-		case .settings, .notifications, .triggers: .you
+		case .settings, .triggers: .you
 		}
 	}
 

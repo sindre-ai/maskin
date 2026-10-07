@@ -97,10 +97,6 @@ struct ProfileSheet: View {
 			FilesListScreen(environment: environment, onDone: { self.destination = nil })
 		case .item(.settings):
 			SettingsScreen(environment: environment)
-		case .item(.notifications):
-			NotificationsScreen(environment: environment, store: runtime.notifications)
-				.environment(runtime.router)
-				.task { await runtime.requestPushPermission() }
 		case .item(.triggers):
 			if let workspaceID = environment.workspaceId {
 				TriggersSheet(environment: environment, workspaceID: workspaceID)
@@ -162,10 +158,7 @@ struct ProfileSheet: View {
 		VStack(spacing: 0) {
 			ForEach(Array(items.enumerated()), id: \.element) { index, item in
 				if index > 0 { separator() }
-				ProfileRow(
-					title: item.title, symbol: item.symbol,
-					badge: item == .notifications ? runtime.notifications.unreadCount : 0
-				) { destination = .item(item) }
+				ProfileRow(title: item.title, symbol: item.symbol) { destination = .item(item) }
 			}
 		}
 		.profileCard()
@@ -228,7 +221,6 @@ extension ProfileMenuItem {
 		case .marketplace: "square.grid.2x2"
 		case .artefacts: "doc.text"
 		case .settings: "gearshape"
-		case .notifications: "bell"
 		case .triggers: "bolt"
 		}
 	}

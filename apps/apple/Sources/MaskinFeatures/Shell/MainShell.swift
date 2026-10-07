@@ -120,9 +120,6 @@ private struct PresentationContent: View {
 		case .settings:
 			SettingsScreen(environment: environment)
 				.environment(runtime)
-		case .notifications:
-			NotificationsScreen(environment: environment, store: runtime.notifications)
-				.environment(runtime.router)
 		}
 	}
 }
