@@ -55,6 +55,8 @@ import {
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
+	SESSION_OAUTH_EXPIRES_AT_KEY,
+	isAuthErrorAtAccessTokenExpiry,
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
@@ -361,21 +363,33 @@ export function resolveActorSecretEnv(
  * gate: whether a failing session has anywhere left to fall over to is
  * decided by its slot's position in the chain (see
  * `maybeRetryClaudeOAuthOnNextSlot`), not by its presence.
+ *
+ * `nextOauthExpiresAt` is the access-token expiry of a launch whose container
+ * got no refresh token. It is stamped when given and cleared when not, so a
+ * retry that inherits the previous config never carries a stale expiry onto a
+ * launch that can refresh itself.
  */
 export function mergeLaunchRouteConfig(
 	existingConfig: Record<string, unknown>,
 	routeTaken: LlmRoute,
 	nextOauthSlot: string | undefined,
+	nextOauthExpiresAt?: number,
 ): Record<string, unknown> | null {
 	const needsUpdate =
 		existingConfig.llm_route !== routeTaken ||
-		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
+		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot) ||
+		existingConfig[SESSION_OAUTH_EXPIRES_AT_KEY] !== nextOauthExpiresAt
 	if (!needsUpdate) return null
 
 	const updatedConfig: Record<string, unknown> = {
 		...existingConfig,
 		llm_route: routeTaken,
 		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+	}
+	if (nextOauthExpiresAt === undefined) {
+		delete updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY]
+	} else {
+		updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY] = nextOauthExpiresAt
 	}
 	if (nextOauthSlot === 'primary') {
 		updatedConfig.claude_oauth_runtime_failover_retry_of = undefined
@@ -2216,6 +2230,7 @@ export class SessionManager extends EventEmitter {
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
+		let oauthExpiresAtTaken: number | undefined
 		let routeModelName: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
@@ -2233,6 +2248,7 @@ export class SessionManager extends EventEmitter {
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
+				oauthExpiresAtTaken = resolved.oauthExpiresAt
 				routeModelName = resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
@@ -2303,7 +2319,12 @@ export class SessionManager extends EventEmitter {
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
-			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
+			const updatedConfig = mergeLaunchRouteConfig(
+				existingConfig,
+				routeTaken,
+				nextOauthSlot,
+				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
+			)
 			const modelNameToPersist =
 				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
 				routeModelName &&
@@ -3296,6 +3317,15 @@ export class SessionManager extends EventEmitter {
 		const failedSlot = config.llm_oauth_slot
 		if (typeof failedSlot !== 'string') return null
 
+		if (isAuthErrorAtAccessTokenExpiry(config, reason)) {
+			logger.info('Session ended at access-token expiry, leaving the Claude slot as it is', {
+				sessionId,
+				slot: failedSlot,
+				reason,
+			})
+			return null
+		}
+
 		const failover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
 			workspaceId: session.workspaceId,
@@ -3344,6 +3374,18 @@ export class SessionManager extends EventEmitter {
 		// a workspace can hold more than two.
 		const failedSlot = config.llm_oauth_slot
 		if (typeof failedSlot !== 'string') return
+
+		// A session whose container got no refresh token ends at its access
+		// token's expiry with an auth error. The slot is healthy, so it is not
+		// stamped auth_failed and the workspace stays on it.
+		if (isAuthErrorAtAccessTokenExpiry(config, reason)) {
+			logger.info('Session ended at access-token expiry, leaving the Claude slot as it is', {
+				sessionId: session.id,
+				slot: failedSlot,
+				reason,
+			})
+			return
+		}
 
 		// One retry per failing session, however long the chain is: the retry
 		// itself fails over again from its own slot if it has to.
