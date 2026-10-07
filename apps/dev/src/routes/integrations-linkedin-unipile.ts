@@ -10,6 +10,7 @@ import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
+import { recordWebhookDelivery } from '../lib/integrations/providers/linkedin-unipile/delivery-telemetry'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import { readUnipileEnvelope } from '../lib/integrations/providers/linkedin-unipile/envelope'
@@ -1025,13 +1026,11 @@ app.post('/webhook', async (c) => {
 	const mapRow = getEventMapRow(envelope.type)
 	if (!mapRow) {
 		// Unknown or unhandled Unipile event type: acknowledge so Unipile does not
-		// retry. Log the shape so an unhandled event kind surfaces in the dev log
-		// rather than staying invisible. Common expected arrivals here:
-		// `account.status.*`, `chat.*`. To react to one, add a row to event-map.ts.
-		logger.info('linkedin-unipile webhook: skipped unhandled event', {
-			type: envelope.type,
-			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
-		})
+		// retry. The delivery line carries the event type so an unhandled event kind
+		// surfaces in the dev log rather than staying invisible. Common expected
+		// arrivals here: `account.status.*`, `chat.*`. To react to one, add a row to
+		// event-map.ts. No integration row is resolved here, so no PostHog event.
+		recordWebhookDelivery(envelope, false, null, { outcome: 'dropped', reason: 'unknown_type' })
 		return c.json({ ok: true, skipped: 'unknown_type' })
 	}
 
