@@ -57,9 +57,23 @@ public enum MaskinColor {
 	public static let accentFgQuieter = Color(light: RGBA(0x7DBCB0), dark: RGBA(0x6CC4B5))
 	public static let accentFgQuietest = Color(light: RGBA(0x7DBCB0), dark: RGBA(0x6CC4B5))
 	public static let accentFgQuietest2 = Color(light: RGBA(0xACD6CD), dark: RGBA(0x2F7D74))
+	public static let doneBg = Color(light: RGBA(0xF4F4F5), dark: RGBA(0x1F1F22))
+	public static let doneBd = Color(light: RGBA(0xE4E4E7), dark: RGBA(0x27272A))
+	public static let doneFg = Color(light: RGBA(0x18181B), dark: RGBA(0xFAFAFA))
+	public static let doneFg2 = Color(light: RGBA(0x3F3F46), dark: RGBA(0xD4D4D8))
+	public static let doneFg3 = Color(light: RGBA(0x71717A), dark: RGBA(0xA1A1AA))
+	public static let noticeBg = Color(light: RGBA(0xEEF6F4), dark: RGBA(0x15302B))
+	public static let noticeBd = Color(light: RGBA(0xD5EBE6), dark: RGBA(0x20564F))
+	public static let noticeFg = Color(light: RGBA(0x12302C), dark: RGBA(0xD5EBE6))
+	public static let noticeFg2 = Color(light: RGBA(0x20564F), dark: RGBA(0xACD6CD))
+	public static let noticeFg3 = Color(light: RGBA(0x2A7068), dark: RGBA(0x7DBCB0))
+	@available(*, deprecated, renamed: "doneFg")
 	public static let success = Color(light: RGBA(0x18181B), dark: RGBA(0xFAFAFA))
+	@available(*, deprecated, renamed: "doneFg2")
 	public static let successStrong = Color(light: RGBA(0x3F3F46), dark: RGBA(0xD4D4D8))
+	@available(*, deprecated, renamed: "doneBg")
 	public static let successTint = Color(light: RGBA(0xF4F4F5), dark: RGBA(0x1F1F22))
+	@available(*, deprecated, renamed: "doneBd")
 	public static let successTint2 = Color(light: RGBA(0xE4E4E7), dark: RGBA(0x27272A))
 	public static let warning = Color(light: RGBA(0xD97706), dark: RGBA(0xD97706))
 	public static let warningStrong = Color(light: RGBA(0xB45309), dark: RGBA(0xB45309))
@@ -113,6 +127,10 @@ public enum MaskinRadius {
 	public static let panelLg: CGFloat = 15
 	public static let panelXl: CGFloat = 16
 	public static let hero: CGFloat = 18
+	public static let card2xl: CGFloat = 20
+	public static let tile: CGFloat = 22
+	public static let brief: CGFloat = 24
+	public static let composer: CGFloat = 26
 	public static let pill: CGFloat = 99
 	public static let round: CGFloat = 999
 }
@@ -144,25 +162,26 @@ public enum MaskinSpace {
 
 /// Font sizes in points (`--text-13-5` → `t13_5`).
 public enum MaskinFontSize {
-	public static let t7_5: CGFloat = 7.5
-	public static let t8: CGFloat = 8
-	public static let t8_5: CGFloat = 8.5
 	public static let t9: CGFloat = 9
-	public static let t9_5: CGFloat = 9.5
 	public static let t10: CGFloat = 10
-	public static let t10_5: CGFloat = 10.5
 	public static let t11: CGFloat = 11
-	public static let t11_5: CGFloat = 11.5
 	public static let t12: CGFloat = 12
-	public static let t12_5: CGFloat = 12.5
 	public static let t13: CGFloat = 13
+	@available(*, deprecated, message: "Not in the v4 type scale; use t13 or t14")
 	public static let t13_5: CGFloat = 13.5
 	public static let t14: CGFloat = 14
 	public static let t15: CGFloat = 15
 	public static let t16: CGFloat = 16
 	public static let t17: CGFloat = 17
+	public static let t18: CGFloat = 18
 	public static let t19: CGFloat = 19
+	public static let t20: CGFloat = 20
 	public static let t22: CGFloat = 22
+	public static let t24: CGFloat = 24
+	public static let t26: CGFloat = 26
+	public static let t28: CGFloat = 28
+	public static let t32: CGFloat = 32
+	public static let t34: CGFloat = 34
 }
 
 /// Durations in seconds (`--dur-150` → `d150`, `--dur-slide` → `slide`).
@@ -172,6 +191,10 @@ public enum MaskinDuration {
 	public static let d200: Double = 0.2
 	public static let d250: Double = 0.25
 	public static let slide: Double = 0.3
+	public static let push: Double = 0.34
+	public static let wave: Double = 0.8
+	public static let waveStagger: Double = 0.12
+	public static let pulse: Double = 1.2
 }
 
 /// Status badge colours keyed by the CSS token key (`--st-in_progress-*` → `"in_progress"`).

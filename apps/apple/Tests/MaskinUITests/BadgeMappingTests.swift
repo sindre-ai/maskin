@@ -43,10 +43,16 @@ import Testing
 		#expect(MaskinStatus.tokenKey(for: "waiting_for_input") == "blocked")
 	}
 
+	@Test(arguments: ["done", "completed", "succeeded", "paid"]) func doneIsInkNeverGreen(status: String) {
+		let colors = MaskinStatus.colors(for: status)
+		#expect(colors.fg == MaskinColor.doneFg)
+		#expect(colors.bg == MaskinColor.doneBg)
+	}
+
 	@Test func labels() {
 		#expect(MaskinStatus.label(for: "in_progress") == "In progress")
 		#expect(MaskinStatus.label(for: "todo") == "To do")
-		#expect(MaskinStatus.label(for: "waiting_for_input") == "waiting for input")
+		#expect(MaskinStatus.label(for: "waiting_for_input") == "Needs you")
 		#expect(MaskinStatus.sentenceLabel(for: "blocked") == "Blocked")
 	}
 }

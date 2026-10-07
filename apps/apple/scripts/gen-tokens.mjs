@@ -79,10 +79,19 @@ emit('/// Semantic colors. Names mirror the CSS custom properties (`--ink-2` →
 emit('/// Each adapts to the system appearance; the dark values come from the token')
 emit("/// file's `html.dark` swap, and a token with no dark override is the same in both.")
 emit('public enum MaskinColor {')
+// Retired names kept as aliases so callers compile: css name -> replacement Swift name.
+const deprecatedColors = new Map([
+	['--success', 'doneFg'],
+	['--success-strong', 'doneFg2'],
+	['--success-tint', 'doneBg'],
+	['--success-tint-2', 'doneBd'],
+])
 for (const [name, value] of colorsLight) {
 	const l = swiftColor(value)
 	if (!l) continue // shadows etc.
 	const d = swiftColor(colorsDark.get(name) ?? value)
+	if (deprecatedColors.has(name))
+		emit(`\t@available(*, deprecated, renamed: "${deprecatedColors.get(name)}")`)
 	emit(`\tpublic static let ${camel(name.slice(2))} = Color(light: ${l}, dark: ${d})`)
 }
 emit('}')
@@ -119,9 +128,14 @@ emit()
 const typeLight = light(read('typography.css'))
 emit('/// Font sizes in points (`--text-13-5` → `t13_5`).')
 emit('public enum MaskinFontSize {')
+// The v4 scale has no half sizes and nothing below 9; web-only steps are skipped, except
+// the ones native callers still use.
+const keepSizes = new Set(['--text-13-5'])
 for (const [name, value] of typeLight) {
 	if (!name.startsWith('--text-')) continue
 	const px = num(value, 'px')
+	if (px !== null && !keepSizes.has(name) && (!Number.isInteger(px) || px < 9)) continue
+	if (px === 13.5) emit('\t@available(*, deprecated, message: "Not in the v4 type scale; use t13 or t14")')
 	if (px !== null) emit(`\tpublic static let t${name.slice(7).replace('-', '_')}: CGFloat = ${px}`)
 }
 emit('}')

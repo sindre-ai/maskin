@@ -30,8 +30,16 @@ public enum MaskinStatus {
 		return MaskinStatusPalette.all[key] != nil ? key : nil
 	}
 
+	/// v4 brand rule: done is ink on a neutral fill (with a check glyph at the call site), never
+	/// green. The generated palette still carries the web's green pair for these keys, so the
+	/// native clients override them here.
+	static let doneKeys: Set<String> = ["done", "completed", "succeeded"]
+	public static let done = MaskinColorPair(bg: MaskinColor.doneBg, fg: MaskinColor.doneFg)
+
 	public static func colors(for status: String) -> MaskinColorPair {
-		tokenKey(for: status).flatMap { MaskinStatusPalette.all[$0] } ?? fallback
+		guard let key = tokenKey(for: status) else { return fallback }
+		if doneKeys.contains(key) { return done }
+		return MaskinStatusPalette.all[key] ?? fallback
 	}
 
 	/// Human label: "in_progress" → "in progress", with the product's special cases.
@@ -40,6 +48,7 @@ public enum MaskinStatus {
 		case "todo": "To do"
 		case "in_progress": "In progress"
 		case "in_review": "In review"
+		case "waiting_for_input": "Needs you"
 		default: status.replacingOccurrences(of: "_", with: " ")
 		}
 	}

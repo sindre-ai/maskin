@@ -32,10 +32,33 @@ public enum MaskinTypeface {
 	}
 }
 
+/// The v4 weight scale (400, 500, 600, 650, 700, 750) on the weights the platform has.
+/// 650 rounds down to semibold and 750 to bold; titles get their extra punch from tracking.
+public enum MaskinFontWeight {
+	public static let regular = Font.Weight.regular  // 400
+	public static let medium = Font.Weight.medium  // 500
+	public static let semibold = Font.Weight.semibold  // 600
+	public static let w650 = Font.Weight.semibold  // 650
+	public static let bold = Font.Weight.bold  // 700
+	public static let w750 = Font.Weight.bold  // 750
+
+	/// The CSS weight each native weight stands in for, for tests and docs.
+	public static func css(_ weight: Font.Weight) -> Int {
+		switch weight {
+		case .medium: 500
+		case .semibold: 600
+		case .bold: 700
+		default: 400
+		}
+	}
+}
+
 /// A named type role: font + tracking + case. Apply with `.maskinText(.largeTitle)`.
 public enum MaskinTextRole: CaseIterable, Sendable {
-	/// Screen title, 34 / bold, tight tracking.
+	/// Root screen title, 34 / 750, -.026em, line-height 1.06.
 	case largeTitle
+	/// Sheet, thread and flow-name title, 24 / 750, -.022em.
+	case sheetTitle
 	/// Card or sheet headline.
 	case title
 	/// Feed card headline / row title.
@@ -46,23 +69,24 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	case subhead
 	/// Small supporting text.
 	case caption
-	/// Uppercase mono micro-label (11 / semibold, +0.06em).
+	/// Uppercase mono micro-label (10 / semibold, +0.08em).
 	case microLabel
+	/// The larger uppercase mono micro-label (12 / semibold, +0.07em).
+	case microLabelLarge
 	/// Machine-shaped text: ids, counts, cron.
 	case mono
 
-	// Role sizes beyond the token scale (iOS large title) live here, not in call sites.
-	private static let largeTitleSize: CGFloat = 34
-
 	public var font: Font {
 		switch self {
-		case .largeTitle: MaskinTypeface.sans(Self.largeTitleSize, weight: .bold, relativeTo: .largeTitle)
+		case .largeTitle: MaskinTypeface.sans(MaskinFontSize.t34, weight: MaskinFontWeight.w750, relativeTo: .largeTitle)
+		case .sheetTitle: MaskinTypeface.sans(MaskinFontSize.t24, weight: MaskinFontWeight.w750, relativeTo: .title)
 		case .title: MaskinTypeface.sans(MaskinFontSize.t22, weight: .bold, relativeTo: .title2)
 		case .headline: MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold, relativeTo: .headline)
 		case .body: MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body)
 		case .subhead: MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline)
 		case .caption: MaskinTypeface.sans(MaskinFontSize.t12, weight: .medium, relativeTo: .caption)
-		case .microLabel: MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2)
+		case .microLabel: MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold, relativeTo: .caption2)
+		case .microLabelLarge: MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold, relativeTo: .caption)
 		case .mono: MaskinTypeface.mono(MaskinFontSize.t13, relativeTo: .footnote)
 		}
 	}
@@ -70,10 +94,12 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	/// Tracking in em; applied against the role's point size.
 	public var trackingEm: CGFloat {
 		switch self {
-		case .largeTitle: -0.02
+		case .largeTitle: -0.026
+		case .sheetTitle: -0.022
 		case .title: -0.015
 		case .headline: -0.008
-		case .microLabel: 0.06
+		case .microLabel: 0.08
+		case .microLabelLarge: 0.07
 		default: 0
 		}
 	}
@@ -81,18 +107,29 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	/// Point size used to convert `trackingEm` to points.
 	var referenceSize: CGFloat {
 		switch self {
-		case .largeTitle: Self.largeTitleSize
+		case .largeTitle: MaskinFontSize.t34
+		case .sheetTitle: MaskinFontSize.t24
 		case .title: MaskinFontSize.t22
 		case .headline: MaskinFontSize.t17
 		case .body: MaskinFontSize.t16
 		case .subhead: MaskinFontSize.t14
 		case .caption: MaskinFontSize.t12
-		case .microLabel: MaskinFontSize.t11
+		case .microLabel: MaskinFontSize.t10
+		case .microLabelLarge: MaskinFontSize.t12
 		case .mono: MaskinFontSize.t13
 		}
 	}
 
-	public var isUppercase: Bool { self == .microLabel }
+	/// CSS line-height multiple for roles v4 pins (nil: system default). Exposed as data; screens
+	/// opt in via `lineSpacing` when they adopt the role.
+	public var lineHeightEm: CGFloat? {
+		switch self {
+		case .largeTitle: 1.06
+		default: nil
+		}
+	}
+
+	public var isUppercase: Bool { self == .microLabel || self == .microLabelLarge }
 }
 
 extension View {
