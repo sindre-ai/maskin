@@ -607,6 +607,131 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		describe('tools and llm_config writes on another actor', () => {
+			const sharedWs = '00000000-0000-0000-0000-000000000001'
+			const otherWs = '00000000-0000-0000-0000-000000000002'
+			const toolsBody = {
+				tools: {
+					mcpServers: { fake: { type: 'http' as const, url: 'https://example.invalid/mcp' } },
+				},
+			}
+			const llmBody = { llm_config: { model: 'fake-model' } }
+
+			it.each([
+				['tools', toolsBody],
+				['llm_config', llmBody],
+			])(
+				'returns 403 and leaves the row alone when a non-admin member changes %s',
+				async (_n, body) => {
+					const agent = buildActor({ type: 'agent' })
+					const { app, mockResults, calls } = createTestApp(
+						actorsRoutes,
+						'/api/actors',
+						'caller-id',
+					)
+					mockResults.selectQueue = [
+						[{ type: 'agent' }],
+						[{ workspaceId: sharedWs }], // caller's workspaces
+						[{ actorId: agent.id }], // target shares one
+						[], // caller holds no owner/admin role anywhere
+					]
+					mockResults.update = [agent]
+
+					const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, body))
+
+					expect(res.status).toBe(403)
+					expect(calls.updates).toHaveLength(0)
+				},
+			)
+
+			it('returns 403 when the caller is admin only in a workspace the target is not in', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ workspaceId: sharedWs }, { workspaceId: otherWs }],
+					[{ actorId: agent.id }], // shared membership exists in sharedWs
+					[{ workspaceId: otherWs }], // but the caller is admin only in otherWs
+					[], // target is not in otherWs
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when the header workspace is the one the caller is not admin in', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ actorId: 'caller-id' }], // caller is a member of the header workspace
+					[{ actorId: agent.id }], // target too
+					[], // but holds only the member role there
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody, {
+						'X-Workspace-Id': sharedWs,
+					}),
+				)
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 200 when a workspace admin changes tools of an agent in that workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ workspaceId: sharedWs }],
+					[{ actorId: agent.id }],
+					[{ workspaceId: sharedWs }], // caller is owner or admin there
+					[{ actorId: agent.id }], // target is in it
+				]
+				mockResults.update = [{ ...agent, tools: toolsBody.tools }]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody))
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+
+			it('returns 200 when the actor changes its own tools without any membership lookup', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', agent.id)
+				mockResults.selectQueue = [[{ type: 'agent' }]]
+				mockResults.update = [{ ...agent, tools: toolsBody.tools }]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody))
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+
+			it('returns 200 when a plain member changes only the system prompt of an agent', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ workspaceId: sharedWs }],
+					[{ actorId: agent.id }],
+				]
+				mockResults.update = [{ ...agent, systemPrompt: 'New prompt' }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/actors/${agent.id}`, { system_prompt: 'New prompt' }),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+		})
+
 		it('returns 200 when actor updated', async () => {
 			const actor = buildActor()
 			const updated = { ...actor, name: 'Updated Name' }
