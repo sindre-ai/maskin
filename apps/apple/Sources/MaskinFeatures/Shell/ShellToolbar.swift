@@ -91,7 +91,6 @@ private struct ShellToolbarModifier: ViewModifier {
 					}
 					if let new = actions.new, !scrolled {
 						Button(action: new) { Label(actions.newLabel, systemImage: "plus") }
-							.keyboardShortcut("n", modifiers: .command)
 					}
 					if let display = actions.display {
 						Menu {
