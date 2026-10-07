@@ -12,4 +12,14 @@ struct ShellCommandsTests {
 	@Test func numberShortcutsStayWithinSingleDigits() {
 		#expect(ShellCommands.shortcutTabs.count <= 9)
 	}
+
+	@MainActor @Test func newConversationOpensTeamFromAnyTab() {
+		let runtime = AppRuntime(environment: .preview())
+		runtime.selectedTab = .objects
+		runtime.presentation = .settings
+		runtime.requestNewConversation()
+		#expect(runtime.selectedTab == .chats)
+		#expect(runtime.presentation == nil)
+		#expect(runtime.newConversationRequested)
+	}
 }

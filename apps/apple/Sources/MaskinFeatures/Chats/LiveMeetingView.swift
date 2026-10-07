@@ -129,7 +129,9 @@ private struct LiveMeetingContent: View {
 	@Environment(\.openURL) private var openURL
 
 	private let avatarSize = MaskinSpace.s14 * 3 + MaskinSpace.s9
-	private let buttonSize = MaskinSpace.s14 * 2 - MaskinSpace.s3
+	@Environment(\.horizontalSizeClass) private var sizeClass
+	private var regularWidth: Bool { sizeClass == .regular }
+	private var buttonSize: CGFloat { LiveMeetingMetrics.controlSize(regularWidth: regularWidth) }
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s9) {
@@ -258,6 +260,7 @@ private struct LiveMeetingContent: View {
 				onClose()
 			}
 		}
+		.frame(maxWidth: LiveMeetingMetrics.controlsMaxWidth(regularWidth: regularWidth))
 	}
 
 	private func control(

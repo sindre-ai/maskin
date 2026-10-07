@@ -118,6 +118,17 @@ public final class AppRuntime {
 	}
 	public var chatDraft: ChatDraft?
 
+	/// Set by the New conversation command (⌘N) from any tab; `ChatsScreen` takes it, resets it to
+	/// false and presents its new-conversation sheet.
+	public var newConversationRequested = false
+
+	/// Open the new-conversation sheet on the Team tab, whichever tab the person is on.
+	public func requestNewConversation() {
+		presentation = nil
+		selectedTab = .chats
+		newConversationRequested = true
+	}
+
 	public func buildInChat(_ text: String) {
 		presentation = nil
 		selectedTab = .chats

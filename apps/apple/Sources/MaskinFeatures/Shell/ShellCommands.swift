@@ -12,6 +12,11 @@ public struct ShellCommands: Commands {
 	public init() {}
 
 	public var body: some Commands {
+		CommandGroup(after: .newItem) {
+			Button("New Conversation") { runtime?.requestNewConversation() }
+				.keyboardShortcut("n", modifiers: .command)
+				.disabled(runtime == nil)
+		}
 		CommandMenu("Go") {
 			ForEach(Array(Self.shortcutTabs.enumerated()), id: \.element) {
 				index, tab in

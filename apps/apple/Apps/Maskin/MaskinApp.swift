@@ -52,6 +52,9 @@ struct MaskinApp: App {
 				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
 				IntentDeepLinkRelay.attach(openAgent: { runtime.openAgent($0) }) { runtime.router.open($0) }
 			}
+			#if os(iOS)
+				.frame(minWidth: WindowMetrics.minimumWidth, minHeight: WindowMetrics.minimumHeight)
+			#endif
 			.onContinueUserActivity(CSSearchableItemActionType) { activity in
 				guard
 					let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String
@@ -66,6 +69,8 @@ struct MaskinApp: App {
 			#endif
 		}
 		#if os(iOS)
+			// Stage Manager and Split View may shrink the window, but never below 320 × 480.
+			.windowResizability(.contentMinSize)
 			.onChange(of: scenePhase) { _, phase in
 				if phase == .background { BackgroundRefresh.schedule() }
 			}

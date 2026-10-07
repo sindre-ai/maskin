@@ -97,6 +97,11 @@ private struct ChatsContainer: View {
 		.onChange(of: requestedConversationId, initial: true) {
 			ChatsScreen.consume(request: &requestedConversationId, into: &selection)
 		}
+		.onChange(of: runtime?.newConversationRequested, initial: true) {
+			guard runtime?.newConversationRequested == true else { return }
+			runtime?.newConversationRequested = false
+			showNewChat = true
+		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
 			// A build request from Agents or Loops: agents and loops are set up by the Chief of Staff.
 			guard let draft = runtime?.chatDraft else { return }
