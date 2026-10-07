@@ -20,19 +20,23 @@ import SwiftUI
 public struct ShellActions {
 	/// The "+" button (New / New conversation). Nil hides it.
 	public var new: (() -> Void)?
-	/// The dark Live button that opens the daily briefing with the Chief of Staff (For you only).
+	/// The dark Live button (For you and Chats only).
 	public var live: Bool
+	/// What the Live button opens. For you keeps the daily briefing; Chats starts a call with the Chief of Staff.
+	public var liveRequest: LiveMeetingRequest
 	/// The magnifier, on screens where search is a button rather than a tab.
 	public var search: Bool
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
 
 	public init(
-		new: (() -> Void)? = nil, live: Bool = false, search: Bool = true,
+		new: (() -> Void)? = nil, live: Bool = false, liveRequest: LiveMeetingRequest = .dailyBriefing,
+		search: Bool = true,
 		display: ShellDisplayMenu? = nil
 	) {
 		self.new = new
 		self.live = live
+		self.liveRequest = liveRequest
 		self.search = search
 		self.display = display
 	}
@@ -85,9 +89,9 @@ private struct ShellToolbarModifier: ViewModifier {
 				ToolbarItemGroup(placement: .primaryAction) {
 					if actions.live {
 						Button {
-							liveMeeting.present(.dailyBriefing)
+							liveMeeting.present(actions.liveRequest)
 						} label: {
-							Label("Live briefing", systemImage: "waveform")
+							Label(actions.liveRequest.buttonLabel, systemImage: "waveform")
 						}
 						.shellLiveButton()
 					}
