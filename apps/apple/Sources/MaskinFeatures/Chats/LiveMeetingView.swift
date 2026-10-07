@@ -164,7 +164,7 @@ private struct LiveMeetingContent: View {
 			ZStack {
 				ForEach(0..<3, id: \.self) { ring in
 					Circle()
-						.stroke(MaskinColor.accent.opacity(0.35 - Double(ring) * 0.1), lineWidth: MaskinSpace.s1)
+						.stroke(MaskinColor.ink.opacity(0.35 - Double(ring) * 0.1), lineWidth: MaskinSpace.s1)
 						.frame(width: avatarSize + CGFloat(ring + 1) * MaskinSpace.s13 * 1.2)
 						.scaleEffect(pulse(ring))
 						.animation(

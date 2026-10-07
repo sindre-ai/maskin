@@ -172,9 +172,9 @@ struct FileReviewComments: View {
 		HStack(alignment: .top, spacing: MaskinSpace.s5) {
 			Text(annotation.pinNumber.map(String.init) ?? "•")
 				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.accentDeep)
+				.foregroundStyle(MaskinColor.ink)
 				.frame(minWidth: MaskinSpace.s9, minHeight: MaskinSpace.s9)
-				.background(MaskinColor.accentTint, in: Circle())
+				.background(MaskinSurface.fillStrong, in: Circle())
 				.accessibilityLabel(annotation.pinNumber.map { "Pin \($0)" } ?? "Comment")
 			Text(annotation.comment)
 				.maskinText(.body)

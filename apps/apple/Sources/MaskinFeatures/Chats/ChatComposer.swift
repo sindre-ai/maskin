@@ -489,9 +489,9 @@ struct ComposerToolLabel: View {
 	var body: some View {
 		Image(systemName: symbol)
 			.font(.system(size: MaskinFontSize.t16, weight: .medium))
-			.foregroundStyle(active ? MaskinColor.accentStrong : MaskinColor.ink3)
+			.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink3)
 			.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
-			.background(active ? MaskinColor.accentTint : Color.clear, in: Circle())
+			.background(active ? MaskinSurface.fillStrong : Color.clear, in: Circle())
 			.overlay { if outlined { Circle().strokeBorder(MaskinSurface.line, lineWidth: 1) } }
 			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin - MaskinSpace.s2)
 			.contentShape(Rectangle())

@@ -30,7 +30,7 @@ struct SearchContentView: View {
 				.frame(maxWidth: .infinity)
 		}
 		.scrollDismissesKeyboard(.interactively)
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 	}
 }
 

@@ -60,7 +60,7 @@ struct LoopsListView: View {
 			}
 		}
 		.listStyle(.plain)
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.overlay { overlay(isEmpty: loops.isEmpty) }
 		.refreshable { await store.refresh() }
 	}

@@ -531,7 +531,7 @@ struct ThreadTranscript: View {
 			ThreadDivider(label: message.content, ruled: false)
 		case .unreadDivider(let count):
 			ThreadDivider(
-				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.accentStrong)
+				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.sigInk)
 		case .message(let message, let showsAuthor):
 			let run = runs[message.id] ?? ThreadLayout.Run()
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
@@ -554,7 +554,7 @@ struct ThreadTranscript: View {
 			.padding(.top, Self.topPadding(for: message, showsAuthor: showsAuthor, run: run, anchors: anchors, byID: byID))
 			.background(
 				matchIDs.contains(message.id)
-					? (message.id == currentMatchID ? MaskinColor.accentTint : MaskinColor.accentTint2) : Color.clear,
+					? (message.id == currentMatchID ? MaskinSurface.fillStrong : MaskinSurface.fill) : Color.clear,
 				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)

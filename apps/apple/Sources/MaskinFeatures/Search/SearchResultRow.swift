@@ -18,8 +18,8 @@ struct HighlightedText: View {
 			guard let lower = AttributedString.Index(range.lowerBound, within: result),
 				let upper = AttributedString.Index(range.upperBound, within: result)
 			else { continue }
-			result[lower..<upper].backgroundColor = MaskinColor.accentTint
-			result[lower..<upper].foregroundColor = MaskinColor.accentDeep
+			result[lower..<upper].backgroundColor = MaskinSurface.fillStrong
+			result[lower..<upper].foregroundColor = MaskinColor.ink
 		}
 		return result
 	}

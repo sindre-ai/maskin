@@ -30,7 +30,7 @@ public struct WorkspaceSwitcher: View {
 							}
 							Spacer()
 							if workspace.id == store.selectedID {
-								Image(systemName: "checkmark").foregroundStyle(MaskinColor.accent)
+								Image(systemName: "checkmark").foregroundStyle(MaskinColor.ink)
 							}
 						}
 						.frame(minHeight: MaskinSpace.touchMin)

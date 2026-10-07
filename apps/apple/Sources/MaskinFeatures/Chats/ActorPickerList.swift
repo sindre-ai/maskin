@@ -63,7 +63,7 @@ struct ActorPickerList: View {
 						}
 						Spacer()
 						Image(systemName: selection.contains(actor.id) ? "checkmark.circle.fill" : "circle")
-							.foregroundStyle(selection.contains(actor.id) ? MaskinColor.accent : MaskinColor.ink5)
+							.foregroundStyle(selection.contains(actor.id) ? MaskinColor.ink : MaskinColor.ink5)
 							.accessibilityHidden(true)
 					}
 					.contentShape(Rectangle())

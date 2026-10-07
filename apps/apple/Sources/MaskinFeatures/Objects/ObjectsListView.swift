@@ -24,7 +24,7 @@ struct ObjectsListView: View {
 			}
 			content
 		}
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
@@ -186,7 +186,7 @@ struct ObjectsListView: View {
 			} label: {
 				Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.slash" : "star")
 			}
-			.tint(MaskinColor.accent)
+			.tint(MaskinColor.ink)
 		}
 		.swipeActions(edge: .trailing) {
 			Button(role: .destructive) {

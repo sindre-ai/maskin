@@ -62,7 +62,7 @@ private struct WatchChatRow: View {
 					Spacer(minLength: 0)
 					Text("\(conversation.unreadCount)")
 						.font(.caption2.weight(.bold))
-						.foregroundStyle(MaskinColor.accent)
+						.foregroundStyle(MaskinColor.sigInk)
 				}
 			}
 			if let snippet = conversation.snippet, !snippet.isEmpty {

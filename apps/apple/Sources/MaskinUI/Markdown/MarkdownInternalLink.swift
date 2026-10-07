@@ -79,9 +79,9 @@ public struct MarkdownLinkCard: View {
 				HStack(spacing: MaskinSpace.s6) {
 					Image(systemName: info.symbol)
 						.font(.system(size: MaskinFontSize.t15, weight: .semibold))
-						.foregroundStyle(MaskinColor.accentStrong)
+						.foregroundStyle(MaskinColor.ink)
 						.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
-						.background(MaskinColor.accentTint, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+						.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
 						.accessibilityHidden(true)
 					VStack(alignment: .leading, spacing: 0) {
 						Text(name).maskinText(.subhead).fontWeight(.semibold)

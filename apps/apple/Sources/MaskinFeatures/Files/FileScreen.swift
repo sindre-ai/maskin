@@ -24,7 +24,7 @@ public struct FileScreen: View {
 
 	public var body: some View {
 		FileScreenBody(store: store)
-			.background(MaskinSurface.grouped)
+			.ambientBackground()
 			.navigationTitle(store.file?.name ?? "")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
@@ -139,10 +139,10 @@ struct FileLoadedContent: View {
 				systemImage: isAnnotating ? "pin.fill" : "pin"
 			)
 			.maskinText(.subhead)
-			.foregroundStyle(isAnnotating ? MaskinColor.accentDeep : MaskinColor.ink2)
+			.foregroundStyle(isAnnotating ? MaskinColor.ink : MaskinColor.ink2)
 			.padding(.horizontal, MaskinSpace.s8)
 			.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s4)
-			.background(isAnnotating ? MaskinColor.accentTint : MaskinSurface.fill, in: Capsule())
+			.background(isAnnotating ? MaskinSurface.fillStrong : MaskinSurface.fill, in: Capsule())
 			.fixedSize()
 		}
 		.buttonStyle(.plain)

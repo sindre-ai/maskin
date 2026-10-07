@@ -53,7 +53,7 @@ private struct FilesListContent: View {
 	var body: some View {
 		NavigationStack {
 			FilesListView(store: store, search: search, onOpen: open)
-			.background(MaskinSurface.grouped)
+			.ambientBackground()
 			.navigationTitle("Files")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.large)
@@ -131,9 +131,9 @@ struct FilesListView: View {
 		let content = HStack(spacing: MaskinSpace.s8) {
 			Image(systemName: FileKindIcon.symbol(for: file.kind))
 				.font(.system(size: MaskinSpace.s11, weight: .regular))
-				.foregroundStyle(MaskinColor.accentDeep)
+				.foregroundStyle(MaskinColor.ink2)
 				.frame(width: MaskinSpace.s14 + MaskinSpace.s4, height: MaskinSpace.s14 + MaskinSpace.s4)
-				.background(MaskinColor.accentTint, in: RoundedRectangle(cornerRadius: MaskinRadius.cardLg, style: .continuous))
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.cardLg, style: .continuous))
 				.accessibilityHidden(true)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(file.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)

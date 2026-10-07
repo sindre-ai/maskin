@@ -15,15 +15,15 @@ import SwiftUI
 public enum MentionText {
 	/// Where the text sits, which decides the colour of the tagged name.
 	public enum Style: Sendable {
-		/// Text on a plain surface or in someone else's bubble: the accent colour.
+		/// Text on a plain surface or in someone else's bubble: Patina text.
 		case plain
-		/// Text in your own (indigo-tinted) bubble: a lighter indigo that reads against it.
+		/// Text in your own ink bubble: a soft grey that reads against it.
 		case ownBubble
 
 		public var color: Color {
 			switch self {
-			case .plain: MaskinColor.accent
-			case .ownBubble: MaskinColor.accentFgStrong
+			case .plain: MaskinColor.sigInk
+			case .ownBubble: MaskinPatina.mentionOnInverse
 			}
 		}
 	}

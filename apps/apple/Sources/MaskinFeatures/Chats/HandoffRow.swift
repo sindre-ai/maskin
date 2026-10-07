@@ -99,14 +99,14 @@ struct HandoffRow: View {
 		}
 	}
 
-	/// Green tick for a finished step, amber dot for the one in progress, a warning triangle for a failure.
+	/// Tick for a finished step, Patina dot for the one in progress, a warning triangle for a failure.
 	@ViewBuilder
 	private func marker(for step: ActivityStep) -> some View {
 		switch step.status {
 		case .completed:
 			Image(systemName: "checkmark").font(.caption2).foregroundStyle(MaskinColor.success)
 		case .running:
-			Circle().fill(MaskinColor.warning).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+			Circle().fill(MaskinColor.sig).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
 		case .failed:
 			Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(MaskinColor.warning)
 		}

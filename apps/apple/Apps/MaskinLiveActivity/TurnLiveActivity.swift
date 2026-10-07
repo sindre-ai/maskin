@@ -52,7 +52,7 @@ struct TurnLiveActivity: Widget {
 enum StatusStyle {
 	static func tint(_ status: TurnActivityStatus) -> Color {
 		switch status {
-		case .running: MaskinColor.accent
+		case .running: MaskinColor.sigHi
 		case .needsYou: MaskinColor.warning
 		case .done: MaskinColor.success
 		case .failed: MaskinColor.danger

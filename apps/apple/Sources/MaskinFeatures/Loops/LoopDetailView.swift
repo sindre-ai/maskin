@@ -22,7 +22,7 @@ struct LoopDetailView: View {
 				.frame(maxWidth: 720, alignment: .leading)
 				.frame(maxWidth: .infinity)
 		}
-		.background(MaskinSurface.grouped)
+		.ambientBackground()
 		.navigationTitle(store.loop.displayName)
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
@@ -369,7 +369,7 @@ struct LoopActivityRow: View {
 		switch entry.tone {
 		case .success: MaskinColor.success
 		case .failure: MaskinColor.danger
-		case .active: MaskinColor.accent
+		case .active: MaskinColor.sig
 		case .neutral: MaskinColor.ink5
 		}
 	}

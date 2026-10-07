@@ -149,7 +149,7 @@ private struct OptionRowLabel: View {
 				Spacer(minLength: MaskinSpace.s3)
 				if option.recommended {
 					Text("RECOMMENDED").maskinText(.microLabel)
-						.foregroundStyle(chosen ? MaskinSurface.onInverse : MaskinColor.accentFgStrong)
+						.foregroundStyle(chosen ? MaskinSurface.onInverse : MaskinColor.sigInk)
 						.opacity(chosen ? 0.7 : 1)
 				}
 			}
@@ -182,10 +182,10 @@ private struct QuestionOptionStyle: ButtonStyle {
 	}
 
 	private var background: Color {
-		chosen ? MaskinSurface.inverse : (recommended ? MaskinColor.accentTint2 : MaskinSurface.card)
+		chosen ? MaskinSurface.inverse : (recommended ? MaskinSurface.fill : MaskinSurface.card)
 	}
 
 	private var border: Color {
-		chosen ? .clear : (recommended ? MaskinColor.accentFgQuieter : MaskinSurface.line)
+		chosen ? .clear : (recommended ? MaskinColor.ruleStrong : MaskinSurface.line)
 	}
 }

@@ -19,7 +19,7 @@ struct VoiceWaveform: View {
 	var bars = 7
 	var height: CGFloat = 40
 	var barWidth: CGFloat = 4
-	var tint: Color = MaskinColor.accent
+	var tint: Color = MaskinColor.ink
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// The bars' resting silhouette: tall in the middle, short at the edges.
@@ -78,7 +78,7 @@ struct LiveVoicePanel: View {
 		.accessibilityElement(children: .contain)
 	}
 
-	private var tint: Color { phase == .speaking ? MaskinColor.accent : MaskinColor.ink3 }
+	private var tint: Color { phase == .speaking ? MaskinColor.ink : MaskinColor.ink3 }
 
 	private var title: String {
 		switch phase {

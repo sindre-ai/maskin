@@ -33,7 +33,7 @@ struct ConversationRow: View {
 					if let date = conversation.activityDate {
 						Text(ChatListTime.label(for: date, now: now))
 							.maskinText(.caption)
-							.foregroundStyle(conversation.isUnread ? MaskinColor.accent : MaskinColor.ink4)
+							.foregroundStyle(conversation.isUnread ? MaskinColor.sigInk : MaskinColor.ink4)
 					}
 				}
 				HStack(alignment: .top, spacing: MaskinSpace.s4) {
@@ -89,10 +89,10 @@ struct UnreadBadge: View {
 	var body: some View {
 		Text(count > 99 ? "99+" : "\(count)")
 			.maskinText(.caption)
-			.foregroundStyle(MaskinSurface.onInverse)
+			.foregroundStyle(MaskinColor.badgeFg)
 			.padding(.horizontal, MaskinSpace.s3)
 			.frame(minWidth: MaskinSpace.s10, minHeight: MaskinSpace.s10)
-			.background(MaskinColor.accent, in: Capsule())
+			.background(MaskinGradient.badge, in: Capsule())
 			.accessibilityHidden(true)
 	}
 }

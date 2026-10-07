@@ -106,10 +106,10 @@ struct ObjectDetailContent<Decision: View>: View {
 			if let activity = object.activeActivity, !activity.isEmpty {
 				Label(activity, systemImage: "sparkles")
 					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.accentFgStrong)
+					.foregroundStyle(MaskinColor.sigInk)
 					.padding(.horizontal, MaskinSpace.s7)
 					.padding(.vertical, MaskinSpace.s5)
-					.background(MaskinColor.accentTint2, in: Capsule())
+					.background(MaskinColor.sigTint, in: Capsule())
 			}
 		}
 	}
@@ -195,7 +195,7 @@ struct ObjectDetailContent<Decision: View>: View {
 							withAnimation(MaskinMotion.standard) { descriptionExpanded.toggle() }
 						}
 						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.accentFgStrong)
+						.foregroundStyle(MaskinColor.ink)
 					}
 				}
 			}
@@ -233,7 +233,7 @@ struct ObjectDetailContent<Decision: View>: View {
 								withAnimation(MaskinMotion.standard) { showAllProperties.toggle() }
 							}
 							.maskinText(.subhead)
-							.foregroundStyle(MaskinColor.accentFgStrong)
+							.foregroundStyle(MaskinColor.ink)
 							.frame(maxWidth: .infinity, alignment: .leading)
 						}
 					}

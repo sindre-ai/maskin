@@ -97,7 +97,7 @@ struct PinCommentSheet: View {
 		}
 		.padding(MaskinSpace.s11)
 		.frame(maxHeight: .infinity, alignment: .top)
-		.background(MaskinSurface.grouped)
+		.ambientBackground(showsBottom: false)
 		.presentationDetents([.medium, .large])
 		.presentationDragIndicator(.visible)
 		.onAppear { focused = true }

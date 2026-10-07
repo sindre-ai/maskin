@@ -116,7 +116,7 @@ struct FilePinMarker: View {
 			.maskinText(.caption)
 			.foregroundStyle(MaskinSurface.onInverse)
 			.frame(width: MaskinSpace.s13, height: MaskinSpace.s13)
-			.background(isDraft ? MaskinColor.accentStrong : MaskinColor.accent, in: Circle())
+			.background(isDraft ? MaskinColor.ink3 : MaskinColor.ink, in: Circle())
 			.overlay(Circle().strokeBorder(MaskinSurface.card, lineWidth: 2))
 			.shadow(color: MaskinColor.overlayDim, radius: 6, y: 2)
 			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)

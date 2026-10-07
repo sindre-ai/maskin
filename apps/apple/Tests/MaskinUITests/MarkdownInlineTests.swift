@@ -122,6 +122,18 @@ private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 		#expect(run.backgroundColor != nil)
 	}
 
+	@Test func linksAreInkAndMentionsArePatinaOrSoftGreyOnInk() {
+		let link = MarkdownInline.attributed("[x](https://example.com)", base: .body)
+		#expect(link.runs.first!.foregroundColor == MaskinColor.ink)
+		let onInk = MarkdownInline.attributed("[x](https://example.com)", base: .body, onInverse: true)
+		#expect(onInk.runs.first!.foregroundColor == MaskinSurface.onInverse)
+		let mention = "[@Ida](\(MarkdownMention.scheme):1)"
+		#expect(MarkdownInline.attributed(mention, base: .body).runs.first!.foregroundColor == MaskinColor.sigInk)
+		#expect(
+			MarkdownInline.attributed(mention, base: .body, onInverse: true).runs.first!.foregroundColor
+				== MaskinPatina.mentionOnInverse)
+	}
+
 	@Test func anOutsideLinkIsUntouched() {
 		let attr = MarkdownInline.attributed("[x](https://example.com)", base: .body, linkInfo: info)
 		let run = attr.runs.first!

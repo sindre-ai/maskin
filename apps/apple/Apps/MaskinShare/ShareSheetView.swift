@@ -44,7 +44,7 @@ struct ShareSheetView: View {
 				form
 			}
 		}
-		.background(MaskinSurface.grouped.ignoresSafeArea())
+		.ambientBackground(showsBottom: false)
 		.task { await model.start() }
 		.onChange(of: model.phase) { _, phase in
 			switch phase {
