@@ -67,6 +67,46 @@ export async function actorsShareWorkspace(
 	return !!shared
 }
 
+/**
+ * Whether `callerId` is an owner or admin (any actor type) of a workspace it
+ * shares with `targetId`. When `workspaceId` (the X-Workspace-Id header) is
+ * given, the role must be held in that workspace and the target must be a
+ * member of it; otherwise any shared workspace counts. Gates writes to another
+ * actor's tools and llm_config, which decide what runs in its sessions.
+ */
+export async function isAdminOfSharedWorkspace(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId?: string,
+): Promise<boolean> {
+	const callerAdminWorkspaces = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, callerId),
+				inArray(workspaceMembers.role, ['owner', 'admin']),
+				...(workspaceId ? [eq(workspaceMembers.workspaceId, workspaceId)] : []),
+			),
+		)
+	if (callerAdminWorkspaces.length === 0) return false
+	const [shared] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, targetId),
+				inArray(
+					workspaceMembers.workspaceId,
+					callerAdminWorkspaces.map((w) => w.workspaceId),
+				),
+			),
+		)
+		.limit(1)
+	return !!shared
+}
+
 export async function isWorkspaceOwner(
 	db: Database,
 	actorId: string,
