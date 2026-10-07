@@ -13,7 +13,8 @@ public struct ObjectsScreen: View {
 	@Namespace private var zoom
 	@State private var selection: String?
 	@State private var detailPath: [ObjectRoute] = []
-	@State private var showCreate = false
+	@State private var showNewChat = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	public init(environment: AppEnvironment) {
@@ -34,12 +35,11 @@ public struct ObjectsScreen: View {
 				split
 			}
 		}
-		.sheet(isPresented: $showCreate) {
-			CreateObjectSheet(store: store) { created in
-				if sizeClass == .compact {
-					path.append(ObjectRoute(id: created.id))
-				} else {
-					selection = created.id
+		.sheet(isPresented: $showNewChat) {
+			if let chief = runtime?.forYou.chief {
+				NewChatSheet(store: chief.conversations, currentActorID: environment.auth.session?.actorId) { created in
+					runtime?.selectedTab = .chats
+					runtime?.requestedConversationId = created.id
 				}
 			}
 		}
@@ -52,9 +52,9 @@ public struct ObjectsScreen: View {
 		.task { await store.observe(environment.events.subscribe()) }
 	}
 
-	/// New opens the create sheet; Display holds the filters and grouping.
+	/// New starts a plain chat; Display holds the filters and grouping.
 	private var shellActions: ShellActions {
-		ShellActions(new: { showCreate = true }, display: ShellDisplayMenu { ObjectsDisplayMenu(store: store) })
+		ShellActions(new: { showNewChat = true }, display: ShellDisplayMenu { ObjectsDisplayMenu(store: store) })
 	}
 
 	// MARK: iPhone

@@ -52,8 +52,8 @@ public struct ForYouScreen: View {
 		}
 	}
 
-	/// The Display menu: which kind of card to show, and the two bulk actions. Both act on the
-	/// store's existing per-card paths, so each card stays individually undoable.
+	/// The Display menu: which kind of card to show, and taking every suggested option. That acts on
+	/// the store's per-card path, so each card stays individually undoable.
 	@ViewBuilder private var displayMenu: some View {
 		let store = runtime.store
 		if !store.typeCounts.isEmpty {
@@ -70,8 +70,6 @@ public struct ForYouScreen: View {
 		}
 		Button("Take every suggested", systemImage: "checkmark.circle") { store.takeSuggestedOptions() }
 			.disabled(store.suggestedOptionCount == 0)
-		Button("Dismiss all updates", systemImage: "checkmark") { store.dismissAllFYIs() }
-			.disabled(!store.entries.contains { $0.bucket == .fyi })
 	}
 }
 
