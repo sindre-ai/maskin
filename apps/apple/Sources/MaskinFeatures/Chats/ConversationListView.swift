@@ -14,11 +14,24 @@ struct ConversationListView: View {
 	var isLive = true
 	let onNewChat: () -> Void
 
+	@State private var picking = SelectionModel()
+
 	@AppStorage(ChatsDisplayMenu.groupByKey) private var storedGroupBy = ConversationGroupBy.recent.rawValue
 
 	var body: some View {
 		let sections = store.sections(query: search, currentActorID: currentActorID)
-		List(selection: $selection) {
+		let allIDs = sections.pinned.map(\.id) + sections.groups.flatMap { $0.items.map(\.id) }
+		// While selecting, a tap toggles the row instead of opening it.
+		let rowSelection = Binding<String?>(
+			get: { picking.isActive ? nil : selection },
+			set: { id in
+				if picking.isActive {
+					if let id { picking.toggle(id) }
+				} else {
+					selection = id
+				}
+			})
+		return List(selection: rowSelection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…")
 					.listRowInsets(EdgeInsets())
@@ -27,7 +40,8 @@ struct ConversationListView: View {
 			}
 			if !sections.pinned.isEmpty {
 				PinnedTiles(
-					conversations: sections.pinned, currentActorID: currentActorID, selection: $selection,
+					conversations: sections.pinned, currentActorID: currentActorID, selection: rowSelection,
+					picking: picking.isActive ? picking : nil,
 					onUnpin: { id in Task { await store.setPinned(id, false) } }
 				)
 				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
@@ -37,28 +51,36 @@ struct ConversationListView: View {
 			ForEach(sections.groups) { group in
 				Section {
 					ForEach(group.items) { conversation in
-						ConversationRow(conversation: conversation, currentActorID: currentActorID)
+						HStack(spacing: MaskinSpace.s5) {
+							if picking.isActive {
+								SelectionCheckbox(isPicked: picking.contains(conversation.id))
+									.transition(.move(edge: .leading).combined(with: .opacity))
+							}
+							ConversationRow(conversation: conversation, currentActorID: currentActorID)
+						}
+						.selectionRowAccessibility(
+							isActive: picking.isActive, isPicked: picking.contains(conversation.id))
 							.tag(conversation.id)
 							.listRowBackground(MaskinSurface.card)
 							.listRowSeparatorTint(MaskinSurface.separator)
-							.contextMenu { menu(for: conversation) }
+							.contextMenu { if !picking.isActive { menu(for: conversation) } }
 							.swipeActions(edge: .leading, allowsFullSwipe: true) {
-								Button {
+								if !picking.isActive { Button {
 									MaskinHaptics.play(.selection)
 									Task { await store.setPinned(conversation.id, !conversation.pinned) }
 								} label: {
 									Label(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin")
 								}
-								.tint(MaskinColor.ink)
+								.tint(MaskinColor.ink) }
 							}
 							.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-								Button {
+								if !picking.isActive { Button {
 									MaskinHaptics.play(.selection)
 									Task { await store.setArchived(conversation.id, !conversation.archived) }
 								} label: {
 									Label(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
 								}
-								.tint(MaskinColor.ink3)
+								.tint(MaskinColor.ink3) }
 							}
 							.onAppear {
 								if conversation.id == store.conversations.last?.id { Task { await store.loadMore() } }
@@ -100,6 +122,10 @@ struct ConversationListView: View {
 		.ambientBackground()
 		.overlay { overlay(isEmpty: sections.isEmpty) }
 		.refreshable { await store.refresh() }
+		.animation(.snappy, value: picking.isActive)
+		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
+		.onChange(of: store.scope) { picking.exit() }
+		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.chatSearch(store: store, text: $search)
 		.onAppear { store.groupBy = ConversationGroupBy(rawValue: storedGroupBy) ?? .recent }
 	}
@@ -132,6 +158,31 @@ struct ConversationListView: View {
 		}
 	}
 
+	/// Bulk actions in the selection bar. Archive is the primary; the rest sit in a text menu.
+	@ViewBuilder
+	private func bulkActions(allIDs: [String]) -> some View {
+		let ids = picking.ordered(in: allIDs)
+		Menu("More") {
+			if store.scope == .active {
+				Button("Pin", systemImage: "pin") { run(ids) { await store.setPinned($0, true) } }
+				Button("Unpin", systemImage: "pin.slash") { run(ids) { await store.setPinned($0, false) } }
+				Button("Mark as unread", systemImage: "envelope.badge") { run(ids) { await store.markUnread($0) } }
+			}
+		}
+		.disabled(picking.isEmpty || store.scope != .active)
+		Button(store.scope == .archived ? "Unarchive" : "Archive") {
+			run(ids) { await store.setArchived($0, store.scope != .archived) }
+		}
+		.fontWeight(.semibold)
+		.disabled(picking.isEmpty)
+	}
+
+	private func run(_ ids: [String], _ action: @escaping ([String]) async -> BulkResult) {
+		MaskinHaptics.play(.selection)
+		picking.exit()
+		Task { _ = await action(ids) }
+	}
+
 	@ViewBuilder
 	private func menu(for conversation: ConversationSummary) -> some View {
 		Button(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin") {
@@ -140,6 +191,7 @@ struct ConversationListView: View {
 		Button("Mark as unread", systemImage: "envelope.badge") {
 			Task { await store.markUnread(conversation.id) }
 		}
+		Button("Select", systemImage: "checkmark.circle") { picking.enter(selecting: conversation.id) }
 		Button(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox") {
 			Task { await store.setArchived(conversation.id, !conversation.archived) }
 		}
@@ -203,6 +255,8 @@ struct PinnedTiles: View {
 	let conversations: [ConversationSummary]
 	let currentActorID: String?
 	@Binding var selection: String?
+	/// Non-nil while the list is in selection mode: tiles show their checkmark.
+	var picking: SelectionModel?
 	let onUnpin: (String) -> Void
 
 	private let columns = Array(
@@ -215,10 +269,17 @@ struct PinnedTiles: View {
 					selection = conversation.id
 				} label: {
 					PinnedTile(conversation: conversation, currentActorID: currentActorID)
+						.overlay(alignment: .topLeading) {
+							if let picking {
+								SelectionCheckbox(isPicked: picking.contains(conversation.id)).padding(MaskinSpace.s4)
+							}
+						}
 				}
 				.buttonStyle(.plain)
 				.contextMenu {
-					Button("Unpin", systemImage: "pin.slash") { onUnpin(conversation.id) }
+					if picking == nil {
+						Button("Unpin", systemImage: "pin.slash") { onUnpin(conversation.id) }
+					}
 				}
 			}
 		}

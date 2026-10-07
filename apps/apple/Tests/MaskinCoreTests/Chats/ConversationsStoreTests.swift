@@ -168,6 +168,40 @@ struct ConversationsStoreTests {
 		#expect(store.conversations.map(\.id) == ["b"])
 	}
 
+	@Test("bulk archive removes every picked chat, one write each")
+	func bulkArchive() async {
+		let api = FakeListAPI([chatConvo("a"), chatConvo("b"), chatConvo("c")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		let result = await store.setArchived(["a", "c"], true)
+		#expect(result == BulkResult(succeeded: 2, failed: 0))
+		#expect(store.conversations.map(\.id) == ["b"])
+		let calls = await api.stateCalls
+		#expect(calls.count == 2)
+		#expect(store.notice == nil)
+	}
+
+	@Test("bulk archive rolls each chat back and says so when the writes fail")
+	func bulkArchiveFails() async {
+		let api = FakeListAPI([chatConvo("a"), chatConvo("b")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		await api.setFailState(true)
+		let result = await store.setArchived(["a", "b"], true)
+		#expect(result == BulkResult(succeeded: 0, failed: 2))
+		#expect(store.conversations.map(\.id) == ["a", "b"])
+		#expect(store.notice == "Couldn't archive 2 chats.")
+	}
+
+	@Test("bulk pin pins each picked chat")
+	func bulkPin() async {
+		let api = FakeListAPI([chatConvo("a"), chatConvo("b")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		await store.setPinned(["a", "b"], true)
+		#expect(store.conversations.allSatisfy { $0.pinned })
+	}
+
 	@Test("mark unread raises the badge; reading clears it")
 	func unreadState() async {
 		let api = FakeListAPI([chatConvo("a")])

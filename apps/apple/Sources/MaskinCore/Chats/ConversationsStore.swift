@@ -235,27 +235,73 @@ public final class ConversationsStore {
 
 	// MARK: - Per-user state (optimistic, rolled back on failure)
 
-	public func setPinned(_ id: String, _ pinned: Bool) async {
+	@discardableResult
+	public func setPinned(_ id: String, _ pinned: Bool) async -> Bool {
 		await mutate(id, apply: { $0.pinned = pinned }) {
 			try await self.api.updateState(
 				conversationID: id, pinned: pinned, archived: nil, lastReadMessageID: nil, markUnread: false)
 		}
 	}
 
-	public func setArchived(_ id: String, _ archived: Bool) async {
+	@discardableResult
+	public func setArchived(_ id: String, _ archived: Bool) async -> Bool {
 		let before = conversations
 		conversations.removeAll { $0.id == id }
 		reconcileAgentFilter()
 		do {
 			try await api.updateState(
 				conversationID: id, pinned: nil, archived: archived, lastReadMessageID: nil, markUnread: false)
+			return true
 		} catch {
 			conversations = before
 			notice = Self.message(error)
+			return false
 		}
 	}
 
-	public func markUnread(_ id: String) async {
+	/// Bulk archive/unarchive: one optimistic write per chat, each rolled back on its own failure.
+	@discardableResult
+	public func setArchived(_ ids: [String], _ archived: Bool) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			if await setArchived(id, archived) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		if let text = result.failureNotice(
+			action: archived ? "archive" : "unarchive", past: archived ? "archived" : "unarchived", noun: "chat")
+		{
+			notice = text
+		}
+		return result
+	}
+
+	/// Bulk pin/unpin, per chat.
+	@discardableResult
+	public func setPinned(_ ids: [String], _ pinned: Bool) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			if await setPinned(id, pinned) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		if let text = result.failureNotice(
+			action: pinned ? "pin" : "unpin", past: pinned ? "pinned" : "unpinned", noun: "chat")
+		{
+			notice = text
+		}
+		return result
+	}
+
+	/// Bulk mark-as-unread, per chat.
+	@discardableResult
+	public func markUnread(_ ids: [String]) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			if await markUnread(id) { result.succeeded += 1 } else { result.failed += 1 }
+		}
+		if let text = result.failureNotice(action: "mark", past: "marked", noun: "chat") { notice = text }
+		return result
+	}
+
+	@discardableResult
+	public func markUnread(_ id: String) async -> Bool {
 		await mutate(id, apply: { $0.unreadCount = max($0.unreadCount, 1) }) {
 			try await self.api.updateState(
 				conversationID: id, pinned: nil, archived: nil, lastReadMessageID: nil, markUnread: true)
@@ -288,17 +334,20 @@ public final class ConversationsStore {
 		change(&conversations[index])
 	}
 
+	@discardableResult
 	private func mutate(
 		_ id: String, apply: (inout ConversationSummary) -> Void, request: () async throws -> Void
-	) async {
-		guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+	) async -> Bool {
+		guard let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
 		let before = conversations[index]
 		apply(&conversations[index])
 		do {
 			try await request()
+			return true
 		} catch {
 			update(id) { $0 = before }
 			notice = Self.message(error)
+			return false
 		}
 	}
 

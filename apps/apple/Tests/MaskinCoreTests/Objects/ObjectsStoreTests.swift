@@ -253,6 +253,41 @@ struct ObjectsStoreTests {
 		let groups = ObjectsGrouper.group(objects, by: .status, schema: .fallback, type: "task")
 		#expect(groups.map(\.id) == ["todo", "zeta"])
 	}
+	@Test("bulk star stars the picked objects and skips ones already starred")
+	func bulkStar() async {
+		let (store, _) = makeStore()
+		await store.load()
+		await store.toggleStar("t1")
+		let result = await store.setStarred(["t1", "b1", "t2"], true)
+		#expect(result == BulkResult(succeeded: 2, failed: 0))
+		#expect(["t1", "b1", "t2"].allSatisfy { id in store.objects.first { $0.id == id }?.isStarred == true })
+	}
+
+	@Test("bulk status changes only objects whose type offers it, one idempotency key each")
+	func bulkStatus() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		let result = await store.setStatus(["t1", "t2", "i1"], to: "done")
+		let moved = store.objects.filter { $0.status == "done" }.map(\.id)
+		#expect(result.failed == 0)
+		#expect(result.succeeded == moved.count)
+		#expect(Set(remote.updateKeys).count == remote.updateKeys.count)
+	}
+
+	@Test("bulk delete removes them, and puts them all back with a notice when it fails")
+	func bulkDelete() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		remote.fail("delete")
+		let failed = await store.delete(["t1", "b1"])
+		#expect(failed == BulkResult(succeeded: 0, failed: 2))
+		#expect(store.objects.count == 5)
+		#expect(store.actionError == "Couldn't delete 2 objects.")
+		remote.heal()
+		let ok = await store.delete(["t1", "b1"])
+		#expect(ok == BulkResult(succeeded: 2, failed: 0))
+		#expect(store.objects.map(\.id).sorted() == ["i1", "t2", "t3"])
+	}
 }
 
 /// Polls on the main actor until `condition` holds (events cross an AsyncStream hop).
