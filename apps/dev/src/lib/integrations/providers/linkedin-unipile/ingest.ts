@@ -22,6 +22,7 @@ import { isFlagEnabled } from '../../../feature-flags'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../../webhooks/commit'
+import { type DeliveryReporter, createDeliveryReporter } from './delivery-telemetry'
 import { readOwnLinkedinIds } from './direction'
 import type { UnipileEnvelope } from './envelope'
 import { type EventMapRow, type IntegrationRow, resourceId } from './event-map'
@@ -128,7 +129,8 @@ function errorCode(err: unknown): string {
 
 /**
  * Failure after (or around) the claim: release the claims, write a dead-letter
- * events row (ids and an error code, never a body) and log. Idempotent so the
+ * events row (ids and an error code, never a body) and report the delivery as
+ * failed (its one log line and PostHog event). Idempotent so the
  * row's own catch and the budget timeout cannot both run it.
  */
 async function failDelivery(
@@ -136,15 +138,14 @@ async function failDelivery(
 	entry: InFlight,
 	envelope: UnipileEnvelope,
 	err: unknown,
+	reporter: DeliveryReporter,
 ): Promise<void> {
 	if (entry.settled) return
 	entry.settled = true
 	const code = errorCode(err)
-	logger.error('linkedin-unipile webhook: delivery failed after claim', {
-		integration_id: entry.integration.id,
-		unipile_event_type: envelope.type,
-		envelope_id: envelope.envelopeId,
-		error_code: code,
+	reporter.report(entry.integration, {
+		outcome: 'failed',
+		reason: code,
 		error: err instanceof Error ? err.message : String(err),
 	})
 	try {
@@ -185,18 +186,12 @@ async function processRow(
 	envelope: UnipileEnvelope,
 	integration: IntegrationRow,
 	inFlight: InFlight[],
+	reporter: DeliveryReporter,
 ): Promise<RowResult> {
-	const logBase = {
-		unipile_event_type: envelope.type,
-		integration_id: integration.id,
-		account_id: envelope.accountId,
-		envelope_id: envelope.envelopeId,
-	}
-
 	// Flag is read per integration row, on the owner actor, before any claim, so
 	// a flag-off delivery writes no claim and switching on later needs no replay.
 	if (!isFlagEnabled(ownerActorId(integration), map.flag)) {
-		logger.info('linkedin-unipile webhook: delivery', { ...logBase, outcome: 'flag_off' })
+		reporter.report(integration, { outcome: 'dropped', reason: 'flag_off' })
 		return { outcome: 'skipped', reason: 'flag_off' }
 	}
 
@@ -209,7 +204,7 @@ async function processRow(
 
 	const claimed = await claimDelivery(db, integration.workspaceId, keys)
 	if (claimed === 'duplicate') {
-		logger.info('linkedin-unipile webhook: delivery', { ...logBase, outcome: 'duplicate' })
+		reporter.report(integration, { outcome: 'duplicate', reason: 'duplicate' })
 		return { outcome: 'skipped', reason: 'duplicate' }
 	}
 
@@ -235,12 +230,10 @@ async function processRow(
 				})
 			}
 			entry.settled = true
-			const level = result.reason === 'own_message' ? 'info' : 'warn'
-			logger[level]('linkedin-unipile webhook: delivery', {
-				...logBase,
-				...result.log,
+			reporter.report(integration, {
 				outcome: 'dropped',
 				reason: result.reason,
+				extra: result.log,
 			})
 			return { outcome: 'skipped', reason: result.reason }
 		}
@@ -260,11 +253,9 @@ async function processRow(
 			additionalClaimRowIds: otherClaims,
 		})
 		entry.settled = true
-		logger.info('linkedin-unipile webhook: delivery', {
-			...logBase,
-			...result.log,
+		reporter.report(integration, {
 			outcome: 'emitted',
-			action: result.action,
+			extra: { ...result.log, classification: result.data.classification },
 		})
 		return { outcome: 'emitted' }
 	} catch (err) {
@@ -272,13 +263,10 @@ async function processRow(
 			// The reconciler (or the budget timeout) freed the claim mid-flight; the
 			// transaction rolled back, so nothing was written.
 			entry.settled = true
-			logger.warn('linkedin-unipile webhook: claim gone at commit time; txn aborted', {
-				...logBase,
-				claim_row_id: err.claimRowId,
-			})
+			reporter.report(integration, { outcome: 'duplicate', reason: 'claim_released' })
 			return { outcome: 'skipped', reason: 'duplicate' }
 		}
-		await failDelivery(db, entry, envelope, err)
+		await failDelivery(db, entry, envelope, err, reporter)
 		throw err
 	}
 }
@@ -289,12 +277,17 @@ export async function ingestUnipileEnvelope(
 	envelope: UnipileEnvelope,
 	options: { budgetMs?: number } = {},
 ): Promise<IngestOutcome> {
+	// Every delivery reports exactly once per integration row: the reporter
+	// ignores a second report for the same row, so a late failure cannot add a line.
+	const reporter = createDeliveryReporter(envelope, true)
 	const accountId = map.accountId(envelope)
 	if (!accountId) {
+		reporter.report(null, { outcome: 'dropped', reason: 'missing_account_id' })
 		return { status: 200, body: { ok: true, skipped: 'missing_account_id' } }
 	}
 
 	const inFlight: InFlight[] = []
+	let loadedRows: IntegrationRow[] = []
 	let timer: ReturnType<typeof setTimeout> | undefined
 	let expired = false
 
@@ -309,20 +302,16 @@ export async function ingestUnipileEnvelope(
 					eq(integrations.status, 'active'),
 				),
 			)
+		loadedRows = rows
 		if (rows.length === 0) {
-			logger.info('linkedin-unipile webhook: delivery', {
-				unipile_event_type: envelope.type,
-				account_id: accountId,
-				envelope_id: envelope.envelopeId,
-				outcome: 'no_active_integration',
-			})
+			reporter.report(null, { outcome: 'dropped', reason: 'no_active_integration' })
 			return { status: 200, body: { ok: true, skipped: 'no_active_integration' } }
 		}
 
 		const results: RowResult[] = []
 		for (const row of rows) {
 			if (expired) throw new BudgetExceededError()
-			results.push(await processRow(db, map, envelope, row, inFlight))
+			results.push(await processRow(db, map, envelope, row, inFlight, reporter))
 		}
 		const emitted = results.filter((r) => r.outcome === 'emitted').length
 		if (emitted > 0) return { status: 200, body: { ok: true, count: emitted } }
@@ -345,7 +334,16 @@ export async function ingestUnipileEnvelope(
 		// roll back (ClaimReleasedError), and swallowing its eventual rejection
 		// keeps it from surfacing as an unhandled rejection.
 		work.catch(() => {})
-		for (const entry of inFlight) await failDelivery(db, entry, envelope, err)
+		for (const entry of inFlight) await failDelivery(db, entry, envelope, err, reporter)
+		// Rows that never got as far as a claim (timeout, or a failure at the claim
+		// itself) still owe their one line. Rows already reported are ignored.
+		const failure = {
+			outcome: 'failed',
+			reason: errorCode(err),
+			error: err instanceof Error ? err.message : String(err),
+		} as const
+		if (loadedRows.length === 0) reporter.report(null, failure)
+		for (const row of loadedRows) reporter.report(row, failure)
 		return {
 			status: 503,
 			body: {
