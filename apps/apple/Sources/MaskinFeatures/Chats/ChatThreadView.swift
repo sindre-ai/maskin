@@ -276,8 +276,15 @@ struct ChatThreadView: View {
 							.padding(.top, MaskinSpace.s3)
 					}
 					thread
+					if store.isCatchingUp {
+						MonoLabel("Loading new messages…")
+							.frame(maxWidth: .infinity)
+							.padding(.vertical, MaskinSpace.s3)
+							.transition(.opacity)
+					}
 				}
 				.animation(MaskinMotion.standard, value: store.syncProblem)
+				.animation(MaskinMotion.standard, value: store.isCatchingUp)
 			}
 		}
 	}

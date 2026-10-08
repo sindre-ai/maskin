@@ -42,6 +42,9 @@ public final class ChatStore {
 	/// Set right after a send until a reply lands or the spawn grace runs out.
 	public private(set) var awaitingReplySince: Date?
 	public var notice: String?
+	/// The conversation list said something newer exists than the cached page on screen, and the
+	/// first network merge has not landed yet. The thread shows a small "Loading new messages…".
+	public private(set) var isCatchingUp = false
 	/// Why the newest messages could not be fetched while older ones (a cached page) are on
 	/// screen. Without it a failed refresh looks like a thread that simply has nothing newer.
 	public private(set) var syncProblem: String?
@@ -72,6 +75,8 @@ public final class ChatStore {
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private let now: @Sendable () -> Date
 	@ObservationIgnored private let pageSize: Int
+	/// The list's `lastMessageAt` for this conversation when the thread was opened, if known.
+	@ObservationIgnored private let knownLastMessageAt: Date?
 	@ObservationIgnored private let spawnGrace: TimeInterval
 	@ObservationIgnored private let staleSessionAfter: TimeInterval
 	@ObservationIgnored private let pollInterval: Duration?
@@ -96,8 +101,10 @@ public final class ChatStore {
 		spawnGrace: TimeInterval = 20, staleSessionAfter: TimeInterval = 20 * 60,
 		pollInterval: Duration? = .seconds(5), cache: SnapshotCache? = nil,
 		retryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15)],
+		knownLastMessageAt: Date? = nil,
 		now: @escaping @Sendable () -> Date = { Date() }
 	) {
+		self.knownLastMessageAt = knownLastMessageAt
 		self.conversationID = conversationID
 		self.currentActorID = currentActorID
 		self.currentActorName = currentActorName
@@ -332,6 +339,11 @@ public final class ChatStore {
 		hasEarlier = confirmed.count >= ChatCaching.threadMessageLimit
 		phase = .loaded
 		freshness.hydrated(from: entry.savedAt)
+		if let latest = knownLastMessageAt, let newest = confirmed.last?.createdAt,
+			latest.timeIntervalSince(newest) > Self.gapTolerance
+		{
+			isCatchingUp = true
+		}
 	}
 
 	private func writeCache() {
@@ -383,13 +395,29 @@ public final class ChatStore {
 			async let detailTask = api.detail(conversationID: conversationID)
 			async let pageTask = api.messages(
 				conversationID: conversationID, beforeID: nil, afterID: nil, limit: pageSize)
-			let (loadedDetail, page) = try await (detailTask, pageTask)
-			syncProblem = nil
-			detail = loadedDetail
-			if openedReadCursor == nil { openedReadCursor = loadedDetail.lastReadMessageID }
-			readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
-			mergeNewest(page)
-			phase = .loaded
+			// The messages are what the reader is waiting for. With a header already (cache) paint
+			// them the moment they arrive; the detail read only refreshes the read cursor.
+			let page = try await pageTask
+			let hadDetail = detail != nil
+			var loadedDetail: ConversationSummary?
+			if hadDetail {
+				syncProblem = nil
+				mergeNewest(page)
+				phase = .loaded
+				isCatchingUp = false
+				loadedDetail = try? await detailTask
+			} else {
+				loadedDetail = try await detailTask
+				syncProblem = nil
+				mergeNewest(page)
+				phase = .loaded
+				isCatchingUp = false
+			}
+			if let loadedDetail {
+				detail = loadedDetail
+				if openedReadCursor == nil { openedReadCursor = loadedDetail.lastReadMessageID }
+				readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
+			}
 			freshness.refreshed(at: cache?.now() ?? now())
 			writeCache()
 			// Independent reads: run together so the working indicator and trace don't wait on
@@ -404,6 +432,7 @@ public final class ChatStore {
 			// A cancelled request is the view going away, not the server failing.
 			if error is CancellationError || Task.isCancelled { return false }
 			freshness.revalidateFailed()
+			isCatchingUp = false
 			if confirmed.isEmpty {
 				phase = .failed(Self.message(error))
 			} else {
@@ -463,6 +492,7 @@ public final class ChatStore {
 						conversationID: conversationID, beforeID: nil, afterID: lastServerID, limit: pageSize)
 				}
 				mergeNewest(page)
+				isCatchingUp = false
 				if let detail = await freshDetail {
 					self.detail = detail
 					readSent = max(readSent, detail.lastReadMessageID ?? 0)
@@ -473,6 +503,7 @@ public final class ChatStore {
 				await markReadIfNeeded()
 			} catch {
 				freshness.revalidateFailed()
+				isCatchingUp = false
 				if !(error is CancellationError), !Task.isCancelled, !confirmed.isEmpty {
 					syncProblem = Self.message(error)
 				}
