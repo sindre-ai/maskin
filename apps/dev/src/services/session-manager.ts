@@ -403,6 +403,16 @@ export interface SessionLogEvent extends LogChunk {
 }
 
 /**
+ * In-process turn boundary for interactive sessions, emitted as `'turn'`.
+ * `started`: a user turn was written to the CLI's stdin (a human message, a
+ * seed turn, or a replay). `finished`: the turn's closing message was posted.
+ * Consumed by the Live Activity fan-out; never persisted.
+ */
+export type SessionTurnEvent =
+	| { sessionId: string; phase: 'started' }
+	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
+
+/**
  * §17.5 companion parser at the two completion paths: convert the classifier's
  * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
  * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
@@ -582,6 +592,8 @@ export class SessionManager extends EventEmitter {
 			// still retries and still tells the human.
 			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
 			fallbackModel: readEmptyTurnFallbackModel(),
+			onTurnFinished: (sessionId, outcome) =>
+				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 		})
 	}
 
@@ -1298,6 +1310,7 @@ export class SessionManager extends EventEmitter {
 				data: log.content,
 			} satisfies SessionLogEvent)
 		}
+		this.emit('turn', { sessionId, phase: 'started' } satisfies SessionTurnEvent)
 	}
 
 	/**

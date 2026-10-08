@@ -7,7 +7,7 @@ import {
 	respondNotificationSchema,
 	updateNotificationSchema,
 } from '@maskin/shared'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { trackCreateNotificationCalled } from '../lib/analytics/notification-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -142,7 +142,7 @@ const listNotificationsRoute = createRoute({
 app.openapi(listNotificationsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { status, type, object_id, limit, offset } = c.req.valid('query')
+	const { status, type, object_id, limit, offset, order } = c.req.valid('query')
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
 	if (status) {
@@ -159,7 +159,7 @@ app.openapi(listNotificationsRoute, (async (c) => {
 		.select()
 		.from(notifications)
 		.where(and(...conditions))
-		.orderBy(notifications.createdAt)
+		.orderBy(order === 'desc' ? desc(notifications.createdAt) : asc(notifications.createdAt))
 		.limit(limit)
 		.offset(offset)
 

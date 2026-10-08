@@ -2,9 +2,12 @@ import { type Database, idempotencyRecords } from '@maskin/db'
 import { eq, lt, sql } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { logger } from '../lib/logger'
+import { redactPath } from '../lib/redact-path'
 
 const TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
+// 408 Request Timeout, 425 Too Early, 429 Too Many Requests.
+const NON_CACHEABLE_STATUSES = new Set([408, 425, 429])
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 const KEY_ROTATION_PATH = /^\/api\/actors\/[^/]+\/api-keys$/
 
@@ -77,7 +80,7 @@ export function createIdempotencyMiddleware(db: Database) {
 					logger.info('idempotency hit — replaying cached response', {
 						actorId,
 						method,
-						path: c.req.path,
+						path: redactPath(c.req.path),
 					})
 					return c.json(
 						cached.response as Record<string, unknown>,
@@ -99,6 +102,11 @@ export function createIdempotencyMiddleware(db: Database) {
 		const contentType = c.res.headers.get('content-type')
 		if (!contentType?.includes('application/json')) return
 		if (c.res.status >= 500) return
+		// Transient client-side outcomes (timeout / too-early / rate-limited) are
+		// "try again" signals, not results. Caching them would replay the same
+		// error for the whole TTL to a client that retries with the same key —
+		// exactly what an offline outbox does.
+		if (NON_CACHEABLE_STATUSES.has(c.res.status)) return
 
 		try {
 			const cloned = c.res.clone()

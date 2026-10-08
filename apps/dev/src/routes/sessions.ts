@@ -2,9 +2,12 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
+	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
+	sessionActivityQuerySchema,
+	sessionActivityResponseSchema,
 	sessionAskSchema,
 	sessionInputSchema,
 	sessionLeanRowSchema,
@@ -27,6 +30,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { loadSessionActivity } from '../lib/session-activity-query'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
@@ -884,6 +888,53 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
+
+// GET /:id/activity - Normalized per-message agent activity trace
+const getSessionActivityRoute = createRoute({
+	method: 'get',
+	path: '/{id}/activity',
+	tags: ['Sessions'],
+	summary: 'Get the agent activity trace (steps) per conversation message',
+	description: `Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most ${SESSION_ACTIVITY_SCAN_ROWS} of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.`,
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		query: sessionActivityQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionActivityResponseSchema } },
+			description: 'Activity turns, oldest to newest',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(getSessionActivityRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const { turns, oldestLogId, hasOlder } = await loadSessionActivity(db, id, {
+		limitTurns: query.limit_turns,
+		messageId: query.message_id,
+		beforeLogId: query.before_log_id,
+	})
+
+	return c.json({
+		session_id: id,
+		turns,
+		oldest_log_id: oldestLogId,
+		has_older: hasOlder,
+	} satisfies z.infer<typeof sessionActivityResponseSchema>)
+}) as RouteHandler<typeof getSessionActivityRoute, Env>)
 
 // GET /:id/logs/deep - Cursor-paginated log read that mirrors the get_session_logs
 // MCP tool. Distinct from /:id/logs above: this route returns rows in the

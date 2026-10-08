@@ -5912,6 +5912,35 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'get_session_activity',
+		{
+			description: tools.get_session_activity.description,
+			inputSchema: tools.get_session_activity.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.limit_turns) params.set('limit_turns', String(args.limit_turns))
+			if (args.message_id !== undefined) params.set('message_id', String(args.message_id))
+			if (args.before_log_id !== undefined) params.set('before_log_id', String(args.before_log_id))
+			const activity = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}/activity?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)) as Record<string, unknown>
+			return {
+				_meta: meta('get_session_activity', config, args.workspace_id),
+				// Same full payload on both channels (see known-pitfalls.md).
+				content: [{ type: 'text' as const, text: JSON.stringify(activity) }],
+				structuredContent: activity,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'stop_session',
 		{
 			description: tools.stop_session.description,

@@ -1502,6 +1502,33 @@ export const tools = {
 			limit: z.number().int().min(1).max(500).default(100).describe('Max rows per page.'),
 		}),
 	},
+	get_session_activity: {
+		description:
+			"Get the compact agent activity trace for a session: per conversation-message turns, each with its steps (tool calls, thinking, text, errors), status and final result. Same wording as the web chat activity dropdown. Page toward older turns by passing the previous response's `oldest_log_id` as `before_log_id` while `has_older` is true. content and structuredContent carry the same full payload. This tool is read-only — to see raw log lines use `get_session` with `include_logs: true`; to change a session use `stop_session`, `pause_session` or `resume_session`.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Session ID'),
+			limit_turns: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.default(5)
+				.describe('Newest N turns to return (a turn = one conversation message answered)'),
+			message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Return only the turn triggered by this conversation message id'),
+			before_log_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Exclusive upper bound on log id; pass a previous `oldest_log_id` to page older'),
+		}),
+	},
 	stop_session: {
 		description: 'Stop a running session',
 		inputSchema: z.object({
