@@ -103,6 +103,7 @@ import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapsh
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
+import { buildWorkspaceStartupBlock } from '../../services/workspace-briefing'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -539,6 +540,8 @@ describe('SessionManager', () => {
 				[], // launchContainer: integrations lookup
 			]
 
+			vi.mocked(buildWorkspaceStartupBlock).mockReturnValueOnce('STARTUP-BLOCK\n\n')
+
 			await manager.startSession(session.id)
 
 			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
@@ -548,6 +551,12 @@ describe('SessionManager', () => {
 			}
 			expect(createArgs.env.INTERACTIVE).toBe('1')
 			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
+			// A chat has no ACTION_PROMPT, so it gets the startup block in its system prompt.
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: true }),
+			)
+			expect(createArgs.env.SYSTEM_PROMPT).toMatch(/^STARTUP-BLOCK\n\n/)
+			expect(createArgs.env.SYSTEM_PROMPT).toContain('You are Workspace Coach.')
 			expect(createArgs.interactive).toBe(true)
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 			// actionPrompt is '' here — no seed turn should be sent once attached.
@@ -740,6 +749,9 @@ describe('SessionManager', () => {
 				interactive?: boolean
 			}
 			expect(createArgs.env.ACTION_PROMPT).toBe('Do the thing')
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: false }),
+			)
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
 			expect(createArgs.interactive).toBe(false)
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()

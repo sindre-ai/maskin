@@ -148,6 +148,46 @@ describe('buildWorkspaceStartupBlock', () => {
 		)
 	})
 
+	it('gives every session the try-first, do-it-now wording, interactive or not', () => {
+		for (const interactive of [false, true]) {
+			const block = buildWorkspaceStartupBlock({ ...args, interactive })
+			expect(block).toContain(
+				'Do the work, don\'t describe it. If your next step is something your tools can do, do it in this turn. Don\'t end with "I\'ll..." or "next I would...".',
+			)
+			expect(block).toContain(
+				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use run_agent if you need the answer now. Ask a person only for the cases below.',
+			)
+			expect(block).toContain(
+				"Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.",
+			)
+			expect(block).toContain(
+				"Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.",
+			)
+			expect(block).toContain(
+				"Ask a person first before you do anything outside the company or that costs money, or delete anything. For everything else that's reversible, go ahead and note what you did.",
+			)
+		}
+	})
+
+	it('gives chats the chat wording and not the unwatched-run wording', () => {
+		const block = buildWorkspaceStartupBlock({ ...args, interactive: true })
+		expect(block).toContain(
+			'If they ask a question, think out loud or describe a problem, give your assessment and stop. Make changes when they ask for one.',
+		)
+		expect(block).not.toContain('Nobody is watching this run')
+	})
+
+	it('gives unwatched runs the unwatched-run wording and not the chat wording', () => {
+		const block = buildWorkspaceStartupBlock(args)
+		expect(block).toContain('Nobody is watching this run')
+		expect(block).not.toContain('give your assessment and stop')
+	})
+
+	it('adds no shouty wording', () => {
+		const block = buildWorkspaceStartupBlock(args)
+		expect(block).not.toMatch(/\b(CRITICAL|MUST|NEVER|ALWAYS)\b/)
+	})
+
 	it('no longer says "You decide how to achieve the goal" (it never stated a goal)', () => {
 		const block = buildWorkspaceStartupBlock(args)
 		expect(block).not.toContain('You decide how to achieve the goal')
