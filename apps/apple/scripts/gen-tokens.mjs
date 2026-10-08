@@ -135,7 +135,8 @@ for (const [name, value] of typeLight) {
 	if (!name.startsWith('--text-')) continue
 	const px = num(value, 'px')
 	if (px !== null && !keepSizes.has(name) && (!Number.isInteger(px) || px < 9)) continue
-	if (px === 13.5) emit('\t@available(*, deprecated, message: "Not in the v4 type scale; use t13 or t14")')
+	if (px === 13.5)
+		emit('\t@available(*, deprecated, message: "Not in the v4 type scale; use t13 or t14")')
 	if (px !== null) emit(`\tpublic static let t${name.slice(7).replace('-', '_')}: CGFloat = ${px}`)
 }
 emit('}')

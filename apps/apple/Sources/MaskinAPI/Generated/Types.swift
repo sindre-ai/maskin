@@ -1117,7 +1117,7 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/relationships/get`.
     public func get_sol_api_sol_relationships(
         query: Operations.get_sol_api_sol_relationships.Input.Query = .init(),
-        headers: Operations.get_sol_api_sol_relationships.Input.Headers = .init()
+        headers: Operations.get_sol_api_sol_relationships.Input.Headers
     ) async throws -> Operations.get_sol_api_sol_relationships.Output {
         try await get_sol_api_sol_relationships(Operations.get_sol_api_sol_relationships.Input(
             query: query,

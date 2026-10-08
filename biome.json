@@ -37,7 +37,8 @@
 			"apps/apple/Maskin.xcodeproj",
 			"apps/apple/openapi.json",
 			"apps/apple/Sources/MaskinAPI/openapi.json",
-			"**/*.xcassets"
+			"**/*.xcassets",
+			"**/*.xcassets/**"
 		]
 	}
 }
