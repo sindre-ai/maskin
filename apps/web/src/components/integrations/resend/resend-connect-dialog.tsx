@@ -64,7 +64,12 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 	const [dnsRecords, setDnsRecords] = useState<ResendDnsRecord[]>([])
 	const [existingMxHost, setExistingMxHost] = useState<string | null>(null)
 	const [connectError, setConnectError] = useState<{
-		code: 'INVALID_API_KEY' | 'DOMAIN_ALREADY_CLAIMED' | 'UNKNOWN'
+		code:
+			| 'INVALID_API_KEY'
+			| 'DOMAIN_ALREADY_CLAIMED'
+			| 'BARE_DOMAIN_HAS_MAIL'
+			| 'INVALID_DOMAIN'
+			| 'UNKNOWN'
 		message?: string
 	} | null>(null)
 	const [signingSecret, setSigningSecret] = useState('')
@@ -272,15 +277,10 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 							</Button>
 						)}
 						{scene === 's3-root-mx' && (
-							<>
-								<Button variant="outline" onClick={() => setScene('s2')}>
-									<ArrowLeft className="mr-1 h-3.5 w-3.5" />
-									Pick a subdomain
-								</Button>
-								<Button variant="ghost" onClick={handleRegisterDomain}>
-									Continue anyway — I know what I&apos;m doing
-								</Button>
-							</>
+							<Button variant="outline" onClick={() => setScene('s2')}>
+								<ArrowLeft className="mr-1 h-3.5 w-3.5" />
+								Pick a subdomain
+							</Button>
 						)}
 						{scene === 's4-done' && <Button onClick={closeAndReset}>Done</Button>}
 					</div>
@@ -322,7 +322,12 @@ function deriveResumeScene(prefill: ResendConnectPrefill): ResendConnectScene {
 }
 
 function parseConnectError(err: unknown): {
-	code: 'INVALID_API_KEY' | 'DOMAIN_ALREADY_CLAIMED' | 'UNKNOWN'
+	code:
+		| 'INVALID_API_KEY'
+		| 'DOMAIN_ALREADY_CLAIMED'
+		| 'BARE_DOMAIN_HAS_MAIL'
+		| 'INVALID_DOMAIN'
+		| 'UNKNOWN'
 	message?: string
 } {
 	if (typeof err === 'object' && err !== null) {
@@ -331,6 +336,13 @@ function parseConnectError(err: unknown): {
 			message?: string
 			resend_error?: string
 			status?: number
+			fieldErrors?: Record<string, string[]>
+		}
+		// The server puts these two codes in error.details; ApiError exposes
+		// them as fieldErrors.code while err.code stays the generic BAD_REQUEST.
+		const detailCode = anyErr.fieldErrors?.code?.[0]
+		if (detailCode === 'BARE_DOMAIN_HAS_MAIL' || detailCode === 'INVALID_DOMAIN') {
+			return { code: detailCode }
 		}
 		if (anyErr.code === 'INVALID_API_KEY') {
 			return {
@@ -511,6 +523,27 @@ function StepTwo({
 					</div>
 				</div>
 			</div>
+			{error?.code === 'BARE_DOMAIN_HAS_MAIL' && (
+				<div
+					role="alert"
+					className="rounded-md border border-error bg-error/5 p-3 text-xs text-error"
+				>
+					<p className="font-medium">That domain already receives mail.</p>
+					<p className="mt-1">
+						Registering it here would reroute everyone&apos;s mail on it. Use a dedicated subdomain
+						instead, such as mail.example.com.
+					</p>
+				</div>
+			)}
+			{error?.code === 'INVALID_DOMAIN' && (
+				<div
+					role="alert"
+					className="rounded-md border border-error bg-error/5 p-3 text-xs text-error"
+				>
+					<p className="font-medium">That doesn&apos;t look like a valid domain.</p>
+					<p className="mt-1">Enter a hostname such as mail.example.com.</p>
+				</div>
+			)}
 			{error?.code === 'DOMAIN_ALREADY_CLAIMED' && (
 				<div
 					role="alert"
