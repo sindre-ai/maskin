@@ -92,6 +92,13 @@ const actorLlmConfigSchema = z
 		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
 	)
 
+// Optional suggestion shown on every field an agent writes a trigger prompt
+// into (create_trigger, update_trigger, and the inline steps of create_loop /
+// update_loop). A suggestion only: nothing validates or rejects a prompt that
+// ignores it. One constant so the places can't drift apart.
+const TRIGGER_PROMPT_GUIDANCE =
+	'A good trigger prompt starts with what the run is for. You can say: the outcome (what is true when it is done), how anyone can see that it is true, what to leave alone, and when to stop and ask a person. Done can be a status that moves, but it can also be a summary written, a report posted, or a check that found nothing to do. Use whichever fits. Short is fine.'
+
 /**
  * Inline loop-step definition accepted by create_loop / update_loop. Each step
  * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
@@ -115,7 +122,7 @@ const loopStepSchema = z.object({
 		.string()
 		.min(1)
 		.describe(
-			'Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically.',
+			`Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically. ${TRIGGER_PROMPT_GUIDANCE}`,
 		),
 	when: z
 		.union([
@@ -1124,7 +1131,7 @@ export const tools = {
 				.describe(
 					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }',
 				),
-			action_prompt: z.string(),
+			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid(),
 			enabled: z.boolean().default(true),
 		}),
@@ -1137,7 +1144,7 @@ export const tools = {
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			config: z.record(z.unknown()).optional(),
-			action_prompt: z.string().min(1).optional(),
+			action_prompt: z.string().min(1).optional().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid().optional(),
 			enabled: z.boolean().optional(),
 		}),
