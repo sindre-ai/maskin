@@ -30,7 +30,7 @@ struct ReferenceSuggestions: View {
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Link \(ref.title)")
 				}
 			}
@@ -53,7 +53,7 @@ struct ReferenceChip: View {
 	var body: some View {
 		HStack(spacing: MaskinSpace.s4) {
 			if let onOpen {
-				Button(action: onOpen) { label }.buttonStyle(.plain)
+				Button(action: onOpen) { label }.buttonStyle(.maskinPressed)
 			} else {
 				label
 			}
@@ -63,7 +63,7 @@ struct ReferenceChip: View {
 						.frame(width: MaskinSpace.touchMin - MaskinSpace.s4, height: MaskinSpace.touchMin - MaskinSpace.s4)
 						.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityLabel("Remove \(ref.title)")
 			}
 		}

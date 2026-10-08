@@ -272,7 +272,7 @@ struct ShareSheetView: View {
 			.background(MaskinSurface.inverse, in: Circle())
 			.opacity(model.canPost || isPosting ? 1 : 0.4)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(!model.canPost)
 		.accessibilityLabel(sendLabel)
 	}

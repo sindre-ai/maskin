@@ -65,7 +65,7 @@ struct AttachmentChip: View {
 				if let detail { Text(detail).maskinText(.microLabel).foregroundStyle(detailColor) }
 			}
 			if case .failed = draft.state {
-				Button("Retry", action: onRetry).maskinText(.caption).buttonStyle(.plain)
+				Button("Retry", action: onRetry).maskinText(.caption).buttonStyle(.maskinPressed)
 					.foregroundStyle(MaskinColor.ink)
 			}
 			Button(action: onRemove) {
@@ -73,7 +73,7 @@ struct AttachmentChip: View {
 					.frame(width: MaskinSpace.touchMin - MaskinSpace.s4, height: MaskinSpace.touchMin - MaskinSpace.s4)
 					.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityLabel("Remove \(draft.name)")
 		}
 		.padding(.leading, MaskinSpace.s5)
@@ -135,7 +135,7 @@ struct MentionChip: View {
 						.frame(width: MaskinSpace.touchMin - MaskinSpace.s5, height: MaskinSpace.touchMin - MaskinSpace.s5)
 						.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityLabel("Remove mention of \(mention.name)")
 			}
 		}

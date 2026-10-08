@@ -22,7 +22,7 @@ struct HandoffRow: View {
 			} label: {
 				summary
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityHint(expanded ? "Hide details" : "Show details")
 			if expanded { details.transition(.opacity) }
 		}

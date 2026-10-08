@@ -68,7 +68,7 @@ struct ActorPickerList: View {
 					}
 					.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityAddTraits(selection.contains(actor.id) ? .isSelected : [])
 			}
 		}

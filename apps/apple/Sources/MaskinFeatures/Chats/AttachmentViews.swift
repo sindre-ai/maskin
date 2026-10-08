@@ -42,7 +42,7 @@ struct AttachmentThumbnail: View {
 		Group {
 			if let image {
 				Button { open?(file.fileID) } label: { picture(image) }
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.accessibilityLabel("Photo \(file.name ?? "")")
 					.accessibilityHint("Opens the file")
 			} else if failed || images == nil {
@@ -113,7 +113,7 @@ struct MessageFileChip: View {
 					.strokeBorder(MaskinSurface.line, lineWidth: 1))
 			.contentShape(Rectangle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel("Attachment \(file.name ?? "file")")
 		.accessibilityHint("Opens the file")
 	}

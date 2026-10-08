@@ -48,7 +48,7 @@ struct QuestionOptionsView: View {
 							.background(MaskinSurface.inverse, in: Capsule())
 							.opacity(complete ? 1 : 0.35)
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.disabled(!complete)
 					Text("or just type your reply").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}

@@ -290,7 +290,7 @@ struct ConversationListView: View {
 		} label: {
 			SelectionBarLabel(title: store.scope == .archived ? "Unarchive" : "Archive", isPrimary: true)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(picking.isEmpty)
 	}
 

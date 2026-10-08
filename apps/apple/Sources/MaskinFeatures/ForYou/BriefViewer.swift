@@ -157,7 +157,7 @@ struct BriefViewer: View {
 						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 						.maskinGlass(in: Circle(), interactive: true)
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityLabel("Close")
 			}
 		}
@@ -207,7 +207,7 @@ struct BriefViewer: View {
 					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 					.background(MaskinPatina.viewerAccent, in: Capsule())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			if case .page(let output) = card.content {
 				Button { fullPage = output } label: {
 					Label("Open page", systemImage: "arrow.up.forward.square")
@@ -217,7 +217,7 @@ struct BriefViewer: View {
 						.frame(minHeight: MaskinSpace.touchMin)
 						.maskinGlassCapsule(interactive: true)
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed(.shrink))
 				.accessibilityHint("Opens the page so you can scroll and use it")
 			}
 		}

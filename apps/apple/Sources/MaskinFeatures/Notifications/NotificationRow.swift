@@ -61,7 +61,7 @@ struct NotificationRow: View {
 			Button(action: onOpen) {
 				content().frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityHint("Opens the notification")
 		} else {
 			content()

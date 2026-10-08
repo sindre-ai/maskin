@@ -198,7 +198,7 @@ struct DecisionCardView: View {
 						.strokeBorder(MaskinSurface.line, lineWidth: 1))
 				.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel(title)
 			.accessibilityHint(actions.open == nil ? "" : "Opens \(title)")
 		}
@@ -388,7 +388,7 @@ struct DecisionCardView: View {
 					.background(MaskinSurface.inverse, in: Circle())
 					.opacity(canSend ? 1 : 0.3)
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.disabled(!canSend)
 			.accessibilityLabel("Send reply")
 		}

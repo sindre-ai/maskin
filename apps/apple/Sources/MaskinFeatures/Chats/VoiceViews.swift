@@ -106,7 +106,7 @@ struct LiveVoicePanel: View {
 					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 					.background(MaskinSurface.fill, in: Circle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel(muted ? "Turn the microphone on" : "Mute the microphone")
 			Button {
 				MaskinHaptics.play(.medium)
@@ -119,7 +119,7 @@ struct LiveVoicePanel: View {
 					.frame(height: MaskinSpace.touchMin)
 					.background(MaskinSurface.inverse, in: Capsule())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel("End the live conversation")
 			Spacer(minLength: 0)
 		}

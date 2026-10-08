@@ -107,7 +107,7 @@ struct ObjectsListView: View {
 		} label: {
 			SelectionBarLabel(title: "Archive", isPrimary: true)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(picking.isEmpty || !store.canArchive(ids))
 	}
 
@@ -158,7 +158,7 @@ struct ObjectsListView: View {
 								type == selected ? MaskinSurface.fill : Color.clear, in: Capsule())
 							.contentShape(Capsule())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.accessibilityAddTraits(type == selected ? .isSelected : [])
 				}
 			}

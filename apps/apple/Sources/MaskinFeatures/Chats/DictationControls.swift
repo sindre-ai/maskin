@@ -19,7 +19,7 @@ struct DictationDiscardButton: View {
 				.frame(width: size, height: size)
 				.background(MaskinSurface.fill, in: Circle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel("Discard dictation")
 	}
 }
@@ -39,7 +39,7 @@ struct DictationDoneButton: View {
 				.frame(width: size, height: size)
 				.background(MaskinSurface.inverse, in: Circle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel("Done dictating")
 	}
 }

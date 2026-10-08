@@ -1,5 +1,6 @@
 import MaskinCore
 import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 /// The leading checkbox a row shows while a list is in selection mode. Ink, not a brand colour.
@@ -143,7 +144,7 @@ private struct SelectionToolbar<Actions: View>: ViewModifier {
 				.frame(minHeight: MaskinSpace.touchMin)
 				.maskinGlass(in: Capsule(), interactive: true)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 	}
 
 	private var bottomBar: some View {

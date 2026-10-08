@@ -280,7 +280,7 @@ private struct LiveMeetingContent: View {
 			}
 			.frame(maxWidth: .infinity)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel(title)
 	}
 

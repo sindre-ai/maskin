@@ -326,7 +326,7 @@ struct ObjectDetailContent<Decision: View>: View {
 		.padding(MaskinSpace.s8)
 		.contentShape(Rectangle())
 		if let onOpenObject {
-			Button { onOpenObject(link.otherId) } label: { label }.buttonStyle(.plain)
+			Button { onOpenObject(link.otherId) } label: { label }.buttonStyle(.maskinPressed)
 		} else {
 			label
 		}
@@ -396,7 +396,7 @@ struct ObjectDetailContent<Decision: View>: View {
 			.frame(minHeight: MaskinSpace.s14)
 			.contentShape(Rectangle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed)
 		.accessibilityHint(open ? "Hides the updates" : "Shows the updates")
 		if open { ForEach(items) { timelineRow($0) } }
 	}

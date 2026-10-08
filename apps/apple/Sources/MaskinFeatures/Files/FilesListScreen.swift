@@ -162,9 +162,9 @@ struct FilesListView: View {
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isButton)
 		if let onOpen {
-			Button { onOpen(file.id) } label: { content }.buttonStyle(.plain)
+			Button { onOpen(file.id) } label: { content }.buttonStyle(.maskinPressed)
 		} else {
-			NavigationLink(value: FileRoute(id: file.id)) { content }.buttonStyle(.plain)
+			NavigationLink(value: FileRoute(id: file.id)) { content }.buttonStyle(.maskinPressed)
 		}
 	}
 }

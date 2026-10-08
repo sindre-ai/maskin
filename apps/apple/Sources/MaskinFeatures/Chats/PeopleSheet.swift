@@ -31,7 +31,7 @@ struct GroupHeaderPill: View {
 			.background(MaskinSurface.fill, in: Capsule())
 			.contentShape(Capsule())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel("People in this chat: \(GroupChatSummary.names(of: participants, selfID: selfID))")
 		.accessibilityHint("Shows who is in the chat")
 	}

@@ -45,7 +45,7 @@ struct ThreadSearchBar: View {
 				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 				.contentShape(Rectangle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed)
 		.foregroundStyle(matchCount == 0 ? MaskinColor.ink5 : MaskinColor.ink2)
 		.disabled(matchCount == 0)
 		.accessibilityLabel(label)

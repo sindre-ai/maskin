@@ -1,4 +1,5 @@
 import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 /// One labelled input on the auth screens: label above, a filled well, an optional trailing
@@ -94,7 +95,7 @@ struct AuthModeSwitch: View {
 						}
 						.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed(.shrink))
 				.accessibilityAddTraits(selected ? .isSelected : [])
 			}
 		}

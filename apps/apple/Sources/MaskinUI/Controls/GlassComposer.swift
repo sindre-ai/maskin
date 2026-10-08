@@ -64,7 +64,7 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 				.background(MaskinSurface.inverse, in: Circle())
 				.opacity(canSend ? 1 : 0.35)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(!canSend)
 		#if !os(watchOS) && !os(tvOS)
 		.keyboardShortcut(.return, modifiers: .command)
@@ -133,7 +133,7 @@ public struct GlassComposer<Mic: View>: View {
 			canSend: canSend, showsMic: !canSend || listening, onSend: onSend,
 			leading: {
 				Button(action: onAttach) { ComposerCircleLabel("plus") }
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Attach")
 			},
 			field: {

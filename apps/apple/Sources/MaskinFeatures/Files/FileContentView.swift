@@ -160,7 +160,7 @@ struct FileReviewComments: View {
 			}
 			ForEach(annotations) { annotation in
 				Button { onSelect?(annotation) } label: { row(annotation) }
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.disabled(onSelect == nil)
 			}
 		}

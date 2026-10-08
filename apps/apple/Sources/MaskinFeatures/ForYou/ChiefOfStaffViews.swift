@@ -31,7 +31,7 @@ struct QuickQuestionChips: View {
 							.frame(minHeight: MaskinSpace.s14)
 							.background(MaskinSurface.fill, in: Capsule())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 				}
 			}
 		}

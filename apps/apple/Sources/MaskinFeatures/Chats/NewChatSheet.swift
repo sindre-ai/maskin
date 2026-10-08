@@ -100,7 +100,7 @@ struct NewChatSheet: View {
 						.padding(.vertical, MaskinSpace.s2)
 						.background(MaskinColor.accentTint2, in: Capsule())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.accessibilityLabel("Remove \(actor.participant.name)")
 				}
 			}
@@ -125,7 +125,7 @@ struct NewChatSheet: View {
 						}
 						.frame(width: MaskinSpace.s14 * 2 + MaskinSpace.s9)
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Add \(actor.participant.name)")
 				}
 			}
@@ -204,7 +204,7 @@ struct NewChatSheet: View {
 				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 				.background(MaskinSurface.fill, in: Circle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel("Dictate")
 		#endif
 	}

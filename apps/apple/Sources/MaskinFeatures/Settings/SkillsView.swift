@@ -14,7 +14,7 @@ struct SkillsView: View {
 		List {
 			ForEach(store.skills) { skill in
 				Button { editing = .existing(skill) } label: { SkillRow(skill: skill) }
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.swipeActions(edge: .trailing) {
 						Button("Delete", role: .destructive) { pendingDelete = skill }
 					}

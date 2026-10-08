@@ -24,7 +24,7 @@ struct EmojiSuggestions: View {
 					.frame(minHeight: MaskinSpace.touchMin)
 					.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityLabel("\(item.name) emoji")
 			}
 		}
@@ -52,7 +52,7 @@ struct EmojiPickerGrid: View {
 							.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 							.contentShape(Rectangle())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel(emoji)
 				}
 			}

@@ -311,7 +311,7 @@ struct MessageRow: View {
 			} label: {
 				label.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityLabel("\(message.actorName), open agent")
 		} else {
 			label
@@ -342,17 +342,17 @@ struct MessageRow: View {
 				Button(action: copyWholeMessage) {
 					barLabel(copied ? "Copied" : "Copy", copied ? "checkmark" : "doc.on.doc")
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				if let onQuote {
-					Button(action: onQuote) { barLabel("Quote", "arrowshape.turn.up.left") }.buttonStyle(.plain)
+					Button(action: onQuote) { barLabel("Quote", "arrowshape.turn.up.left") }.buttonStyle(.maskinPressed)
 				}
 				Button { selectingText = true } label: { barLabel("Select", "selection.pin.in.out") }
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 				ShareLink(item: message.content) { barLabel("Share", "square.and.arrow.up") }
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 			}
 			if let onEdit {
-				Button(action: onEdit) { barLabel("Edit", "pencil") }.buttonStyle(.plain)
+				Button(action: onEdit) { barLabel("Edit", "pencil") }.buttonStyle(.maskinPressed)
 			}
 		}
 		.padding(.top, MaskinSpace.s2)
@@ -433,7 +433,7 @@ struct MessageRow: View {
 					.padding(.vertical, MaskinSpace.s3)
 					.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityLabel(expanded ? "Show less of this message" : "Show the full message")
 		}
 		if message.editedAt != nil {
@@ -461,12 +461,12 @@ struct MessageRow: View {
 					Image(systemName: "exclamationmark.circle.fill").foregroundStyle(MaskinColor.danger)
 						.accessibilityHidden(true)
 					Text("Not sent").foregroundStyle(MaskinColor.danger)
-					Button("Retry", action: onRetrySend).buttonStyle(.plain)
+					Button("Retry", action: onRetrySend).buttonStyle(.maskinPressed)
 						.foregroundStyle(MaskinColor.ink)
 						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 						.accessibilityHint(reason)
-					Button("Delete", role: .destructive, action: onDiscard).buttonStyle(.plain)
+					Button("Delete", role: .destructive, action: onDiscard).buttonStyle(.maskinPressed)
 						.foregroundStyle(MaskinColor.ink4)
 						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
@@ -518,7 +518,7 @@ struct WorkingIndicator: View {
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityLabel("Stop \(agent.name)")
 			}
 		}
@@ -557,7 +557,7 @@ struct ResumeBanner: View {
 					.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s3)
 					.background(MaskinSurface.inverse, in: Capsule())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel("Resume \(agent.name)")
 		}
 		.padding(.horizontal, MaskinSpace.s8)

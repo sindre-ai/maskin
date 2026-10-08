@@ -159,7 +159,7 @@ struct MarketplaceContent: View {
 				.background(selected ? MaskinSurface.inverse : MaskinSurface.card, in: Capsule())
 				.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: selected ? 0 : 1))
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityAddTraits(selected ? .isSelected : [])
 	}
 
@@ -185,7 +185,7 @@ struct MarketplaceContent: View {
 					.padding(MaskinSpace.s8)
 					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed(.shrink))
 			}
 		}
 	}
@@ -243,7 +243,7 @@ struct InstallBadge: View {
 					.padding(.vertical, MaskinSpace.s4)
 					.background(MaskinSurface.inverse, in: Capsule())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 		case .installing:
 			ProgressView().controlSize(.small)
 		case .installed(let row):
