@@ -2201,16 +2201,20 @@ export class SessionManager extends EventEmitter {
 		// the stdin-driven stream-json branch instead.
 		// session.actionPrompt is the user's original prompt and is never written back
 		// wrapped — safe to re-prepend on every launch, including resume.
+		// frontendBaseUrl falls back to the dev value outside production; it
+		// only throws on a missing FRONTEND_URL in prod, which is the same
+		// failure mode as fileViewerUrl and is intentional.
+		const startupBlock = buildWorkspaceStartupBlock({
+			workspaceId: session.workspaceId,
+			frontendUrl: frontendBaseUrl(),
+			interactive: session.interactive,
+		})
 		if (session.interactive) {
 			envVars.INTERACTIVE = '1'
+			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
+			// through the system prompt instead.
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
 		} else {
-			// frontendBaseUrl falls back to the dev value outside production; it
-			// only throws on a missing FRONTEND_URL in prod, which is the same
-			// failure mode as fileViewerUrl and is intentional.
-			const startupBlock = buildWorkspaceStartupBlock({
-				workspaceId: session.workspaceId,
-				frontendUrl: frontendBaseUrl(),
-			})
 			envVars.ACTION_PROMPT = `${startupBlock}${session.actionPrompt}`
 		}
 

@@ -18,15 +18,37 @@ const TITLE_MAX = 120
 const EXCERPT_MAX = 180
 
 /**
+ * Wording for every session, autonomous run or chat. Approved word for word —
+ * do not paraphrase or add emphasis.
+ */
+const EVERY_SESSION_GUIDANCE = `Do the work, don't describe it. If your next step is something your tools can do, do it in this turn. Don't end with "I'll..." or "next I would...".
+
+Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use run_agent if you need the answer now. Ask a person only for the cases below.
+
+Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.
+
+Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.
+
+Ask a person first before you do anything outside the company or that costs money, or delete anything. For everything else that's reversible, go ahead and note what you did.`
+
+/**
+ * Wording for chats with a person. Approved word for word.
+ */
+const CHAT_GUIDANCE =
+	'If they ask a question, think out loud or describe a problem, give your assessment and stop. Make changes when they ask for one.'
+
+/**
  * Wording for runs nobody is watching (triggers, loops, background). Approved
  * word for word — do not paraphrase or add emphasis.
  */
 const UNWATCHED_RUN_GUIDANCE = `Nobody is watching this run and nobody can answer mid-run, so "Shall I...?" or "Want me to...?" just blocks the work. For reversible steps that follow from the task, go ahead. Before you end, read your last paragraph. If it's a plan, a question or a promise, do that work now. End only when the work is done or you're blocked on something only a person can give.`
 
 /**
- * Briefing block prepended to every non-interactive session's ACTION_PROMPT.
- * Describes the workspace terrain, then says what to do when nobody is
- * watching the run.
+ * Briefing block for every session: prepended to the ACTION_PROMPT of
+ * non-interactive runs, added to the system prompt of interactive (chat)
+ * sessions. Describes the workspace terrain, then the guidance for every
+ * session, then the guidance for the kind of session it is — chats with a
+ * person (`interactive`) or runs nobody is watching.
  *
  * Parameterised on the live `workspaceId` + `frontendUrl` so the agent sees
  * the exact host + workspace-scoped path it should emit when referencing an
@@ -35,6 +57,7 @@ const UNWATCHED_RUN_GUIDANCE = `Nobody is watching this run and nobody can answe
 export function buildWorkspaceStartupBlock(args: {
 	workspaceId: string
 	frontendUrl: string
+	interactive?: boolean
 }): string {
 	const exampleUrl = buildWebAppHref(stripTrailingSlash(args.frontendUrl), args.workspaceId, {
 		kind: 'object',
@@ -54,7 +77,9 @@ When you reference an object in a comment, notification, or description, emit a 
 
 \`[title](${exampleUrl})\`
 
-${UNWATCHED_RUN_GUIDANCE}
+${EVERY_SESSION_GUIDANCE}
+
+${args.interactive ? CHAT_GUIDANCE : UNWATCHED_RUN_GUIDANCE}
 
 ---
 
