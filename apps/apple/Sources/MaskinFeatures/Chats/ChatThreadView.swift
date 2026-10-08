@@ -336,12 +336,13 @@ struct ChatThreadView: View {
 			.onChange(of: store.messages.last?.id) { _, _ in
 				// Follow new messages only while the reader is at the bottom (or just sent one);
 				// otherwise leave them where they are and offer a jump.
-				if followingOpen {
-					jumpToBottom(proxy)
-				} else if isAtBottom || store.messages.last?.actorID == store.currentActorID {
-					scrollToBottom(proxy)
-				} else {
-					unseenCount += 1
+				switch ThreadScrollPolicy.onNewestChanged(
+					followingOpen: followingOpen, isAtBottom: isAtBottom,
+					newestIsMine: store.messages.last?.actorID == store.currentActorID)
+				{
+				case .jump: jumpToBottom(proxy)
+				case .follow: scrollToBottom(proxy)
+				case .countUnseen: unseenCount += 1
 				}
 			}
 			.overlay(alignment: .bottom) {
