@@ -9,6 +9,8 @@ struct TVForYou: View {
 	let environment: AppEnvironment
 	let forYou: ForYouRuntime?
 	let stories: StoriesStore?
+	@Binding var openDecision: String?
+	@State private var path: [String] = []
 	@State private var playing: BriefSequence?
 
 	private var store: ForYouStore? { forYou?.store }
@@ -18,7 +20,7 @@ struct TVForYou: View {
 	}
 
 	var body: some View {
-		NavigationStack {
+		NavigationStack(path: $path) {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 40) {
 					Text("For you").font(.system(size: 64, weight: .bold))
@@ -37,9 +39,16 @@ struct TVForYou: View {
 				if let store { TVDecision(environment: environment, store: store, chief: forYou?.chief, id: id) }
 			}
 		}
+		.onChange(of: openDecision) { _, id in
+			guard let id else { return }
+			path = [id]
+			openDecision = nil
+		}
 		.fullScreenCover(item: Binding(get: { playing.map(PlayingSequence.init) }, set: { if $0 == nil { playing = nil } })) { item in
 			if let stories {
-				TVBriefingPlayer(stories: stories, sequence: item.sequence) { playing = nil }
+				TVBriefingPlayer(
+					environment: environment, stories: stories, chief: forYou?.chief, sequence: item.sequence
+				) { playing = nil }
 			}
 		}
 	}
