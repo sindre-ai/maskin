@@ -45,9 +45,10 @@ struct LoopsListView: View {
 			}
 			ForEach(loops) { loop in
 				LoopCard(
-					loop: loop, agentCount: loop.agentIDs.count, needsYou: store.needsYou(loop),
+					loop: loop, needsYou: store.needsYou(loop),
 					hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-					update: store.latestUpdate(for: loop)
+					update: store.latestUpdate(for: loop),
+					target: LoopOutcomes.cards(for: [loop]).first
 				)
 				.tag(loop.id)
 				.zoomSource(id: loop.id, in: zoomNamespace)

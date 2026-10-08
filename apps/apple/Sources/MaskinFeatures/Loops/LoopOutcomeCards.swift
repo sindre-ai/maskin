@@ -27,12 +27,12 @@ extension OutcomeStatus {
 	var textColor: Color { self == .onTrack ? MaskinColor.sigInk : MaskinColor.ink }
 }
 
-private func number(_ value: Double) -> String {
+func number(_ value: Double) -> String {
 	value.formatted(.number.precision(.fractionLength(0...1)))
 }
 
 /// A target's progress bar in its status shade.
-private struct OutcomeBar: View {
+struct OutcomeBar: View {
 	let fraction: Double
 	let status: OutcomeStatus
 
@@ -159,17 +159,15 @@ struct OutcomeScoreRow: View {
 	}
 }
 
-/// QUALITY on a flow's Outcome tab: three small cards of what the API reports (closed, median
-/// time to close, when it next runs). The handoff's rework and edit-rate metrics are not computed.
+/// QUALITY on a flow's Outcome tab: three small cards of what is measured today (cycles done,
+/// decisions needed, failed steps). Rework and edit rate wait for the API to record edits.
 struct LoopQualitySection: View {
 	let loop: LoopSummary
-	let steps: [LoopStep]
+	/// Steps that failed in the last seven days.
+	let failedSteps: Int
 
 	var body: some View {
-		let stats = LoopQuality.cardStats(
-			for: loop, nextRun: LoopQuality.nextRun(steps: steps, now: Date(), paused: loop.isPaused),
-			duration: LoopDurationText.string,
-			date: { $0.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)) })
+		let stats = LoopQuality.cardStats(for: loop, failedSteps: failedSteps)
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("Quality")
 			HStack(alignment: .top, spacing: MaskinSpace.s4) {

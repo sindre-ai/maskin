@@ -73,7 +73,7 @@ struct FlowCopyTests {
 		let loop = loopRow("l")
 		let feed = [entry("2", "session_failed", ago: 600, note: "Scout hit a rate limit"), entry("1", "session_completed", ago: 7200)]
 		let problem = FlowProblems.derive(loop: loop, activity: feed, now: now)
-		#expect(problem?.kind == .failed)
+		#expect(problem?.kind == .stepFailed(step: nil, timedOut: false))
 		#expect(problem?.detail == "Scout hit a rate limit")
 		#expect(problem?.label == "Run failed")
 	}
@@ -82,7 +82,7 @@ struct FlowCopyTests {
 	func timedOut() {
 		let problem = FlowProblems.derive(
 			loop: loopRow("l"), activity: [entry("1", "session_timeout", ago: 60)], now: now)
-		#expect(problem?.kind == .timedOut)
+		#expect(problem?.kind == .stepFailed(step: nil, timedOut: true))
 	}
 
 	@Test("a run that started or finished after the failure clears the problem, whatever order the feed is in")
@@ -114,7 +114,7 @@ struct FlowCopyTests {
 			LoopActivityEntry(id: "9", action: "trigger_fired", entityType: "trigger", createdAt: now),
 			entry("1", "session_failed", ago: 600),
 		]
-		#expect(FlowProblems.derive(loop: loopRow("l"), activity: feed, now: now)?.kind == .failed)
+		#expect(FlowProblems.derive(loop: loopRow("l"), activity: feed, now: now)?.kind == .stepFailed(step: nil, timedOut: false))
 	}
 
 	// MARK: last seven days
@@ -185,12 +185,22 @@ struct FlowCopyTests {
 
 	// MARK: quality cards
 
-	@Test("quality shows three cards: closed, median time and next run")
+	@Test("quality shows three tiles: cycles done, decisions needed and failed steps")
 	func qualityCards() {
-		let loop = loopRow("l", closed: 12)
-		let cards = LoopQuality.cardStats(
-			for: loop, nextRun: nil, duration: { "\(Int($0))s" }, date: { _ in "soon" })
-		#expect(cards.map(\.label) == ["Closed", "Median time", "Next run"])
-		#expect(cards.map(\.value) == ["12", "—", "—"])
+		let loop = loopRow("l", waiting: 3, closed: 12)
+		let cards = LoopQuality.cardStats(for: loop, failedSteps: 2)
+		#expect(cards.map(\.label) == ["Cycles done", "Decisions needed", "Failed steps"])
+		#expect(cards.map(\.value) == ["12", "3", "2"])
+	}
+
+	// MARK: one-line card update
+
+	@Test("the card's update is cut shorter than the page's")
+	func cardLine() {
+		let words = Array(repeating: "reconciliation", count: 20).joined(separator: " ")
+		let post = LoopPost(id: 1, actorID: "a", text: words)
+		let card = LoopLatestUpdate.line(post: post, author: "Relay", limit: LoopLatestUpdate.cardLimit)
+		#expect((card?.text.count ?? 0) <= LoopLatestUpdate.cardLimit + 1)
+		#expect(card?.text.hasSuffix("…") == true)
 	}
 }

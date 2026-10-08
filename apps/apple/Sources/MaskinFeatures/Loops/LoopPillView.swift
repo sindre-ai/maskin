@@ -45,11 +45,5 @@ struct NeedsYouChip: View {
 
 /// "2d 4h" / "35m" for a span of seconds.
 enum LoopDurationText {
-	static func string(_ seconds: TimeInterval) -> String {
-		let formatter = DateComponentsFormatter()
-		formatter.unitsStyle = .abbreviated
-		formatter.maximumUnitCount = 2
-		formatter.allowedUnits = [.day, .hour, .minute]
-		return formatter.string(from: max(seconds, 60)) ?? "—"
-	}
+	static func string(_ seconds: TimeInterval) -> String { LoopDurationFormat.string(seconds) }
 }

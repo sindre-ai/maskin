@@ -183,10 +183,12 @@ public struct LoopActivityEntry: Identifiable, Equatable, Sendable {
 	public var actorID: String?
 	public var description: String?
 	public var createdAt: Date?
+	/// The row the event is about: the session id for `session_*` events.
+	public var entityID: String?
 
 	public init(
 		id: String, action: String, entityType: String, actorID: String? = nil,
-		description: String? = nil, createdAt: Date? = nil
+		description: String? = nil, createdAt: Date? = nil, entityID: String? = nil
 	) {
 		self.id = id
 		self.action = action
@@ -194,6 +196,7 @@ public struct LoopActivityEntry: Identifiable, Equatable, Sendable {
 		self.actorID = actorID
 		self.description = description
 		self.createdAt = createdAt
+		self.entityID = entityID
 	}
 
 	/// Sentence for the feed: the server's description, else the action in plain words.

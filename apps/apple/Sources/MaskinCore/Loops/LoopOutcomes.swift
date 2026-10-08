@@ -81,8 +81,8 @@ public enum LoopQuality {
 		public var id: String { label }
 	}
 
-	/// In progress, closed, median time to close, waiting, next run. `nextRun` comes from the
-	/// loop's steps (`LoopComingUp`); nil shows a dash. `duration` and `date` render the values.
+	/// Every real number the API has for a loop's health: in progress, closed, median time to close,
+	/// waiting, next run. Dashes for what is missing. The Outcome tab shows only `cardStats`.
 	public static func stats(
 		for loop: LoopSummary, nextRun: Date?, duration: (TimeInterval) -> String,
 		date: (Date) -> String
@@ -96,16 +96,19 @@ public enum LoopQuality {
 		]
 	}
 
-	/// The three labels the Outcome tab's QUALITY cards show, in order.
-	public static let cardLabels = ["Closed", "Median time", "Next run"]
+	/// The three labels the Outcome tab's QUALITY tiles show, in order. Only what is measured today:
+	/// median time and next run are not tiles (next run lives in Under the hood, Schedule), and
+	/// rework and edit rate wait for the API to record edits to approved drafts.
+	public static let cardLabels = ["Cycles done", "Decisions needed", "Failed steps"]
 
-	/// `stats` narrowed to the three quality cards.
-	public static func cardStats(
-		for loop: LoopSummary, nextRun: Date?, duration: (TimeInterval) -> String,
-		date: (Date) -> String
-	) -> [Stat] {
-		let all = stats(for: loop, nextRun: nextRun, duration: duration, date: date)
-		return cardLabels.compactMap { label in all.first { $0.label == label } }
+	/// The quality tiles: cycles closed, decisions waiting on the viewer, and steps that failed in
+	/// the last seven days (`failedSteps`, from `FlowHealth.failedCount`).
+	public static func cardStats(for loop: LoopSummary, failedSteps: Int) -> [Stat] {
+		[
+			Stat(label: cardLabels[0], value: "\(loop.closedCount)"),
+			Stat(label: cardLabels[1], value: "\(loop.waitingCount)"),
+			Stat(label: cardLabels[2], value: "\(failedSteps)"),
+		]
 	}
 
 	/// When the loop next runs on its own: the earliest scheduled step; nil if paused or event-only.

@@ -24,9 +24,14 @@ public protocol LoopsAPI: Sendable {
 	/// The newest top-level post on the loop's timeline, for the list card's latest update. One
 	/// read of the loop object's graph; nil when it has none or the source has no graph access.
 	func latestPost(loopID: String) async throws -> LoopPost?
+	/// The newest runs (sessions) launched from these triggers, a bounded page per trigger. Best
+	/// effort: the stuck check and the health rows work without it.
+	func runs(triggerIDs: [String]) async throws -> [LoopRun]
 }
 
 extension LoopsAPI {
+	/// Nothing, for a source with no session access.
+	public func runs(triggerIDs: [String]) async throws -> [LoopRun] { [] }
 	public func overview(loopID: String) async throws -> LoopOverview { .empty }
 	public func latestPost(loopID: String) async throws -> LoopPost? { nil }
 }

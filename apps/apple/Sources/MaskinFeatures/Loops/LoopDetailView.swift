@@ -105,7 +105,7 @@ struct LoopDetailContent: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s10) {
 			header
-			if let problem = FlowProblems.derive(loop: store.loop, activity: store.activity, now: Date()) {
+			if let problem = store.problem() {
 				LoopProblemBanner(problem: problem, loop: store.loop, directory: store.directory)
 			}
 			if underTheHood {
@@ -120,7 +120,7 @@ struct LoopDetailContent: View {
 					LoopTargetsSection(
 						cards: LoopOutcomes.cards(for: store.loop), directory: store.directory)
 					LoopBriefingsSection(loopID: store.loop.id)
-					LoopQualitySection(loop: store.loop, steps: store.steps)
+					LoopQualitySection(loop: store.loop, failedSteps: store.failedSteps())
 					OutcomesSection(
 						outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
 					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this flow makes land here.") }
