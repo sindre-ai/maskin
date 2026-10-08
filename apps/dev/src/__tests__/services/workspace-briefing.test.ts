@@ -2,6 +2,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	appendToLedger,
+	buildSenderLine,
 	buildWorkspaceStartupBlock,
 	readLedgerTail,
 	renderWorkspaceBriefing,
@@ -394,5 +395,19 @@ describe('renderWorkspaceBriefing', () => {
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('## Active initiatives')
 		expect(result).toContain('## Open signals')
+	})
+})
+
+describe('buildSenderLine', () => {
+	it('names an agent sender, says it is not a person, and guides without blocking', () => {
+		const line = buildSenderLine({ name: 'Planner', type: 'agent' })
+		expect(line).toContain('Planner')
+		expect(line).toContain('another agent, not from a person')
+		expect(line).toContain('check with the owner of the object or a person')
+	})
+
+	it('names a human sender as a person with no agent guidance', () => {
+		const line = buildSenderLine({ name: 'Magnus', type: 'human' })
+		expect(line).toBe('Sent by Magnus, a person.')
 	})
 })
