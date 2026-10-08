@@ -992,6 +992,12 @@ describe('trigger prompt guidance', () => {
 		expect(stepPrompt(tools.update_loop.inputSchema.shape.add_steps)).toContain(guidance)
 	})
 
+	it('is suggested on the close_condition of create_loop and update_loop', () => {
+		const text = 'Runs in this loop are shown this text, so say what done looks like.'
+		expect(tools.create_loop.inputSchema.shape.close_condition.description).toContain(text)
+		expect(tools.update_loop.inputSchema.shape.close_condition.description).toContain(text)
+	})
+
 	it('does not reject a prompt that ignores it', () => {
 		const result = tools.create_trigger.inputSchema.parse({
 			name: 'Daily',

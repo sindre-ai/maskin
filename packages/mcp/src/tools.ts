@@ -92,6 +92,12 @@ const actorLlmConfigSchema = z
 		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
 	)
 
+// Optional sentence on the close_condition field of create_loop / update_loop.
+// Runs woken on a loop are shown this text as their finish line, so it says
+// what a good one looks like. A suggestion only; nothing validates it.
+const CLOSE_CONDITION_GUIDANCE =
+	'Runs in this loop are shown this text, so say what done looks like. It can be a status reached, a summary written, a report posted, or a check that found nothing to do. Short is fine.'
+
 // Optional suggestion shown on every field an agent writes a trigger prompt
 // into (create_trigger, update_trigger, and the inline steps of create_loop /
 // update_loop). A suggestion only: nothing validates or rejects a prompt that
@@ -1213,7 +1219,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded".',
+					`Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded". ${CLOSE_CONDITION_GUIDANCE}`,
 				),
 			steps: z
 				.array(loopStepSchema)
@@ -1263,7 +1269,9 @@ export const tools = {
 			close_condition: z
 				.string()
 				.optional()
-				.describe('New plain-language close condition. Pass an empty string to clear.'),
+				.describe(
+					`New plain-language close condition. Pass an empty string to clear. ${CLOSE_CONDITION_GUIDANCE}`,
+				),
 			closed_statuses: closedStatusesSchema,
 			add_steps: z
 				.array(loopStepSchema)
