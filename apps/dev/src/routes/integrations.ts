@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import { promises as dns } from 'node:dns'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
@@ -38,6 +37,11 @@ import {
 } from '../lib/integrations/providers/github/installation-recovery'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
+import {
+	isSubdomainName,
+	isValidHostname,
+	precheckResendDomain,
+} from '../lib/integrations/providers/resend/dns-precheck'
 import {
 	DomainAlreadyClaimedError,
 	DomainRegisterError,
@@ -994,6 +998,35 @@ app.openapi(connectRoute, (async (c) => {
 				: null
 
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
+			// Server-side guard behind the dialog's advisory pre-check: a malformed
+			// name never reaches Resend, and a bare domain that already carries
+			// someone else's mail is refused, since adding our MX to it reroutes
+			// the whole domain. A bare domain with no mail stays allowed.
+			if (!isValidHostname(resendSubdomain)) {
+				return c.json(
+					createApiError('BAD_REQUEST', 'Not a valid hostname', [
+						{ field: 'code', message: 'INVALID_DOMAIN' },
+					]),
+					400,
+				)
+			}
+			const precheck = isSubdomainName(resendSubdomain)
+				? null
+				: await precheckResendDomain(resendSubdomain)
+			if (precheck?.warn) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						'This name already carries mail, use a dedicated hostname such as mail.example.com',
+						[
+							{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
+							{ field: 'existing_mx', message: precheck.existingMx.join(', ') },
+						],
+					),
+					400,
+				)
+			}
+
 			// Step 1 — verify the API key against Resend by listing domains.
 			// 401 → INVALID_API_KEY (Step 1 error state).
 			const verifyRes = await fetch('https://api.resend.com/domains?limit=100', {
@@ -2129,29 +2162,7 @@ app.openapi(dnsPrecheckRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'domain is required'), 400)
 	}
 
-	// A subdomain has at least three labels (mail.example.com → true;
-	// example.com → false). We treat any three-plus-label input as a
-	// subdomain, which is the shape the design assumes — sending on a bare
-	// apex changes the whole domain's mail routing, whereas a subdomain is
-	// carved out.
-	const parts = trimmed.split('.')
-	const isSubdomain = parts.length >= 3
-
-	let existingMx: string[] = []
-	try {
-		const records = await dns.resolveMx(trimmed)
-		existingMx = records.sort((a, b) => a.priority - b.priority).map((r) => r.exchange)
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException).code
-		if (code !== 'ENOTFOUND' && code !== 'ENODATA') {
-			logger.warn('resend.dns_precheck.error', { domain: trimmed, err: String(err) })
-		}
-	}
-
-	const isResendMx = existingMx.some(
-		(h) => h.toLowerCase().includes('resend') || h.toLowerCase().includes('amazonses'),
-	)
-	const warn = !isSubdomain && existingMx.length > 0 && !isResendMx
+	const { existingMx, isSubdomain, warn } = await precheckResendDomain(trimmed)
 	return c.json({ existing_mx: existingMx, is_subdomain: isSubdomain, warn })
 }) as RouteHandler<typeof dnsPrecheckRoute, Env>)
 
