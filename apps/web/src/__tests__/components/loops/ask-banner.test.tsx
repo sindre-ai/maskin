@@ -201,6 +201,7 @@ describe('AskBanner — per-step-derived copy', () => {
 			pill: 'supervised',
 			entryCondition: null,
 			closeCondition: null,
+			tags: [],
 			inProgressCount: 0,
 			closedCount: 0,
 			medianTimeToCloseMs: null,
