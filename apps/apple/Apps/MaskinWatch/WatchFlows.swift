@@ -61,14 +61,6 @@ private struct WatchFlowSummary: View {
 	}
 }
 
-extension LoopSummary {
-	/// Share of the flow's work that has closed: the ring.
-	var ringProgress: Double {
-		let total = inProgressCount + closedCount
-		return total == 0 ? 0 : Double(closedCount) / Double(total)
-	}
-}
-
 private struct WatchRing: View {
 	let progress: Double
 	let paused: Bool

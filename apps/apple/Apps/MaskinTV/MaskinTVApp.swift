@@ -8,8 +8,10 @@ struct MaskinTVApp: App {
 	var body: some Scene {
 		WindowGroup {
 			GlanceRoot(environment: environment) { store in
-				GlanceInbox(environment: environment, store: store) { EmptyView() }
+				TVRoot(environment: environment, store: store)
 			}
+			// Dark only: the room display uses the Patina dark tokens.
+			.preferredColorScheme(.dark)
 		}
 	}
 }

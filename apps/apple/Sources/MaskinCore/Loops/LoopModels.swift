@@ -117,6 +117,12 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 
 	public var isPaused: Bool { status == .paused }
 
+	/// Share of the loop's work that has closed, 0...1: the progress ring on the watch and TV.
+	public var ringProgress: Double {
+		let total = inProgressCount + closedCount
+		return total == 0 ? 0 : Double(closedCount) / Double(total)
+	}
+
 	/// "3 in progress · 12 closed"
 	public var statsLine: String {
 		"\(inProgressCount) in progress · \(closedCount) closed"

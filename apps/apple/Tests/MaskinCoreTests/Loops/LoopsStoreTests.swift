@@ -283,3 +283,13 @@ struct LoopTagsTests {
 		#expect(s.filtered().count == 3)
 	}
 }
+
+@Suite("Loop progress ring")
+struct LoopProgressTests {
+	@Test("the ring is the share of work that has closed, and empty with no work")
+	func ring() {
+		#expect(LoopSummary(id: "a", name: "A").ringProgress == 0)
+		#expect(LoopSummary(id: "b", name: "B", inProgressCount: 3, closedCount: 1).ringProgress == 0.25)
+		#expect(LoopSummary(id: "c", name: "C", inProgressCount: 0, closedCount: 5).ringProgress == 1)
+	}
+}
