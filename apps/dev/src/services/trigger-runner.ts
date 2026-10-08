@@ -242,6 +242,9 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
  */
 const TRIGGER_CRUD_ACTIONS = new Set(['created', 'updated', 'deleted'])
 
+/** Largest delay setTimeout honours (2^31-1 ms, ~24.8 days); above it Node fires after ~1 ms. */
+const MAX_TIMEOUT_MS = 2_147_483_647
+
 /** The trigger fields a human edits; a change in any of them counts as an edit. */
 function triggerFingerprint(trigger: typeof triggers.$inferSelect): string {
 	return JSON.stringify([
@@ -1573,7 +1576,12 @@ export class TriggerRunner {
 	private scheduleReminder(trigger: typeof triggers.$inferSelect) {
 		const config = trigger.config as Record<string, unknown>
 		const scheduledAt = new Date(config.scheduled_at as string)
-		const delay = Math.max(0, scheduledAt.getTime() - Date.now())
+		const remaining = Math.max(0, scheduledAt.getTime() - Date.now())
+		// setTimeout treats a delay above 2^31-1 ms (~24.8 days) as 1 ms, which
+		// would fire a far-future reminder at once. Arm at most MAX_TIMEOUT_MS and
+		// re-arm from the timer callback until the real time is in range.
+		const delay = Math.min(remaining, MAX_TIMEOUT_MS)
+		const clamped = remaining > MAX_TIMEOUT_MS
 
 		// Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot,
 		// so skipping it here would consume its timeout and drop it permanently
@@ -1582,6 +1590,11 @@ export class TriggerRunner {
 		// failure through handleSessionCreateFailure so an over-cap reminder is
 		// classified (and can open a pause) rather than paging.
 		const timeout = setTimeout(async () => {
+			if (clamped) {
+				this.scheduleReminder(trigger)
+				return
+			}
+
 			logger.info(`Reminder trigger '${trigger.name}' firing`)
 
 			await recordEvent(this.db, {
