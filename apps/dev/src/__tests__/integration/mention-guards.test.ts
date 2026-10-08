@@ -39,6 +39,7 @@ function createRecordingSessionManager(started: StartedSession[]) {
 				{
 					config,
 					status: 'completed',
+					spawnedBySessionId: params.spawnedBySessionId ?? null,
 					initiatedFromObjectId: params.initiatedFromObjectId ?? null,
 					initiatedFromObjectType: params.initiatedFromObjectType ?? null,
 				},
@@ -65,6 +66,7 @@ async function comment(opts: {
 	content: string
 	mentions: string[]
 	metadata?: Record<string, unknown>
+	authorSessionId?: string
 }): Promise<number> {
 	const rows = await db
 		.insert(events)
@@ -78,6 +80,7 @@ async function comment(opts: {
 				content: opts.content,
 				mentions: opts.mentions,
 				...(opts.metadata ? { metadata: opts.metadata } : {}),
+				...(opts.authorSessionId ? { authorSessionId: opts.authorSessionId } : {}),
 			},
 		})
 		.returning({ id: events.id })
@@ -297,6 +300,129 @@ describe('Agent-mention loop guards (integration)', () => {
 			1 + MENTION_GUARD_LIMITS.maxAgentMentionsPerWindow,
 		)
 	}, 60_000)
+})
+
+describe('Mention spawn link (integration)', () => {
+	let bridge: EventEmitter & PgNotifyBridge
+	let started: StartedSession[]
+	let dispatcher: CommentDispatcher
+
+	beforeEach(() => {
+		capturePosthogEvent.mockClear()
+		started = []
+		bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+		const sm = createRecordingSessionManager(started)
+		configureSessionLifecycle({ db, sessionManager: sm as unknown as SessionManager })
+		dispatcher = new CommentDispatcher(db, bridge, sm as unknown as SessionManager)
+		dispatcher.start()
+	})
+
+	afterEach(() => {
+		dispatcher.stop()
+		vi.restoreAllMocks()
+	})
+
+	async function setup() {
+		const human = getTestActorId()
+		const ws = await insertWorkspace(db, human)
+		const mk = (name: string) =>
+			insertActor(db, {
+				type: 'agent',
+				name,
+				email: `${name.toLowerCase()}-${Math.random().toString(36).slice(2)}@integration.test`,
+				apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
+			})
+		const [author, helper, other] = await Promise.all([mk('Author'), mk('Helper'), mk('Other')])
+		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'link' })
+		return { ws, author, helper, other, object }
+	}
+
+	async function mention(
+		ws: { id: string },
+		from: { id: string },
+		to: { id: string },
+		objectId: string,
+		extra: { authorSessionId?: string; metadata?: Record<string, unknown>; content?: string },
+	) {
+		const id = await comment({
+			workspaceId: ws.id,
+			actorId: from.id,
+			entityId: objectId,
+			content: extra.content ?? 'please take this',
+			mentions: [to.id],
+			authorSessionId: extra.authorSessionId,
+			metadata: extra.metadata,
+		})
+		bridge.emit('event', {
+			workspace_id: ws.id,
+			actor_id: from.id,
+			action: 'commented',
+			entity_type: 'object',
+			entity_id: objectId,
+			event_id: String(id),
+		} satisfies PgEvent)
+		await new Promise((r) => setTimeout(r, 250))
+	}
+
+	const startedRows = (actorId: string) =>
+		db.select().from(sessions).where(eq(sessions.actorId, actorId))
+
+	it('links the mentioned agent’s session to the author’s own live session, depth 1', async () => {
+		const { ws, author, helper, object } = await setup()
+		const mine = await insertSession(db, ws.id, author.id, author.id, { status: 'running' })
+		await mention(ws, author, helper, object.id, { authorSessionId: mine.id })
+		const [row] = await startedRows(helper.id)
+		expect(row.spawnedBySessionId).toBe(mine.id)
+		expect((row.config as { hop_depth?: number }).hop_depth).toBe(1)
+	})
+
+	it('forged authorSessionId (another actor’s live session) leaves the link null', async () => {
+		const { ws, author, helper, other, object } = await setup()
+		const theirs = await insertSession(db, ws.id, other.id, other.id, { status: 'running' })
+		await mention(ws, author, helper, object.id, { authorSessionId: theirs.id })
+		const [row] = await startedRows(helper.id)
+		expect(row).toBeDefined()
+		expect(row.spawnedBySessionId).toBeNull()
+	})
+
+	it('a terminal author session leaves the link null', async () => {
+		const { ws, author, helper, object } = await setup()
+		const done = await insertSession(db, ws.id, author.id, author.id, { status: 'completed' })
+		await mention(ws, author, helper, object.id, { authorSessionId: done.id })
+		const [row] = await startedRows(helper.id)
+		expect(row.spawnedBySessionId).toBeNull()
+	})
+
+	it('a comment from a client cannot plant an author session id through metadata', async () => {
+		const { ws, author, helper, object } = await setup()
+		const mine = await insertSession(db, ws.id, author.id, author.id, { status: 'running' })
+		await mention(ws, author, helper, object.id, {
+			metadata: { authorSessionId: mine.id },
+		})
+		const [row] = await startedRows(helper.id)
+		expect(row.spawnedBySessionId).toBeNull()
+	})
+
+	it('a genuine return wakes the sender with no link, inheriting the helper’s depth', async () => {
+		const { ws, author: sender, helper, object } = await setup()
+		const helperSession = await insertSession(db, ws.id, helper.id, sender.id, {
+			status: 'completed',
+			helperReturnedAt: new Date(),
+			config: { hop_depth: 2 },
+		})
+		// The return is posted as the helper, mentions the sender and, as required,
+		// carries no author session id.
+		await mention(ws, helper, sender, object.id, {
+			metadata: { helper_return: helperSession.id },
+			content: 'Helper finished the work you handed it.',
+		})
+		const [woken] = await startedRows(sender.id)
+		expect(woken.spawnedBySessionId).toBeNull()
+		expect((woken.config as { hop_depth?: number }).hop_depth).toBe(2)
+		expect((woken.config as { mention?: { helper_return?: boolean } }).mention?.helper_return).toBe(
+			true,
+		)
+	})
 })
 
 describe('normalizeMentionText', () => {

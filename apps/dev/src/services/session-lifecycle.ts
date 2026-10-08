@@ -63,6 +63,11 @@ export interface StartSessionInput {
 	sourceCommentEventId?: number
 	parentSessionId?: string
 	/**
+	 * The session that started this one (sessions.spawned_by_session_id), already
+	 * authenticated by resolveSpawnLink(). Never pass a raw header value here.
+	 */
+	spawnedBySessionId?: string
+	/**
 	 * Handed-off strip anchors (bet/444b-handed-off-strip). Both optional; a
 	 * spawn without them persists NULL and renders no strip.
 	 */
@@ -210,6 +215,7 @@ export async function startSession(
 		createdBy,
 		autoStart: input.autoStart,
 		sourceSessionId: input.parentSessionId,
+		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
 		initiatedFromObjectType: input.initiatedFromObjectType,
 		spawnedByMessageId: input.spawnedByMessageId,

@@ -154,17 +154,19 @@ async function isDuplicateMention(
 /**
  * A comment's helper_return metadata is just a string any author can write.
  * It only counts when the session it names belongs to the comment's author and
- * has taken its one-shot return claim (helper_returned_at is set).
+ * has taken its one-shot return claim (helper_returned_at is set). Returns that
+ * session's hop depth, which the session woken by the return inherits, or null
+ * when the marker is not genuine.
  */
-export async function isGenuineHelperReturn(
+export async function verifyHelperReturn(
 	db: Database,
 	ctx: { sessionId: string; commenterId: string },
-): Promise<boolean> {
+): Promise<{ hopDepth: number } | null> {
 	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ctx.sessionId)) {
-		return false
+		return null
 	}
 	const [row] = await db
-		.select({ id: sessions.id })
+		.select({ config: sessions.config })
 		.from(sessions)
 		.where(
 			and(
@@ -174,5 +176,11 @@ export async function isGenuineHelperReturn(
 			),
 		)
 		.limit(1)
-	return !!row
+	return row ? { hopDepth: readHopDepth(row.config) } : null
+}
+
+/** Depth stored in sessions.config.hop_depth; anything unreadable counts as 0. */
+export function readHopDepth(config: unknown): number {
+	const raw = (config as { hop_depth?: unknown } | null)?.hop_depth
+	return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : 0
 }

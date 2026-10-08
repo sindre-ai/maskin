@@ -29,7 +29,8 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
-import { evaluateAgentMentionGuards, isGenuineHelperReturn } from './mention-guards'
+import { resolveSpawnLink } from './helper-link'
+import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
@@ -1947,6 +1948,8 @@ interface CommentEventData {
 	content?: unknown
 	mentions?: unknown
 	parentEventId?: unknown
+	/** Session the author was running, from X-Maskin-Session-Id (lib/comments.ts). A claim only. */
+	authorSessionId?: unknown
 	metadata?: {
 		suppress_auto_dispatch?: unknown
 		suppress_dispatch_actor_ids?: unknown
@@ -2071,6 +2074,7 @@ export class CommentDispatcher {
 				content: typeof data.content === 'string' ? data.content : '',
 				helperReturnSessionId:
 					typeof data.metadata?.helper_return === 'string' ? data.metadata.helper_return : null,
+				authorSessionId: typeof data.authorSessionId === 'string' ? data.authorSessionId : null,
 			})
 			return
 		}
@@ -2106,6 +2110,7 @@ export class CommentDispatcher {
 		suppressedActorIds: Set<string>
 		content: string
 		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
 		// The commenter rides along in the same lookup so the loop guards can tell
 		// an agent-authored mention from a human one without an extra query.
@@ -2156,6 +2161,7 @@ export class CommentDispatcher {
 				parentEventId: ctx.parentEventId,
 				commenterIsAgent,
 				helperReturnSessionId: ctx.helperReturnSessionId,
+				authorSessionId: ctx.authorSessionId,
 			})
 			anyDispatched = true
 		}
@@ -2448,6 +2454,7 @@ export class CommentDispatcher {
 		parentEventId: number | null
 		commenterIsAgent: boolean
 		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
 		const [notification] = await this.db.transaction((tx) =>
 			insertNotificationsWithEvents(tx, {
@@ -2484,16 +2491,23 @@ export class CommentDispatcher {
 		// wake an agent. A blocked mention keeps its notification (written above),
 		// it just does not start a session.
 		let isHelperReturn = false
+		// Depth the woken session carries in config.hop_depth. A session woken by a
+		// return inherits the depth of the helper that returned, so a sender that
+		// keeps re-delegating cannot reset the chain.
+		let hopDepth: number | undefined
 		if (ctx.commenterIsAgent) {
 			// The helper_return marker is plain comment metadata, so it is only
 			// believed when the named session really is this author's and has taken
 			// its return claim. Anything else is treated as an ordinary mention.
-			isHelperReturn =
-				ctx.helperReturnSessionId !== null &&
-				(await isGenuineHelperReturn(this.db, {
-					sessionId: ctx.helperReturnSessionId,
-					commenterId: ctx.commenterId,
-				}))
+			const verifiedReturn =
+				ctx.helperReturnSessionId !== null
+					? await verifyHelperReturn(this.db, {
+							sessionId: ctx.helperReturnSessionId,
+							commenterId: ctx.commenterId,
+						})
+					: null
+			isHelperReturn = verifiedReturn !== null
+			if (verifiedReturn) hopDepth = verifiedReturn.hopDepth
 			const decision = await evaluateAgentMentionGuards(this.db, {
 				workspaceId: ctx.workspaceId,
 				commentEventId: ctx.eventId,
@@ -2511,6 +2525,23 @@ export class CommentDispatcher {
 					object_id: ctx.objectId,
 				})
 				return
+			}
+		}
+
+		// Link the mentioned agent's session to the session the author was running,
+		// so its outcome can be sent back. A return never links: the session it wakes
+		// must have no link of its own, or returns could chain.
+		let spawnedBySessionId: string | undefined
+		if (!isHelperReturn) {
+			const link = await resolveSpawnLink(this.db, {
+				claimedSessionId: ctx.authorSessionId,
+				authenticatedActorId: ctx.commenterId,
+				workspaceId: ctx.workspaceId,
+				objectId: ctx.objectId,
+			})
+			if (link.linked) {
+				spawnedBySessionId = link.spawnedBySessionId
+				hopDepth = link.hopDepth
 			}
 		}
 
@@ -2536,7 +2567,9 @@ export class CommentDispatcher {
 					comment_event_id: ctx.eventId,
 					...(isHelperReturn ? { helper_return: true } : {}),
 				},
+				...(hopDepth ? { hop_depth: hopDepth } : {}),
 			},
+			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
 			sourceCommentEventId: ctx.eventId,
 			createdBy: ctx.commenterId,

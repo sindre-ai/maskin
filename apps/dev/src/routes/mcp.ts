@@ -91,6 +91,10 @@ app.post('/', async (c) => {
 				? session.source
 				: ('process' as const),
 		triggeringEventId,
+		// Forward the caller's session id so create_session / run_agent can link
+		// the helper to its sender. Only a uuid-shaped header counts, and it is
+		// still just a claim: POST /api/sessions checks it belongs to the caller.
+		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({

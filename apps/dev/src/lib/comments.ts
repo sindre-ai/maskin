@@ -21,6 +21,14 @@ export interface PostCommentInput {
 	 */
 	decision?: CommentDecision
 	attention?: number
+	/**
+	 * The session the author was running when it posted, from X-Maskin-Session-Id.
+	 * A claim, not proof: CommentDispatcher checks it against the author before it
+	 * links a session started by an @mention. Stored under its own key (not in the
+	 * client-supplied metadata) so a request body cannot write it. Leave unset for
+	 * the helper-return comment, which must not wake a session that has a link.
+	 */
+	authorSessionId?: string
 }
 
 export interface PostCommentResult {
@@ -66,6 +74,7 @@ export async function postComment(
 				metadata: input.metadata,
 				decision: input.decision,
 				attention: input.attention,
+				...(input.authorSessionId ? { authorSessionId: input.authorSessionId } : {}),
 			},
 		})
 
