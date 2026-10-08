@@ -11,7 +11,7 @@ struct WatchBriefing: View {
 	let firstName: String?
 	@State private var speaker = BriefingSpeaker()
 
-	private var text: String? {
+	private var script: String? {
 		if case .loaded(let brief) = store?.brief { return WatchBriefingText.plain(brief.markdown) }
 		return nil
 	}
@@ -19,60 +19,76 @@ struct WatchBriefing: View {
 	var body: some View {
 		NavigationStack {
 			ScrollView {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				VStack(alignment: .leading, spacing: 10) {
+					WatchPageTitle(title: "For you", count: store?.needsCount ?? 0)
 					NavigationLink {
-						WatchBriefingReader(text: text ?? "")
-					} label: {
-						VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-							Text("DAILY").font(.system(size: 10, weight: .bold))
-								.padding(.horizontal, 8).padding(.vertical, 3)
-								.background(MaskinSurface.fill, in: Capsule())
-							Text(greeting).font(.title3.weight(.bold)).multilineTextAlignment(.leading)
-							Text(readTime).font(.caption2.monospaced()).foregroundStyle(MaskinColor.ink4)
-						}
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.padding(MaskinSpace.s5)
-						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: 22))
-					}
-					.buttonStyle(.plain)
-					.disabled(text == nil)
-
+						WatchBriefingReader(text: script ?? "")
+					} label: { card }
+						.buttonStyle(.plain)
+						.disabled(script == nil)
 					listenControl
 				}
+				.padding(.horizontal, 2)
 			}
-			.navigationTitle("Briefing")
+			.toolbar(.hidden, for: .navigationBar)
+			.containerBackground(for: .navigation) { WatchBackdrop() }
 		}
 		.task(id: store == nil) { if let store, store.brief == .idle { await store.loadBrief() } }
 		.onDisappear { speaker.stop() }
+	}
+
+	private var card: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text("DAILY")
+				.font(WatchType.microMono())
+				.tracking(0.8)
+				.foregroundStyle(MaskinColor.stLab)
+				.padding(.horizontal, 10).padding(.vertical, 4)
+				.background(MaskinColor.pill, in: Capsule())
+			Spacer(minLength: 28)
+			Text(greeting)
+				.font(MaskinTypeface.sans(22, weight: .bold, relativeTo: .title2))
+				.foregroundStyle(MaskinColor.stFg)
+				.multilineTextAlignment(.leading)
+			Text(readTime)
+				.font(WatchType.mono())
+				.tracking(0.6)
+				.foregroundStyle(MaskinColor.stLab)
+				.padding(.top, 6)
+		}
+		.padding(14)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(MaskinGradient.unseenBrief, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
 	}
 
 	@ViewBuilder
 	private var listenControl: some View {
 		switch store?.brief {
 		case .failed(let message):
-			Text(message).font(.footnote).foregroundStyle(MaskinColor.ink4)
+			Text(message).font(WatchType.caption()).foregroundStyle(MaskinColor.ink4)
 			Button("Retry") { Task { await store?.loadBrief() } }.buttonStyle(SecondaryActionButtonStyle())
 		case .loaded:
 			Button {
-				if speaker.isSpeaking { speaker.stop() } else if let text { speaker.speak(text) }
+				if speaker.isSpeaking { speaker.stop() } else if let script { speaker.speak(script) }
 			} label: {
 				Label(speaker.isSpeaking ? "Stop" : "Listen", systemImage: speaker.isSpeaking ? "stop.fill" : "waveform")
+					.font(MaskinTypeface.sans(17, weight: .bold, relativeTo: .body))
+					.foregroundStyle(MaskinSurface.onInverse)
+					.frame(maxWidth: .infinity, minHeight: 44)
+					.background(MaskinSurface.inverse, in: Capsule())
 			}
-			.buttonStyle(PrimaryActionButtonStyle())
-			.frame(minHeight: 44)
+			.buttonStyle(.plain)
 		default:
-			ProgressView()
+			ProgressView().frame(maxWidth: .infinity)
 		}
 	}
 
 	private var greeting: String {
-		let hour = Calendar.current.component(.hour, from: Date())
-		let part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
-		return firstName.map { "\(part), \($0)" } ?? part
+		StoryDerivation.greeting(name: firstName, now: Date())
 	}
 
 	private var readTime: String {
-		let words = text?.split(whereSeparator: \.isWhitespace).count ?? 0
+		let words = (script ?? "").split(whereSeparator: \.isWhitespace).count
 		return "READ · \(max(1, Int((Double(words) / 200).rounded(.up)))) MIN"
 	}
 }
@@ -82,13 +98,14 @@ private struct WatchBriefingReader: View {
 
 	var body: some View {
 		ScrollView {
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			VStack(alignment: .leading, spacing: 10) {
 				ForEach(Array(WatchBriefingText.paragraphs(text).enumerated()), id: \.offset) { _, paragraph in
-					Text(paragraph).font(.system(size: 16))
+					Text(paragraph).font(WatchType.body()).foregroundStyle(MaskinColor.ink)
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
+		.containerBackground(for: .navigation) { WatchBackdrop() }
 		.navigationTitle("Briefing")
 	}
 }

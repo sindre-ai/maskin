@@ -9,14 +9,32 @@ struct WatchHome: View {
 	let environment: AppEnvironment
 	let store: ForYouStore?
 	@State private var loops: LoopsStore?
+	@State private var page: Page = WatchHome.startingPage
+
+	enum Page: Int { case needsYou, briefing, flows }
+
+	/// Design review only: `MASKIN_DEMO_PAGE=briefing` opens that page, because a simulator has no
+	/// Digital Crown to scroll with. Always the first page in Release.
+	private static var startingPage: Page {
+		#if DEBUG
+			switch ProcessInfo.processInfo.environment["MASKIN_DEMO_PAGE"] {
+			case "briefing": return .briefing
+			case "flows": return .flows
+			default: break
+			}
+		#endif
+		return .needsYou
+	}
 
 	var body: some View {
-		TabView {
-			WatchNeedsYou(store: store, workspaceId: environment.workspaceId)
-			WatchBriefing(store: store, firstName: firstName)
-			WatchFlows(loops: loops)
+		TabView(selection: $page) {
+			WatchNeedsYou(store: store, workspaceId: environment.workspaceId).tag(Page.needsYou)
+			WatchBriefing(store: store, firstName: firstName).tag(Page.briefing)
+			WatchFlows(loops: loops).tag(Page.flows)
 		}
 		.tabViewStyle(.verticalPage)
+		// Actions are ink; the system accent would otherwise paint titles and links indigo.
+		.tint(MaskinColor.ink)
 		.task(id: environment.auth.credentials) { await startLoops() }
 		.onDisappear { loops?.stop() }
 	}

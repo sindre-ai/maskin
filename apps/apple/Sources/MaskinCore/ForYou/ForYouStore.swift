@@ -291,9 +291,9 @@ public final class ForYouStore {
 	// MARK: Acting (thin wrappers that keep the card on screen)
 
 	/// Take an option on a card.
-	public func choose(_ option: DecisionOption, on card: ForYouCard) {
+	public func choose(_ option: DecisionOption, note: String? = nil, on card: ForYouCard) {
 		retain(card)
-		decisions.choose(option.label, on: DecisionTarget(card))
+		decisions.choose(option.label, note: note, on: DecisionTarget(card))
 		widgetReloader.reload()
 	}
 

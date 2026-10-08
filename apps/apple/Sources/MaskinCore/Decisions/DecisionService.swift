@@ -155,8 +155,13 @@ public final class DecisionService {
 	// MARK: Acting
 
 	/// Take one of the agent's options. Optimistic: the record exists the moment this returns.
-	public func choose(_ label: String, on target: DecisionTarget) {
-		submit(content: label, kind: .option(label), target: target)
+	/// `note` is an optional reason that travels with the option in the same comment ("Hold · Need
+	/// more time"), so the thread shows why. The record is still the option itself.
+	public func choose(_ label: String, note: String? = nil, on target: DecisionTarget) {
+		let reason = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		submit(
+			content: reason.isEmpty ? label : "\(label) · \(reason)", kind: .option(label),
+			target: target)
 	}
 
 	/// Answer in the reader's own words.

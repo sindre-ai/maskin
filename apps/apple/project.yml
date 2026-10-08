@@ -481,6 +481,9 @@ targets:
     sources:
       - path: Apps/MaskinWatch
         excludes: [Info.plist]
+      # Schibsted Grotesk and JetBrains Mono; without them the watch falls back to the system font.
+      - path: Apps/Maskin/Resources/Fonts
+        type: folder
       - path: Apps/Shared
       # The iPhone app's notification-action runner, shared so a decision tapped on a watch alert
       # is carried out by the same code.
@@ -513,6 +516,9 @@ targets:
         # Companion of the iPhone app (embedded in it): iPhone pushes mirror here, and the
         # sign-in is handed over by WatchSessionBridge.
         WKCompanionAppBundleIdentifier: io.maskin.app
+        UIAppFonts:
+          - Fonts/SchibstedGrotesk.ttf
+          - Fonts/JetBrainsMono.ttf
         NSUserActivityTypes: [io.maskin.app.open-object]
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         NSAppTransportSecurity:
@@ -542,6 +548,8 @@ targets:
     sources:
       - path: Apps/MaskinTV
         excludes: [Info.plist, MaskinTV.entitlements]
+      - path: Apps/Maskin/Resources/Fonts
+        type: folder
       - path: Apps/Shared
     dependencies:
       - target: MaskinTVTopShelf
@@ -570,6 +578,9 @@ targets:
           UIColorName: LaunchBackground
           UIImageName: LaunchMark
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        UIAppFonts:
+          - Fonts/SchibstedGrotesk.ttf
+          - Fonts/JetBrainsMono.ttf
         # maskin://<workspaceId>/objects/<id>: what the Top Shelf items open.
         CFBundleURLTypes:
           - CFBundleURLName: io.maskin.app.tv
