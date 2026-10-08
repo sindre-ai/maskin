@@ -18,9 +18,15 @@ const TITLE_MAX = 120
 const EXCERPT_MAX = 180
 
 /**
- * Briefing block prepended to every session's ACTION_PROMPT. Describes the
- * workspace terrain rather than prescribing steps — agentic models do better
- * with outcome-oriented context than with imperative checklists.
+ * Wording for runs nobody is watching (triggers, loops, background). Approved
+ * word for word — do not paraphrase or add emphasis.
+ */
+const UNWATCHED_RUN_GUIDANCE = `Nobody is watching this run and nobody can answer mid-run, so "Shall I...?" or "Want me to...?" just blocks the work. For reversible steps that follow from the task, go ahead. Before you end, read your last paragraph. If it's a plan, a question or a promise, do that work now. End only when the work is done or you're blocked on something only a person can give.`
+
+/**
+ * Briefing block prepended to every non-interactive session's ACTION_PROMPT.
+ * Describes the workspace terrain, then says what to do when nobody is
+ * watching the run.
  *
  * Parameterised on the live `workspaceId` + `frontendUrl` so the agent sees
  * the exact host + workspace-scoped path it should emit when referencing an
@@ -48,7 +54,7 @@ When you reference an object in a comment, notification, or description, emit a 
 
 \`[title](${exampleUrl})\`
 
-You decide how to achieve the goal. This is just the terrain.
+${UNWATCHED_RUN_GUIDANCE}
 
 ---
 

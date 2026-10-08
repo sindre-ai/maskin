@@ -139,12 +139,18 @@ describe('buildWorkspaceStartupBlock', () => {
 		expect(block).toContain('SESSION_LEARNING.md')
 	})
 
-	it('uses contextual framing rather than imperative step-by-step commands', () => {
-		// Outcome-oriented models push back on prescriptive checklists — the
-		// block should describe terrain, not dictate a sequence of actions.
+	it('tells unwatched runs to go ahead on reversible steps and not end on a plan, question or promise', () => {
 		const block = buildWorkspaceStartupBlock(args)
-		expect(block).toContain('You decide how to achieve the goal')
-		expect(block).not.toMatch(/^\s*1\.\s+Read/m)
+		expect(block).toContain('Nobody is watching this run and nobody can answer mid-run')
+		expect(block).toContain('"Shall I...?" or "Want me to...?" just blocks the work')
+		expect(block).toContain(
+			"If it's a plan, a question or a promise, do that work now. End only when the work is done or you're blocked on something only a person can give.",
+		)
+	})
+
+	it('no longer says "You decide how to achieve the goal" (it never stated a goal)', () => {
+		const block = buildWorkspaceStartupBlock(args)
+		expect(block).not.toContain('You decide how to achieve the goal')
 	})
 
 	it('embeds the canonical object link format with the workspace id', () => {
