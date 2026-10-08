@@ -20,3 +20,13 @@ struct ThreadScrollPolicyTests {
 		#expect(ThreadScrollPolicy.onNewestChanged(followingOpen: false, isAtBottom: false, newestIsMine: false) == .countUnseen)
 	}
 }
+
+@Suite("ThreadRendering")
+struct ThreadRenderingTests {
+	@Test("short threads are eager, long ones lazy")
+	func threshold() {
+		#expect(!ThreadRendering.usesLazyStack(rowCount: 0))
+		#expect(!ThreadRendering.usesLazyStack(rowCount: ThreadRendering.eagerRowLimit - 1))
+		#expect(ThreadRendering.usesLazyStack(rowCount: ThreadRendering.eagerRowLimit))
+	}
+}

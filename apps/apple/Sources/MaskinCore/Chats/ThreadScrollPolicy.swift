@@ -19,3 +19,14 @@ public enum ThreadScrollPolicy {
 		return .countUnseen
 	}
 }
+
+/// How the thread lays out its rows.
+public enum ThreadRendering {
+	/// Threads shorter than this render in a plain stack. A lazy stack estimates the height of rows
+	/// it has not built; under repeated rebuilds plus the bottom scroll anchor those estimates
+	/// mis-measure (blank gaps, content sliding). Below this size building every row is cheap.
+	/// Longer threads keep the lazy stack.
+	public static let eagerRowLimit = 100
+
+	public static func usesLazyStack(rowCount: Int) -> Bool { rowCount >= eagerRowLimit }
+}
