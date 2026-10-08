@@ -118,6 +118,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { returnToSender } from './helper-return'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -3671,6 +3672,11 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Tell the session that started this one how it ended (no-op for an
+		// unlinked session). This path writes the terminal status itself and never
+		// goes through settleSession, so it has to call the return on its own.
+		void returnToSender(this.db, sessionId, { sessionManager: this })
+
 		// G1: emit `agent_session_completed` dev-side with the workspace-skill
 		// provisioning counts recorded at session start (+ any staging report).
 		// See `trackAgentSessionCompletedWithSkills` for why this rides alongside
@@ -5810,6 +5816,11 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		// Tell the session that started this one how it ended. Skipped for
+		// stopSession()'s provisional write: its exit code is not known yet, and the
+		// genuine report that follows is the one that returns, with the right wording.
+		if (!stoppedByUser) void returnToSender(this.db, sessionId, { sessionManager: this })
 
 		// G1: mirror the terminal `agent_session_completed` emission from the
 		// local-Docker path (handleCompletion). This runs on every remote
