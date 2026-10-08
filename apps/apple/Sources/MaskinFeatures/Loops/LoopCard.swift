@@ -3,26 +3,23 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One flow in the list as a glanceable card: progress ring, name, "cycle · stage", a Patina
-/// "Needs you" chip when the viewer is the blocker, the newest thing an agent said, and three
-/// stats. Pure values in, so it renders in previews and snapshots.
+/// One flow in the list as a glanceable card: icon tile, name, "cycle · stage", a Patina "Needs you"
+/// chip when the viewer is the blocker, the newest thing an agent said as one line of secondary
+/// text, and the flow's first target inline. Stats live on the flow page, not here. Pure values in,
+/// so it renders in previews and snapshots.
 struct LoopCard: View {
 	let loop: LoopSummary
-	let agentCount: Int
 	let needsYou: Bool
 	var hasUpdate = false
 	var update: LoopLatestUpdate.Line?
-
-	private static let ringSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s4
+	/// The most urgent target, when the flow has any.
+	var target: OutcomeCard?
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
-			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-				Divider().overlay(MaskinSurface.separator)
-				if let update { latest(update) }
-				stats
-			}
+			if let update { latest(update) }
+			if let target { targetBlock(target) }
 		}
 		.padding(.vertical, MaskinSpace.s9)
 		.padding(.horizontal, MaskinSpace.s10)
@@ -34,7 +31,12 @@ struct LoopCard: View {
 
 	private var header: some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s8) {
-			ring
+			Image(systemName: "arrow.triangle.2.circlepath")
+				.font(.system(size: MaskinSpace.s10, weight: .semibold))
+				.foregroundStyle(MaskinColor.sigInk)
+				.frame(width: MaskinSpace.s14 + MaskinSpace.s4, height: MaskinSpace.s14 + MaskinSpace.s4)
+				.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+				.accessibilityHidden(true)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				HStack(spacing: MaskinSpace.s3) {
 					Text(loop.displayName)
@@ -59,47 +61,45 @@ struct LoopCard: View {
 		}
 	}
 
-	private var ring: some View {
-		LoopProgressRing(
-			loop: loop, size: Self.ringSize, lineWidth: MaskinSpace.s2,
-			valueFont: MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
-	}
-
-	/// The newest post as one sentence, its author in bold ink ahead of the grey text.
+	/// The newest post as one line of secondary text, its author in semibold ahead of the rest.
 	private func latest(_ update: LoopLatestUpdate.Line) -> some View {
 		Group {
 			if let author = update.author {
-				Text(author).fontWeight(.semibold).foregroundStyle(MaskinColor.ink) + Text(" " + update.text)
+				Text(author).fontWeight(.semibold).foregroundStyle(MaskinColor.ink3) + Text(" " + update.text)
 			} else {
 				Text(update.text)
 			}
 		}
-		.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-		.foregroundStyle(MaskinColor.ink3)
-		.lineSpacing(MaskinSpace.s1)
-		.lineLimit(4)
+		.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+		.foregroundStyle(MaskinColor.ink4)
+		.lineLimit(1)
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
-	private var stats: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s4) {
-			stat("\(loop.inProgressCount)", "in progress")
-			stat("\(loop.closedCount)", "closed")
-			stat("\(agentCount)", agentCount == 1 ? "agent" : "agents")
+	/// Value, "of {target}", status, label and bar. No due date and no forecast: the API has neither.
+	private func targetBlock(_ card: OutcomeCard) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+				Text(number(card.target.actual))
+					.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: MaskinFontWeight.w750, relativeTo: .title2))
+					.tracking(-0.028 * MaskinFontSize.t24)
+					.foregroundStyle(MaskinColor.ink)
+				Text("of \(number(card.target.target))")
+					.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.ink5)
+				Spacer(minLength: MaskinSpace.s3)
+				Text(card.status.label)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650, relativeTo: .footnote))
+					.foregroundStyle(card.status.textColor)
+			}
+			Text(card.target.label)
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
+				.foregroundStyle(MaskinColor.ink3)
+				.lineLimit(1)
+			OutcomeBar(fraction: card.target.fraction, status: card.status)
+				.padding(.top, MaskinSpace.s3)
 		}
-	}
-
-	private func stat(_ value: String, _ label: String) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-			Text(value)
-				.font(MaskinTypeface.sans(MaskinFontSize.t18, weight: MaskinFontWeight.bold, relativeTo: .headline))
-				.tracking(-0.02 * MaskinFontSize.t18)
-				.foregroundStyle(MaskinColor.ink)
-			Text(label)
-				.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
-				.foregroundStyle(MaskinColor.ink5)
-		}
-		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(.top, MaskinSpace.s2)
 	}
 
 	/// "Cycle 3 · Define", or the lifecycle rung while the stage is still unknown.
@@ -111,7 +111,10 @@ struct LoopCard: View {
 		var parts = [loop.displayName, stageLine]
 		if needsYou { parts.append("Needs you") }
 		if let update { parts.append(([update.author, update.text].compactMap { $0 }).joined(separator: " ")) }
-		parts.append("\(loop.inProgressCount) in progress, \(loop.closedCount) closed, \(agentCount) agents")
+		if let target {
+			parts.append(
+				"\(target.target.label), \(number(target.target.actual)) of \(number(target.target.target)), \(target.status.label)")
+		}
 		if hasUpdate { parts.append("update available") }
 		return parts.joined(separator: ". ")
 	}

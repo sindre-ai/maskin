@@ -88,6 +88,37 @@ public struct APILoopsSource: LoopsAPI {
 		return try Self.decode(ActivityWire.self, from: ok.body.json).events.map(\.model)
 	}
 
+	/// How many runs to read per trigger: enough for a median step time, bounded for the request.
+	static let runsPerTrigger = 20
+
+	public func runs(triggerIDs: [String]) async throws -> [LoopRun] {
+		let client = client, workspaceID = workspaceID
+		return try await withThrowingTaskGroup(of: [LoopRun].self) { group in
+			for triggerID in Set(triggerIDs) {
+				group.addTask {
+					let output = try await client.get_sol_api_sol_sessions(
+						.init(
+							query: .init(trigger_id: triggerID, verbose: true, limit: Self.runsPerTrigger),
+							headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+					guard case .ok(let ok) = output else {
+						throw AutomationError("Couldn't load this flow's runs.")
+					}
+					// verbose=true asks for the full rows (the default is the lean list shape).
+					return (try ok.body.json.value1 ?? []).map { row in
+						LoopRun(
+							id: row.id, triggerID: row.triggerId, status: row.status,
+							createdAt: AutomationDates.parse(row.createdAt),
+							startedAt: AutomationDates.parse(row.startedAt),
+							completedAt: AutomationDates.parse(row.completedAt))
+					}
+				}
+			}
+			var all: [LoopRun] = []
+			for try await page in group { all += page }
+			return all
+		}
+	}
+
 	public func actors() async throws -> [AutomationActor] {
 		try await AutomationActorsSource.load(client: client, workspaceID: workspaceID)
 	}
@@ -252,13 +283,15 @@ public struct APILoopsSource: LoopsAPI {
 		var actorId: String?
 		var action: String
 		var entityType: String
+		var entityId: String?
 		var description: String?
 		var createdAt: String?
 
 		var model: LoopActivityEntry {
 			LoopActivityEntry(
 				id: String(Int(id)), action: action, entityType: entityType, actorID: actorId,
-				description: description, createdAt: AutomationDates.parse(createdAt))
+				description: description, createdAt: AutomationDates.parse(createdAt),
+				entityID: entityId)
 		}
 	}
 

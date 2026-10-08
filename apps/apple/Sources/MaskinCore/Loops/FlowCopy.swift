@@ -40,8 +40,12 @@ public enum LoopLatestUpdate {
 		}
 	}
 
-	/// About how long the sentence runs on the card.
+	/// About how long a sentence runs when it is allowed room.
 	public static let limit = 130
+
+	/// The flow card shows the update as one line of secondary text, so it is cut shorter: past
+	/// this the line would only be truncated by the view.
+	public static let cardLimit = 90
 
 	/// Markdown the agent wrote, flattened to plain running text.
 	static func plain(_ markdown: String) -> String {
@@ -88,53 +92,10 @@ public enum LoopLatestUpdate {
 		return cut.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:.-")) + "…"
 	}
 
-	public static func line(post: LoopPost, author: String?) -> Line? {
-		let text = sentence(from: post.text)
+	public static func line(post: LoopPost, author: String?, limit: Int = LoopLatestUpdate.limit) -> Line? {
+		let text = sentence(from: post.text, limit: limit)
 		guard !text.isEmpty else { return nil }
 		return Line(author: author, text: text)
-	}
-}
-
-/// Something stuck on a flow, derived only from a session that failed or timed out and has not
-/// been followed by a run since.
-public struct FlowProblem: Equatable, Sendable {
-	public enum Kind: Sendable, Equatable { case failed, timedOut }
-
-	public var kind: Kind
-	public var entryID: String
-	public var actorID: String?
-	/// What the server said about the run, when it said anything.
-	public var detail: String?
-	public var date: Date?
-
-	/// Mono label on the banner.
-	public var label: String { kind == .failed ? "Run failed" : "Run timed out" }
-}
-
-public enum FlowProblems {
-	/// A failure older than this is history, not a flow that is stuck now.
-	public static let window: TimeInterval = 7 * 24 * 3600
-
-	/// The newest run outcome decides: failed or timed out is a problem, a run that started or
-	/// finished after it clears the problem. A draft or paused flow is not stuck, it is stopped.
-	public static func derive(
-		loop: LoopSummary, activity: [LoopActivityEntry], now: Date
-	) -> FlowProblem? {
-		guard loop.status.isLive else { return nil }
-		let sessions = activity.enumerated()
-			.filter { $0.element.action.hasPrefix("session_") }
-			.sorted {
-				let a = $0.element.createdAt ?? .distantPast, b = $1.element.createdAt ?? .distantPast
-				return a != b ? a > b : $0.offset < $1.offset
-			}
-			.map(\.element)
-		guard let latest = sessions.first, latest.tone == .failure else { return nil }
-		if let date = latest.createdAt, now.timeIntervalSince(date) > window { return nil }
-		let description = latest.description?.trimmingCharacters(in: .whitespacesAndNewlines)
-		return FlowProblem(
-			kind: latest.action == "session_timeout" ? .timedOut : .failed, entryID: latest.id,
-			actorID: latest.actorID, detail: (description?.isEmpty ?? true) ? nil : description,
-			date: latest.createdAt)
 	}
 }
 

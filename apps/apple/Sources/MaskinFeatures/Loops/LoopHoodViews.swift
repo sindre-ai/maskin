@@ -3,8 +3,9 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// "Something is stuck": the latest run failed or timed out and nothing has run since. A Patina
-/// notice with a "!" mark, the run it concerns and an ink "Ask Chief of Staff" pill.
+/// "Something is stuck": a step failed, a decision has waited on the viewer over 48 hours, or
+/// nothing has moved for twice the usual step time. A Patina notice with a "!" mark, the cause
+/// from the copy deck and an ink "Ask Chief of Staff" pill (the only action: nothing reruns a step).
 struct LoopProblemBanner: View {
 	let problem: FlowProblem
 	let loop: LoopSummary
@@ -14,8 +15,7 @@ struct LoopProblemBanner: View {
 	private var who: String? { directory.name(problem.actorID) }
 
 	private var explanation: String {
-		let base = problem.detail ?? "The last run didn't finish."
-		return base + " Nothing has run since."
+		[problem.headline, problem.detail].compactMap { $0 }.joined(separator: " ")
 	}
 
 	var body: some View {
@@ -46,8 +46,7 @@ struct LoopProblemBanner: View {
 					.lineSpacing(MaskinSpace.s1)
 					.fixedSize(horizontal: false, vertical: true)
 				Button {
-					runtime?.buildInChat(
-						"The flow \(loop.displayName) is stuck: its last run \(problem.kind == .failed ? "failed" : "timed out"). What happened, and what should we do? ")
+					runtime?.buildInChat(problem.question(flow: loop.displayName))
 				} label: {
 					Text("Ask Chief of Staff")
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650, relativeTo: .footnote))
@@ -81,6 +80,7 @@ struct LoopHoodSection: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+			LoopHealthSection(loop: store.loop, activity: store.activity, loaded: store.phase == .loaded)
 			LoopScheduleSection(store: store)
 			LoopRunChart(activity: store.activity, loaded: store.phase == .loaded)
 			outcomeText
@@ -130,6 +130,7 @@ struct LoopHoodSection: View {
 		let tiles: [(String, String)] = [
 			("In progress", "\(store.loop.inProgressCount)"),
 			("Closed", "\(store.loop.closedCount)"),
+			("Agents", "\(store.loop.agentIDs.count)"),
 			("Needs you", "\(store.loop.waitingCount)"),
 			("Median time", store.loop.medianTimeToClose.map(LoopDurationText.string) ?? "—"),
 		]
@@ -246,7 +247,7 @@ struct LoopRunChart: View {
 					.tracking(0.08 * MaskinFontSize.t11)
 					.foregroundStyle(MaskinColor.ink5)
 				Spacer(minLength: MaskinSpace.s4)
-				Text(loaded ? LoopRunHistory.summary(days) : "")
+				Text(loaded ? summaryText(days, now: now) : "")
 					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 					.foregroundStyle(MaskinColor.ink4)
 			}
@@ -275,6 +276,13 @@ struct LoopRunChart: View {
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 	}
 
+	/// "12 runs, 1 failed", then how completed runs compare with the week before when that can be told.
+	private func summaryText(_ days: [LoopRunDay], now: Date) -> String {
+		let base = LoopRunHistory.summary(days)
+		guard let delta = FlowHealth.completedDelta(activity, now: now) else { return base }
+		return base + " · " + FlowHealth.deltaText(delta)
+	}
+
 	@ViewBuilder
 	private func bar(_ day: LoopRunDay, peak: Int) -> some View {
 		if day.runs == 0 {
@@ -292,6 +300,59 @@ struct LoopRunChart: View {
 			.frame(maxWidth: .infinity)
 			.frame(height: max(height, MaskinSpace.s3))
 			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.tag2 + MaskinRadius.tag, style: .continuous))
+		}
+	}
+}
+
+/// IS IT WORKING: Runs ok, Needs you and Failed, a dot and one line each. Counted from the newest
+/// 50 events, so the page says so when a busy flow may have older days missing.
+struct LoopHealthSection: View {
+	let loop: LoopSummary
+	let activity: [LoopActivityEntry]
+	let loaded: Bool
+
+	var body: some View {
+		let now = Date()
+		let rows = FlowHealth.rows(loop: loop, activity: activity, now: now)
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			FlowSectionHeader("Is it working")
+			VStack(spacing: 0) {
+				ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+					HStack(alignment: .top, spacing: MaskinSpace.s6) {
+						Circle().fill(color(row.tone))
+							.frame(width: MaskinSpace.s4 + MaskinSpace.s1, height: MaskinSpace.s4 + MaskinSpace.s1)
+							.padding(.top, MaskinSpace.s3)
+							.accessibilityHidden(true)
+						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+							Text(row.label)
+								.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: MaskinFontWeight.w650, relativeTo: .subheadline))
+								.foregroundStyle(MaskinColor.ink)
+							Text(loaded ? row.note : "")
+								.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+								.foregroundStyle(MaskinColor.ink4)
+						}
+						Spacer(minLength: 0)
+					}
+					.padding(.vertical, MaskinSpace.s6)
+					.accessibilityElement(children: .combine)
+					if index < rows.count - 1 { Divider().overlay(MaskinSurface.separator) }
+				}
+			}
+			.padding(.horizontal, MaskinSpace.s8)
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			if LoopRunHistory.mayBeTruncated(activity, now: now) {
+				Text("Counted from the latest \(LoopRunHistory.feedLimit) events, so busy days may read low.")
+					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+			}
+		}
+	}
+
+	private func color(_ tone: FlowHealth.Tone) -> Color {
+		switch tone {
+		case .ok: MaskinColor.sig
+		case .warn: MaskinColor.sigInk
+		case .bad: MaskinColor.danger
+		case .idle: MaskinColor.ink5
 		}
 	}
 }

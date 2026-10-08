@@ -50,7 +50,8 @@ private struct LoopsContainer: View {
 					// The card's latest update reads each flow's graph through the objects remote.
 					objects: APIObjectsRemote(
 						client: environment.client, credentials: environment.auth.credentialsProvider)),
-				events: environment.events, cache: environment.snapshotCache))
+				events: environment.events, cache: environment.snapshotCache,
+				sortStorage: UserDefaultsLoopsSortStorage()))
 	}
 
 	var body: some View {
@@ -93,8 +94,10 @@ private struct LoopsContainer: View {
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
 		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
-		// A flow has no filter yet (flows carry no tags), so the bar is the avatar alone.
-		.shellToolbar(environment: environment, title: "Flows")
+		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
+		.shellToolbar(
+			environment: environment, title: "Flows",
+			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
 	}
 
 	@ViewBuilder
@@ -151,6 +154,17 @@ private struct LoopDetailHost: View {
 			EmptyState(symbol: "tray", title: "This flow is gone", message: "It was removed elsewhere.")
 		} else {
 			LoopDetailView(store: store, install: install, onOpenTrigger: onOpenTrigger)
+		}
+	}
+}
+
+/// The Flows Display menu in the shell's pill: Recent or Name. Remembered on this device.
+struct FlowsDisplayMenu: View {
+	@Bindable var store: LoopsStore
+
+	var body: some View {
+		Picker("Sort", selection: $store.sort) {
+			ForEach(LoopsSort.allCases) { Text($0.title).tag($0) }
 		}
 	}
 }

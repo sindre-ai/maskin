@@ -17,12 +17,17 @@ public final class LoopsStore {
 	/// Loop object id → install info (only loops installed from the marketplace).
 	public private(set) var installs: [String: LoopInstall] = [:]
 	public var notice: String?
+	/// How the list is ordered. Remembered on this device (see `LoopsSortStorage`).
+	public var sort: LoopsSort {
+		didSet { if sort != oldValue { sortStorage?.save(sort) } }
+	}
 	/// Loop id → its newest post, for the card's latest update (only the bounded set is loaded).
 	public private(set) var latestPosts: [String: LoopPost] = [:]
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
 	public private(set) var freshness = Freshness()
 
 	@ObservationIgnored private let cache: SnapshotCache?
+	@ObservationIgnored private let sortStorage: (any LoopsSortStorage)?
 	@ObservationIgnored private let api: any LoopsAPI
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private var listener: Task<Void, Never>?
@@ -35,11 +40,16 @@ public final class LoopsStore {
 	@ObservationIgnored private let debouncer: RefreshDebouncer
 	@ObservationIgnored private var intents = IntentKeys()
 
-	public init(api: any LoopsAPI, events: EventHub?, cache: SnapshotCache? = nil) {
+	public init(
+		api: any LoopsAPI, events: EventHub?, cache: SnapshotCache? = nil,
+		sortStorage: (any LoopsSortStorage)? = nil
+	) {
 		self.api = api
 		self.events = events
 		self.debouncer = RefreshDebouncer()
 		self.cache = cache
+		self.sortStorage = sortStorage
+		self.sort = sortStorage?.load() ?? .recent
 		hydrateIfNeeded()
 	}
 
@@ -66,12 +76,15 @@ public final class LoopsStore {
 	/// Test seam: a custom wait between a live event and the refetch it causes.
 	init(
 		api: any LoopsAPI, events: EventHub?, debounce: Duration,
-		sleep: @escaping RefreshDebouncer.Sleep, cache: SnapshotCache? = nil
+		sleep: @escaping RefreshDebouncer.Sleep, cache: SnapshotCache? = nil,
+		sortStorage: (any LoopsSortStorage)? = nil
 	) {
 		self.api = api
 		self.events = events
 		self.debouncer = RefreshDebouncer(delay: debounce, sleep: sleep)
 		self.cache = cache
+		self.sortStorage = sortStorage
+		self.sort = sortStorage?.load() ?? .recent
 		hydrateIfNeeded()
 	}
 
@@ -81,10 +94,11 @@ public final class LoopsStore {
 		loop.agentIDs.compactMap { directory.name($0) }
 	}
 
-	/// Every loop, as the API ordered them, narrowed by the search text.
+	/// Every loop in the chosen order, narrowed by the search text.
 	public func filtered(query: String = "") -> [LoopSummary] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-		return loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) }
+		return sort.apply(
+			to: loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) })
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }
@@ -105,10 +119,11 @@ public final class LoopsStore {
 	/// How many cards get a latest update: the most recently touched flows that are not drafts.
 	public static let latestUpdateBound = 10
 
-	/// The card's latest-update sentence for a loop, once its newest post has loaded.
+	/// The card's latest-update line for a loop, once its newest post has loaded.
 	public func latestUpdate(for loop: LoopSummary) -> LoopLatestUpdate.Line? {
 		guard let post = latestPosts[loop.id] else { return nil }
-		return LoopLatestUpdate.line(post: post, author: directory.name(post.actorID))
+		return LoopLatestUpdate.line(
+			post: post, author: directory.name(post.actorID), limit: LoopLatestUpdate.cardLimit)
 	}
 
 	/// Loads the newest post for the visible cards: at most `latestUpdateBound` flows, one graph

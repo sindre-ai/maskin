@@ -14,6 +14,8 @@ public final class LoopDetailStore {
 	public private(set) var steps: [LoopStep] = []
 	public private(set) var activity: [LoopActivityEntry] = []
 	public private(set) var overview: LoopOverview = .empty
+	/// The newest runs of the flow's steps; empty until read, and when the read fails.
+	public private(set) var runs: [LoopRun] = []
 	/// The phase the viewer tapped; nil follows the busiest one.
 	public var selectedStatus: String?
 	public private(set) var phase: Phase = .idle
@@ -87,6 +89,15 @@ public final class LoopDetailStore {
 		return parts.joined(separator: " · ")
 	}
 
+	/// The one thing wrong with the flow right now, if anything (the stuck banner).
+	public func problem(now: Date = Date()) -> FlowProblem? {
+		FlowProblems.derive(
+			loop: loop, steps: steps, activity: activity, runs: runs, posts: posts, now: now)
+	}
+
+	/// Steps that failed in the last seven days, for the Quality tile.
+	public func failedSteps(now: Date = Date()) -> Int { FlowHealth.failedCount(activity, now: now) }
+
 	/// Who an activity entry belongs to, by name.
 	public func actorName(_ entry: LoopActivityEntry) -> String? { directory.name(entry.actorID) }
 
@@ -137,8 +148,11 @@ public final class LoopDetailStore {
 				async let stepRows = api.steps(loopID: loop.id)
 				async let feed = api.activity(loopID: loop.id)
 				async let extra = try? api.overview(loopID: loop.id)
+				async let runRows = try? api.runs(triggerIDs: loop.triggerIDs)
 				let (all, newSteps, newFeed) = try await (summaries, stepRows, feed)
 				if let fresh = await extra { overview = fresh }
+				// A failed read keeps the runs already on screen; the stuck check just has less to go on.
+				if let fresh = await runRows { runs = fresh }
 				guard let fresh = all.first(where: { $0.id == loop.id }) else {
 					isGone = true
 					return
