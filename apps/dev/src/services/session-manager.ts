@@ -144,7 +144,11 @@ import {
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
-import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
+import {
+	buildWorkspaceStartupBlock,
+	loadSenderLine,
+	renderWorkspaceBriefing,
+} from './workspace-briefing'
 
 /**
  * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
@@ -2243,7 +2247,9 @@ export class SessionManager extends EventEmitter {
 			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
-			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${session.actionPrompt}`
+			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
+			const senderLine = typeof sentBy === 'string' ? await loadSenderLine(this.db, sentBy) : ''
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:
