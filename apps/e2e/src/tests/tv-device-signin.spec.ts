@@ -76,7 +76,8 @@ test('a person types the code by hand, lower case and without the dash', async (
 	expect((await pollFromTv(tv.device_code)).actor?.api_key).toBe(account.apiKey)
 })
 
-test('refusing a TV hands over nothing', async ({ page }) => {
+// `account` is requested (not used) so the fixture signs the page in before it loads.
+test('refusing a TV hands over nothing', async ({ page, account: _account }) => {
 	const tv = await startOnTv()
 	await page.goto(`/tv?code=${tv.user_code}`)
 	await page.getByRole('button', { name: "This isn't me" }).click()
@@ -87,7 +88,7 @@ test('refusing a TV hands over nothing', async ({ page }) => {
 	expect(polled.actor).toBeUndefined()
 })
 
-test('a wrong code says so without revealing anything', async ({ page }) => {
+test('a wrong code says so without revealing anything', async ({ page, account: _account }) => {
 	await page.goto('/tv')
 	await page.getByLabel('Code').fill('BCDF2345')
 	await page.getByRole('button', { name: 'Continue' }).click()
