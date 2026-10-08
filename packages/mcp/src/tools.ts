@@ -1525,7 +1525,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout), up to 660 seconds by default, and holds a container while it waits. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block. Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),
