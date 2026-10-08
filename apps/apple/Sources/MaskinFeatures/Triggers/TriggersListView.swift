@@ -54,7 +54,7 @@ struct TriggersListView: View {
 		.overlay { overlay(isEmpty: sections.isEmpty) }
 		.refreshable { await store.refresh() }
 		.confirmationDialog(
-			"Delete \(pendingDelete?.name ?? "trigger")?",
+			"Delete trigger?",
 			isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
 			titleVisibility: .visible, presenting: pendingDelete
 		) { trigger in
@@ -62,7 +62,7 @@ struct TriggersListView: View {
 				Task { await store.delete(trigger.id) }
 			}
 		} message: { _ in
-			Text("Agents will no longer be woken by it.")
+			Text("The flow keeps running by hand.")
 		}
 	}
 

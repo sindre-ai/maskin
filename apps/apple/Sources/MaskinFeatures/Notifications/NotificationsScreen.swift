@@ -102,7 +102,7 @@ struct NotificationsContent: View {
 	private var list: some View {
 		List {
 			if store.isOffline {
-				OfflineBanner(message: "Can't refresh right now. Showing what we have.")
+				OfflineBanner(message: "Can't reach Maskin. Showing what we had.")
 					.listRowInsets(EdgeInsets())
 					.listRowSeparator(.hidden)
 			}

@@ -6,7 +6,7 @@ public struct OfflineBanner: View {
 	private let isVisible: Bool
 	private let message: String
 
-	public init(isVisible: Bool = true, message: String = "You are offline. Changes will sync when reconnected.") {
+	public init(isVisible: Bool = true, message: String = "Can't reach Maskin. Decisions queue offline.") {
 		self.isVisible = isVisible
 		self.message = message
 	}

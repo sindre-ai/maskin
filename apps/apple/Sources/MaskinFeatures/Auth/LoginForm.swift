@@ -16,7 +16,7 @@ struct LoginForm: Equatable {
 }
 
 extension LoginForm {
-	static let sessionEndedMessage = "Your session ended. Sign in again to pick up where you left off."
+	static let sessionEndedMessage = "Session expired. Sign in again. Your queued decisions are kept."
 
 	/// The calm notice shown above the form after the server ended the session. A real sign-in
 	/// error takes its place (it is more specific), and a new attempt in flight hides it.

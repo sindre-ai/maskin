@@ -81,11 +81,11 @@ struct TriggerDetailView: View {
 		}
 		.overlay { if store.isSaving { ProgressView() } }
 		.confirmationDialog(
-			"Delete \(store.trigger.name)?", isPresented: $confirmDelete, titleVisibility: .visible
+			"Delete trigger?", isPresented: $confirmDelete, titleVisibility: .visible
 		) {
 			Button("Delete trigger", role: .destructive) { Task { await store.delete() } }
 		} message: {
-			Text("Agents will no longer be woken by it.")
+			Text("The flow keeps running by hand.")
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
