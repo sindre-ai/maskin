@@ -41,6 +41,7 @@ import {
 	findDueWorkspaceIds,
 	sweepQueueRetention,
 } from './trigger-event-queue'
+import { loadSenderLine } from './workspace-briefing'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -2478,11 +2479,13 @@ export class CommentDispatcher {
 		if (ctx.actor.type !== 'agent') return
 
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
+		const senderLine = await loadSenderLine(this.db, ctx.commenterId)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: ctx.actor.id,
 			callerKind: 'trigger',
 			actionPrompt: buildMentionPrompt({
+				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
@@ -2529,6 +2532,7 @@ export class CommentDispatcher {
  * the notification-id it references are edited in one place.
  */
 export function buildMentionPrompt(ctx: {
+	senderLine?: string
 	objectId: string
 	commenterActorId: string
 	content: string
@@ -2536,6 +2540,7 @@ export function buildMentionPrompt(ctx: {
 	parentEventId: number | null
 }): string {
 	return [
+		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
 		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
 		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',

@@ -93,9 +93,13 @@ app.openapi(createSessionRoute, (async (c) => {
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
 	// every session to the agent that received the owner's first turn without
 	// requiring an additive column migration.
-	const config = body.entry_agent_role
-		? { ...body.config, entry_agent_role: body.entry_agent_role }
-		: body.config
+	// Also record who asked (run_agent / create_session land here), so launch can
+	// tell the helper who sent it without rewriting the stored action prompt.
+	const config = {
+		...body.config,
+		...(body.entry_agent_role ? { entry_agent_role: body.entry_agent_role } : {}),
+		sent_by_actor_id: actorId,
+	}
 
 	const handle = await startSession({
 		workspaceId,
