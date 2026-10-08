@@ -7,10 +7,15 @@ import SwiftUI
 /// on the right. An option that can't be taken back asks first; after deciding the screen shows what
 /// was chosen with an Undo. Text never needs typing: replies and questions come with the thread.
 struct TVDecision: View {
+	let environment: AppEnvironment
 	let store: ForYouStore
+	let chief: ChiefOfStaffDesk?
 	let id: String
 	@Environment(\.dismiss) private var dismiss
 	@State private var confirming: DecisionOption?
+	@State private var thread: TVThreadRoute?
+	@State private var opening = false
+	@State private var askFailed = false
 
 	private var entry: FeedEntry? { store.entries.first { $0.id == id } }
 
@@ -29,6 +34,12 @@ struct TVDecision: View {
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.navigationDestination(item: $thread) { TVThread(environment: environment, conversationID: $0.id) }
+		.alert("Can't open the thread", isPresented: $askFailed) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text("There's no Chief of Staff in this workspace to ask.")
+		}
 		.confirmationDialog(
 			confirming.map { "\($0.label)?" } ?? "", isPresented: Binding(
 				get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
@@ -78,7 +89,32 @@ struct TVDecision: View {
 				if (entry.card.decision?.options ?? []).isEmpty {
 					Text("Decide on iPhone or Watch").font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
 				}
+				askButton(entry.card)
 			}
+		}
+	}
+
+	/// Opens the conversation with the Chief of Staff about this card's object: dictate a question
+	/// there rather than typing one.
+	@ViewBuilder private func askButton(_ card: ForYouCard) -> some View {
+		if let chief {
+			Button {
+				guard !opening else { return }
+				opening = true
+				Task {
+					defer { opening = false }
+					do {
+						let outcome = try await ChiefOfStaffThreads.open(
+							about: card, conversations: chief.conversations)
+						thread = TVThreadRoute(id: outcome.conversation.id)
+					} catch {
+						askFailed = true
+					}
+				}
+			} label: {
+				TVCapsuleLabel(title: opening ? "Opening…" : "Ask Chief of Staff", symbol: "mic.fill")
+			}
+			.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 		}
 	}
 
@@ -121,4 +157,9 @@ extension String {
 		let t = trimmingCharacters(in: .whitespacesAndNewlines)
 		return t.isEmpty ? nil : t
 	}
+}
+
+/// Where "Ask Chief of Staff" goes: the conversation about the card's object.
+struct TVThreadRoute: Hashable, Identifiable {
+	let id: String
 }

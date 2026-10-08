@@ -6,13 +6,13 @@ import SwiftUI
 /// The tvOS app: the top tab bar the system draws, For you, Team, Flows, Objects and Profile.
 struct TVRoot: View {
 	let environment: AppEnvironment
-	let store: ForYouStore?
+	let forYou: ForYouRuntime?
 	@State private var loops: LoopsStore?
 	@State private var stories: StoriesStore?
 
 	var body: some View {
 		TabView {
-			TVForYou(environment: environment, store: store, stories: stories)
+			TVForYou(environment: environment, forYou: forYou, stories: stories)
 				.tabItem { Text("For you") }
 			TVTeam(environment: environment)
 				.tabItem { Text("Team") }

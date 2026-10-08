@@ -7,9 +7,11 @@ import SwiftUI
 /// the Decision screen, where it is decided with the remote.
 struct TVForYou: View {
 	let environment: AppEnvironment
-	let store: ForYouStore?
+	let forYou: ForYouRuntime?
 	let stories: StoriesStore?
 	@State private var playing: BriefSequence?
+
+	private var store: ForYouStore? { forYou?.store }
 
 	private var entries: [FeedEntry] {
 		(store?.entries ?? []).filter { $0.section == .needs }
@@ -32,7 +34,7 @@ struct TVForYou: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			.navigationDestination(for: String.self) { id in
-				if let store { TVDecision(store: store, id: id) }
+				if let store { TVDecision(environment: environment, store: store, chief: forYou?.chief, id: id) }
 			}
 		}
 		.fullScreenCover(item: Binding(get: { playing.map(PlayingSequence.init) }, set: { if $0 == nil { playing = nil } })) { item in

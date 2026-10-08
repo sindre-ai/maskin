@@ -12,7 +12,7 @@ struct MaskinWatchApp: App {
 
 	var body: some Scene {
 		WindowGroup {
-			GlanceRoot(environment: environment) { store in WatchHome(environment: environment, store: store) }
+			GlanceRoot(environment: environment) { forYou in WatchHome(environment: environment, store: forYou?.store) }
 				.task { listenForPhone() }
 				// Complications fetch with this session, so any change (handoff, sign-in on the watch,
 				// sign-out) should refresh them rather than wait for the next scheduled reload.

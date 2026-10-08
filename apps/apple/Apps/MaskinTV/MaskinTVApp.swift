@@ -7,8 +7,8 @@ struct MaskinTVApp: App {
 
 	var body: some Scene {
 		WindowGroup {
-			GlanceRoot(environment: environment) { store in
-				TVRoot(environment: environment, store: store)
+			GlanceRoot(environment: environment) { forYou in
+				TVRoot(environment: environment, forYou: forYou)
 			}
 			// Dark only: the room display uses the Patina dark tokens.
 			.preferredColorScheme(.dark)
