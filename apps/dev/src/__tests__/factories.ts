@@ -265,12 +265,27 @@ export function buildCreateTriggerBody(overrides?: Record<string, unknown>) {
 
 export function buildSession(overrides?: Record<string, unknown>) {
 	const n = next()
+	const status = (overrides?.status as string | undefined) ?? 'running'
+	// Mirror the migration 0076 back-fill so a test that only sets `status`
+	// still lands with a coherent `session_state`; the reaper (Commit 6)
+	// reads session_state, and a bare-status seed would silently escape
+	// every cutoff it should exercise.
+	const sessionStateFromStatus: Record<string, string> = {
+		pending: 'queued',
+		queued: 'queued',
+		starting: 'starting',
+		running: 'running',
+		snapshotting: 'running',
+	}
+	const derivedSessionState = sessionStateFromStatus[status] ?? 'done'
 	return {
 		id: randomUUID(),
 		workspaceId: randomUUID(),
 		actorId: randomUUID(),
 		triggerId: null,
-		status: 'running',
+		status,
+		sessionState: derivedSessionState,
+		stateEnteredAt: new Date(),
 		containerId: `container-${n}`,
 		actionPrompt: `Do something ${n}`,
 		config: {},

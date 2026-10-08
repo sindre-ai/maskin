@@ -456,6 +456,9 @@ app.openapi(listUnreadRoute, (async (c) => {
 				eq(events.workspaceId, subscriptions.workspaceId),
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
+				// Implied by both branches below; stated outright so the planner can use
+				// the comments-only partial index events_ws_entity_commented_idx.
+				eq(events.action, 'commented'),
 				readOrRecentPredicate,
 				// Two surfaces land in the unread feed, both scoped to comments only
 				// (status-change/terminal-bet/commitment-attention signals were

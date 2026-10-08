@@ -161,7 +161,7 @@ export function AgentCreateForm({
 							value={modelDraft}
 							onChange={(e) => setModelDraft(e.target.value)}
 							onBlur={handleModelBlur}
-							placeholder="e.g. claude-opus-4-7"
+							placeholder="e.g. claude-sonnet-5-5"
 						/>
 					</div>
 				</div>

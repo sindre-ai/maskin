@@ -16,7 +16,9 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
+import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 
@@ -62,6 +64,46 @@ app.get('/', async (c) => {
 	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
+		const callerId = c.get('actorId')
+
+		// Every frame goes through this serialized chain. It exists for the
+		// `session.state_changed` frame below: resolving it needs a DB read, but
+		// the live bridge callback is synchronous, so a fire-and-forget await
+		// there would let two events' frames interleave and land out of order.
+		// Chaining also guarantees the generic frame is on the wire before the
+		// delegation-strip frame for the same event.
+		let chain: Promise<void> = Promise.resolve()
+		const writeFrame = (
+			id: string,
+			action: string,
+			payload: unknown,
+			sessionEntityId: string | null,
+		): Promise<void> => {
+			chain = chain
+				.then(async () => {
+					await stream.writeSSE({ id, event: action, data: JSON.stringify(payload) })
+					if (!sessionEntityId) return
+					// Entitlement gate on the emission path: `loadSessionStateChangeFrame`
+					// returns null unless the caller is a participant of the owning
+					// conversation, so a non-participant never receives this frame.
+					const frame = await loadSessionStateChangeFrame(db, {
+						sessionId: sessionEntityId,
+						workspaceId,
+						actorId: callerId,
+					})
+					if (!frame) return
+					await stream.writeSSE({
+						id,
+						event: 'session.state_changed',
+						data: JSON.stringify(frame),
+					})
+				})
+				.catch((err) => {
+					logger.warn('events SSE frame write failed', { error: String(err) })
+				})
+			return chain
+		}
+
 		// Replay missed events if Last-Event-ID is provided
 		const parsedId = Number(lastEventId)
 		if (lastEventId && !Number.isNaN(parsedId)) {
@@ -73,11 +115,12 @@ app.get('/', async (c) => {
 				.limit(100)
 
 			for (const event of missed) {
-				await stream.writeSSE({
-					id: String(event.id),
-					event: event.action,
-					data: JSON.stringify(event),
-				})
+				await writeFrame(
+					String(event.id),
+					event.action,
+					event,
+					event.entityType === 'session' ? event.entityId : null,
+				)
 			}
 		}
 
@@ -85,11 +128,12 @@ app.get('/', async (c) => {
 		const handler = (event: PgEvent) => {
 			if (event.workspace_id !== workspaceId) return
 
-			stream.writeSSE({
-				id: event.event_id,
-				event: event.action,
-				data: JSON.stringify(event),
-			})
+			void writeFrame(
+				event.event_id,
+				event.action,
+				event,
+				event.entity_type === 'session' ? event.entity_id : null,
+			)
 		}
 
 		bridge.on('event', handler)
@@ -617,34 +661,49 @@ async function spawnThreadReplySessions(ctx: {
 		(id) => !ctx.excludedAgentIds.has(id),
 	)
 
+	// Resolve the object type once for the whole thread-reply fanout — a
+	// thread-reply spawn is on a first-class object by construction (the
+	// `commented` event's entity_type is 'object'), so a single PK read
+	// per commented event is cheap even for a big fanout.
+	const [obj] = await ctx.db
+		.select({ type: objects.type })
+		.from(objects)
+		.where(eq(objects.id, ctx.objectId))
+		.limit(1)
+	const initiatedFromObjectId = obj ? ctx.objectId : null
+	const initiatedFromObjectType = obj?.type ?? null
+
 	for (const agentId of threadReplyAgentIds) {
-		ctx.sessionManager
-			.createSession(ctx.workspaceId, {
-				actorId: agentId,
-				actionPrompt: buildThreadReplyPrompt({
-					objectId: ctx.objectId,
-					commenterActorId: ctx.actorId,
-					content: ctx.newCommentContent,
-					threadRootEventId: ctx.threadRootEventId,
-				}),
-				config: {
-					thread_reply: {
-						object_id: ctx.objectId,
-						comment_event_id: ctx.newCommentEventId,
-						thread_root_event_id: ctx.threadRootEventId,
-						commenter_actor_id: ctx.actorId,
-					},
+		startSession({
+			workspaceId: ctx.workspaceId,
+			actorId: agentId,
+			callerKind: 'trigger',
+			actionPrompt: buildThreadReplyPrompt({
+				objectId: ctx.objectId,
+				commenterActorId: ctx.actorId,
+				content: ctx.newCommentContent,
+				threadRootEventId: ctx.threadRootEventId,
+			}),
+			config: {
+				thread_reply: {
+					object_id: ctx.objectId,
+					comment_event_id: ctx.newCommentEventId,
+					thread_root_event_id: ctx.threadRootEventId,
+					commenter_actor_id: ctx.actorId,
 				},
-				createdBy: ctx.actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create thread-reply session', {
-					agentId,
-					objectId: ctx.objectId,
-					threadRootEventId: ctx.threadRootEventId,
-					error: String(err),
-				}),
-			)
+			},
+			createdBy: ctx.actorId,
+			initiatedFromObjectId,
+			initiatedFromObjectType,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to create thread-reply session', {
+				agentId,
+				objectId: ctx.objectId,
+				threadRootEventId: ctx.threadRootEventId,
+				error: String(err),
+			}),
+		)
 	}
 }
 

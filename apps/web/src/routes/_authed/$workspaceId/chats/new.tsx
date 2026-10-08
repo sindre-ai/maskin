@@ -3,6 +3,7 @@ import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
@@ -79,6 +80,7 @@ interface Recipient {
  * flag ids in `apps/dev/src/lib/feature-flags.ts`.
  */
 function NewChatRoute() {
+	useDocumentTitle('New chat')
 	const search = Route.useSearch()
 	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
 	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
@@ -463,8 +465,10 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 								aria-label={typedMode ? 'Add someone — person or agent' : 'Recent collaborators'}
 								className={cn(
 									'flex list-none flex-col gap-0.5 overflow-y-auto p-0',
-									// Desktop: single column, max 8 rows before scroll.
-									'max-h-[calc(8*40px)]',
+									// Mobile: cap at 4 rows so the composer stays visible on small
+									// phones (dvh alone can't help — the To row is shrink-0). md+
+									// gets the full 8-row list.
+									'max-h-[calc(4*40px)] md:max-h-[calc(8*40px)]',
 									// Tablet 641–1024px: 2-col when RECENT has >4 rows.
 									!typedMode && dropdownRows.length > 4
 										? 'md:grid md:max-h-[calc(4*40px)] md:grid-cols-2 lg:flex lg:max-h-[calc(8*40px)]'

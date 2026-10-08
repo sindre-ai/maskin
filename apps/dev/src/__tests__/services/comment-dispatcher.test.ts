@@ -2,10 +2,12 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
 	normalizeMentionsList,
 	normalizeParentEventId,
+	threadReplyLines,
 } from '../../services/trigger-runner'
 import { buildActor, buildNotification } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
@@ -38,6 +40,7 @@ describe('CommentDispatcher', () => {
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
 		calls = ctx.calls
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		dispatcher = new CommentDispatcher(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
@@ -66,8 +69,12 @@ describe('CommentDispatcher', () => {
 		bridge.emit('event', event)
 		// Yield enough microtask ticks to drain every await inside
 		// handleEvent → dispatchMention → insertNotificationsWithEvents. Each
-		// mock resolves synchronously, so a small loop is plenty.
-		for (let i = 0; i < 20; i++) await Promise.resolve()
+		// mock resolves synchronously, so a small loop is plenty. Bumped to
+		// 40 with the initiated_from lookup added to dispatchMention /
+		// dispatchCommentFallback: each mention now has an extra `await`
+		// (`loadInitiatedFromObject`), so multi-mention fanouts were racing
+		// the assertion at the old 20-tick budget.
+		for (let i = 0; i < 40; i++) await Promise.resolve()
 	}
 
 	it('ignores events that are not commented-on-object', async () => {
@@ -219,6 +226,9 @@ describe('CommentDispatcher', () => {
 		expect(opts.triggerSource).toBe('comment_fallback')
 		expect(opts.sourceCommentEventId).toBe(42)
 		expect(opts.actionPrompt as string).not.toContain('has no driver')
+		// The triggering comment was top-level, so the new comment IS the
+		// thread — no reply-in-thread instruction belongs in the prompt.
+		expect(opts.actionPrompt as string).not.toContain('Thread parent event ID')
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -227,6 +237,64 @@ describe('CommentDispatcher', () => {
 				sourceCommentEventId: 42,
 			}),
 		)
+	})
+
+	it('tells a mentioned agent to reply inside the thread it was triggered by', async () => {
+		const agent = buildActor({ type: 'agent' })
+		const notification = buildNotification({ targetActorId: agent.id })
+		mockResults.selectQueue = [
+			// event row lookup — the triggering comment is a reply (parentEventId 7)
+			[
+				{
+					actorId: 'commenter-1',
+					data: { mentions: [agent.id], parentEventId: 7, content: 'reply' },
+				},
+			],
+			// parent-author lookup — a different actor, so dispatch is not suppressed
+			[{ actorId: 'parent-author-1' }],
+			// mentioned-actor lookup
+			[{ id: agent.id, type: agent.type }],
+		]
+		mockResults.insert = [notification]
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		]
+		expect(opts.actionPrompt as string).toContain('Thread parent event ID: 7')
+		expect(opts.actionPrompt as string).toContain('parent_event_id: 7')
+	})
+
+	it('tells a fallback-dispatched agent to reply inside the triggering thread', async () => {
+		mockResults.selectQueue = [
+			// event data — a reply (parentEventId 900), no mentions
+			[
+				{
+					actorId: 'human-author',
+					data: { content: 'reply', mentions: [], parentEventId: 900 },
+				},
+			],
+			// parent-author lookup
+			[{ actorId: 'parent-author-1' }],
+			// driver lookup
+			[{ driver: 'driver-1' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'human-author' }))
+
+		expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		]
+		expect(opts.actorId).toBe('driver-1')
+		expect(opts.actionPrompt as string).toContain('Thread parent event ID: 900')
+		expect(opts.actionPrompt as string).toContain('parent_event_id: 900')
 	})
 
 	it('driver = author → noop_self_authored with no dispatch (case 0, guard-first)', async () => {
@@ -574,5 +642,21 @@ describe('normalizeParentEventId()', () => {
 		expect(normalizeParentEventId(undefined)).toBeNull()
 		expect(normalizeParentEventId(Number.NaN)).toBeNull()
 		expect(normalizeParentEventId(Number.POSITIVE_INFINITY)).toBeNull()
+	})
+})
+
+describe('threadReplyLines()', () => {
+	it('returns no lines when the triggering comment was top-level', () => {
+		expect(threadReplyLines(null)).toEqual([])
+	})
+
+	it('names the thread parent id and the argument that replies into it', () => {
+		const prompt = threadReplyLines(7).join('\n')
+		expect(prompt).toContain('Thread parent event ID: 7')
+		expect(prompt).toContain('parent_event_id: 7')
+	})
+
+	it('opens with a blank separator so call sites can spread it unconditionally', () => {
+		expect(threadReplyLines(7)[0]).toBe('')
 	})
 })

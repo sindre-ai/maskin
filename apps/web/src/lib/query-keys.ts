@@ -40,6 +40,9 @@ export const queryKeys = {
 		detail: (id: string) => ['workspaces', 'detail', id] as const,
 		members: (id: string) => ['workspaces', id, 'members'] as const,
 	},
+	invites: {
+		list: (workspaceId: string) => ['invites', workspaceId] as const,
+	},
 	relationships: {
 		all: (workspaceId: string) => ['relationships', workspaceId] as const,
 		byObject: (workspaceId: string, objectId: string) =>
@@ -121,6 +124,13 @@ export const queryKeys = {
 	files: {
 		all: (workspaceId: string) => ['files', workspaceId] as const,
 		detail: (workspaceId: string, id: string) => ['files', workspaceId, 'detail', id] as const,
+	},
+	fileComments: {
+		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
+	},
+	attachingObjects: {
+		byFile: (workspaceId: string, fileId: string) =>
+			['attaching-objects', workspaceId, fileId] as const,
 	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,

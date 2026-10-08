@@ -1,5 +1,5 @@
 import { events, files, objects, relationships } from '@maskin/db/schema'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import {
 	buildCreateObjectBody,
 	buildFile,
@@ -1257,6 +1257,59 @@ describe('Objects Integration', () => {
 			// The intruder — inserted after the snapshot — must NOT appear on
 			// either page. That's the whole snapshot guarantee.
 			expect(walked).not.toContain(intruder.id)
+		})
+
+		// Bulk imports insert every row in one statement, so Postgres stamps them
+		// all with the same microsecond-precision `created_at`. The API hands the
+		// cursor back as a JS Date (millisecond precision); a keyset seek on the
+		// truncated value skips the tied rows under `desc` and replays them under
+		// `asc`. Seed 150 rows sharing one sub-millisecond timestamp and walk the
+		// way the MCP list_objects tool does.
+		describe.each(['desc', 'asc'] as const)('identical createdAt (order=%s)', (order) => {
+			it('walks every row exactly once and reports the real total', async () => {
+				const pageSize = 100
+				const app = createApp()
+				const actorId = getTestActorId()
+				const seeded: string[] = []
+				for (let i = 0; i < 150; i++) {
+					const row = await insertObject(db, workspaceId, actorId, {
+						type: 'task',
+						status: 'todo',
+						title: `Tied ${i}`,
+					})
+					seeded.push(row.id)
+				}
+				await db.execute(
+					sql`UPDATE objects SET created_at = '2026-01-01T00:00:00.123456Z', updated_at = '2026-01-01T00:00:00.123456Z' WHERE workspace_id = ${workspaceId}`,
+				)
+
+				const snapshotAt = new Date().toISOString()
+				const walked: string[] = []
+				let totalCount: string | null = null
+				let cursor: { createdAt: string; id: string } | null = null
+				for (let hop = 0; hop < 200; hop++) {
+					const seek = cursor
+						? `&cursor_created_at=${encodeURIComponent(cursor.createdAt)}&cursor_id=${cursor.id}`
+						: ''
+					const res = await app.request(
+						jsonGet(
+							`/api/objects?type=task&limit=${pageSize}&order=${order}&sort=createdAt&snapshot_at=${encodeURIComponent(snapshotAt)}${seek}`,
+							{ 'x-workspace-id': workspaceId },
+						),
+					)
+					expect(res.status).toBe(200)
+					totalCount ??= res.headers.get('x-total-count')
+					const rows = (await res.json()) as Array<{ id: string; createdAt: string }>
+					walked.push(...rows.map((r) => r.id))
+					if (rows.length < pageSize) break
+					const last = rows[rows.length - 1]
+					cursor = { createdAt: last.createdAt, id: last.id }
+				}
+
+				expect(walked).toHaveLength(seeded.length)
+				expect([...walked].sort()).toEqual([...seeded].sort())
+				expect(totalCount).toBe(String(seeded.length))
+			})
 		})
 
 		it('ignores the keyset seek when only cursor_id is passed without cursor_created_at', async () => {

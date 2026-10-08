@@ -5,6 +5,14 @@ export const actorTypeSchema = z.enum(['human', 'agent'])
 
 export const actorToolsSchema = z.object({
 	mcpServers: z.record(z.string(), mcpServerSchema).default({}),
+	/**
+	 * Names of workspace-level secrets (AGENT_SECRET_* process env on the API
+	 * service) to copy into this actor's session env, so tool headers can
+	 * reference them as ${AGENT_SECRET_X} instead of holding the token in plain
+	 * text. Names only, never values. Names without the AGENT_SECRET_ prefix are
+	 * ignored at launch (see resolveActorSecretEnv in apps/dev session-manager).
+	 */
+	envFrom: z.array(z.string()).optional(),
 })
 
 export const llmConfigSchema = z.object({

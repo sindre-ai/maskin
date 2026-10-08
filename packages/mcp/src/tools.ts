@@ -84,7 +84,7 @@ const actorLlmConfigSchema = z
 			.string()
 			.optional()
 			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
-		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
+		model: z.string().optional().describe('Model identifier to use, e.g. "claude-sonnet-5-5".'),
 	})
 	.passthrough()
 	.optional()
@@ -1069,10 +1069,16 @@ export const tools = {
 	},
 	create_comment: {
 		description:
-			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.\n\nWhen you need a human to make a call rather than just read something, put that human in `mentions` and fill in `decision` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the `decision` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.',
+			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.\n\nWhen you need a human to make a call rather than just read something, put that human in `mentions` and fill in `decision` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the `decision` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.\n\nThread defaulting: when this session was dispatched from a comment (any triggering comment on this or another object), your reply is threaded inside that triggering thread automatically — you do not need to set `parent_event_id`. Pass `parent_event_id` explicitly only when you want to reply under a DIFFERENT comment than the one that spawned you. Set `no_thread: true` on the rare occasion you deliberately want a fresh top-level comment (e.g. opening a new topic on a bet) rather than a reply inside the current thread.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
+			no_thread: z
+				.boolean()
+				.optional()
+				.describe(
+					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
+				),
 		}),
 	},
 
@@ -1368,10 +1374,25 @@ export const tools = {
 				.describe(
 					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
 				),
+			initiated_from_object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Object id (bet, task, insight, etc.) this session is being spawned for. Threaded into the session row so a failure event can link back to the object, and emitted on the runtime_session_ended PostHog event as context_object_id. Omit when there is no originating object (direct API create, cron, onboarding).',
+				),
+			initiated_from_object_type: z
+				.string()
+				.max(64)
+				.optional()
+				.describe(
+					"Object type of `initiated_from_object_id` (e.g. 'bet', 'task', 'insight'). Emitted on the runtime_session_ended PostHog event as context_object_type. Must be set whenever initiated_from_object_id is set.",
+				),
 		}),
 	},
 	list_sessions: {
-		description: 'List sessions with optional filters (status, actor, last-updated window).',
+		description:
+			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -1387,6 +1408,13 @@ export const tools = {
 				])
 				.optional(),
 			actor_id: z.string().uuid().optional(),
+			trigger_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Filter to sessions spawned by a specific trigger. Complements actor_id — a session has both an actor (the agent that ran) and, when spawned automatically, the trigger that scheduled it.',
+				),
 			updated_before: z
 				.string()
 				.datetime({ offset: true })
@@ -1401,20 +1429,35 @@ export const tools = {
 				.describe(
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
 				),
-			limit: z.number().int().min(1).max(100).default(20),
+			before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					"Cursor: pass the last row's `updated_at` from the previous page to walk backward through history. Half-open, exclusive: returns rows with `updated_at < before`.",
+				),
+			verbose: z
+				.boolean()
+				.default(false)
+				.describe(
+					"When false (the default), returns lean rows { id, title, status, updated_at } — ~10x smaller than the fat shape. When true, returns today's full session payload for backwards compatibility.",
+				),
+			limit: z.number().int().min(1).max(200).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system).',
+			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			include_logs: z
 				.boolean()
 				.default(false)
-				.describe('Include log output from the session container'),
+				.describe(
+					'Include log output from the session container. When true, the response gains a `logs` array ordered newest-first (id DESC), so the ending — where a failure lives — is at the top.',
+				),
 			log_limit: z
 				.number()
 				.int()
@@ -1422,6 +1465,41 @@ export const tools = {
 				.max(500)
 				.default(100)
 				.describe('Max log lines to return (only used when include_logs is true)'),
+		}),
+	},
+	get_session_logs: {
+		description:
+			'Read a session\'s log history with cursor pagination. Default direction is newest-first so the caller lands on the ending, where a failure lives. Walk backward through history with before_id (rows satisfy id < before_id), tail the live stream with after_id (rows satisfy id > after_id), or compose both for the bounded window after_id < id < before_id. Pass direction: "oldest_first" (no cursor) to jump to boot. Row shape: { id, sessionId, stream, content, createdAt }.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Session id'),
+			direction: z
+				.enum(['newest_first', 'oldest_first'])
+				.default('newest_first')
+				.describe(
+					'Which end to page from. `newest_first` (the default) returns the latest rows first — id DESC — so a caller lands on the failure. `oldest_first` returns id ASC, for the rare "jump to boot" case.',
+				),
+			before_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Half-open, exclusive: rows satisfy `id < before_id`. Pages backward through history. Compose with after_id to bound the window.',
+				),
+			after_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Half-open, exclusive: rows satisfy `id > after_id`. Live-tail from a known cursor. Compose with before_id to bound the window.',
+				),
+			stream: z
+				.enum(['stdout', 'stderr', 'system'])
+				.optional()
+				.describe('Filter to a single log stream.'),
+			limit: z.number().int().min(1).max(500).default(100).describe('Max rows per page.'),
 		}),
 	},
 	stop_session: {
@@ -1473,6 +1551,20 @@ export const tools = {
 				.max(3700)
 				.default(660)
 				.describe('Maximum time to wait before giving up (should exceed session timeout)'),
+			spawned_by_message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'The assistant message that triggered this sub-agent spawn. Persisted onto the session so the UI can anchor a handed-off strip to that bubble; omit for a spawn with no strip.',
+				),
+			depends_on_session_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe(
+					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
+				),
 		}),
 	},
 

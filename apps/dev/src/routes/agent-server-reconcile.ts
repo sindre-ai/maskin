@@ -399,6 +399,93 @@ app.openapi(sessionCompleteRoute, async (c) => {
 	return c.json({ ok: true }, 200)
 })
 
+// Reasonable ceilings for the skill-staging report body — same order-of-magnitude
+// as SESSION_REQUEST_SCHEMA in apps/agent-server: an agent has at most a few
+// tens of skills attached, and a per-skill failure carries a short reason.
+const MAX_STAGING_FAILURES = 200
+const MAX_STAGING_FAILURE_REASON_LEN = 500
+
+const skillStagingBodySchema = z.object({
+	manifest_skills: z.number().int().min(0).max(1000),
+	staged: z.number().int().min(0).max(1000),
+	failures: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(256),
+				error: z.string().max(MAX_STAGING_FAILURE_REASON_LEN),
+			}),
+		)
+		.max(MAX_STAGING_FAILURES)
+		.default([]),
+})
+
+const skillStagingRoute = createRoute({
+	method: 'post',
+	path: '/sessions/:id/skill-staging',
+	tags: ['Internal'],
+	summary: 'Report the outcome of host-side workspace-skill staging for a session',
+	description:
+		'Called by an agent-server immediately after `stageSessionSkills` completes (before `spawnSession`). Records the per-session skill-staging outcome and feeds the G1 signal set — `skills_staged` on `agent_session_started_with_prompt`/`agent_session_completed`, and `session_skill_load_failed` when the manifest reported any per-skill errors.',
+	request: {
+		params: z.object({ id: z.string().uuid() }),
+		body: {
+			content: { 'application/json': { schema: skillStagingBodySchema } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Staging outcome recorded',
+			content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
+		},
+		401: {
+			description: 'Invalid bearer token',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		503: {
+			description: 'Endpoint not configured',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(skillStagingRoute, async (c) => {
+	const expected = process.env.AGENT_SERVER_SECRET
+	if (!expected) {
+		return c.json(
+			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Agent-server endpoint not configured'),
+			503,
+		)
+	}
+	const header = c.req.header('Authorization') ?? ''
+	const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : ''
+	if (!presented || !constantTimeEqual(presented, expected)) {
+		return c.json(createApiError(ApiErrorCode.UNAUTHORIZED, 'Invalid bearer token'), 401)
+	}
+
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+	const sessionManager = c.get('sessionManager')
+
+	// Best-effort. A DB blip recording the outcome shouldn't fail the report —
+	// the session boot proceeds either way (the manifest is already staged on
+	// the guest's mount by the time this fires). Log so a chronic failure is
+	// diagnosable, then return 200 so the agent-server doesn't retry a signal
+	// that has no useful side effect on retry.
+	try {
+		await sessionManager.recordSkillStagingResult(id, {
+			manifestSkills: body.manifest_skills,
+			staged: body.staged,
+			failures: body.failures,
+		})
+	} catch (err) {
+		logger.error('Failed to record skill-staging outcome', {
+			sessionId: id,
+			error: String(err),
+		})
+	}
+	return c.json({ ok: true }, 200)
+})
+
 /** Length-leaking equality is fine here — both sides are server-controlled secrets, not user-supplied. */
 function constantTimeEqual(a: string, b: string): boolean {
 	if (a.length !== b.length) return false
