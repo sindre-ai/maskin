@@ -1,0 +1,116 @@
+# Staging stack for Coolify (a second app next to production, same server).
+#
+# Standalone on purpose: Coolify takes ONE compose file per app, so this is not
+# an override of docker-compose.prod.yml. Point the staging app's "Docker
+# Compose Location" at /docker-compose.staging.yml.
+#
+# Differences from docker-compose.prod.yml, and why:
+#
+#  - No /var/run/docker.sock mount, no group_add, no agent-base service.
+#    Staging sessions run on the remote agent server (see
+#    deploy/staging/README.md). With the socket mounted this app could touch
+#    production's containers on the shared Docker host, and the agent-base
+#    build would re-tag the agent-base:latest image production also uses.
+#    Without the socket the app logs a failed agent-base warm-up at boot and
+#    carries on.
+#  - No seaweedfs metrics publish. Prod binds 127.0.0.1:9327 on this host, so a
+#    second bind would fail the deploy.
+#  - Passes through the env prod.yml does not forward: AGENT_SERVER_SECRET,
+#    AGENT_SERVERS, AGENT_SERVER_MAX_SESSIONS, MASKIN_BACKEND_URL,
+#    MASKIN_PUBLIC_URL, APP_URL and the MASKIN_FALLBACK_* model-login keys.
+#    Without AGENT_SERVER_SECRET the reconcile route answers 503 and without
+#    AGENT_SERVERS the dispatcher has no agent server to pick.
+#
+# Set every value in Coolify's env UI for the staging app. Nothing here carries
+# a secret.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-maskin}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/s3.json <<'CONF'
+        {"identities":[{"name":"admin","credentials":[{"accessKey":"admin","secretKey":"admin"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        CONF
+        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data
+    volumes:
+      - seaweed_data:/data
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/dev/Dockerfile
+      args:
+        VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
+    # No host port publish: Coolify's Traefik proxy routes the domain to this
+    # container over the internal network (ports_exposes=3000).
+    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 6
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maskin}
+      POSTGRES_URL: ${POSTGRES_URL:-}
+      DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:-}
+      PORT: "3000"
+      NODE_ENV: production
+      STATIC_DIR: /app/apps/web/dist
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_BUCKET: ${S3_BUCKET:-agent-files}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-admin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-admin}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+      WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Remote agent server wiring. AGENT_SERVERS is url|secret and must hold
+      # ONLY the staging agent server (http://<agent-host>:3002|<secret>), so
+      # dispatch can never pick production's server on :3001.
+      AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-}
+      AGENT_SERVERS: ${AGENT_SERVERS:-}
+      AGENT_SERVER_MAX_SESSIONS: ${AGENT_SERVER_MAX_SESSIONS:-5}
+      # URLs that sessions and links use. All three are the staging public URL.
+      MASKIN_BACKEND_URL: ${MASKIN_BACKEND_URL:-}
+      MASKIN_PUBLIC_URL: ${MASKIN_PUBLIC_URL:-}
+      APP_URL: ${APP_URL:-}
+      # System-fallback model login. A static key, so it cannot invalidate
+      # production's Claude login.
+      MASKIN_FALLBACK_OPENROUTER_KEY: ${MASKIN_FALLBACK_OPENROUTER_KEY:-}
+      MASKIN_FALLBACK_BASE_URL: ${MASKIN_FALLBACK_BASE_URL:-}
+      MASKIN_FALLBACK_MODEL: ${MASKIN_FALLBACK_MODEL:-}
+      MASKIN_FALLBACK_SMALL_MODEL: ${MASKIN_FALLBACK_SMALL_MODEL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  seaweed_data:
