@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFiles } from '@/hooks/use-files'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -87,6 +88,16 @@ export function MessageBubble({
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	const attachments = message.metadata?.attachments ?? []
+	// Resolve the file record for each attachment so the bubble renders the real
+	// filename — the metadata `name` is best-effort and older / MCP-posted
+	// messages often omit it, which previously fell through to a hardcoded
+	// "Attachment" label. Matches the right sidebar's file rendering.
+	const attachmentFileIds = useMemo(() => attachments.map((a) => a.file_id), [attachments])
+	const { data: attachedFiles } = useFiles(workspaceId, { ids: attachmentFileIds })
+	const filesById = useMemo(
+		() => new Map((attachedFiles ?? []).map((f) => [f.id, f])),
+		[attachedFiles],
+	)
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
 	const mentions = message.metadata?.mentions ?? []
@@ -100,19 +111,22 @@ export function MessageBubble({
 	const fileList =
 		attachments.length > 0 ? (
 			<ul className="flex flex-col gap-1" aria-label="Attached files">
-				{attachments.map((f) => (
-					<li key={f.file_id}>
-						<AttachedFileCard
-							workspaceId={workspaceId}
-							file={{
-								id: f.file_id,
-								name: f.name ?? 'Attachment',
-								sizeBytes: f.size_bytes ?? 0,
-								mimeType: f.mime_type,
-							}}
-						/>
-					</li>
-				))}
+				{attachments.map((f) => {
+					const resolved = filesById.get(f.file_id)
+					return (
+						<li key={f.file_id}>
+							<AttachedFileCard
+								workspaceId={workspaceId}
+								file={{
+									id: f.file_id,
+									name: resolved?.name ?? f.name ?? 'Attachment',
+									sizeBytes: resolved?.sizeBytes ?? f.size_bytes ?? 0,
+									mimeType: resolved?.mimeType ?? f.mime_type,
+								}}
+							/>
+						</li>
+					)
+				})}
 			</ul>
 		) : null
 
