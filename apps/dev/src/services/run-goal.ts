@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { objects, relationships } from '@maskin/db/schema'
+import { objects, relationships, sessions } from '@maskin/db/schema'
 import { buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 
@@ -204,4 +204,23 @@ function describeObjectGoal(
 			.join('\n')}`
 	}
 	return `This run was started for ${objectLink} (${type}). No finish line is written on it, so decide from the request below what done looks like. One reading, if it fits: move the object to its next status.`
+}
+
+/**
+ * Saves the block on `sessions.config.run_goal` as a jsonb merge, so other
+ * keys (`llm_route` and the rest) are untouched. First write wins: launch
+ * runs again on resume and must not overwrite what the agent was first shown.
+ */
+export async function saveRunGoal(db: Database, sessionId: string, block: string): Promise<void> {
+	await db
+		.update(sessions)
+		.set({
+			config: sql`coalesce(${sessions.config}, '{}'::jsonb) || ${JSON.stringify({ run_goal: block })}::jsonb`,
+		})
+		.where(
+			and(
+				eq(sessions.id, sessionId),
+				sql`NOT (coalesce(${sessions.config}, '{}'::jsonb) ? 'run_goal')`,
+			),
+		)
 }

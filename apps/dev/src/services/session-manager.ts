@@ -119,7 +119,7 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
-import { buildRunGoalBlock } from './run-goal'
+import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import {
@@ -2057,12 +2057,7 @@ export class SessionManager extends EventEmitter {
 		if (typeof config.run_goal === 'string') return config.run_goal
 		try {
 			const block = await buildRunGoalBlock(this.db, session, frontendBaseUrl())
-			await this.db
-				.update(sessions)
-				.set({
-					config: sql`coalesce(${sessions.config}, '{}'::jsonb) || ${JSON.stringify({ run_goal: block })}::jsonb`,
-				})
-				.where(and(eq(sessions.id, session.id), sql`NOT (${sessions.config} ? 'run_goal')`))
+			await saveRunGoal(this.db, session.id, block)
 			// Later launch steps spread `session.config` into their own write.
 			;(session as { config: Record<string, unknown> }).config = { ...config, run_goal: block }
 			return block
