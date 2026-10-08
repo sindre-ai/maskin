@@ -30,6 +30,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
+import { loadPromptSender } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
@@ -93,9 +94,15 @@ app.openapi(createSessionRoute, (async (c) => {
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
 	// every session to the agent that received the owner's first turn without
 	// requiring an additive column migration.
-	const config = body.entry_agent_role
+	const baseConfig = body.entry_agent_role
 		? { ...body.config, entry_agent_role: body.entry_agent_role }
 		: body.config
+
+	// Record who started this session (run_agent, create_session or the REST
+	// call) so the launch can tell the helper who sent it. Set here, not taken
+	// from the request, so a caller cannot pose as someone else.
+	const sender = await loadPromptSender(db, actorId)
+	const config = sender ? { ...baseConfig, sender } : baseConfig
 
 	const handle = await startSession({
 		workspaceId,

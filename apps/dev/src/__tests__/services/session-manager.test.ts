@@ -80,6 +80,8 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
+	buildSenderLines: vi.fn().mockReturnValue([]),
+	parseSessionSender: vi.fn().mockReturnValue(null),
 	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
 	appendToLedger: vi.fn().mockResolvedValue(undefined),
 	readLedgerTail: vi.fn().mockResolvedValue([]),
@@ -103,6 +105,7 @@ import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapsh
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
+import { buildSenderLines, parseSessionSender } from '../../services/workspace-briefing'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -743,6 +746,48 @@ describe('SessionManager', () => {
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
 			expect(createArgs.interactive).toBe(false)
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
+		})
+
+		it('puts the sender lines between the workspace block and the action prompt', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				config: { sender: { name: 'Planner', type: 'agent' } },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			vi.mocked(parseSessionSender).mockReturnValueOnce({ name: 'Planner', type: 'agent' })
+			vi.mocked(buildSenderLines).mockReturnValueOnce(['Sent by Planner, an agent.', ''])
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			expect(parseSessionSender).toHaveBeenCalledWith({ name: 'Planner', type: 'agent' })
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.ACTION_PROMPT).toBe('Sent by Planner, an agent.\n\nDo the thing')
 		})
 
 		it('refuses to launch when the agent has no apiKey', async () => {

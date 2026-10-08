@@ -51,6 +51,30 @@ describe('Sessions Routes', () => {
 			})
 		})
 
+		it('records who started the session so the launch can name the sender', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, sessionManager, mockResults } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+			mockResults.selectQueue = [[{ name: 'Planner', type: 'agent' }]]
+
+			await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({ config: { interactive: false } }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(createArgs?.[1]?.config).toMatchObject({
+				sender: { name: 'Planner', type: 'agent' },
+			})
+		})
+
 		it('leaves config untouched when entry_agent_role is omitted', async () => {
 			const session = buildSession({ workspaceId: wsId })
 			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
