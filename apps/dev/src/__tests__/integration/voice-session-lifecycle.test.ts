@@ -1,8 +1,12 @@
 import { voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
-import voiceSessionsRoutes from '../../routes/voice-sessions'
+import voiceSessionsRoutes, {
+	type RealtimeMintFn,
+	setRealtimeMintFn,
+} from '../../routes/voice-sessions'
 import {
 	endVoiceSession,
 	getVoiceMinutesUsedToday,
@@ -16,6 +20,11 @@ import {
 } from '../../services/voice-session-timeout-sweeper'
 import { insertActor, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
+
+vi.mock('../../lib/analytics/posthog', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/analytics/posthog')>()),
+	capturePosthogEvent: vi.fn(async () => {}),
+}))
 
 async function seedCall(
 	opts: {
@@ -305,5 +314,77 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 		const res = await post(`/api/voice-sessions/${session.id}/hangup`, { reason: 'user_hangup' })
 		expect(res.status).toBe(404)
 		expect((await reload(session.id))?.status).toBe('active')
+	})
+
+	describe('session mint', () => {
+		const okMint: RealtimeMintFn = async () => ({
+			kind: 'ok',
+			vendorSessionId: 'vs_mint',
+			clientSecret: 'ek_test',
+			expiresAt: '2026-10-06T10:00:00.000Z',
+			wsUrl: 'wss://api.openai.com/v1/realtime',
+			model: 'gpt-realtime',
+		})
+
+		beforeEach(() => {
+			vi.mocked(capturePosthogEvent).mockClear()
+			setRealtimeMintFn(okMint)
+		})
+		afterEach(() => setRealtimeMintFn(null))
+
+		const deniedReasons = () =>
+			vi
+				.mocked(capturePosthogEvent)
+				.mock.calls.filter(([event]) => event === 'voice_session_denied')
+				.map(([, , props]) => props?.reason)
+
+		const liveRows = async (humanId: string) =>
+			(await db.select().from(voiceSessions).where(eq(voiceSessions.humanActorId, humanId))).filter(
+				(r) => r.status === 'pending' || r.status === 'active',
+			)
+
+		it('409s a second concurrent mint for the same human and fires concurrent_active', async () => {
+			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
+
+			const first = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			expect(first.status).toBe(201)
+
+			const second = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			expect(second.status).toBe(409)
+			expect(((await second.json()) as { error: { code: string } }).error.code).toBe('CONFLICT')
+			expect(deniedReasons()).toEqual(['concurrent_active'])
+			expect(await liveRows(getTestActorId())).toHaveLength(1)
+		})
+
+		it('does not lock the caller out when the vendor rate-limits the mint', async () => {
+			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
+			setRealtimeMintFn(async () => ({ kind: 'rate_limited', retryAfterSeconds: 7 }))
+
+			const limited = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			expect(limited.status).toBe(429)
+			expect(await liveRows(getTestActorId())).toHaveLength(0)
+
+			setRealtimeMintFn(okMint)
+			const retry = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			expect(retry.status).toBe(201)
+		})
+
+		it('does not lock the caller out when the vendor mint errors, and marks the row errored', async () => {
+			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
+			setRealtimeMintFn(async () => ({ kind: 'error', status: 502, body: 'bad gateway' }))
+
+			const failed = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			expect(failed.status).toBe(500)
+			expect(await liveRows(getTestActorId())).toHaveLength(0)
+			const errored = (
+				await db.select().from(voiceSessions).where(eq(voiceSessions.status, 'errored'))
+			).filter((r) => r.humanActorId === getTestActorId() && r.endedReason === 'vendor_error')
+			expect(errored).toHaveLength(1)
+			expect(errored[0]?.endedAt).toBeInstanceOf(Date)
+
+			setRealtimeMintFn(okMint)
+			const retry = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			expect(retry.status).toBe(201)
+		})
 	})
 })
