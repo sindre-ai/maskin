@@ -1,8 +1,9 @@
 import { EventEmitter } from 'node:events'
 import { events, conversations, messages, sessions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { and, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resolveSpawnLink } from '../../services/helper-link'
 import { buildReturnMessage, returnToSender } from '../../services/helper-return'
 import { MENTION_GUARD_LIMITS } from '../../services/mention-guards'
 import { configureSessionLifecycle, settleSession } from '../../services/session-lifecycle'
@@ -370,6 +371,77 @@ describe('Helper return (integration)', () => {
 				(wokenRow?.config as { mention?: { helper_return?: boolean } }).mention?.helper_return,
 			).toBe(true)
 		})
+
+		it('a sender that keeps re-handing work to a failing helper is cut off at the hop cap, well under 5 agent comments', async () => {
+			let current = await insertSession(db, workspaceId, sender.id, sender.id, {
+				status: 'running',
+				initiatedFromObjectId: objectId,
+			})
+			let returns = 0
+			for (let round = 0; round < 10; round++) {
+				// The sender hands work to the helper from its live session...
+				const link = await resolveSpawnLink(db, {
+					claimedSessionId: current.id,
+					authenticatedActorId: sender.id,
+					workspaceId,
+					objectId,
+				})
+				// ...and then ends, as a sender that delegated usually does.
+				await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.id, current.id))
+				if (!link.linked) break
+				const failed = await insertSession(db, workspaceId, helper.id, sender.id, {
+					status: 'failed',
+					spawnedBySessionId: current.id,
+					initiatedFromObjectId: objectId,
+					config: { hop_depth: link.hopDepth },
+					result: { exit_code: 1 },
+				})
+				if (!(await returnToSender(db, failed.id)).returned) break
+				returns++
+
+				const [comment] = await db
+					.select()
+					.from(events)
+					.where(and(eq(events.entityId, objectId), eq(events.actorId, helper.id)))
+					.orderBy(desc(events.id))
+					.limit(1)
+				const before = woken.length
+				bridge.emit('event', {
+					workspace_id: workspaceId,
+					actor_id: helper.id,
+					action: 'commented',
+					entity_type: 'object',
+					entity_id: objectId,
+					event_id: String(comment.id),
+				} satisfies PgEvent)
+				await vi.waitFor(() => expect(woken.length).toBe(before + 1), {
+					timeout: 5_000,
+					interval: 25,
+				})
+				// The woken sender is the next live session that can hand work off again.
+				const [next] = await db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.actorId, sender.id))
+					.orderBy(desc(sessions.createdAt))
+					.limit(1)
+				await db.update(sessions).set({ status: 'running' }).where(eq(sessions.id, next.id))
+				current = next
+			}
+
+			expect(returns).toBe(MENTION_GUARD_LIMITS.maxHopDepth)
+			const agentComments = await db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, objectId),
+						eq(events.action, 'commented'),
+						eq(events.actorId, helper.id),
+					),
+				)
+			expect(agentComments.length).toBeLessThan(5)
+		}, 60_000)
 	})
 })
 
