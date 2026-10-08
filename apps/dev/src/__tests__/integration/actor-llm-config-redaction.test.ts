@@ -93,7 +93,7 @@ describe('Actor llm_config api_key redaction — GET /api/actors/:id', () => {
 		expect((await res.json()).llm_config).toEqual(storedLlmConfig())
 	})
 
-	it('masks api_key for an admin of a different workspace the actor is not in', async () => {
+	it('returns 404 and no api_key to an admin of a different workspace the actor is not in', async () => {
 		const { target } = await seedWorkspaceWithKeyedAgent()
 		const outsider = await insertActor(db, { type: 'agent', name: 'Outside Admin' })
 		const otherWs = await insertWorkspace(db, getTestActorId())
@@ -101,14 +101,13 @@ describe('Actor llm_config api_key redaction — GET /api/actors/:id', () => {
 
 		const res = await createAppAs(outsider.id).request(jsonGet(`/api/actors/${target.id}`))
 
-		const text = await res.text()
-		expect(text).not.toContain(FAKE_KEY)
-		expect(JSON.parse(text).llm_config.api_key).toBe(MASKED_VALUE)
+		expect(res.status).toBe(404)
+		expect(await res.text()).not.toContain(FAKE_KEY)
 	})
 })
 
 describe('Actor llm_config api_key redaction — PATCH /api/actors/:id', () => {
-	it('keeps the stored key when a masked config is sent back with an unrelated change', async () => {
+	it('rejects a peer sending a masked config back and leaves the stored key untouched', async () => {
 		const { target, peer } = await seedWorkspaceWithKeyedAgent()
 		const app = createAppAs(peer.id)
 		const read = await (await app.request(jsonGet(`/api/actors/${target.id}`))).json()
@@ -120,17 +119,15 @@ describe('Actor llm_config api_key redaction — PATCH /api/actors/:id', () => {
 			}),
 		)
 
-		expect(res.status).toBe(200)
-		const text = await res.text()
-		expect(text).not.toContain(FAKE_KEY)
-		expect(JSON.parse(text).description).toBe('edited by a peer')
+		expect(res.status).toBe(403)
+		expect(await res.text()).not.toContain(FAKE_KEY)
 		expect((await storedRow(target.id)).llmConfig).toEqual(storedLlmConfig())
 	})
 
 	it('keeps the stored key when only the model changes', async () => {
-		const { target, peer } = await seedWorkspaceWithKeyedAgent()
+		const { target } = await seedWorkspaceWithKeyedAgent()
 
-		const res = await createAppAs(peer.id).request(
+		const res = await createAppAs(getTestActorId()).request(
 			jsonRequest('PATCH', `/api/actors/${target.id}`, {
 				llm_config: { api_key: MASKED_VALUE, model: 'other-model' },
 			}),
@@ -144,9 +141,9 @@ describe('Actor llm_config api_key redaction — PATCH /api/actors/:id', () => {
 	})
 
 	it('still saves a real new key', async () => {
-		const { target, peer } = await seedWorkspaceWithKeyedAgent()
+		const { target } = await seedWorkspaceWithKeyedAgent()
 
-		const res = await createAppAs(peer.id).request(
+		const res = await createAppAs(getTestActorId()).request(
 			jsonRequest('PATCH', `/api/actors/${target.id}`, {
 				llm_config: { api_key: 'fake-rotated', model: 'fake-model' },
 			}),
@@ -160,9 +157,9 @@ describe('Actor llm_config api_key redaction — PATCH /api/actors/:id', () => {
 	})
 
 	it('rejects a masked key sent with a changed provider and leaves the stored config untouched', async () => {
-		const { target, peer } = await seedWorkspaceWithKeyedAgent()
+		const { target } = await seedWorkspaceWithKeyedAgent()
 
-		const res = await createAppAs(peer.id).request(
+		const res = await createAppAs(getTestActorId()).request(
 			jsonRequest('PATCH', `/api/actors/${target.id}`, {
 				llm_provider: 'openai',
 				llm_config: { api_key: MASKED_VALUE },
@@ -177,7 +174,9 @@ describe('Actor llm_config api_key redaction — PATCH /api/actors/:id', () => {
 	})
 
 	it('rejects a masked key when the actor has no stored key', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
 		const target = await insertActor(db, { type: 'agent', name: 'No Key Agent' })
+		await addMember(ws.id, target.id, 'member')
 
 		const res = await createAppAs(getTestActorId()).request(
 			jsonRequest('PATCH', `/api/actors/${target.id}`, { llm_config: { api_key: MASKED_VALUE } }),
