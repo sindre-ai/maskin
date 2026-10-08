@@ -3,8 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The tvOS app: the top tab bar the system draws, For you and Flows. Team and Objects arrive with
-/// their own screens; an empty tab is never shipped.
+/// The tvOS app: the top tab bar the system draws, For you, Team, Flows, Objects and Profile.
 struct TVRoot: View {
 	let environment: AppEnvironment
 	let store: ForYouStore?
@@ -14,8 +13,14 @@ struct TVRoot: View {
 		TabView {
 			TVForYou(environment: environment, store: store)
 				.tabItem { Text("For you") }
+			TVTeam(environment: environment)
+				.tabItem { Text("Team") }
 			TVFlows(environment: environment, loops: loops)
 				.tabItem { Text("Flows") }
+			TVObjects(environment: environment)
+				.tabItem { Text("Objects") }
+			TVProfile(environment: environment)
+				.tabItem { Text("Profile") }
 		}
 		.task(id: environment.auth.credentials) { await startLoops() }
 		.onDisappear { loops?.stop() }
