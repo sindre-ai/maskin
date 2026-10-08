@@ -16,6 +16,7 @@ import {
 	CLAUDE_CREDENTIAL_TIMEOUT_MS,
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
+	type RefreshBuffer,
 	decryptOAuthData,
 	refreshSlotSingleFlight,
 } from './claude-oauth'
@@ -157,7 +158,7 @@ export interface FailoverParams {
 	/** Overrides `process.env` (used by tests). */
 	env?: NodeJS.ProcessEnv
 	/** Passed through to `refreshSlotSingleFlight`. */
-	bufferMs?: number
+	bufferMs?: RefreshBuffer
 	/**
 	 * Invoked when a CONFIGURED slot yields no usable token, reporting whether
 	 * the failure is worth retrying. Deliberately not called when nothing is
@@ -417,7 +418,7 @@ async function loadAndRefreshSlot(
 	workspaceId: string,
 	slot: OAuthSlotKind,
 	encrypted: EncryptedOAuthData,
-	bufferMs: number | undefined,
+	bufferMs: RefreshBuffer | undefined,
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshFailure: ClassifierInput | null }> {
 	const stored = decryptOAuthData(encrypted)
 	try {
@@ -448,7 +449,7 @@ async function attemptChainHeadRecovery(params: {
 	workspaceId: string
 	actorId: string
 	probe: SubscriptionProbe
-	bufferMs: number | undefined
+	bufferMs: RefreshBuffer | undefined
 	now: number
 }): Promise<ClaudeCredentials | null> {
 	const { db, workspaceId, actorId, probe, bufferMs, now } = params
@@ -584,6 +585,41 @@ async function recordChainExhausted(params: {
 		now,
 		slot,
 	})
+}
+
+/**
+ * sessions.config key holding the access-token expiry (epoch ms) a container
+ * launched with. Stamped only when the refresh token was withheld from it, so
+ * its presence means "this session cannot refresh itself".
+ */
+export const SESSION_OAUTH_EXPIRES_AT_KEY = 'claude_oauth_expires_at'
+
+/** Reasons that read as a bad credential rather than a spent one. */
+const AUTH_CLASS_FAILOVER_REASONS: ReadonlySet<string> = new Set([
+	'auth_failed',
+	'not_logged_in',
+	'oauth_revoked',
+])
+
+/** An auth error this close to (or past) expiry is attributed to expiry. */
+const ACCESS_TOKEN_EXPIRY_SLACK_MS = 60_000
+
+/**
+ * True when a session that could not refresh its own token hit an auth-class
+ * error at its access token's expiry. That is the honest limit of withholding
+ * the refresh token (the slot is healthy, the session simply outlived its
+ * token), so it must not stamp auth_failed on the slot or move the workspace
+ * off it. Sessions without the stamp (flag off, other routes) never match.
+ */
+export function isAuthErrorAtAccessTokenExpiry(
+	config: Record<string, unknown>,
+	reason: string,
+	now: number = Date.now(),
+): boolean {
+	if (!AUTH_CLASS_FAILOVER_REASONS.has(reason)) return false
+	const expiresAt = config[SESSION_OAUTH_EXPIRES_AT_KEY]
+	if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return false
+	return now >= expiresAt - ACCESS_TOKEN_EXPIRY_SLACK_MS
 }
 
 /**

@@ -183,6 +183,12 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Serves list_objects sort=updatedAt, which orders and seeks on the UTC
+		// millisecond-truncated value. Built CONCURRENTLY in migration 0088.
+		index('objects_ws_updated_at_ms_idx').on(
+			t.workspaceId,
+			sql`date_trunc('milliseconds', ${t.updatedAt} AT TIME ZONE 'UTC')`,
+		),
 		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
 		// in migration 0083.
 		index('objects_active_session_idx')
@@ -468,11 +474,14 @@ export const sessions = pgTable(
 			{ onDelete: 'set null' },
 		),
 		initiatedFromObjectType: text('initiated_from_object_type'),
-		inputTokens: integer('input_tokens'),
-		outputTokens: integer('output_tokens'),
-		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
-		cacheReadInputTokens: integer('cache_read_input_tokens'),
-		durationMs: integer('duration_ms'),
+		// bigint (mode 'number'): cumulative counters outgrow int4 on long-lived
+		// sessions (cache reads reached 2.1B). Drizzle maps them back to JS
+		// numbers, exact below 2^53. Widened in migration 0082.
+		inputTokens: bigint('input_tokens', { mode: 'number' }),
+		outputTokens: bigint('output_tokens', { mode: 'number' }),
+		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
+		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
+		durationMs: bigint('duration_ms', { mode: 'number' }),
 		currentActivity: text('current_activity'),
 		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
 		// `status` text because reaper + retry-scheduler need to tell

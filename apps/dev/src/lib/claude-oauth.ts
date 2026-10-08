@@ -20,6 +20,63 @@ import { logger } from './logger'
  */
 export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
 
+/**
+ * Runtime kill-switch for keeping the Claude refresh token out of agent
+ * containers. Default is OFF: only the literal string `true` enables it, until
+ * the launch check (one real session start in the real image with no refresh
+ * token) has passed, so a missing env keeps today's behaviour. On, the platform refreshes at
+ * session launch with a session-sized buffer and the container is handed an
+ * access token only. Off restores today's behaviour exactly: the container gets
+ * the refresh token and the default 10 minute buffer.
+ */
+export const CLAUDE_PLATFORM_REFRESH_FLAG_ENV = 'MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED'
+
+/** Setting for how much access-token life a session launch must start with. */
+export const CLAUDE_LAUNCH_BUFFER_ENV = 'CLAUDE_LAUNCH_BUFFER_MS'
+
+/**
+ * Default launch buffer: 3 h. Covers the longest observed run (2.77 h) and the
+ * 2 h session timeout cap with headroom.
+ */
+export const DEFAULT_CLAUDE_LAUNCH_BUFFER_MS = 3 * 60 * 60 * 1000
+
+export function isClaudePlatformRefreshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return (env[CLAUDE_PLATFORM_REFRESH_FLAG_ENV] ?? '').trim().toLowerCase() === 'true'
+}
+
+/** The launch buffer setting; anything that is not a positive number falls back to the default. */
+export function readClaudeLaunchBufferMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = Number(env[CLAUDE_LAUNCH_BUFFER_ENV])
+	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CLAUDE_LAUNCH_BUFFER_MS
+}
+
+/**
+ * How far ahead of expiry a slot must be refreshed. A number is a fixed buffer.
+ * `{ launchMs }` is the session-launch policy: the setting, capped at half the
+ * slot's known access-token lifetime, and a slot with no known lifetime is
+ * refreshed once so the lifetime becomes known.
+ */
+export type RefreshBuffer = number | { launchMs: number }
+
+/**
+ * Access-token lifetime per workspace+slot, in memory only (no extra storage).
+ * Set by every refresh through refreshSlotSingleFlight, so only the first
+ * launch per slot after a restart pays for a forced refresh.
+ */
+const slotLifetimesMs = new Map<string, number>()
+
+/** Test seam: forget every learned lifetime. */
+export function resetClaudeSlotLifetimes(): void {
+	slotLifetimesMs.clear()
+}
+
+function needsRefresh(key: string, expiresAt: number, buffer: RefreshBuffer): boolean {
+	if (typeof buffer === 'number') return expiresAt <= Date.now() + buffer
+	const lifetime = slotLifetimesMs.get(key)
+	if (lifetime === undefined) return true
+	return expiresAt <= Date.now() + Math.min(buffer.launchMs, lifetime / 2)
+}
+
 export interface ClaudeOAuthTokens {
 	accessToken: string
 	refreshToken: string
@@ -248,12 +305,13 @@ export async function refreshSlotSingleFlight(
 	workspaceId: string,
 	slot: OAuthSlotKind,
 	stored: EncryptedOAuthData,
-	bufferMs = 10 * 60 * 1000,
+	bufferMs: RefreshBuffer = 10 * 60 * 1000,
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshed: boolean }> {
-	if (stored.expiresAt > Date.now() + bufferMs) {
+	const key = `${workspaceId}:${slot}`
+	if (!needsRefresh(key, stored.expiresAt, bufferMs)) {
 		return { tokens: decryptOAuthData(stored), refreshed: false }
 	}
-	return withSlotRefreshLock(`${workspaceId}:${slot}`, async () => {
+	return withSlotRefreshLock(key, async () => {
 		const readStored = async () => {
 			const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 			const settings = (ws?.settings as Record<string, unknown>) ?? {}
@@ -261,11 +319,15 @@ export async function refreshSlotSingleFlight(
 		}
 		const tokens = decryptOAuthData((await readStored()) ?? stored)
 		try {
-			const result = await refreshClaudeTokenIfNeeded(tokens, bufferMs)
-			if (result.refreshed) {
-				await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
-			}
-			return result
+			if (!needsRefresh(key, tokens.expiresAt, bufferMs)) return { tokens, refreshed: false }
+			logger.info('Claude OAuth token expiring soon, refreshing...')
+			const refreshedTokens = await refreshClaudeToken(tokens)
+			// Lower bound on the real lifetime (expires_in minus the call's own
+			// latency), so the half-life guard errs on the safe side.
+			const lifetimeMs = refreshedTokens.expiresAt - Date.now()
+			if (Number.isFinite(lifetimeMs) && lifetimeMs > 0) slotLifetimesMs.set(key, lifetimeMs)
+			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(refreshedTokens))
+			return { tokens: refreshedTokens, refreshed: true }
 		} catch (err) {
 			const latest = await readStored().catch(() => undefined)
 			if (latest && decrypt(latest.encryptedRefreshToken) !== tokens.refreshToken) {

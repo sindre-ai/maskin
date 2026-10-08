@@ -1,26 +1,24 @@
 import { createHash } from 'node:crypto'
+import { collectGates } from './gates.js'
 import { collectSignals } from './signals.js'
 import type { ClassifierInput, ClassifierVerdict, RiskBand, SignalHit } from './types.js'
 import { SKILL_VERSION } from './types.js'
-import { PATH_FLOOR_SCORE, REGEX_FLOOR_SCORE } from './weights.js'
+
+const AUTO_MAX_SCORE = 24
 
 export function classify(input: ClassifierInput): ClassifierVerdict {
-	const { signals, floors_applied } = collectSignals(input)
+	// Signals are still collected so the PR comment stays informative, but they no
+	// longer decide the outcome. Only the gates do (see gates.ts): a gate hit is
+	// human_review_required, everything else is auto. Protected paths and regex
+	// floors from .maskin/*.yml are not consulted for the band.
+	const { signals } = collectSignals(input)
+	const floors_applied = collectGates(input)
 
 	const sumWeights = signals.reduce((acc, s) => acc + s.weight, 0)
 	const cappedAdditive = Math.min(sumWeights, 100)
 
-	const hasProtectedPath = floors_applied.some((s) => s.kind === 'protected_path')
-	const hasRegexFloor = floors_applied.some((s) => s.kind === 'regex_floor_hit')
-
-	let score: number
-	if (hasProtectedPath) {
-		score = PATH_FLOOR_SCORE
-	} else if (hasRegexFloor) {
-		score = Math.max(cappedAdditive, REGEX_FLOOR_SCORE)
-	} else {
-		score = cappedAdditive
-	}
+	// Keep the displayed score consistent with the band.
+	const score = floors_applied.length > 0 ? 100 : Math.min(cappedAdditive, AUTO_MAX_SCORE)
 
 	const band = bandForScore(score)
 	const deterministic_seed = computeSeed(input, signals, floors_applied, score)
