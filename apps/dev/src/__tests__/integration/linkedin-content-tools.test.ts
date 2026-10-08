@@ -3,6 +3,10 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PurgeIdempotencyJob } from '../../jobs/purge-idempotency'
 import { encrypt } from '../../lib/crypto'
+import {
+	type LinkedInMockServer,
+	startLinkedInMock,
+} from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { __setLinkedInClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	getLinkedInPostEngagement,
@@ -351,5 +355,68 @@ describe('get_post_engagement fan-out', () => {
 		expect(result.comments.total).toBe(0)
 		expect(result.partial_errors.reactions).toBeNull()
 		expect(result.partial_errors.comments).toBeNull()
+	})
+
+	/**
+	 * Discriminating test for the resolved-id defect: Unipile's reactions and
+	 * comments sub-routes take the id a *Get a Post* response carries, never the
+	 * caller's native activity id. This drives the REAL client against the
+	 * in-process mock (no client stub), so the assertion is on provider-route
+	 * behaviour, not on our own model of it — a stub would encode the same wrong
+	 * assumption as the code. The mock serves the wrong id the way the live API
+	 * does (400 post_not_found), so forwarding the caller's input fails here.
+	 */
+	describe('resolves the sub-route id via retrievePost', () => {
+		let mock: LinkedInMockServer
+
+		beforeAll(async () => {
+			mock = await startLinkedInMock()
+			process.env.UNIPILE_BASE_URL = mock.baseUrl
+			process.env.UNIPILE_API_KEY = 'test-api-key'
+		})
+
+		afterAll(async () => {
+			await mock.close()
+			process.env.UNIPILE_BASE_URL = 'http://ignored-by-test-stub'
+			process.env.UNIPILE_API_KEY = 'ignored-by-test-stub'
+		})
+
+		it('uses the id retrievePost returned for reactions and comments, not the input id', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			await insertConnectedLinkedInCredential(ws.id, actorId)
+
+			// A native activity id — deliberately NOT the id the Post object
+			// carries (mock-post-1). Percent-encoded on the wire, so a mock that
+			// compares the raw segment must decode it first.
+			const activityId = 'urn:li:activity:7300000000000000000'
+
+			const result = await getLinkedInPostEngagement(
+				{ db, actorId, workspaceId: ws.id },
+				{ post_id: activityId },
+			)
+
+			// The envelope echoes the caller's input id...
+			expect(result.post_id).toBe(activityId)
+			// ...but the sub-routes ran against the resolved id, so they succeeded
+			// and the envelope is complete.
+			expect(result.is_partial).toBe(false)
+			expect(result.partial_errors.reactions).toBeNull()
+			expect(result.partial_errors.comments).toBeNull()
+			expect(result.reactions.total).toBe(2)
+			expect(result.comments.total).toBe(1)
+
+			// Second, independent lever: the recorded sub-route paths carry the
+			// resolved id and never the raw activity id. Scope this to the two
+			// engagement routes — the retrieve route correctly takes the caller's
+			// id, since resolving it is that call's whole job.
+			const subRoutePaths = mock
+				.inbox()
+				.map((r) => r.path)
+				.filter((p) => p.includes('/reactions') || p.includes('/comments'))
+			expect(subRoutePaths).toHaveLength(2)
+			expect(subRoutePaths.every((p) => p.includes('/posts/mock-post-1/'))).toBe(true)
+			expect(subRoutePaths.some((p) => p.includes(encodeURIComponent(activityId)))).toBe(false)
+		})
 	})
 })
