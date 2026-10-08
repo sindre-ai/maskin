@@ -38,11 +38,11 @@ public enum MaskinStatus {
 
 	static let patinaKeys: Set<String> = [
 		"in_progress", "active", "live", "processing", "clustered", "in_review", "waiting_for_input",
-		"started",
+		"blocked", "started",
 	]
 	static let inkKeys: Set<String> = ["done", "completed", "validated", "succeeded", "scored", "paid"]
-	/// Failure and risk keep their palette entries: a session that failed must still read as one.
-	static let alertKeys: Set<String> = ["failed", "blocked", "at_risk", "breached"]
+	/// Failure and risk read in the warning colour (the one allowed non-Patina signal), on a grey fill.
+	static let alertKeys: Set<String> = ["failed", "at_risk", "breached"]
 
 	/// The tone of a status key (after aliases). Unknown keys are grey.
 	public static func tone(for status: String) -> Tone {
@@ -53,13 +53,14 @@ public enum MaskinStatus {
 		return .grey
 	}
 
+	public static let alert = MaskinColorPair(bg: MaskinColor.surfaceAlt, fg: MaskinColor.warningStrong)
 	public static let patina = MaskinColorPair(bg: MaskinColor.sigTint, fg: MaskinColor.sigInk)
 	public static let done = MaskinColorPair(bg: MaskinColor.doneBg, fg: MaskinColor.doneFg)
 
 	public static func colors(for status: String) -> MaskinColorPair {
 		let key = aliases[status] ?? status
 		if alertKeys.contains(key), !patinaKeys.contains(status) {
-			return MaskinStatusPalette.all[key] ?? fallback
+			return alert
 		}
 		switch tone(for: status) {
 		case .patina: return patina
@@ -87,15 +88,27 @@ public enum MaskinStatus {
 }
 
 /// Maps an object type to badge colours and an SF Symbol, mirroring `typeColors` / `typeIcons`.
+/// Type tags are neutral; only the type DOT keeps its hue (the documented colour exception).
 public enum MaskinObjectType {
-	public static let fallback = MaskinColorPair(bg: MaskinColor.surfaceAlt, fg: MaskinColor.ink4)
+	public static let fallback = MaskinColorPair(bg: MaskinColor.surfaceAlt, fg: MaskinColor.ink3)
+
+	/// The hue of a type's dot: Doc, Insight, Bet and Task keep theirs; other types are grey.
+	public static func dotColor(for type: String) -> Color {
+		switch type {
+		case "doc", "document", "knowledge": MaskinColor.objDoc
+		case "insight": MaskinColor.objInsight
+		case "bet": MaskinColor.objBet
+		case "task": MaskinColor.objTask
+		default: MaskinColor.ink5
+		}
+	}
 
 	public static func tokenKey(for type: String) -> String? {
 		MaskinTypePalette.all[type] != nil ? type : nil
 	}
 
 	public static func colors(for type: String) -> MaskinColorPair {
-		MaskinTypePalette.all[type] ?? fallback
+		fallback
 	}
 
 	/// SF Symbol for built-in types; nil for module / custom types (callers show an initial).

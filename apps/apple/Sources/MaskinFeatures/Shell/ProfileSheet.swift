@@ -156,7 +156,7 @@ struct ProfileSheet: View {
 				.padding(MaskinSpace.s9)
 				.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityLabel("Your profile, \(session.name)")
 			.profileCard()
 		}
@@ -215,7 +215,7 @@ struct ProfileSheet: View {
 				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 				.contentShape(Rectangle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed)
 		.profileCard()
 	}
 
@@ -312,7 +312,7 @@ private struct ProfileRow: View {
 			.frame(minHeight: MaskinSpace.touchMin)
 			.contentShape(Rectangle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed)
 	}
 }
 

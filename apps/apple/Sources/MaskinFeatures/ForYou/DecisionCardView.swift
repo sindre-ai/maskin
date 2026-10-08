@@ -7,7 +7,7 @@ import SwiftUI
 /// gesture leaves as a closure, so it renders in a snapshot test exactly as on screen.
 ///
 /// States, matching the mockup: the open ask (summary, options with their consequences,
-/// inline reply), the receipt after a choice ("You chose X · Undo"), queued while offline (amber),
+/// inline reply), the receipt after a choice ("You chose X · Undo"), queued while offline (notice),
 /// waiting on an agent after a typed reply, and a rolled-back failure.
 struct DecisionCardView: View {
 	struct Actions {
@@ -198,7 +198,7 @@ struct DecisionCardView: View {
 						.strokeBorder(MaskinSurface.line, lineWidth: 1))
 				.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel(title)
 			.accessibilityHint(actions.open == nil ? "" : "Opens \(title)")
 		}
@@ -280,11 +280,12 @@ struct DecisionCardView: View {
 					if let type = card.objectType {
 						// The type's hue is the one documented colour exception in this card.
 						RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-							.fill(MaskinObjectType.colors(for: type).fg)
+							.fill(MaskinObjectType.dotColor(for: type))
 							.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 							.accessibilityHidden(true)
 						Text(type.uppercased())
 							.font(MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
+							.maskinMonoLabelScale()
 							.tracking(0.7)
 							.foregroundStyle(MaskinColor.ink5)
 							.lineLimit(1).fixedSize()
@@ -388,7 +389,7 @@ struct DecisionCardView: View {
 					.background(MaskinSurface.inverse, in: Circle())
 					.opacity(canSend ? 1 : 0.3)
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.disabled(!canSend)
 			.accessibilityLabel("Send reply")
 		}
@@ -568,6 +569,7 @@ private struct OptionPill: View {
 		let shape = RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
 		Text(label)
 			.multilineTextAlignment(.leading)
+			.fixedSize(horizontal: false, vertical: true)
 			.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: recommended ? MaskinFontWeight.w650 : MaskinFontWeight.semibold))
 			.foregroundStyle(recommended ? Color.white : MaskinColor.ink)
 			.padding(.horizontal, MaskinSpace.s8)

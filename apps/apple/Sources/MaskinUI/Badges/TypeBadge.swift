@@ -34,7 +34,7 @@ public struct TypeBadge: View {
 			case .tile:
 				tile(colors)
 			case .dot:
-				Circle().fill(colors.fg).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+				Circle().fill(MaskinObjectType.dotColor(for: type)).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
 			}
 		}
 		.lineLimit(1)

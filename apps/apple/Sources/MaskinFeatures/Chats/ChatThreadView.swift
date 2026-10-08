@@ -356,7 +356,7 @@ struct ChatThreadView: View {
 							.foregroundStyle(MaskinColor.ink)
 							.maskinGlassCapsule(interactive: true)
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.padding(.bottom, MaskinSpace.s5)
 					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 				}
@@ -667,15 +667,15 @@ struct StaleThreadBanner: View {
 					.frame(minHeight: MaskinSpace.touchMin)
 					.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 		}
-		.foregroundStyle(MaskinSurface.amberForeground)
+		.foregroundStyle(MaskinColor.noticeFg)
 		.padding(.leading, MaskinSpace.s8)
 		.padding(.trailing, MaskinSpace.s3)
-		.background(MaskinSurface.amberBackground, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+		.background(MaskinColor.noticeBg, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 		.overlay(
 			RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
-				.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1))
+				.strokeBorder(MaskinColor.noticeBd, lineWidth: 1))
 		.accessibilityElement(children: .contain)
 	}
 }

@@ -237,7 +237,7 @@ struct ChatComposer: View {
 			ComposerToolLabel("plus", outlined: true)
 		}
 		.menuIndicator(.hidden)
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed)
 		.accessibilityLabel(allowsAttach ? "Add a file, mention or emoji" : "Add a mention or emoji")
 		.popover(isPresented: $showEmojis) {
 			EmojiPickerGrid { emoji in
@@ -274,7 +274,7 @@ struct ChatComposer: View {
 							.frame(width: buttonSize, height: buttonSize)
 							.contentShape(Circle())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Dictate")
 				}
 				sendButton
@@ -293,7 +293,7 @@ struct ChatComposer: View {
 				.frame(width: buttonSize, height: buttonSize)
 				.background(model.canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(!model.canSend)
 		#if !os(watchOS)
 		.keyboardShortcut(.return, modifiers: .command)
@@ -537,7 +537,7 @@ struct ComposerFormatRow: View {
 				.frame(width: MaskinSpace.s13 + MaskinSpace.s3, height: MaskinSpace.touchMin - MaskinSpace.s2)
 				.contentShape(Rectangle())
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed)
 		.accessibilityLabel(item.2)
 	}
 }

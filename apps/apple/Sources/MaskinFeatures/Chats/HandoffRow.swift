@@ -22,7 +22,7 @@ struct HandoffRow: View {
 			} label: {
 				summary
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityHint(expanded ? "Hide details" : "Show details")
 			if expanded { details.transition(.opacity) }
 		}
@@ -112,7 +112,7 @@ struct HandoffRow: View {
 				.maskinText(.caption).foregroundStyle(MaskinColor.warningStrong)
 		case .done?:
 			Label(HandoffPill.done.label, systemImage: "checkmark")
-				.maskinText(.caption).foregroundStyle(MaskinColor.success)
+				.maskinText(.caption).foregroundStyle(MaskinColor.doneFg)
 		case nil:
 			EmptyView()
 		}

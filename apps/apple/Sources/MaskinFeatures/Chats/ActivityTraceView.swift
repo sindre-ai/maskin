@@ -128,7 +128,7 @@ struct LiveActivityView: View {
 							.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
 							.contentShape(Rectangle())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Stop \(agent.name)")
 				}
 			}
@@ -238,7 +238,7 @@ struct FinishedTraceView: View {
 				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s8, alignment: .leading)
 				.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.disabled(turn.steps.isEmpty)
 			.accessibilityLabel("Agent activity, \(turn.summary)")
 			.accessibilityHint(turn.steps.isEmpty ? "" : (expanded ? "Collapse steps" : "Show steps"))

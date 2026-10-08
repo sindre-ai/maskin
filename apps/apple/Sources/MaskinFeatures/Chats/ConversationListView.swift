@@ -290,7 +290,7 @@ struct ConversationListView: View {
 		} label: {
 			SelectionBarLabel(title: store.scope == .archived ? "Unarchive" : "Archive", isPrimary: true)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(picking.isEmpty)
 	}
 
@@ -522,8 +522,8 @@ struct TeamSectionHeader<Trailing: View>: View {
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			Text(label.uppercased()).maskinText(.microLabelLarge).foregroundStyle(MaskinColor.ink5)
-			Text("\(count)").maskinText(.microLabelLarge).foregroundStyle(countColor)
+			Text(label.uppercased()).maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
+			Text("\(count)").maskinText(.microLabel).foregroundStyle(countColor)
 			Spacer(minLength: 0)
 			trailing
 		}

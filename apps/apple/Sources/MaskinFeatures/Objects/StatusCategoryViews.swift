@@ -59,7 +59,7 @@ struct StatusWord: View {
 	}
 }
 
-/// The amber notice of the empty/error states (handoff 1D): a title, one sentence and at most one
+/// The notice of the empty/error states (handoff 1D): a title, one sentence and at most one
 /// action. Used for "Can't reach Maskin" and for a failed load; never for anything but errors.
 struct AmberNotice: View {
 	let title: String
@@ -70,18 +70,18 @@ struct AmberNotice: View {
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s5) {
 			Image(systemName: "exclamationmark.circle.fill")
-				.foregroundStyle(MaskinSurface.amberForeground)
+				.foregroundStyle(MaskinColor.noticeFg)
 				.accessibilityHidden(true)
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 				Text(title).maskinText(.subhead).fontWeight(.semibold)
 				Text(message).maskinText(.subhead)
 			}
-			.foregroundStyle(MaskinSurface.amberForeground)
+			.foregroundStyle(MaskinColor.noticeFg)
 			Spacer(minLength: MaskinSpace.s3)
 			if let actionTitle, let action {
 				Button(actionTitle, action: action)
 					.maskinText(.subhead).fontWeight(.semibold)
-					.foregroundStyle(MaskinSurface.amberForeground)
+					.foregroundStyle(MaskinColor.noticeFg)
 					.frame(minHeight: MaskinSpace.touchMin)
 			}
 		}
@@ -89,12 +89,12 @@ struct AmberNotice: View {
 		.padding(.vertical, MaskinSpace.s5)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(
-			MaskinSurface.amberBackground,
+			MaskinColor.noticeBg,
 			in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 		)
 		.overlay(
 			RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
-				.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1)
+				.strokeBorder(MaskinColor.noticeBd, lineWidth: 1)
 		)
 		.accessibilityElement(children: .combine)
 	}

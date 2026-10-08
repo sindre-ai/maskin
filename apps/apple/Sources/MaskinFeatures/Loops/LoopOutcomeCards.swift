@@ -60,8 +60,7 @@ struct LoopTargetsSection: View {
 			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 				HStack {
 					Text("TARGET")
-						.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold))
-						.tracking(0.08 * MaskinFontSize.t11)
+						.maskinText(.microLabel)
 						.foregroundStyle(MaskinColor.ink5)
 					Spacer(minLength: MaskinSpace.s4)
 					if let owner = directory.actor(card.target.ownerID) {

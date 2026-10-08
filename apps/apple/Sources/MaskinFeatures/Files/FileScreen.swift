@@ -145,7 +145,7 @@ struct FileLoadedContent: View {
 			.background(isAnnotating ? MaskinSurface.fillStrong : MaskinSurface.fill, in: Capsule())
 			.fixedSize()
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityAddTraits(isAnnotating ? .isSelected : [])
 	}
 

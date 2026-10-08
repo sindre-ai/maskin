@@ -101,7 +101,7 @@ struct MarketplaceLoopDetailView: View {
 				if let note = row.updateNote {
 					Text(note)
 						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.warningStrong)
+						.foregroundStyle(MaskinColor.sigInk)
 						.padding(MaskinSpace.s8)
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))

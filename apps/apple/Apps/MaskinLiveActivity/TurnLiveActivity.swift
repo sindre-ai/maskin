@@ -53,9 +53,9 @@ enum StatusStyle {
 	static func tint(_ status: TurnActivityStatus) -> Color {
 		switch status {
 		case .running: MaskinColor.sigHi
-		case .needsYou: MaskinColor.warning
-		case .done: MaskinColor.success
-		case .failed: MaskinColor.danger
+		case .needsYou: MaskinColor.sig
+		case .done: MaskinColor.doneFg
+		case .failed: MaskinColor.warning
 		}
 	}
 

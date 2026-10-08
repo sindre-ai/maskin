@@ -150,7 +150,7 @@ struct FirstUseView: View {
 
 	private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
 		Button(title, action: action)
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.maskinText(.subhead)
 			.fontWeight(.semibold)
 			.foregroundStyle(MaskinColor.ink3)

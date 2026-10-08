@@ -50,7 +50,7 @@ struct DictationButton: View {
 		} label: {
 			ComposerMicLabel(listening: dictation.isListening)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
 		.onDisappear { dictation.stop() }
 		.onChange(of: dictation.isListening) { _, now in listening = now }

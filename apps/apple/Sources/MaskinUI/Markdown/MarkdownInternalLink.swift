@@ -102,7 +102,7 @@ public struct MarkdownLinkCard: View {
 						.strokeBorder(MaskinSurface.line, lineWidth: 1))
 				.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel(name == info.kindLabel ? name : "\(name), \(info.kindLabel)")
 			.accessibilityHint("Opens in Maskin")
 		}

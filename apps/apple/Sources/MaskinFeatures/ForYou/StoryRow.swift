@@ -30,7 +30,7 @@ struct StoryRow: View {
 	}
 }
 
-/// One 124 x 176 card: unit label (a glass pill) and unseen dot on top, the headline below. No ring,
+/// One 124 x 176 card (220 tall at accessibility text sizes): unit label (a glass pill) and unseen dot on top, the headline below. No ring,
 /// no border. An unseen card is the Patina gradient; a seen one is a plain card. The mono format
 /// line under the headline says what opening it gives (`READ · 1 MIN`).
 struct StoryCardView: View {
@@ -38,8 +38,9 @@ struct StoryCardView: View {
 	let isSeen: Bool
 	let action: () -> Void
 
-	private static let size = CGSize(width: 124, height: 176)
+	private static let width: CGFloat = 124
 	private static let radius: CGFloat = 24
+	@Environment(\.dynamicTypeSize) private var typeSize
 
 	var body: some View {
 		let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
@@ -48,6 +49,7 @@ struct StoryCardView: View {
 				HStack(alignment: .top, spacing: MaskinSpace.s2) {
 					Text(card.unit.uppercased())
 						.font(MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold))
+						.maskinMonoLabelScale()
 						.tracking(0.63)
 						.foregroundStyle(isSeen ? MaskinColor.ink5 : MaskinColor.stLab)
 						.lineLimit(2)
@@ -71,13 +73,15 @@ struct StoryCardView: View {
 					.lineLimit(5)
 				Text(card.formatLabel)
 					.font(MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold))
+					.maskinMonoLabelScale()
 					.tracking(0.63)
 					.foregroundStyle(isSeen ? MaskinColor.ink5 : MaskinColor.stLab)
 					.lineLimit(1)
 					.padding(.top, MaskinSpace.s3)
 			}
 			.padding(MaskinSpace.s6)
-			.frame(width: Self.size.width, height: Self.size.height)
+			.frame(
+				width: Self.width, height: MaskinScaling.briefingCardHeight(for: typeSize))
 			.background(fill, in: shape)
 			.shadow(color: MaskinPatina.cardShadow, radius: 1, y: 1)
 			.shadow(color: MaskinPatina.cardShadow, radius: 9, y: 6)

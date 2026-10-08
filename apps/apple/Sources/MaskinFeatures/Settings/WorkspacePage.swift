@@ -52,7 +52,7 @@ extension PageStateTone {
 		switch self {
 		case .active: MaskinColor.sigInk
 		case .muted: MaskinColor.ink5
-		case .notice: MaskinColor.warning
+		case .notice: MaskinColor.noticeFg3
 		case .plain: MaskinColor.ink3
 		}
 	}
@@ -163,7 +163,7 @@ struct PageGroupLabel: View {
 	let text: String
 	var body: some View {
 		Text(text)
-			.maskinText(.microLabelLarge)
+			.maskinText(.microLabel)
 			.textCase(.uppercase)
 			.foregroundStyle(MaskinColor.ink4)
 			.padding(.horizontal, MaskinSpace.s2)

@@ -71,7 +71,9 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	case caption
 	/// Uppercase mono micro-label (10 / semibold, +0.08em).
 	case microLabel
-	/// The larger uppercase mono micro-label (12 / semibold, +0.07em).
+	/// The larger uppercase mono micro-label (12 / semibold, +0.07em). Only for a label that stands
+	/// alone in a header (the story player's unit, a thread's context link); chips, row type labels and
+	/// section labels use `.microLabel`. 9pt exists only inside briefing cards.
 	case microLabelLarge
 	/// Machine-shaped text: ids, counts, cron.
 	case mono
@@ -129,6 +131,15 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		}
 	}
 
+	/// The largest Dynamic Type size the role follows. Mono labels stop at `.xxxLarge`; everything
+	/// else scales all the way through the accessibility sizes.
+	public var dynamicTypeCeiling: DynamicTypeSize {
+		switch self {
+		case .microLabel, .microLabelLarge: MaskinScaling.monoLabelCeiling
+		default: .accessibility5
+		}
+	}
+
 	public var isUppercase: Bool { self == .microLabel || self == .microLabelLarge }
 }
 
@@ -137,5 +148,6 @@ extension View {
 	/// `MonoLabel` (it is a string transform, not a style).
 	public func maskinText(_ role: MaskinTextRole) -> some View {
 		font(role.font).tracking(role.trackingEm * role.referenceSize)
+			.dynamicTypeSize(...role.dynamicTypeCeiling)
 	}
 }

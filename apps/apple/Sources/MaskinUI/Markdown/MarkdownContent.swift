@@ -336,7 +336,7 @@ private struct MarkdownCodeBlock: View {
 					.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s2)
 					.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed)
 			.accessibilityLabel(copied ? "Code copied" : "Copy code")
 		}
 		.padding(.leading, MaskinSpace.s7)

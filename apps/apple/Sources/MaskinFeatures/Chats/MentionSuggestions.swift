@@ -49,7 +49,7 @@ struct MentionSuggestions: View {
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Mention \(person.name), \(person.roleLabel)")
 				}
 			}

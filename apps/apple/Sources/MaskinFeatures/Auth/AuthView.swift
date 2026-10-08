@@ -83,7 +83,7 @@ public struct AuthView: View {
 					withAnimation(reduceMotion ? nil : MaskinMotion.panel) { model.switchTo(.signIn) }
 					focus = .password
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.maskinText(.subhead)
 				.fontWeight(.semibold)
 				.foregroundStyle(MaskinColor.ink)
@@ -180,7 +180,7 @@ public struct AuthView: View {
 						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
 				.accessibilityLabel(showPassword ? "Hide password" : "Show password")
 			}
 		}

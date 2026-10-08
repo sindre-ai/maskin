@@ -25,7 +25,7 @@ struct FlowSectionHeader<Trailing: View>: View {
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 			Text(title.uppercased())
-				.maskinText(.microLabelLarge)
+				.maskinText(.microLabel)
 				.foregroundStyle(MaskinColor.ink5)
 				.lineLimit(1)
 			Spacer(minLength: MaskinSpace.s4)

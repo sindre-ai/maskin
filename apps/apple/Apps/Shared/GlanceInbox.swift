@@ -162,9 +162,9 @@ extension AppNotification.Kind {
 	var tint: Color {
 		switch self {
 		case .needsInput: MaskinColor.sigInk
-		case .recommendation: MaskinColor.warning
-		case .goodNews: MaskinColor.success
-		case .alert: MaskinColor.danger
+		case .recommendation: MaskinColor.sigInk
+		case .goodNews: MaskinColor.doneFg
+		case .alert: MaskinColor.ink
 		case .other: MaskinColor.ink4
 		}
 	}

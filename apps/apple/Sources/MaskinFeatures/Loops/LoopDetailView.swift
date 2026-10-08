@@ -311,7 +311,7 @@ struct LoopActivityRow: View {
 	private var color: Color {
 		switch entry.tone {
 		case .success: MaskinColor.ink
-		case .failure: MaskinColor.danger
+		case .failure: MaskinColor.warning
 		case .active: MaskinColor.sig
 		case .neutral: MaskinColor.ink5
 		}

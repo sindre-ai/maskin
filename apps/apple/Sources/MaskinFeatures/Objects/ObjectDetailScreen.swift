@@ -281,7 +281,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						.background(selected ? MaskinSurface.fill : Color.clear, in: Capsule())
 						.contentShape(Capsule())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.accessibilityAddTraits(selected ? .isSelected : [])
 				}
 			}

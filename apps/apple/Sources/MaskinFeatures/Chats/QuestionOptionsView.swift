@@ -48,7 +48,7 @@ struct QuestionOptionsView: View {
 							.background(MaskinSurface.inverse, in: Capsule())
 							.opacity(complete ? 1 : 0.35)
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 					.disabled(!complete)
 					Text("or just type your reply").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
@@ -122,7 +122,7 @@ struct QuestionOptionsView: View {
 			ForEach(questions) { question in
 				let selection = answers.first { $0.header == question.header }?.selected ?? []
 				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Image(systemName: "checkmark.circle.fill").foregroundStyle(MaskinColor.success)
+					Image(systemName: "checkmark.circle.fill").foregroundStyle(MaskinColor.doneFg)
 						.accessibilityHidden(true)
 					Text("\(question.header): \(selection.joined(separator: ", "))")
 						.maskinText(.subhead).foregroundStyle(MaskinColor.ink3)

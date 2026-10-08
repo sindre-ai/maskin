@@ -51,7 +51,7 @@ struct UpdatedNote: View {
 		if WidgetPolicy.isStale(snapshot, at: now) {
 			(Text("Updated ") + Text(snapshot.updatedAt, style: .relative) + Text(" ago"))
 				.font(.caption2)
-				.foregroundStyle(MaskinColor.warningStrong)
+				.foregroundStyle(MaskinColor.sigInk)
 				.lineLimit(1)
 				.accessibilityLabel("Updated \(accessibleAge) ago")
 		}
@@ -138,7 +138,7 @@ private struct AgentLine: View {
 			}
 			if showHeld, let held = ForYouFormat.heldNote(since: decision.since, now: now) {
 				if decision.agentName != nil { Text("·") }
-				Text(held).foregroundStyle(MaskinColor.warningStrong)
+				Text(held).foregroundStyle(MaskinColor.sigInk)
 			}
 		}
 		.font(.caption2)
@@ -367,7 +367,7 @@ private struct AllClearView: View {
 			Spacer(minLength: 0)
 			Image(systemName: "checkmark.circle")
 				.font(.system(size: size == .small ? 26 : 32, weight: .regular))
-				.foregroundStyle(MaskinColor.success)
+				.foregroundStyle(MaskinColor.doneFg)
 				.accessibilityHidden(true)
 			Text("Nothing needs you")
 				.font(size == .small ? .subheadline.weight(.semibold) : .headline)

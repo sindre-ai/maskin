@@ -8,9 +8,9 @@ public enum AgentMood: Sendable, Equatable {
 	case idle
 	/// Running: a breathing ring and a gentle bob.
 	case working
-	/// Waiting on a person: a soft amber nudge.
+	/// Waiting on a person: a soft Patina nudge.
 	case waiting
-	/// Last run failed: a small red mark.
+	/// Last run failed: a small warning mark.
 	case failed
 	/// Paused on purpose: dimmed.
 	case paused
@@ -26,14 +26,14 @@ struct AgentMoodBadge: View {
 	var body: some View {
 		switch mood {
 		case .waiting:
-			dot(MaskinColor.warning)
+			dot(MaskinColor.sig)
 				.scaleEffect(pulsing ? 1.18 : 1)
 				.onAppear {
 					guard !reduceMotion else { return }
 					withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulsing = true }
 				}
 		case .failed:
-			dot(MaskinColor.danger)
+			dot(MaskinColor.warning)
 		case .idle, .working, .paused:
 			EmptyView()
 		}

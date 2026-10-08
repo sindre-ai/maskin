@@ -272,7 +272,7 @@ struct ShareSheetView: View {
 			.background(MaskinSurface.inverse, in: Circle())
 			.opacity(model.canPost || isPosting ? 1 : 0.4)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(!model.canPost)
 		.accessibilityLabel(sendLabel)
 	}
@@ -308,7 +308,7 @@ struct ShareSheetView: View {
 			Spacer()
 			Image(systemName: "checkmark.circle.fill")
 				.font(.system(size: heroIconSize))
-				.foregroundStyle(MaskinColor.success)
+				.foregroundStyle(MaskinColor.doneFg)
 				.accessibilityHidden(true)
 			VStack(spacing: MaskinSpace.s3) {
 				Text("Sent to Maskin").maskinText(.title).foregroundStyle(MaskinColor.ink)

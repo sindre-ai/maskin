@@ -62,6 +62,7 @@ struct BriefViewer: View {
 			}
 		}
 		.offset(y: dragY)
+		.background { arrowKeys }
 		.simultaneousGesture(swipeDown)
 		.preferredColorScheme(.dark)
 		.accessibilityElement(children: .contain)
@@ -101,6 +102,20 @@ struct BriefViewer: View {
 			last = now
 			playback.tick(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
 		}
+	}
+
+	// MARK: Keyboard
+
+	/// Left and right arrows move between slides for a hardware keyboard (iPad, Mac); Esc is the
+	/// Close button's cancel shortcut. Zero-size so they take no layout and VoiceOver skips them.
+	private var arrowKeys: some View {
+		HStack {
+			Button("Previous") { playback.previous() }.keyboardShortcut(.leftArrow, modifiers: [])
+			Button("Next") { playback.next() }.keyboardShortcut(.rightArrow, modifiers: [])
+		}
+		.frame(width: 0, height: 0)
+		.opacity(0)
+		.accessibilityHidden(true)
 	}
 
 	// MARK: Gestures
@@ -145,8 +160,7 @@ struct BriefViewer: View {
 			HStack(spacing: MaskinSpace.s5) {
 				if card.loopID == nil { ChiefOfStaffTile(size: MaskinSpace.s12) }
 				Text(card.unit.uppercased())
-					.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold))
-					.tracking(0.66)
+					.maskinText(.microLabelLarge)
 					.foregroundStyle(MaskinPatina.viewerAccent)
 					.lineLimit(1)
 				Spacer(minLength: 0)
@@ -157,7 +171,8 @@ struct BriefViewer: View {
 						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 						.maskinGlass(in: Circle(), interactive: true)
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed)
+				.keyboardShortcut(.cancelAction)
 				.accessibilityLabel("Close")
 			}
 		}
@@ -207,7 +222,7 @@ struct BriefViewer: View {
 					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 					.background(MaskinPatina.viewerAccent, in: Capsule())
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.maskinPressed(.shrink))
 			if case .page(let output) = card.content {
 				Button { fullPage = output } label: {
 					Label("Open page", systemImage: "arrow.up.forward.square")
@@ -217,7 +232,7 @@ struct BriefViewer: View {
 						.frame(minHeight: MaskinSpace.touchMin)
 						.maskinGlassCapsule(interactive: true)
 				}
-				.buttonStyle(.plain)
+				.buttonStyle(.maskinPressed(.shrink))
 				.accessibilityHint("Opens the page so you can scroll and use it")
 			}
 		}

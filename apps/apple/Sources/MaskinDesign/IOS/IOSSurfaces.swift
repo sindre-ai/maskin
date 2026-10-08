@@ -36,9 +36,4 @@ public enum MaskinSurface {
 	public static let glassBorder = Color(
 		light: RGBA(red: 255, green: 255, blue: 255, alpha: 0.7),
 		dark: RGBA(red: 255, green: 255, blue: 255, alpha: 0.1))
-
-	/// Amber notice (offline / held) palette (`--amberBg/Bd/Fg`).
-	public static let amberBackground = Color(light: RGBA(0xFDFBF5), dark: RGBA(0x2A2417))
-	public static let amberBorder = Color(light: RGBA(0xF2E8D5), dark: RGBA(0x4A3E22))
-	public static let amberForeground = Color(light: RGBA(0x7C6F57), dark: RGBA(0xD9C79B))
 }

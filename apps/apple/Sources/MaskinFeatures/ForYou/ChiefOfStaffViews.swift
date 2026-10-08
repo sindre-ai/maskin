@@ -31,7 +31,7 @@ struct QuickQuestionChips: View {
 							.frame(minHeight: MaskinSpace.s14)
 							.background(MaskinSurface.fill, in: Capsule())
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.maskinPressed(.shrink))
 				}
 			}
 		}
@@ -85,6 +85,7 @@ struct ChiefOfStaffSheet: View {
 			.toolbar(.hidden, for: .navigationBar)
 			#endif
 		}
+		.ambientBackground(showsBottom: false)
 		.task { sendPending(built) }
 		.sheet(isPresented: $showParticipants) {
 			PeopleSheet(chat: built.chat, conversations: desk.conversations)
@@ -105,7 +106,7 @@ struct ChiefOfStaffSheet: View {
 		HStack(spacing: MaskinSpace.s7) {
 			ChiefOfStaffTile(size: MaskinSpace.s14 + MaskinSpace.s3)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text("Chief of Staff").maskinText(.headline).foregroundStyle(MaskinColor.ink)
+				Text("Chief of Staff").maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
 				Text(ChiefOfStaffThreads.title(for: presented.card))
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
