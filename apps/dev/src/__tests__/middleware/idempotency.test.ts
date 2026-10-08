@@ -219,4 +219,21 @@ describe('idempotency middleware', () => {
 		})
 		expect(r2.status).toBe(200)
 	})
+
+	it.each([408, 425, 429, 201, 404])('status %i: caching behaviour', async (status) => {
+		const dbCtx = createTestContext()
+		const app = new Hono()
+		app.use('*', async (c, next) => {
+			c.set('actorId', 'actor-1')
+			await next()
+		})
+		app.use('*', createIdempotencyMiddleware(dbCtx.db))
+		app.post('/t', (c) => c.json({ error: 'x' }, status as 200))
+
+		await app.request('/t', { method: 'POST', headers: { 'Idempotency-Key': 'k' } })
+
+		// Transient outcomes must not be written to the ledger; others still are.
+		const wrote = dbCtx.calls.inserts.length > 0
+		expect(wrote).toBe(![408, 425, 429].includes(status))
+	})
 })

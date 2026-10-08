@@ -641,6 +641,83 @@ ${surviving}
 		expect(after).toHaveLength(before.length + 1)
 	})
 
+	describe('turn-finished signal (drives the Live Activity)', () => {
+		function withSignal() {
+			const finished: Array<{ sessionId: string; outcome: string }> = []
+			const calls: unknown[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: (sessionId, outcome) => finished.push({ sessionId, outcome }),
+				retryTurn: async (_s, payload) => {
+					calls.push(payload)
+				},
+				delay: async () => {},
+			})
+			return { instance, finished, calls }
+		}
+
+		it('signals done once when the reply is posted, and not again for a redelivered line', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(31)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('signals done for a turn that ends with nothing to post', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(32)}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('signals failed when the human is told the turn failed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(33)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}\n`,
+			)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'failed' }])
+		})
+
+		it('does not signal while a transient failure is being replayed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished, calls } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'API Error: {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_x"}' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+			expect(finished).toEqual([])
+		})
+
+		it('survives a throwing listener', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			finalizer = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: () => {
+					throw new Error('boom')
+				},
+			})
+			await feed(session.id, `${userTurnLine(35)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
+	})
+
 	describe('a turn that failed against the model API', () => {
 		/** The envelope the CLI writes when a request 500s mid-turn. */
 		function apiErrorLine(requestId: string) {

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
 // Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
@@ -212,11 +213,11 @@ export const addConversationParticipantsSchema = z.object({
 })
 
 export const conversationListQuerySchema = z.object({
-	pinned: z.coerce.boolean().optional(),
+	pinned: booleanQueryParam.optional(),
 	// Excludes archived conversations by default — matches the mockup's
 	// default "Chats" list, archived ones need an explicit filter to surface.
-	archived: z.coerce.boolean().default(false),
-	unread_only: z.coerce.boolean().optional(),
+	archived: booleanQueryParam.default(false),
+	unread_only: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

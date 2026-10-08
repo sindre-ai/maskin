@@ -277,6 +277,84 @@ export const sessionLogQuerySchema = z.object({
 	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
+// ── Activity trace (GET /api/sessions/:id/activity) ──────────────────────
+
+/** Rows of `session_logs` the activity endpoint will scan in one request. */
+export const SESSION_ACTIVITY_SCAN_ROWS = 2000
+
+export const sessionActivityQuerySchema = z.object({
+	/** Newest N turns to return (a turn = one conversation message the agent answered). */
+	limit_turns: z.coerce.number().int().min(1).max(20).default(5),
+	/**
+	 * Return only the turn triggered by this conversation message id. If the turn
+	 * is outside the newest-rows window, the server anchors a scan at that turn's
+	 * tagged user envelope instead, so any tagged turn can be looked up directly.
+	 */
+	message_id: z.coerce.number().int().positive().optional(),
+	/**
+	 * Exclusive upper bound on `session_logs.id`; pass a previous response's
+	 * `oldest_log_id` to page toward older turns.
+	 */
+	before_log_id: z.coerce.number().int().positive().optional(),
+})
+
+/**
+ * Turns are delimited by user envelopes tagged with `maskin_message_id`.
+ * Log rows written before that tagging existed (and any rows ahead of the
+ * first tagged envelope) belong to no turn and are intentionally dropped,
+ * mirroring the web transcript's `unassigned` bucket which the chat never shows.
+ */
+export const sessionActivityStepSchema = z.object({
+	/** Stable across polls: `<logId>-<blockIndex>` (`<logId>-stderr` for stderr). */
+	id: z.string(),
+	kind: z.enum(['tool_use', 'thinking', 'text', 'error']),
+	/** Short human label, at most 120 chars, e.g. `Using Read`. */
+	label: z.string().max(120),
+	/** Optional one-line input summary, at most 300 chars. */
+	detail: z.string().max(300).optional(),
+	started_at: z.string().nullable(),
+	finished_at: z.string().nullable(),
+	status: z.enum(['running', 'completed', 'failed']),
+})
+
+export const sessionActivityTurnSchema = z.object({
+	/** The conversation `messages.id` that triggered this turn. */
+	message_id: z.number().int(),
+	started_at: z.string().nullable(),
+	finished_at: z.string().nullable(),
+	/** `running` until a `result` envelope closes the turn. */
+	status: z.enum(['running', 'completed', 'failed']),
+	/** True once the turn called the conversation-reply tool. */
+	contains_reply: z.boolean(),
+	result: z
+		.object({ text: z.string().max(8000), is_error: z.boolean(), log_id: z.number().int() })
+		.nullable(),
+	steps: z.array(sessionActivityStepSchema).max(100),
+	/** True when more than 100 steps happened and the oldest were dropped. */
+	steps_truncated: z.boolean(),
+	/**
+	 * True when the scan window began in the middle of this turn: the turn's
+	 * tagged user envelope was recovered with one extra lookup, but the log
+	 * rows between that envelope and the window were not loaded, so its earliest
+	 * steps are missing. Only ever set on the oldest returned turn.
+	 */
+	partial: z.boolean(),
+})
+
+export const sessionActivityResponseSchema = z.object({
+	session_id: z.string().uuid(),
+	/** Oldest to newest. */
+	turns: z.array(sessionActivityTurnSchema),
+	/** Pass as `before_log_id` to fetch older turns. Null when nothing was scanned. */
+	oldest_log_id: z.number().int().nullable(),
+	/** The scan window was full, so older turns probably exist. */
+	has_older: z.boolean(),
+})
+
+export type SessionActivityStep = z.infer<typeof sessionActivityStepSchema>
+export type SessionActivityTurn = z.infer<typeof sessionActivityTurnSchema>
+export type SessionActivityResponse = z.infer<typeof sessionActivityResponseSchema>
+
 /**
  * Query params for the deep-read log endpoint that mirrors the `get_session_logs`
  * MCP tool. Distinct from `sessionLogQuerySchema` above (which serves today's
