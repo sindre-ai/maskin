@@ -180,7 +180,8 @@ private struct ChatThreadHost: View {
 			conversationID: conversationID, currentActorID: session?.actorId ?? "",
 			currentActorName: session?.name ?? "You", api: source,
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
-			cache: environment.snapshotCache)
+			cache: environment.snapshotCache,
+			knownLastMessageAt: conversations.conversation(id: conversationID)?.lastMessageAt)
 		chat.trace = ActivityStore(
 			source: HTTPSessionActivitySource(environment: environment), cache: environment.snapshotCache)
 		chat.onMarkedRead = { [conversations] id, _ in

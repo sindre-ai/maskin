@@ -52,6 +52,8 @@ actor FakeChatAPI: ChatAPI {
 	var actorList: [ChatActor] = []
 	var messageCalls: [(before: Int?, after: Int?)] = []
 	var afterSend: (@Sendable () async -> Void)?
+	/// Runs inside `messages` before it answers: lets a test look at the store mid-request.
+	var messagesGate: (@Sendable () async -> Void)?
 	var persistedByKey: [String: ChatMessage] = [:]
 
 	init(server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1")) {
@@ -70,6 +72,7 @@ actor FakeChatAPI: ChatAPI {
 	func setFailMutations(_ v: Bool) { failMutations = v }
 	func setSessions(_ s: [ChatAgentSession]) { sessionList = s }
 	func setActors(_ a: [ChatActor]) { actorList = a }
+	func setMessagesGate(_ f: (@Sendable () async -> Void)?) { messagesGate = f }
 	func setAfterSend(_ f: (@Sendable () async -> Void)?) { afterSend = f }
 
 	func detail(conversationID: String) async throws -> ConversationSummary {
@@ -81,6 +84,7 @@ actor FakeChatAPI: ChatAPI {
 		-> MessagePage
 	{
 		messageCalls.append((beforeID, afterID))
+		if let messagesGate { await messagesGate() }
 		if failMessages { throw URLError(.notConnectedToInternet) }
 		var rows = server.sorted { ($0.serverID ?? 0) > ($1.serverID ?? 0) }
 		if let beforeID { rows = rows.filter { ($0.serverID ?? 0) < beforeID } }

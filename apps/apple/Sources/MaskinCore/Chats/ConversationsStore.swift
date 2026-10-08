@@ -39,6 +39,10 @@ public final class ConversationsStore {
 		}
 	}
 
+	/// Told after every successful reload of the active, unfiltered list (first load, events,
+	/// pull-to-refresh). The thread prefetcher hangs off this.
+	@ObservationIgnored public var onListLoaded: (@MainActor ([ConversationSummary]) -> Void)?
+
 	@ObservationIgnored private let api: any ConversationsAPI
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private let cache: SnapshotCache?
@@ -195,6 +199,7 @@ public final class ConversationsStore {
 				reconcileAgentFilter()
 				freshness.refreshed(at: cache?.now() ?? Date())
 				writeCache()
+				if scope == .active, filter == .all { onListLoaded?(conversations) }
 			} catch {
 				freshness.revalidateFailed()
 				if conversations.isEmpty { phase = .failed(Self.message(error)) }
