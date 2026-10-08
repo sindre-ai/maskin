@@ -1000,7 +1000,7 @@ app.openapi(connectRoute, (async (c) => {
 			// the whole domain. A bare domain with no mail stays allowed.
 			if (!isValidHostname(resendSubdomain)) {
 				return c.json(
-					createApiError('BAD_REQUEST', 'receive_subdomain is not a valid hostname', [
+					createApiError('BAD_REQUEST', 'Not a valid hostname', [
 						{ field: 'code', message: 'INVALID_DOMAIN' },
 					]),
 					400,
@@ -1011,10 +1011,14 @@ app.openapi(connectRoute, (async (c) => {
 				: await precheckResendDomain(resendSubdomain)
 			if (precheck?.warn) {
 				return c.json(
-					createApiError('BAD_REQUEST', 'This domain already has mail, use a subdomain instead', [
-						{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
-						{ field: 'existing_mx', message: precheck.existingMx.join(', ') },
-					]),
+					createApiError(
+						'BAD_REQUEST',
+						'This name already carries mail, use a dedicated hostname such as mail.example.com',
+						[
+							{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
+							{ field: 'existing_mx', message: precheck.existingMx.join(', ') },
+						],
+					),
 					400,
 				)
 			}
