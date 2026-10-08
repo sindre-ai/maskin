@@ -99,6 +99,8 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 				return false
 			}
 
+			const FORM_FIELD_TAGS = ['INPUT', 'TEXTAREA', 'SELECT']
+
 			const excluded = new Set<Element>()
 			for (const selector of excludedSelectors) {
 				for (const el of document.querySelectorAll(selector)) {
@@ -118,10 +120,31 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 			// is not on the known-offender exclusion list) is silently
 			// clipping or unintentionally horizontally scrolling — the exact class
 			// of failure that reached `main` in #1700.
+			// An ancestor of an excluded element reports that element's overflow too.
+			// Skip it only when its own overflow (scrollWidth minus clientWidth) is no
+			// bigger than how far an excluded descendant sticks out past the
+			// ancestor's right edge. Anything beyond that still fails, so the skip
+			// cannot hide a second overflow on the same ancestor.
+			const overflowExplainedByExclusion = (el: HTMLElement) => {
+				const excess = el.scrollWidth - el.clientWidth
+				const right = el.getBoundingClientRect().right
+				for (const ex of excluded) {
+					if (ex === el || !el.contains(ex)) continue
+					const reach = ex.getBoundingClientRect().right - right
+					if (excess <= reach + tolerance) return true
+				}
+				return false
+			}
+
 			for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
 				if (el.scrollWidth <= el.clientWidth + tolerance) continue
+				// An input's scrollWidth is its text width, not its layout box: it
+				// changes with the typed or placeholder text (343 to 381 across the
+				// Settings index retries) while clientWidth stays fixed.
+				if (FORM_FIELD_TAGS.includes(el.tagName)) continue
 				if (hasHorizontalOverflowIntent(el)) continue
 				if (excluded.has(el)) continue
+				if (overflowExplainedByExclusion(el)) continue
 				offenders.push({
 					selector: describe(el),
 					scrollWidth: el.scrollWidth,
