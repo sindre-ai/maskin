@@ -21,6 +21,11 @@ import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
+import {
+	type PromptSender,
+	buildSenderLines,
+	loadPromptSender,
+} from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
@@ -672,6 +677,7 @@ async function spawnThreadReplySessions(ctx: {
 		.limit(1)
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 	const initiatedFromObjectType = obj?.type ?? null
+	const sender = threadReplyAgentIds.length > 0 ? await loadPromptSender(ctx.db, ctx.actorId) : null
 
 	for (const agentId of threadReplyAgentIds) {
 		startSession({
@@ -681,6 +687,7 @@ async function spawnThreadReplySessions(ctx: {
 			actionPrompt: buildThreadReplyPrompt({
 				objectId: ctx.objectId,
 				commenterActorId: ctx.actorId,
+				sender,
 				content: ctx.newCommentContent,
 				threadRootEventId: ctx.threadRootEventId,
 			}),
@@ -710,10 +717,12 @@ async function spawnThreadReplySessions(ctx: {
 function buildThreadReplyPrompt(ctx: {
 	objectId: string
 	commenterActorId: string
+	sender: PromptSender | null
 	content: string
 	threadRootEventId: number
 }): string {
 	return [
+		...buildSenderLines(ctx.sender),
 		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
 		'',
 		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',

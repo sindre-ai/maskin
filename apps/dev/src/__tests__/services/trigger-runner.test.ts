@@ -6,6 +6,7 @@ import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	TriggerRunner,
+	buildMentionPrompt,
 	calculateBackoffUntil,
 	evaluateCondition,
 	evaluateConditions,
@@ -1974,5 +1975,31 @@ describe('getObjectFromData()', () => {
 	it('returns empty for null data', () => {
 		const result = getObjectFromData(null)
 		expect(result).toEqual({})
+	})
+})
+
+describe('buildMentionPrompt()', () => {
+	const base = {
+		objectId: 'obj-1',
+		commenterActorId: 'actor-1',
+		content: 'please look',
+		notificationId: 'notif-1',
+		parentEventId: null,
+	}
+
+	it('opens with the sender name and says an agent is not a person', () => {
+		const prompt = buildMentionPrompt({ ...base, sender: { name: 'Planner', type: 'agent' } })
+		expect(prompt.startsWith('Sent by Planner, an agent.')).toBe(true)
+		expect(prompt).toContain('not from a person')
+	})
+
+	it('opens with the sender name and says a person is a person', () => {
+		const prompt = buildMentionPrompt({ ...base, sender: { name: 'Magnus', type: 'human' } })
+		expect(prompt.startsWith('Sent by Magnus, a person.')).toBe(true)
+	})
+
+	it('starts with the original text when the sender is unknown', () => {
+		const prompt = buildMentionPrompt({ ...base, sender: null })
+		expect(prompt.startsWith('You were @mentioned in a comment on an object.')).toBe(true)
 	})
 })

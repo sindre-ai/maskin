@@ -973,6 +973,8 @@ describe('Events Routes', () => {
 							data: { content: 'Root' },
 						},
 					],
+					[{ type: 'task' }], // object type for the spawned session
+					[{ name: 'Magnus', type: 'human' }], // who posted the new comment
 				]
 				mockResults.insert = [newComment]
 
@@ -996,7 +998,7 @@ describe('Events Routes', () => {
 					wsId,
 					expect.objectContaining({
 						actorId: agentAId,
-						actionPrompt: expect.stringContaining('Follow up'),
+						actionPrompt: expect.stringMatching(/^Sent by Magnus, a person\.\n\n[\s\S]*Follow up/),
 						createdBy: 'test-actor-id',
 						config: expect.objectContaining({
 							thread_reply: expect.objectContaining({
