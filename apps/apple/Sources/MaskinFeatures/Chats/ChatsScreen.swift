@@ -116,6 +116,7 @@ private struct ChatsContainer: View {
 			) { created in
 				selection = created.id
 			}
+			.presentationDetents([.medium, .large])
 		}
 	}
 }

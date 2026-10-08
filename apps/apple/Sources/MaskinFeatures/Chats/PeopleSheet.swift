@@ -87,7 +87,9 @@ struct PeopleSheet: View {
 				Text("\(person.name) will no longer see new messages here.")
 			}
 			.searchable(text: $query, isPresented: .constant(adding), prompt: "Search people and agents")
-			.navigationTitle(adding ? "Add people" : "People · \(chat.participants.count)")
+			.scrollContentBackground(.hidden)
+			.ambientBackground(showsBottom: false)
+			.sheetTitle(adding ? "Add people" : "People", subtitle: adding ? nil : "\(chat.participants.count) in this chat")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif

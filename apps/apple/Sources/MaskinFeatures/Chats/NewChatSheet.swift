@@ -46,7 +46,8 @@ struct NewChatSheet: View {
 				.padding(MaskinSpace.s9)
 			}
 			.scrollDismissesKeyboard(.interactively)
-			.navigationTitle("New conversation")
+			.ambientBackground(showsBottom: false)
+			.sheetTitle("New conversation")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
