@@ -24,7 +24,7 @@ struct ObjectTypeTag: View {
 	var body: some View {
 		HStack(spacing: MaskinSpace.s3) {
 			RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-				.fill(MaskinObjectType.colors(for: type).fg)
+				.fill(MaskinObjectType.dotColor(for: type))
 				.frame(width: MaskinSpace.s4 - MaskinSpace.s1, height: MaskinSpace.s4 - MaskinSpace.s1)
 				.accessibilityHidden(true)
 			Text(name.uppercased())
@@ -151,7 +151,7 @@ struct ObjectGroupHeader: View {
 		HStack(spacing: MaskinSpace.s4) {
 			if group.isType {
 				RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-					.fill(MaskinObjectType.colors(for: group.id).fg)
+					.fill(MaskinObjectType.dotColor(for: group.id))
 					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 					.accessibilityHidden(true)
 				Text((group.title ?? group.id).uppercased())

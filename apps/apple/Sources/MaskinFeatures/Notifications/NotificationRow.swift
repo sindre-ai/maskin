@@ -43,7 +43,7 @@ struct NotificationRow: View {
 				} else if let answer = answerSummary {
 					Label(answer, systemImage: "checkmark.circle.fill")
 						.maskinText(.caption)
-						.foregroundStyle(MaskinColor.successStrong)
+						.foregroundStyle(MaskinColor.doneFg2)
 						.accessibilityLabel("You answered: \(answer)")
 				}
 			}
@@ -177,9 +177,9 @@ struct NotificationRow: View {
 	static func tint(for kind: AppNotification.Kind) -> Color {
 		switch kind {
 		case .needsInput: MaskinColor.sigInk
-		case .recommendation: MaskinColor.warning
-		case .goodNews: MaskinColor.success
-		case .alert: MaskinColor.danger
+		case .recommendation: MaskinColor.sigInk
+		case .goodNews: MaskinColor.doneFg
+		case .alert: MaskinColor.ink
 		case .other: MaskinColor.ink4
 		}
 	}

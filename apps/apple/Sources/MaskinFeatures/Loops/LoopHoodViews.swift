@@ -351,7 +351,7 @@ struct LoopHealthSection: View {
 		switch tone {
 		case .ok: MaskinColor.sig
 		case .warn: MaskinColor.sigInk
-		case .bad: MaskinColor.danger
+		case .bad: MaskinColor.warning
 		case .idle: MaskinColor.ink5
 		}
 	}

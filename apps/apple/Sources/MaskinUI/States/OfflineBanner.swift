@@ -17,14 +17,14 @@ public struct OfflineBanner: View {
 				Image(systemName: "wifi.slash").accessibilityHidden(true)
 				Text(message).maskinText(.subhead)
 			}
-			.foregroundStyle(MaskinSurface.amberForeground)
+			.foregroundStyle(MaskinColor.noticeFg)
 			.padding(.horizontal, MaskinSpace.s8)
 			.padding(.vertical, MaskinSpace.s5)
 			.frame(maxWidth: .infinity, alignment: .leading)
-			.background(MaskinSurface.amberBackground, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+			.background(MaskinColor.noticeBg, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 			.overlay(
 				RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
-					.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1)
+					.strokeBorder(MaskinColor.noticeBd, lineWidth: 1)
 			)
 			.accessibilityElement(children: .combine)
 			.transition(.move(edge: .top).combined(with: .opacity))

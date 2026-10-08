@@ -122,7 +122,7 @@ struct QuestionOptionsView: View {
 			ForEach(questions) { question in
 				let selection = answers.first { $0.header == question.header }?.selected ?? []
 				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Image(systemName: "checkmark.circle.fill").foregroundStyle(MaskinColor.success)
+					Image(systemName: "checkmark.circle.fill").foregroundStyle(MaskinColor.doneFg)
 						.accessibilityHidden(true)
 					Text("\(question.header): \(selection.joined(separator: ", "))")
 						.maskinText(.subhead).foregroundStyle(MaskinColor.ink3)

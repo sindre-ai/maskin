@@ -205,7 +205,7 @@ struct ObjectBoardCard: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			HStack(spacing: MaskinSpace.s3) {
 				RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-					.fill(MaskinObjectType.colors(for: object.type).fg)
+					.fill(MaskinObjectType.dotColor(for: object.type))
 					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 					.accessibilityHidden(true)
 				Text(typeName)

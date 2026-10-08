@@ -121,9 +121,9 @@ struct IntegrationRow: View {
 	private var tint: Color {
 		switch status {
 		case .available: MaskinColor.ink5
-		case .connected: MaskinColor.success
-		case .needsReconnect, .incomplete: MaskinColor.warning
-		case .disconnected: MaskinColor.danger
+		case .connected: MaskinColor.doneFg
+		case .needsReconnect, .incomplete: MaskinColor.sigInk
+		case .disconnected: MaskinColor.ink3
 		}
 	}
 
@@ -161,7 +161,7 @@ struct SkillRow: View {
 			HStack {
 				Text(skill.name).foregroundStyle(MaskinColor.ink)
 				if !skill.isValid {
-					Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(MaskinColor.warning)
+					Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(MaskinColor.sigInk)
 						.accessibilityLabel("Needs attention")
 				}
 			}

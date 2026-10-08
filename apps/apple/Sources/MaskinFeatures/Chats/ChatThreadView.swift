@@ -662,13 +662,13 @@ struct StaleThreadBanner: View {
 			}
 			.buttonStyle(.plain)
 		}
-		.foregroundStyle(MaskinSurface.amberForeground)
+		.foregroundStyle(MaskinColor.noticeFg)
 		.padding(.leading, MaskinSpace.s8)
 		.padding(.trailing, MaskinSpace.s3)
-		.background(MaskinSurface.amberBackground, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+		.background(MaskinColor.noticeBg, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 		.overlay(
 			RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
-				.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1))
+				.strokeBorder(MaskinColor.noticeBd, lineWidth: 1))
 		.accessibilityElement(children: .contain)
 	}
 }

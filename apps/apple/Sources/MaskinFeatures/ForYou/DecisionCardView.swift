@@ -7,7 +7,7 @@ import SwiftUI
 /// gesture leaves as a closure, so it renders in a snapshot test exactly as on screen.
 ///
 /// States, matching the mockup: the open ask (summary, options with their consequences,
-/// inline reply), the receipt after a choice ("You chose X · Undo"), queued while offline (amber),
+/// inline reply), the receipt after a choice ("You chose X · Undo"), queued while offline (notice),
 /// waiting on an agent after a typed reply, and a rolled-back failure.
 struct DecisionCardView: View {
 	struct Actions {
@@ -280,7 +280,7 @@ struct DecisionCardView: View {
 					if let type = card.objectType {
 						// The type's hue is the one documented colour exception in this card.
 						RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-							.fill(MaskinObjectType.colors(for: type).fg)
+							.fill(MaskinObjectType.dotColor(for: type))
 							.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 							.accessibilityHidden(true)
 						Text(type.uppercased())

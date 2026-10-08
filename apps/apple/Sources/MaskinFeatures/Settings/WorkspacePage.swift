@@ -52,7 +52,7 @@ extension PageStateTone {
 		switch self {
 		case .active: MaskinColor.sigInk
 		case .muted: MaskinColor.ink5
-		case .notice: MaskinColor.warning
+		case .notice: MaskinColor.noticeFg3
 		case .plain: MaskinColor.ink3
 		}
 	}

@@ -172,7 +172,7 @@ struct MarketplaceContent: View {
 				Button { path.append(row.sourceLoopID) } label: {
 					HStack(spacing: MaskinSpace.s5) {
 						Image(systemName: "arrow.triangle.2.circlepath")
-							.foregroundStyle(MaskinColor.warningStrong)
+							.foregroundStyle(MaskinColor.sigInk)
 							.accessibilityHidden(true)
 						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 							Text(row.loopName).maskinText(.headline).foregroundStyle(MaskinColor.ink)
@@ -253,7 +253,7 @@ struct InstallBadge: View {
 				Text(row.hasUpdate ? "Update" : "Installed")
 			}
 			.maskinText(.subhead)
-			.foregroundStyle(row.hasUpdate ? MaskinColor.warningStrong : MaskinColor.success)
+			.foregroundStyle(row.hasUpdate ? MaskinColor.sigInk : MaskinColor.doneFg)
 		}
 	}
 }
