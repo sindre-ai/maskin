@@ -257,6 +257,98 @@ describe('POST /api/integrations/resend/connect — two-call handshake', () => {
 		expect(rows).toHaveLength(0)
 	})
 
+	describe('bare-domain guard', () => {
+		let resolveMxSpy: ReturnType<typeof vi.spyOn>
+
+		beforeEach(() => {
+			resolveMxSpy = vi.spyOn(dns, 'resolveMx')
+		})
+
+		afterEach(() => {
+			resolveMxSpy.mockRestore()
+		})
+
+		async function connect(receiveSubdomain: string) {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			const res = await buildApp().request(
+				jsonPost(
+					'/api/integrations/resend/connect',
+					{ api_key: 're_test_valid_key', receive_subdomain: receiveSubdomain },
+					{ 'x-workspace-id': ws.id },
+				),
+			)
+			const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, ws.id))
+			return { res, rows }
+		}
+
+		it('returns 400 BARE_DOMAIN_HAS_MAIL without calling Resend for an apex with a foreign MX', async () => {
+			resolveMxSpy.mockResolvedValue([{ exchange: 'aspmx.l.google.com', priority: 1 }])
+
+			const { res, rows } = await connect('example.com')
+
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as {
+				error: { details?: Array<{ field: string; message: string }> }
+			}
+			expect(body.error.details).toEqual(
+				expect.arrayContaining([
+					{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
+					{ field: 'existing_mx', message: 'aspmx.l.google.com' },
+				]),
+			)
+			expect(fetchSpy).not.toHaveBeenCalled()
+			expect(rows).toHaveLength(0)
+		})
+
+		it('connects an apex that has no MX', async () => {
+			resolveMxSpy.mockRejectedValue(
+				Object.assign(new Error('ENODATA example.com'), { code: 'ENODATA' }),
+			)
+			fetchSpy.mockImplementation(async (_url: RequestInfo | URL, init?: RequestInit) =>
+				init?.method === 'POST'
+					? new Response(JSON.stringify(RESEND_DOMAIN_RESPONSE), { status: 200 })
+					: new Response(JSON.stringify({ data: [] }), { status: 200 }),
+			)
+
+			const { res, rows } = await connect('example.com')
+
+			expect(res.status).toBe(200)
+			expect(rows).toHaveLength(1)
+		})
+
+		it('connects mail.maskin.io without looking up MX', async () => {
+			fetchSpy.mockImplementation(async (_url: RequestInfo | URL, init?: RequestInit) =>
+				init?.method === 'POST'
+					? new Response(JSON.stringify(RESEND_DOMAIN_RESPONSE), { status: 200 })
+					: new Response(JSON.stringify({ data: [] }), { status: 200 }),
+			)
+
+			const { res, rows } = await connect('mail.maskin.io')
+
+			expect(res.status).toBe(200)
+			expect(rows).toHaveLength(1)
+			expect(resolveMxSpy).not.toHaveBeenCalled()
+		})
+
+		it.each(['not a domain', 'mail..example.com', '-mail.example.com', 'localhost'])(
+			'returns 400 INVALID_DOMAIN without calling Resend for %s',
+			async (name) => {
+				const { res, rows } = await connect(name)
+
+				expect(res.status).toBe(400)
+				const body = (await res.json()) as {
+					error: { details?: Array<{ field: string; message: string }> }
+				}
+				expect(body.error.details).toEqual(
+					expect.arrayContaining([{ field: 'code', message: 'INVALID_DOMAIN' }]),
+				)
+				expect(fetchSpy).not.toHaveBeenCalled()
+				expect(rows).toHaveLength(0)
+			},
+		)
+	})
+
 	it('falls through to Skjald behaviour verbatim when the resend body is absent (non-resend provider)', async () => {
 		vi.mocked(getProvider).mockImplementation((name: string) => {
 			if (name === 'skjald') {
