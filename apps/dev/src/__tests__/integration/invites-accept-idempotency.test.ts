@@ -1,5 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { workspaceInvitations } from '@maskin/db/schema'
+import { idempotencyRecords, workspaceInvitations } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -28,7 +29,7 @@ function app() {
 	return outer
 }
 
-describe('Invites — retrying POST /:token/accept with the same Idempotency-Key', () => {
+describe('Invites — POST /:token/accept with an Idempotency-Key', () => {
 	let workspaceId: string
 	let inviterId: string
 
@@ -39,7 +40,7 @@ describe('Invites — retrying POST /:token/accept with the same Idempotency-Key
 		await setWorkspacePlan(db, workspaceId, 'pro')
 	})
 
-	it('gives the invitee the same answer, including their key, when the first reply was lost', async () => {
+	it('never writes the invitee key to the idempotency ledger', async () => {
 		const rawToken = generateInviteToken()
 		await db.insert(workspaceInvitations).values({
 			workspaceId,
@@ -51,25 +52,22 @@ describe('Invites — retrying POST /:token/accept with the same Idempotency-Key
 			metadata: {},
 		})
 
-		const send = () =>
-			app().request(
-				jsonRequest(
-					'POST',
-					`/api/invites/${rawToken}/accept`,
-					{ email: 'retry-newbie@example.com', password: 'correct-horse-battery-staple' },
-					{ 'Idempotency-Key': 'accept-retry-1' },
-				),
-			)
+		const res = await app().request(
+			jsonRequest(
+				'POST',
+				`/api/invites/${rawToken}/accept`,
+				{ email: 'retry-newbie@example.com', password: 'correct-horse-battery-staple' },
+				{ 'Idempotency-Key': 'accept-ledger-1' },
+			),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { actor: { api_key: string } }
+		expect(body.actor.api_key).toMatch(/^ank_/)
 
-		const first = await send()
-		expect(first.status).toBe(201)
-		const firstBody = (await first.json()) as { actor: { api_key: string } }
-		expect(firstBody.actor.api_key).toMatch(/^ank_/)
-
-		// The client never saw the first reply and sends the identical request again.
-		const retry = await send()
-		expect(retry.status).toBe(201)
-		const retryBody = (await retry.json()) as { actor: { api_key: string } }
-		expect(retryBody.actor.api_key).toBe(firstBody.actor.api_key)
+		const rows = await db
+			.select()
+			.from(idempotencyRecords)
+			.where(eq(idempotencyRecords.key, 'anon:accept-ledger-1'))
+		expect(rows).toHaveLength(0)
 	})
 })
