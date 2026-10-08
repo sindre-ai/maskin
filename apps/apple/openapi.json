@@ -16999,6 +16999,12 @@
 															"null"
 														]
 													},
+													"tags": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"inProgressCount": {
 														"type": "integer",
 														"minimum": 0
@@ -17113,6 +17119,7 @@
 													"pill",
 													"entryCondition",
 													"closeCondition",
+													"tags",
 													"inProgressCount",
 													"closedCount",
 													"medianTimeToCloseMs",

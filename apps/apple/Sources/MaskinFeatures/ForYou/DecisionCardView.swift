@@ -29,6 +29,8 @@ struct DecisionCardView: View {
 	/// Where replies and quick questions go: the Chief of Staff. Without it (a card shown outside
 	/// the feed) the card keeps its plain reply field, which comments on the object.
 	var chief: ChiefOfStaffDesk?
+	/// iPad split view: the thread opens in the detail column, so an open thread never expands the card.
+	var threadInDetail = false
 
 	@State private var draft = ""
 	@State private var composerFocused = false
@@ -46,7 +48,7 @@ struct DecisionCardView: View {
 		CardExpansion.Engagement(
 			composerFocused: composerFocused,
 			hasDraft: chief.map { !$0.composer(for: card).text.isEmpty } ?? !draft.isEmpty,
-			threadOpen: chief?.presented?.card.id == card.id)
+			threadOpen: !threadInDetail && chief?.presented?.card.id == card.id)
 	}
 
 	private var isExpanded: Bool {

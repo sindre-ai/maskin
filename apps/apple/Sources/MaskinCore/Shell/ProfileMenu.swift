@@ -16,7 +16,7 @@ public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Send
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
 	case agents, marketplace, artefacts, members, integrations, triggers, billing, keys
-	case settings, notifications
+	case settings
 
 	public var id: String { rawValue }
 
@@ -31,7 +31,6 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .billing: "Billing"
 		case .keys: "Keys"
 		case .settings: "Settings"
-		case .notifications: "Notifications"
 		}
 	}
 
@@ -47,7 +46,6 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .billing: "Plan, seats, invoices"
 		case .keys: "API keys for outside tools"
 		case .settings: "Appearance, workspace, account"
-		case .notifications: "What needs you, and what happened"
 		}
 	}
 
@@ -55,7 +53,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		switch self {
 		case .agents, .marketplace, .artefacts, .members, .integrations, .triggers, .billing, .keys:
 			.workspace
-		case .settings, .notifications: .you
+		case .settings: .you
 		}
 	}
 

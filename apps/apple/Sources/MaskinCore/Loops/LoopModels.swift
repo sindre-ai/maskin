@@ -70,6 +70,8 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var pill: LoopPill
 	public var entryCondition: String?
 	public var closeCondition: String?
+	/// Team, business unit or part of the business this loop belongs to (`metadata.tags`).
+	public var tags: [String]
 	public var inProgressCount: Int
 	public var closedCount: Int
 	public var medianTimeToClose: TimeInterval?
@@ -84,6 +86,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public init(
 		id: String, name: String?, content: String? = nil, status: LoopPill = .learning,
 		pill: LoopPill? = nil, entryCondition: String? = nil, closeCondition: String? = nil,
+		tags: [String] = [],
 		inProgressCount: Int = 0, closedCount: Int = 0, medianTimeToClose: TimeInterval? = nil,
 		agentIDs: [String] = [], triggerIDs: [String] = [], waitingCount: Int = 0,
 		createdAt: Date? = nil, updatedAt: Date? = nil, targets: [LoopTarget]? = nil
@@ -96,6 +99,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 		self.pill = pill ?? status
 		self.entryCondition = entryCondition
 		self.closeCondition = closeCondition
+		self.tags = tags
 		self.inProgressCount = inProgressCount
 		self.closedCount = closedCount
 		self.medianTimeToClose = medianTimeToClose
@@ -112,6 +116,12 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	}
 
 	public var isPaused: Bool { status == .paused }
+
+	/// Share of the loop's work that has closed, 0...1: the progress ring on the watch and TV.
+	public var ringProgress: Double {
+		let total = inProgressCount + closedCount
+		return total == 0 ? 0 : Double(closedCount) / Double(total)
+	}
 
 	/// "3 in progress · 12 closed"
 	public var statsLine: String {

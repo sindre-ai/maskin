@@ -96,34 +96,39 @@ struct LiveVoicePanel: View {
 		}
 	}
 
+	/// The live controls are the whole interaction while you talk, so they are big (64 pt) and spread
+	/// across the panel instead of sitting together in the middle.
+	private static let controlSize = MaskinSpace.s14 * 2
+
 	private var controls: some View {
-		HStack(spacing: MaskinSpace.s3) {
+		HStack(spacing: 0) {
 			Spacer(minLength: 0)
 			Button(action: onToggleMute) {
 				Image(systemName: muted ? "mic.slash.fill" : "mic.fill")
-					.font(.system(size: MaskinFontSize.t16, weight: .medium))
+					.font(.system(size: MaskinFontSize.t22, weight: .medium))
 					.foregroundStyle(muted ? MaskinColor.danger : MaskinColor.ink3)
-					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+					.frame(width: Self.controlSize, height: Self.controlSize)
 					.background(MaskinSurface.fill, in: Circle())
 			}
 			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel(muted ? "Turn the microphone on" : "Mute the microphone")
+			Spacer(minLength: MaskinSpace.s12)
 			Button {
 				MaskinHaptics.play(.medium)
 				onEnd()
 			} label: {
 				Label("End", systemImage: "xmark")
-					.maskinText(.subhead).fontWeight(.semibold)
+					.maskinText(.headline).fontWeight(.semibold)
 					.foregroundStyle(MaskinSurface.onInverse)
-					.padding(.horizontal, MaskinSpace.s10)
-					.frame(height: MaskinSpace.touchMin)
+					.padding(.horizontal, MaskinSpace.s14)
+					.frame(height: Self.controlSize)
 					.background(MaskinSurface.inverse, in: Capsule())
 			}
 			.buttonStyle(.maskinPressed(.shrink))
 			.accessibilityLabel("End the live conversation")
 			Spacer(minLength: 0)
 		}
-		.padding(.horizontal, MaskinSpace.s5)
-		.padding(.bottom, MaskinSpace.s5)
+		.padding(.horizontal, MaskinSpace.s9)
+		.padding(.bottom, MaskinSpace.s9)
 	}
 }

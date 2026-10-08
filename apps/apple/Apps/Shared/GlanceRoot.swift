@@ -1,25 +1,24 @@
 import MaskinCore
 import SwiftUI
 
-/// Root of the watchOS and tvOS apps: sign in, then a glanceable list of what needs the user.
-/// Uses only MaskinCore stores (`NotificationsStore`, `WorkspaceStore`) plus MaskinDesign/MaskinUI.
-struct GlanceRoot<Extra: View>: View {
+/// Root of the watchOS and tvOS apps: sign in, then whatever `content` builds from the signed-in
+/// actor's For You runtime (nil until it exists). One `ForYouRuntime` per actor, built here and not in
+/// `init`, so a re-render never starts a second listener.
+struct GlanceRoot<Content: View>: View {
 	private let environment: AppEnvironment
-	private let extra: Extra
-	@State private var store: NotificationsStore
+	private let content: (ForYouRuntime?) -> Content
+	@State private var forYou: ForYouRuntime?
 
-	/// `extra` is an optional section shown under the inbox (the watch adds Chats there).
-	init(environment: AppEnvironment, @ViewBuilder extra: () -> Extra) {
+	init(environment: AppEnvironment, @ViewBuilder content: @escaping (ForYouRuntime?) -> Content) {
 		self.environment = environment
-		self.extra = extra()
-		_store = State(initialValue: NotificationsStore(environment: environment))
+		self.content = content
 	}
 
 	var body: some View {
 		let auth = environment.auth
 		Group {
 			if auth.session != nil {
-				GlanceInbox(environment: environment, store: store) { extra }
+				content(forYou)
 			} else {
 				GlanceLogin(auth: auth)
 			}
@@ -27,11 +26,14 @@ struct GlanceRoot<Extra: View>: View {
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }
 		.task(id: auth.credentials) {
 			environment.syncEvents()
-			store.activate(workspaceId: environment.workspaceId, events: environment.events)
+			forYou?.stop()
+			guard auth.session != nil else {
+				forYou = nil
+				return
+			}
+			let runtime = ForYouRuntime.make(environment: environment)
+			forYou = runtime
+			await runtime.store.load()
 		}
 	}
-}
-
-extension GlanceRoot where Extra == EmptyView {
-	init(environment: AppEnvironment) { self.init(environment: environment) { EmptyView() } }
 }

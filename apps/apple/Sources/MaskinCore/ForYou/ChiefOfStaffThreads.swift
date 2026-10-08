@@ -163,6 +163,23 @@ public final class ChiefOfStaffDesk {
 		await open(card: card, text: question, metadata: nil) {}
 	}
 
+	/// Opens the card's thread with nothing to send, for the iPad detail column ("Ask" there goes
+	/// straight to the conversation instead of expanding the card).
+	public func openThread(card: ForYouCard) async {
+		guard !isOpening else { return }
+		isOpening = true
+		defer { isOpening = false }
+		do {
+			let outcome = try await ChiefOfStaffThreads.open(
+				about: card, alsoInvite: [], conversations: conversations)
+			presented = Presented(conversationID: outcome.conversation.id, card: card, pending: nil)
+		} catch is ChiefOfStaffThreads.NoChiefOfStaff {
+			notice = "This workspace has no Chief of Staff to message."
+		} catch {
+			notice = "Couldn't open the conversation. \(ChatStore.message(error))"
+		}
+	}
+
 	private func open(
 		card: ForYouCard, text: String, metadata: ChatSendMetadata?, restore: () -> Void
 	) async {

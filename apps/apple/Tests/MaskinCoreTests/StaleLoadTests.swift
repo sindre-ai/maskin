@@ -29,62 +29,9 @@ actor Gate {
 	}
 }
 
-// MARK: - NotificationsStore
-
-private struct GatedNotifications: NotificationsSource {
-	let gate: Gate
-	let rows: [AppNotification]
-	func list() async throws -> [AppNotification] {
-		await gate.wait()
-		return rows
-	}
-	func setStatus(id: String, status: AppNotification.Status) async throws -> AppNotification {
-		throw NotificationsError("unused")
-	}
-	func delete(id: String) async throws {}
-	func respond(id: String, response: JSONValue) async throws -> AppNotification {
-		throw NotificationsError("unused")
-	}
-	func actors(ids: [String]) async throws -> [NotificationActor] { [] }
-}
-
 @MainActor
 @Suite("Stale loads are not applied")
 struct StaleLoadTests {
-	@Test("a notifications load that started before a workspace switch is dropped")
-	func notificationsAcrossReset() async {
-		let gate = Gate()
-		let store = NotificationsStore(
-			source: GatedNotifications(gate: gate, rows: [makeNotification("old-workspace")]),
-			currentActorId: { "me" })
-		let load = Task { await store.reload() }
-		await gate.waitUntilStarted()
-
-		store.reset()  // workspace switch / sign-out while the request is in flight
-		await gate.release()
-		await load.value
-
-		#expect(store.notifications.isEmpty, "the previous workspace's rows must not appear")
-		#expect(store.phase != .loaded)
-	}
-
-	@Test("a notifications load that started under another user is dropped")
-	func notificationsAcrossActor() async {
-		let gate = Gate()
-		var actor: String? = "alice"
-		let store = NotificationsStore(
-			source: GatedNotifications(gate: gate, rows: [makeNotification("a1", target: "alice")]),
-			currentActorId: { actor })
-		let load = Task { await store.reload() }
-		await gate.waitUntilStarted()
-
-		actor = "bob"
-		await gate.release()
-		await load.value
-
-		#expect(store.notifications.isEmpty)
-	}
-
 	// MARK: WorkspaceStore
 
 	@Test("a workspace list fetched for a signed-out user never selects a workspace for the next one")

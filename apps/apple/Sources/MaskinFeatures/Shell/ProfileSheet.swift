@@ -8,8 +8,8 @@ import SwiftUI
 /// More tab.
 ///
 /// The sheet hosts ONE `NavigationStack`. Every row pushes a page onto it (Your profile, Members,
-/// Integrations, Triggers, Billing, Keys, and the existing Agents, Marketplace, Artefacts, Settings
-/// and Notifications screens in their embedded mode: no stack and no Done button of their own).
+/// Integrations, Triggers, Billing, Keys, and the existing Agents, Marketplace, Artefacts and Settings
+/// screens in their embedded mode: no stack and no Done button of their own).
 /// Only the workspace switcher is still a sheet, because it is a picker.
 struct ProfileSheet: View {
 	let environment: AppEnvironment
@@ -125,10 +125,6 @@ struct ProfileSheet: View {
 			KeysPage(store: services.apiKeyStore())
 		case .settings:
 			SettingsScreen(environment: environment)
-		case .notifications:
-			NotificationsScreen(environment: environment, store: runtime.notifications)
-				.environment(runtime.router)
-				.task { await runtime.requestPushPermission() }
 		}
 	}
 
@@ -186,10 +182,7 @@ struct ProfileSheet: View {
 		VStack(spacing: 0) {
 			ForEach(Array(items.enumerated()), id: \.element) { index, item in
 				if index > 0 { separator() }
-				ProfileRow(
-					title: item.title, symbol: item.symbol,
-					badge: item == .notifications ? runtime.notifications.unreadCount : 0
-				) { path.append(.item(item)) }
+				ProfileRow(title: item.title, symbol: item.symbol) { path.append(.item(item)) }
 			}
 		}
 		.profileCard()
@@ -252,7 +245,6 @@ extension ProfileMenuItem {
 		case .marketplace: "square.grid.2x2"
 		case .artefacts: "doc.text"
 		case .settings: "gearshape"
-		case .notifications: "bell"
 		case .triggers: "bolt"
 		case .members: "person.2"
 		case .integrations: "puzzlepiece.extension"

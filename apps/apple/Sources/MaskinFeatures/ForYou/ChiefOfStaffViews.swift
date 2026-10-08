@@ -45,6 +45,8 @@ struct ChiefOfStaffSheet: View {
 	let environment: AppEnvironment
 	let desk: ChiefOfStaffDesk
 	let presented: ChiefOfStaffDesk.Presented
+	/// Closes the thread where it is not a sheet (the iPad detail column). Nil: dismiss the sheet.
+	var onClose: (() -> Void)?
 
 	@Environment(\.dismiss) private var dismiss
 	@State private var holder = Holder()
@@ -111,7 +113,7 @@ struct ChiefOfStaffSheet: View {
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s3)
-			Button { dismiss() } label: {
+			Button { if let onClose { onClose() } else { dismiss() } } label: {
 				Image(systemName: "xmark")
 					.font(.system(size: MaskinFontSize.t13, weight: .bold))
 					.foregroundStyle(MaskinColor.ink4)

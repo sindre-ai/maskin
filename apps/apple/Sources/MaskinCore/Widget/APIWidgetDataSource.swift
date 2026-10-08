@@ -32,7 +32,7 @@ public struct APIWidgetDataSource: WidgetDataSource {
 		try await forYou.fetchActors(workspaceId: workspaceId)
 	}
 
-	/// One page of `status=pending`: the same rows `NotificationsStore.unreadCount` counts.
+	/// One page of `status=pending` notifications.
 	public func unreadNotificationCount(workspaceId: String) async throws -> Int {
 		let output = try await client.get_sol_api_sol_notifications(
 			query: .init(status: "pending", limit: WidgetSnapshot.unreadCap),

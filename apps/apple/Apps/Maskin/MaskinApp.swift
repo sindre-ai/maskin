@@ -55,6 +55,10 @@ struct MaskinApp: App {
 			#if os(iOS)
 				.frame(minWidth: WindowMetrics.minimumWidth, minHeight: WindowMetrics.minimumHeight)
 			#endif
+			// "Open on iPhone" from the watch: the card the wearer was looking at.
+			.onContinueUserActivity(HandoffActivity.type) { activity in
+				if let url = HandoffActivity.link(from: activity.userInfo) { IntentDeepLinkRelay.open(url) }
+			}
 			.onContinueUserActivity(CSSearchableItemActionType) { activity in
 				guard
 					let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String

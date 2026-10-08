@@ -301,65 +301,6 @@ struct ObjectDetailCacheTests {
 	}
 }
 
-// MARK: - Notifications
-
-@MainActor
-@Suite("Store cache: Notifications")
-struct NotificationsCacheTests {
-	private func store(_ rig: Rig, _ source: FakeNotificationsSource) -> NotificationsStore {
-		let identity = rig.identity
-		return NotificationsStore(
-			source: source, currentActorId: { identity.actor }, cache: rig.cache)
-	}
-
-	@Test func cachedInboxIsShownBeforeAnyNetworkCall() async {
-		let rig = Rig()
-		defer { rig.cleanUp() }
-		await store(rig, FakeNotificationsSource([makeNotification("n1")])).reload()
-
-		let idle = FakeNotificationsSource([])
-		let second = store(rig, idle)
-		#expect(second.notifications.map(\.id) == ["n1"])
-		#expect(second.unreadCount == 1)
-		#expect(second.freshness.source == .cache)
-		#expect(await idle.listCalls == 0)
-		// The sender's name came with it.
-		#expect(second.actor(for: "agent-1")?.name == "Relay")
-	}
-
-	@Test func revalidatingReplacesTheCachedInbox() async {
-		let rig = Rig()
-		defer { rig.cleanUp() }
-		await store(rig, FakeNotificationsSource([makeNotification("n1")])).reload()
-		let second = store(rig, FakeNotificationsSource([makeNotification("n2")]))
-		await second.reload()
-		#expect(second.notifications.map(\.id) == ["n2"])
-		#expect(second.freshness.source == .network)
-	}
-
-	@Test func aFailedRevalidateKeepsTheCachedInbox() async {
-		let rig = Rig()
-		defer { rig.cleanUp() }
-		await store(rig, FakeNotificationsSource([makeNotification("n1")])).reload()
-		let down = FakeNotificationsSource([])
-		await down.setFailList(true)
-		let second = store(rig, down)
-		await second.reload()
-		#expect(second.notifications.map(\.id) == ["n1"])
-		#expect(second.phase == .loaded)
-		#expect(second.isOffline)
-		#expect(second.freshness.isStale)
-	}
-
-	@Test func anotherActorSeesNothing() async {
-		let rig = Rig()
-		defer { rig.cleanUp() }
-		await store(rig, FakeNotificationsSource([makeNotification("n1")])).reload()
-		rig.identity.actor = "actor-b"
-		#expect(store(rig, FakeNotificationsSource([])).notifications.isEmpty)
-	}
-}
-
 // MARK: - Loops, Triggers, Agents
 
 @MainActor

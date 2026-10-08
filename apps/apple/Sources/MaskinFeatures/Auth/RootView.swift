@@ -80,7 +80,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: auth.credentials) { environment.syncEvents() }
 		.task(id: runtime.syncKey) { runtime.sync() }
 		.task(id: auth.session?.actorId) { await runtime.actorChanged(auth.session?.actorId) }
-		.onChange(of: runtime.notifications.unreadCount, initial: true) { runtime.updateBadge() }
+		.task { runtime.updateBadge() }
 		.onChange(of: [auth.session?.actorId ?? "", auth.session?.workspaceId ?? ""]) {
 			widgetReloader.reload()
 		}

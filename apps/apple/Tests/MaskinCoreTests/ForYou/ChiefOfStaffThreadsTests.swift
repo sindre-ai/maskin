@@ -134,6 +134,15 @@ struct ChiefOfStaffDeskTests {
 		#expect(desk.presented?.card == card)
 	}
 
+	@Test("opening a thread without a message presents it with nothing pending")
+	func opensEmpty() async {
+		let existing = chatConvo("c9", title: "About: Onboarding redesign", participants: [chatMe, chief])
+		let desk = desk(CoSAPI(items: [existing]))
+		await desk.openThread(card: card)
+		#expect(desk.presented?.conversationID == "c9")
+		#expect(desk.presented?.pending == nil)
+	}
+
 	@Test("a failure gives the words back and says why")
 	func failure() async {
 		let desk = desk(CoSAPI(actors: []))
