@@ -62,6 +62,7 @@ struct BriefViewer: View {
 			}
 		}
 		.offset(y: dragY)
+		.background { arrowKeys }
 		.simultaneousGesture(swipeDown)
 		.preferredColorScheme(.dark)
 		.accessibilityElement(children: .contain)
@@ -101,6 +102,20 @@ struct BriefViewer: View {
 			last = now
 			playback.tick(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
 		}
+	}
+
+	// MARK: Keyboard
+
+	/// Left and right arrows move between slides for a hardware keyboard (iPad, Mac); Esc is the
+	/// Close button's cancel shortcut. Zero-size so they take no layout and VoiceOver skips them.
+	private var arrowKeys: some View {
+		HStack {
+			Button("Previous") { playback.previous() }.keyboardShortcut(.leftArrow, modifiers: [])
+			Button("Next") { playback.next() }.keyboardShortcut(.rightArrow, modifiers: [])
+		}
+		.frame(width: 0, height: 0)
+		.opacity(0)
+		.accessibilityHidden(true)
 	}
 
 	// MARK: Gestures
@@ -157,6 +172,7 @@ struct BriefViewer: View {
 						.maskinGlass(in: Circle(), interactive: true)
 				}
 				.buttonStyle(.maskinPressed)
+				.keyboardShortcut(.cancelAction)
 				.accessibilityLabel("Close")
 			}
 		}
