@@ -243,8 +243,7 @@ struct LoopRunChart: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack(alignment: .firstTextBaseline) {
 				Text("LAST 7 DAYS")
-					.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold))
-					.tracking(0.08 * MaskinFontSize.t11)
+					.maskinText(.microLabel)
 					.foregroundStyle(MaskinColor.ink5)
 				Spacer(minLength: MaskinSpace.s4)
 				Text(loaded ? summaryText(days, now: now) : "")

@@ -145,8 +145,7 @@ struct BriefViewer: View {
 			HStack(spacing: MaskinSpace.s5) {
 				if card.loopID == nil { ChiefOfStaffTile(size: MaskinSpace.s12) }
 				Text(card.unit.uppercased())
-					.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold))
-					.tracking(0.66)
+					.maskinText(.microLabelLarge)
 					.foregroundStyle(MaskinPatina.viewerAccent)
 					.lineLimit(1)
 				Spacer(minLength: 0)

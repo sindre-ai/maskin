@@ -155,14 +155,14 @@ struct ObjectGroupHeader: View {
 					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 					.accessibilityHidden(true)
 				Text((group.title ?? group.id).uppercased())
-					.maskinText(.microLabelLarge)
+					.maskinText(.microLabel)
 					.foregroundStyle(MaskinColor.ink4)
 			} else if !group.id.isEmpty {
 				Text(MaskinStatus.label(for: group.id).uppercased())
-					.maskinText(.microLabelLarge)
+					.maskinText(.microLabel)
 					.foregroundStyle(MaskinColor.ink4)
 			}
-			Text("\(group.objects.count)").maskinText(.microLabelLarge).foregroundStyle(MaskinColor.ink5)
+			Text("\(group.objects.count)").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
 			Spacer()
 		}
 		.textCase(nil)

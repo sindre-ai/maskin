@@ -71,7 +71,9 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	case caption
 	/// Uppercase mono micro-label (10 / semibold, +0.08em).
 	case microLabel
-	/// The larger uppercase mono micro-label (12 / semibold, +0.07em).
+	/// The larger uppercase mono micro-label (12 / semibold, +0.07em). Only for a label that stands
+	/// alone in a header (the story player's unit, a thread's context link); chips, row type labels and
+	/// section labels use `.microLabel`. 9pt exists only inside briefing cards.
 	case microLabelLarge
 	/// Machine-shaped text: ids, counts, cron.
 	case mono

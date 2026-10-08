@@ -163,7 +163,7 @@ struct PageGroupLabel: View {
 	let text: String
 	var body: some View {
 		Text(text)
-			.maskinText(.microLabelLarge)
+			.maskinText(.microLabel)
 			.textCase(.uppercase)
 			.foregroundStyle(MaskinColor.ink4)
 			.padding(.horizontal, MaskinSpace.s2)

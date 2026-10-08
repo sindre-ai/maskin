@@ -101,12 +101,12 @@ struct ObjectsBoardView: View {
 					StatusCategoryGlyph(category: StatusCategory.of(column.value))
 				}
 				Text(MaskinStatus.label(for: column.value).uppercased())
-					.maskinText(.microLabelLarge)
+					.maskinText(.microLabel)
 					.foregroundStyle(MaskinColor.ink4)
 					.lineLimit(1)
 				Spacer(minLength: MaskinSpace.s3)
 				Text("\(board.count(in: column, needsYouOnly: needsYouOnly))")
-					.maskinText(.microLabelLarge)
+					.maskinText(.microLabel)
 					.foregroundStyle(MaskinColor.ink5)
 			}
 			.padding(.horizontal, MaskinSpace.s3)
