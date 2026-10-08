@@ -32,7 +32,7 @@ public struct MainShell: View {
 					ForEach(ShellTab.allCases) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
-							.badge(tab.badge(runtime: runtime, badges: badges))
+							.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
 							.tag(tab)
 					}
 				}
@@ -78,7 +78,7 @@ private struct AdaptiveTabs: View {
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
-				.badge(tab.badge(runtime: runtime, badges: badges))
+				.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
 			}
 			// The system search role: a detached search button on iOS 26 (a plain trailing tab
 			// before that, a sidebar entry on iPad and the Mac). The only search entry point.
@@ -148,13 +148,17 @@ private struct ShellTabContent: View {
 }
 
 extension ShellTab {
-	/// The count on the tab: open decisions on For you, unread conversations on Team. Zero shows nothing.
+	/// The badge on the tab: open decisions on For you (a dot when only updates are unread), unread
+	/// conversations on Team. Nothing when there is nothing.
 	@MainActor
-	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> Int {
+	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
 		switch self {
-		case .forYou: runtime.forYou.store.needsCount
-		case .chats: badges.unreadChats
-		default: 0
+		case .forYou:
+			let store = runtime.forYou.store
+			return .make(
+				count: store.needsCount, hasUnreadWithoutCount: store.unreadCount > store.needsCount)
+		case .chats: return .make(count: badges.unreadChats)
+		default: return .none
 		}
 	}
 }
