@@ -369,7 +369,8 @@ struct MessageRow: View {
 			.contentShape(Capsule())
 	}
 
-	private static let emojiSize: CGFloat = 44
+	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
+	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
 	/// A long message shows this much, then "Show more". It only collapses if opening it would reveal
 	/// at least `collapseSlack` more, so a message a few lines over the line is never hidden.
 	private static let collapsedHeight: CGFloat = 300
@@ -393,7 +394,7 @@ struct MessageRow: View {
 		let dimmed = message.isPending && !message.isFailed
 		Group {
 			if message.isEmojiOnly {
-				Text(message.content).font(.system(size: Self.emojiSize))
+				Text(message.content).font(.system(size: emojiSize))
 			} else {
 				MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
 			}

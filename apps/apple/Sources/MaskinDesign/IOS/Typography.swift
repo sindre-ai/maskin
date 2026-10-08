@@ -131,6 +131,15 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		}
 	}
 
+	/// The largest Dynamic Type size the role follows. Mono labels stop at `.xxxLarge`; everything
+	/// else scales all the way through the accessibility sizes.
+	public var dynamicTypeCeiling: DynamicTypeSize {
+		switch self {
+		case .microLabel, .microLabelLarge: MaskinScaling.monoLabelCeiling
+		default: .accessibility5
+		}
+	}
+
 	public var isUppercase: Bool { self == .microLabel || self == .microLabelLarge }
 }
 
@@ -139,5 +148,6 @@ extension View {
 	/// `MonoLabel` (it is a string transform, not a style).
 	public func maskinText(_ role: MaskinTextRole) -> some View {
 		font(role.font).tracking(role.trackingEm * role.referenceSize)
+			.dynamicTypeSize(...role.dynamicTypeCeiling)
 	}
 }

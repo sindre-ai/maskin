@@ -16,7 +16,7 @@ struct EmojiSuggestions: View {
 					onPick(item)
 				} label: {
 					HStack(spacing: MaskinSpace.s6) {
-						Text(item.emoji).font(.system(size: MaskinFontSize.t22))
+						Text(item.emoji).font(MaskinTypeface.sans(MaskinFontSize.t22, relativeTo: .title2))
 						Text(":\(item.name):").maskinText(.body).foregroundStyle(MaskinColor.ink2)
 						Spacer(minLength: 0)
 					}
@@ -48,7 +48,7 @@ struct EmojiPickerGrid: View {
 						MaskinHaptics.play(.selection)
 						onPick(emoji)
 					} label: {
-						Text(emoji).font(.system(size: MaskinFontSize.t22))
+						Text(emoji).font(MaskinTypeface.sans(MaskinFontSize.t22, relativeTo: .title2))
 							.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 							.contentShape(Rectangle())
 					}
