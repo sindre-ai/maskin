@@ -141,19 +141,26 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 	// Document-level check — kept, because `overflow-x: clip` on html/body in
 	// `apps/web/src/app.css` is the reason inner overflow can hide from this
 	// check today, and a future revert of that rule must still fail the gate.
-	expect(
-		report.docScrollWidth,
-		`${surface} document overflows horizontally at ${viewport.label}: scrollWidth=${report.docScrollWidth} > innerWidth=${report.innerWidth}`,
-	).toBeLessThanOrEqual(report.innerWidth + HORIZONTAL_OVERFLOW_TOLERANCE_PX)
+	// Soft assertions: the surface loop keeps walking after a failure, so one run
+	// lists every offending surface instead of stopping at the first. The test
+	// still fails at the end.
+	expect
+		.soft(
+			report.docScrollWidth,
+			`${surface} document overflows horizontally at ${viewport.label}: scrollWidth=${report.docScrollWidth} > innerWidth=${report.innerWidth}`,
+		)
+		.toBeLessThanOrEqual(report.innerWidth + HORIZONTAL_OVERFLOW_TOLERANCE_PX)
 
 	// Inner-scroller check — flags any element whose own scrollWidth exceeds its
 	// clientWidth without an explicit horizontal-scroll intent in the source.
 	// This is what asserts the chats thread scroller (and any other future
 	// vertical-primary container) actually contains its content.
-	expect(
-		report.offenders,
-		`${surface} has inner-scroller horizontal overflow at ${viewport.label} (innerWidth=${report.innerWidth}): ${JSON.stringify(report.offenders)}`,
-	).toEqual([])
+	expect
+		.soft(
+			report.offenders,
+			`${surface} has inner-scroller horizontal overflow at ${viewport.label} (innerWidth=${report.innerWidth}): ${JSON.stringify(report.offenders)}`,
+		)
+		.toEqual([])
 }
 
 // Critical controls that must remain visible at every ship-gate viewport on the
