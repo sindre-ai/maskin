@@ -25,9 +25,9 @@ public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
 	/// none: it is the system search tab, and its field is the bar.
 	public var barItems: [ShellBarItem] {
 		switch self {
-		case .forYou: [.live, .display, .avatar]
-		case .chats: [.new, .display, .avatar]
-		case .loops: [.avatar]
+		case .forYou: [.display, .live, .avatar]
+		case .chats: [.display, .new, .avatar]
+		case .loops: [.display, .avatar]
 		case .objects: [.display, .avatar]
 		case .search: [.avatar]
 		}

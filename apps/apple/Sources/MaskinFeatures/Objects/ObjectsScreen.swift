@@ -49,7 +49,9 @@ public struct ObjectsScreen: View {
 
 	/// Search is the list's own `.searchable`; Display holds the filters and grouping.
 	private var shellActions: ShellActions {
-		ShellActions(display: ShellDisplayMenu { ObjectsDisplayMenu(store: store, picking: picking) })
+		ShellActions(
+			display: ShellDisplayMenu { ObjectsDisplayMenu(store: store, picking: picking) },
+			displaySymbol: ShellActions.slidersSymbol)
 	}
 
 	// MARK: iPhone
