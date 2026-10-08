@@ -4,6 +4,7 @@ import {
 	events,
 	actors,
 	notifications,
+	objects,
 	readState,
 	subscriptions,
 	workspaceMembers,
