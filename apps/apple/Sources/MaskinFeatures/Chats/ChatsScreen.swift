@@ -105,6 +105,11 @@ private struct ChatsContainer: View {
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
+		.onChange(of: runtime?.newConversationRequested ?? false) { _, requested in
+			guard requested else { return }
+			runtime?.newConversationRequested = false
+			showNewChat = true
+		}
 		.sheet(isPresented: $showNewChat, onDismiss: { pendingText = "" }) {
 			NewChatSheet(
 				store: store, currentActorID: environment.auth.session?.actorId, prefill: pendingText

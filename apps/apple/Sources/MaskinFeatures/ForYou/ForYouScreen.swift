@@ -12,6 +12,7 @@ public struct ForYouScreen: View {
 	private let environment: AppEnvironment
 	private let openObject: ((String) -> Void)?
 	@Environment(AppRuntime.self) private var appRuntime
+	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	public init(environment: AppEnvironment, openObject: ((String) -> Void)? = nil) {
 		self.environment = environment
@@ -21,22 +22,50 @@ public struct ForYouScreen: View {
 	/// Owned by `AppRuntime`; reading it is free and has no side effects.
 	private var runtime: ForYouRuntime { appRuntime.forYou }
 
+	/// Regular width (iPad, Mac, any wide window) is a split view: the feed beside the object a
+	/// card is about. Compact width keeps one column and opens objects in a sheet.
+	private var isSplit: Bool { sizeClass == .regular }
+
 	public var body: some View {
-		NavigationStack {
-			ForYouFeedView(
-				store: runtime.store, outbox: runtime.outbox,
-				openObject: openObject, chief: runtime.chief, environment: environment,
-				stories: appRuntime.storiesStore()
-			)
-			.shellToolbar(
-				environment: environment, title: "For you",
-				actions: ShellActions(
-					live: true, display: ShellDisplayMenu { displayMenu })
-			)
-			.task(id: environment.workspaceId) {
-				async let feed: Void = runtime.store.load()
-				async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
-				_ = await (feed, stories)
+		if isSplit {
+			NavigationSplitView {
+				feed(openObject: { appRuntime.forYouSelection = $0 })
+					.navigationSplitViewColumnWidth(min: 340, ideal: 430, max: 520)
+			} detail: {
+				detail
+			}
+			.navigationSplitViewStyle(.balanced)
+		} else {
+			NavigationStack { feed(openObject: openObject) }
+		}
+	}
+
+	private func feed(openObject: ((String) -> Void)?) -> some View {
+		ForYouFeedView(
+			store: runtime.store, outbox: runtime.outbox,
+			openObject: openObject, chief: runtime.chief, environment: environment,
+			stories: appRuntime.storiesStore(),
+			selectedId: isSplit ? appRuntime.forYouSelection : nil
+		)
+		.shellToolbar(
+			environment: environment, title: "For you",
+			actions: ShellActions(
+				live: true, display: ShellDisplayMenu { displayMenu })
+		)
+		.task(id: environment.workspaceId) {
+			async let feed: Void = runtime.store.load()
+			async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
+			_ = await (feed, stories)
+		}
+	}
+
+	/// The object behind the selected card, with its own stack so related objects push inside it.
+	@ViewBuilder private var detail: some View {
+		if let id = appRuntime.forYouSelection {
+			ForYouObjectDetail(environment: environment, objectId: id) { appRuntime.forYouSelection = $0 }
+		} else {
+			ContentUnavailableView {
+				Text("Select something").maskinText(.body).foregroundStyle(MaskinColor.ink4)
 			}
 		}
 	}
@@ -96,6 +125,9 @@ struct ForYouFeedView: View {
 	var environment: AppEnvironment?
 	/// The briefing cards above the feed; nil in snapshots.
 	var stories: StoriesStore?
+	/// The card open in the detail column at regular width. It gets a 2 pt ink ring: selection,
+	/// not signal, so no Patina.
+	var selectedId: String?
 	@State private var openStory: StoryCard?
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
@@ -280,6 +312,16 @@ struct ForYouFeedView: View {
 			entry: entry, sender: store.senderName(of: entry.card), expanded: true,
 			now: fixedNow ?? Date(),
 			actions: .live(store: store, entry: entry, openObject: openObject), chief: chief)
+			.overlay {
+				if entry.id == selectedId {
+					RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+						.strokeBorder(MaskinColor.ink, lineWidth: 2)
+						.allowsHitTesting(false)
+				}
+			}
+			#if os(iOS)
+				.hoverEffect(.lift)
+			#endif
 	}
 
 	private func dismiss(_ entry: FeedEntry) {
@@ -392,5 +434,30 @@ extension View {
 		#else
 		sheet(item: item, content: content)
 		#endif
+	}
+}
+
+/// The detail column of For you at regular width.
+private struct ForYouObjectDetail: View {
+	let environment: AppEnvironment
+	let objectId: String
+	let open: (String) -> Void
+	@State private var path: [String] = []
+
+	var body: some View {
+		NavigationStack(path: $path) {
+			screen(objectId)
+				.navigationDestination(for: String.self) { screen($0) }
+		}
+		// Choosing another card starts a fresh stack rather than pushing onto the last one.
+		.id(objectId)
+	}
+
+	private func screen(_ id: String) -> some View {
+		ObjectDetailScreen(
+			environment: environment, objectId: id, onOpenObject: { path.append($0) },
+			decisionSection: { ObjectDecisionSection(environment: environment, objectId: id) }
+		)
+		.id(id)
 	}
 }

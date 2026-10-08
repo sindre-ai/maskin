@@ -23,6 +23,12 @@ public struct ShellCommands: Commands {
 			Button("Search") { runtime?.focusSearch() }
 				.keyboardShortcut("k", modifiers: .command)
 				.disabled(runtime == nil)
+			Button("New conversation") { runtime?.startNewConversation() }
+				.keyboardShortcut("n", modifiers: .command)
+				.disabled(runtime == nil)
+			Button("Accept recommended option") { runtime?.acceptRecommendedOnSelection() }
+				.keyboardShortcut(.return, modifiers: [])
+				.disabled(runtime?.canAcceptRecommended != true)
 		}
 	}
 }
@@ -30,6 +36,30 @@ public struct ShellCommands: Commands {
 extension AppRuntime {
 	/// Search is the trailing tab everywhere.
 	fileprivate func focusSearch() { selectedTab = .search }
+
+	/// ⌘N: land on Team and open its new-conversation sheet.
+	fileprivate func startNewConversation() {
+		selectedTab = .chats
+		newConversationRequested = true
+	}
+
+	/// The card selected in For you's detail column, when it is a decision with a recommended option
+	/// that can be taken back. An option that can't be undone keeps its on-card confirmation, so
+	/// Return never takes it.
+	private var recommendedOnSelection: (option: DecisionOption, entry: FeedEntry)? {
+		guard selectedTab == .forYou, let id = forYouSelection,
+			let entry = forYou.store.entries.first(where: { $0.id == id }), entry.record == nil,
+			let option = entry.card.decision?.recommended, !option.destructive
+		else { return nil }
+		return (option, entry)
+	}
+
+	fileprivate var canAcceptRecommended: Bool { recommendedOnSelection != nil }
+
+	fileprivate func acceptRecommendedOnSelection() {
+		guard let pick = recommendedOnSelection else { return }
+		forYou.store.choose(pick.option, on: pick.entry.card)
+	}
 }
 
 private struct AppRuntimeKey: FocusedValueKey {

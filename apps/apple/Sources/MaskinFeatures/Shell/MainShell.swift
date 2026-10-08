@@ -32,7 +32,7 @@ public struct MainShell: View {
 					ForEach(ShellTab.allCases) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
-							.badge(tab.badge(runtime: runtime, badges: badges))
+							.badge(tab.badgeLabel(runtime: runtime, badges: badges))
 							.tag(tab)
 					}
 				}
@@ -78,7 +78,7 @@ private struct AdaptiveTabs: View {
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
-				.badge(tab.badge(runtime: runtime, badges: badges))
+				.badge(tab.badgeLabel(runtime: runtime, badges: badges))
 			}
 			// The system search role: a detached search button on iOS 26 (a plain trailing tab
 			// before that, a sidebar entry on iPad and the Mac). The only search entry point.
@@ -145,6 +145,12 @@ private struct ShellTabContent: View {
 }
 
 extension ShellTab {
+	/// The badge text: "99+" past 99, nothing at zero (see `ShellBadgeText`).
+	@MainActor
+	fileprivate func badgeLabel(runtime: AppRuntime, badges: ShellBadges) -> Text? {
+		ShellBadgeText.text(count: badge(runtime: runtime, badges: badges)).map { Text($0) }
+	}
+
 	/// The count on the tab: open decisions on For you, unread conversations on Team. Zero shows nothing.
 	@MainActor
 	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> Int {

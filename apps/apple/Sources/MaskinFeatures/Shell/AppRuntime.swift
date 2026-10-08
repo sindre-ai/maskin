@@ -97,6 +97,13 @@ public final class AppRuntime {
 		}
 	}
 
+	/// The object open in For you's detail column at regular width (iPad, Mac). Compact width opens
+	/// objects in a sheet instead, so this stays nil there.
+	public var forYouSelection: String?
+
+	/// ⌘N: `ChatsScreen` opens its new-conversation sheet and resets this.
+	public var newConversationRequested = false
+
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
 
@@ -220,6 +227,8 @@ public final class AppRuntime {
 			default: break
 			}
 			requestedConversationId = nil
+		forYouSelection = nil
+			forYouSelection = nil
 			// Switching workspace starts over on For you; a link that caused the switch then
 			// selects its own tab (`handlePendingLink` below).
 			selectedTab = .forYou
@@ -286,6 +295,7 @@ public final class AppRuntime {
 		environment.events.disconnect()
 		presentation = nil
 		requestedConversationId = nil
+		forYouSelection = nil
 		selectedTab = .forYou
 		FileStore.clearExports()
 	}
@@ -402,6 +412,7 @@ public final class AppRuntime {
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
+		forYouSelection = nil
 		selectedTab = .forYou
 		// Local traces of this account: what they searched for and files they exported to share.
 		SearchRecents.clearAll()

@@ -541,6 +541,14 @@ struct AppRuntimePresentationTests {
 		#expect(runtime.showSettings)
 	}
 
+	@Test("the For you detail selection does not outlive the session")
+	func selectionClearedWithSession() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.forYouSelection = "obj-1"
+		runtime.sessionEnded()
+		#expect(runtime.forYouSelection == nil)
+	}
+
 	@Test("a session the server ended also resets the selected tab")
 	func sessionEndedResetsTab() async {
 		let (runtime, _) = await makeRuntime()
