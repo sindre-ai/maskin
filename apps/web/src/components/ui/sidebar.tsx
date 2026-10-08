@@ -434,10 +434,7 @@ const SidebarRail = React.forwardRef<
 			onClick={toggleSidebar}
 			title="Toggle Sidebar"
 			className={cn(
-				// Sits inside the sidebar's own box. Straddling the border (w-4,
-				// -translate-x-1/2) pushed 8px past the fixed wrapper, so the wrapper
-				// scrolled horizontally by 8px at md and up.
-				'absolute inset-y-0 z-20 hidden w-2 transition-all ease-linear after:absolute after:inset-y-0 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=left]:right-0 group-data-[side=left]:after:right-0 group-data-[side=right]:left-0 group-data-[side=right]:after:left-0 sm:flex',
+				'absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex',
 				'[[data-side=left]_&]:cursor-w-resize [[data-side=right]_&]:cursor-e-resize',
 				'[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize',
 				'group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full group-data-[collapsible=offcanvas]:hover:bg-sidebar',
