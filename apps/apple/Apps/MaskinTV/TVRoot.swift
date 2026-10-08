@@ -9,21 +9,46 @@ struct TVRoot: View {
 	let forYou: ForYouRuntime?
 	@State private var loops: LoopsStore?
 	@State private var stories: StoriesStore?
+	@State private var tab: Tab = .forYou
+	/// A decision a Top Shelf item (or any maskin:// link) asked to open.
+	@State private var openDecision: String?
+
+	enum Tab: Hashable { case forYou, team, flows, objects, search, profile }
 
 	var body: some View {
-		TabView {
-			TVForYou(environment: environment, forYou: forYou, stories: stories)
-				.tabItem { Text("For you") }
+		TabView(selection: $tab) {
+			TVForYou(
+				environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision
+			)
+			.tabItem { Text("For you") }.tag(Tab.forYou)
 			TVTeam(environment: environment)
-				.tabItem { Text("Team") }
+				.tabItem { Text("Team") }.tag(Tab.team)
 			TVFlows(environment: environment, loops: loops)
-				.tabItem { Text("Flows") }
+				.tabItem { Text("Flows") }.tag(Tab.flows)
 			TVObjects(environment: environment)
-				.tabItem { Text("Objects") }
+				.tabItem { Text("Objects") }.tag(Tab.objects)
 			TVSearch(environment: environment)
-				.tabItem { Image(systemName: "magnifyingglass") }
+				.tabItem { Image(systemName: "magnifyingglass") }.tag(Tab.search)
 			TVProfile(environment: environment)
-				.tabItem { Text("Profile") }
+				.tabItem { Text("Profile") }.tag(Tab.profile)
+		}
+		.overlay(alignment: .topTrailing) {
+			// Last data stays on screen while the connection is down; this says so.
+			if environment.events.connection == .failed {
+				Text("OFFLINE")
+					.font(.system(size: 24, weight: .semibold, design: .monospaced))
+					.foregroundStyle(MaskinColor.ink4)
+					.padding(.top, 20).padding(.trailing, 96)
+					.accessibilityLabel("Offline. Showing the last data.")
+			}
+		}
+		.onOpenURL { url in
+			// A Top Shelf item: open that decision, but only in the workspace the TV is showing.
+			guard let link = DeepLink(url: url), case .object(let workspace, let id) = link,
+				workspace == environment.workspaceId
+			else { return }
+			tab = .forYou
+			openDecision = id
 		}
 		.task(id: environment.auth.credentials) {
 			async let flows: Void = startLoops()

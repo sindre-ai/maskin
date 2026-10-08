@@ -541,9 +541,10 @@ targets:
     platform: tvOS
     sources:
       - path: Apps/MaskinTV
-        excludes: [Info.plist]
+        excludes: [Info.plist, MaskinTV.entitlements]
       - path: Apps/Shared
     dependencies:
+      - target: MaskinTVTopShelf
       - package: MaskinKit
         product: MaskinCore
       - package: MaskinKit
@@ -569,6 +570,12 @@ targets:
           UIColorName: LaunchBackground
           UIImageName: LaunchMark
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        # maskin://<workspaceId>/objects/<id>: what the Top Shelf items open.
+        CFBundleURLTypes:
+          - CFBundleURLName: io.maskin.app.tv
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - maskin
         NSAppTransportSecurity:
           NSExceptionDomains:
             localhost:
@@ -576,10 +583,57 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv
+        CODE_SIGN_ENTITLEMENTS: Apps/MaskinTV/MaskinTV.entitlements
         PRODUCT_NAME: Maskin
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          MASKIN_API_BASE_URL: http://localhost:3000
+        Release:
+          MASKIN_API_BASE_URL: https://maskin.io
+  # Apple TV Top Shelf: the decisions waiting on you, above the app icon. Fetches with the session
+  # the TV app keeps in the shared Keychain group; no code runs when signed out.
+  MaskinTVTopShelf:
+    type: app-extension
+    platform: tvOS
+    sources:
+      - path: Apps/MaskinTVTopShelf
+        excludes: [Info.plist, MaskinTVTopShelf.entitlements]
+    dependencies:
+      - package: MaskinKit
+        product: MaskinCore
+      - package: MaskinKit
+        product: MaskinAPI
+    info:
+      path: Apps/MaskinTVTopShelf/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.tv-top-shelf
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv.topshelf
+        PRODUCT_NAME: MaskinTVTopShelf
+        # TVServices hands back non-Sendable content types, which Swift 6 mode rejects; this target
+        # is a thin adapter over the system API, so it builds in Swift 5 mode.
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_ENTITLEMENTS: Apps/MaskinTVTopShelf/MaskinTVTopShelf.entitlements
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         CODE_SIGN_STYLE: Automatic
       configs:

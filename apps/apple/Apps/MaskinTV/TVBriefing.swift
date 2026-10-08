@@ -131,7 +131,9 @@ final class TVNarrator: NSObject, AVSpeechSynthesizerDelegate {
 /// The full-screen briefing: big type, segmented progress, narrated, advancing as the voice ends.
 /// Left and right on the remote move between slides; Pause/Play and Close are the buttons.
 struct TVBriefingPlayer: View {
+	let environment: AppEnvironment
 	let stories: StoriesStore
+	let chief: ChiefOfStaffDesk?
 	let sequence: BriefSequence
 	let close: () -> Void
 
@@ -140,10 +142,16 @@ struct TVBriefingPlayer: View {
 	@State private var slides: [TVSlide] = []
 	@State private var owner: [Int] = []
 	@FocusState private var focus: Control?
+	@State private var thread: TVThreadRoute?
+	@State private var opening = false
 
-	private enum Control { case pause, close }
+	private enum Control { case pause, more, close }
 
 	var body: some View {
+		NavigationStack { player }
+	}
+
+	private var player: some View {
 		ZStack {
 			MaskinGradient.briefViewer.ignoresSafeArea()
 			VStack(alignment: .leading, spacing: 36) {
@@ -167,6 +175,13 @@ struct TVBriefingPlayer: View {
 					}
 					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 					.focused($focus, equals: .pause)
+					if chief != nil {
+						Button(action: tellMeMore) {
+							TVCapsuleLabel(title: opening ? "Opening…" : "Tell me more", symbol: "bubble.left.fill")
+						}
+						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+						.focused($focus, equals: .more)
+					}
 					Button(action: finish) { TVCapsuleLabel(title: "Close", symbol: "xmark") }
 						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 						.focused($focus, equals: .close)
@@ -184,6 +199,7 @@ struct TVBriefingPlayer: View {
 			}
 		}
 		.onExitCommand(perform: finish)
+		.navigationDestination(item: $thread) { TVThread(environment: environment, conversationID: $0.id) }
 		.task {
 			let built = TVSlides.make(from: sequence)
 			slides = built.slides
@@ -223,6 +239,27 @@ struct TVBriefingPlayer: View {
 
 	private func advance() {
 		if index + 1 < slides.count { go(to: index + 1) } else { finish() }
+	}
+
+	/// Opens a conversation with the Chief of Staff about the slide's briefing. Narration stops: the
+	/// thread is where the talking happens now.
+	private func tellMeMore() {
+		guard let chief, !opening, slides.indices.contains(index),
+			owner.indices.contains(index), sequence.slides.indices.contains(owner[index])
+		else { return }
+		let source = sequence.slides[owner[index]]
+		opening = true
+		narrator.stop()
+		Task {
+			defer { opening = false }
+			let card = ForYouCard(id: source.id, objectTitle: source.headline)
+			if let outcome = try? await ChiefOfStaffThreads.open(about: card, conversations: chief.conversations) {
+				thread = TVThreadRoute(id: outcome.conversation.id)
+			} else {
+				narrator.onFinish = { advance() }
+				present()
+			}
+		}
 	}
 
 	private func finish() {
