@@ -17,20 +17,20 @@ const WIDE_TABLE = [
 const LONG_UNBROKEN_URL =
 	'https://internal.example.com/reports/2026/09/enterprise-onboarding-dropoff-cohort-split-by-activation-source-seat-count'
 
-// Real overflows already filed as their own tasks. Excluding them at the
-// SURFACE level (never globally) lets the strict gate stay red on every OTHER
+// Real overflows already filed as their own tasks. Excluding the exact element
+// (never a whole surface) keeps the strict gate red on every OTHER
 // inner-scroller overflow while the underlying fix lands, so the gate does
 // not block unrelated PRs. Every entry MUST cite its follow-up task and be
-// removed with that task's PR — this is a receipt, not a permanent whitelist.
+// removed in that task's PR — this is a receipt, not a permanent whitelist.
 //
-// - **[data-testid="foryou-feed-root"]** on the For You landing surface:
-//   overflows its own client box by ~4px at every ship-gate viewport and at
-//   Desktop 1440 — a genuine layout bug, not an assertion false positive.
-//   Follow-up: task 81f450da-b0fd-4656-a4fc-133181febffb.
-const SURFACE_OFFENDER_EXCLUSIONS: Record<string, readonly string[]> = {
-	'For You (workspace landing)': ['[data-testid="foryou-feed-root"]'],
-	'For You (step 1)': ['[data-testid="foryou-feed-root"]'],
-}
+// - The desktop sidebar wrapper (div.fixed.inset-y-0.z-10 around
+//   [data-sidebar="sidebar"], apps/web/src/components/ui/sidebar.tsx)
+//   overflows its own client box by 8px at md and up. It is the app shell, so
+//   it shows on every authed surface.
+//   Follow-up: task 0b5738af-3993-410e-87d7-a5ce2b6a516d.
+const KNOWN_OFFENDER_EXCLUSIONS: readonly string[] = [
+	'div.fixed.inset-y-0.z-10:has(> [data-sidebar="sidebar"])',
+]
 
 async function assertNoHorizontalOverflow(page: Page, surface: string, viewport: NamedViewport) {
 	// `load` instead of `networkidle` — the app holds an SSE connection to /api/events,
@@ -38,111 +38,112 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 	await page.waitForLoadState('load')
 	await page.waitForTimeout(200)
 
-	const excludedSelectors = SURFACE_OFFENDER_EXCLUSIONS[surface] ?? []
-
-	const report = await page.evaluate(({ tolerance, excludedSelectors }) => {
-		const innerWidth = window.innerWidth
-		const describe = (el: Element) => {
-			const testId = el.getAttribute('data-testid')
-			if (testId) return `[data-testid="${testId}"]`
-			const id = el.id ? `#${el.id}` : ''
-			const cls =
-				typeof el.className === 'string' && el.className
-					? `.${el.className.trim().split(/\s+/).slice(0, 3).join('.')}`
-					: ''
-			return `${el.tagName.toLowerCase()}${id}${cls}`.slice(0, 160)
-		}
-
-		// The assertion fires when an element's own content is wider than its box
-		// AND the source did not declare any horizontal-overflow intent. Two
-		// intent categories are legitimate — both mean "the developer asked for
-		// this shape, not a silent clip":
-		//   1. Horizontal scroller: `overflow-x-auto|scroll`, `overflow-auto`, or
-		//      inline `overflow-x: auto|scroll`. The user can pan the content.
-		//   2. Explicit clip: Tailwind `sr-only` (a11y hide, 1×1 box on purpose),
-		//      `truncate` (single-line ellipsis, `overflow: hidden`), `line-clamp-*`
-		//      (multi-line ellipsis), `overflow-hidden`, `overflow-x-hidden`, or
-		//      inline `overflow-x: hidden` / `overflow: hidden`. The clip IS the
-		//      feature.
-		// Computed overflow is not enough on its own — per CSS spec, `overflow-y:
-		// auto` alone makes `overflow-x` compute to `auto`, which is exactly why
-		// the chats thread scroller (`data-testid="thread-messages"`, source class
-		// `overflow-y-auto`) silently swallowed the 4917d6f3 regression while
-		// looking like a legitimate horizontal scroller. Reading source-level
-		// intent (the class list or an inline style) is what separates "developer
-		// asked for this" from "a vertical-primary container silently accepted an
-		// `auto` overflow-x it never wanted".
-		const HORIZONTAL_SCROLL_INTENT_TOKENS = [
-			'overflow-x-auto',
-			'overflow-x-scroll',
-			'overflow-auto',
-		]
-		const HORIZONTAL_CLIP_INTENT_TOKENS = [
-			'sr-only',
-			'truncate',
-			'overflow-hidden',
-			'overflow-x-hidden',
-		]
-		const hasHorizontalOverflowIntent = (el: Element) => {
-			const inlineOverflowX = (el as HTMLElement).style?.overflowX
-			if (
-				inlineOverflowX === 'auto' ||
-				inlineOverflowX === 'scroll' ||
-				inlineOverflowX === 'hidden'
-			) {
-				return true
+	const report = await page.evaluate(
+		({ tolerance, excludedSelectors }) => {
+			const innerWidth = window.innerWidth
+			const describe = (el: Element) => {
+				const testId = el.getAttribute('data-testid')
+				if (testId) return `[data-testid="${testId}"]`
+				const id = el.id ? `#${el.id}` : ''
+				const cls =
+					typeof el.className === 'string' && el.className
+						? `.${el.className.trim().split(/\s+/).slice(0, 3).join('.')}`
+						: ''
+				return `${el.tagName.toLowerCase()}${id}${cls}`.slice(0, 160)
 			}
-			const inlineOverflow = (el as HTMLElement).style?.overflow
-			if (inlineOverflow === 'hidden') return true
-			if (typeof el.className === 'string') {
-				const classes = el.className.trim().split(/\s+/)
-				for (const cls of classes) {
-					if (HORIZONTAL_SCROLL_INTENT_TOKENS.includes(cls)) return true
-					if (HORIZONTAL_CLIP_INTENT_TOKENS.includes(cls)) return true
-					// Tailwind `line-clamp-1`, `line-clamp-2`, … all set
-					// `overflow: hidden` for multi-line ellipsis.
-					if (cls.startsWith('line-clamp-')) return true
+
+			// The assertion fires when an element's own content is wider than its box
+			// AND the source did not declare any horizontal-overflow intent. Two
+			// intent categories are legitimate — both mean "the developer asked for
+			// this shape, not a silent clip":
+			//   1. Horizontal scroller: `overflow-x-auto|scroll`, `overflow-auto`, or
+			//      inline `overflow-x: auto|scroll`. The user can pan the content.
+			//   2. Explicit clip: Tailwind `sr-only` (a11y hide, 1×1 box on purpose),
+			//      `truncate` (single-line ellipsis, `overflow: hidden`), `line-clamp-*`
+			//      (multi-line ellipsis), `overflow-hidden`, `overflow-x-hidden`, or
+			//      inline `overflow-x: hidden` / `overflow: hidden`. The clip IS the
+			//      feature.
+			// Computed overflow is not enough on its own — per CSS spec, `overflow-y:
+			// auto` alone makes `overflow-x` compute to `auto`, which is exactly why
+			// the chats thread scroller (`data-testid="thread-messages"`, source class
+			// `overflow-y-auto`) silently swallowed the 4917d6f3 regression while
+			// looking like a legitimate horizontal scroller. Reading source-level
+			// intent (the class list or an inline style) is what separates "developer
+			// asked for this" from "a vertical-primary container silently accepted an
+			// `auto` overflow-x it never wanted".
+			const HORIZONTAL_SCROLL_INTENT_TOKENS = [
+				'overflow-x-auto',
+				'overflow-x-scroll',
+				'overflow-auto',
+			]
+			const HORIZONTAL_CLIP_INTENT_TOKENS = [
+				'sr-only',
+				'truncate',
+				'overflow-hidden',
+				'overflow-x-hidden',
+			]
+			const hasHorizontalOverflowIntent = (el: Element) => {
+				const inlineOverflowX = (el as HTMLElement).style?.overflowX
+				if (
+					inlineOverflowX === 'auto' ||
+					inlineOverflowX === 'scroll' ||
+					inlineOverflowX === 'hidden'
+				) {
+					return true
+				}
+				const inlineOverflow = (el as HTMLElement).style?.overflow
+				if (inlineOverflow === 'hidden') return true
+				if (typeof el.className === 'string') {
+					const classes = el.className.trim().split(/\s+/)
+					for (const cls of classes) {
+						if (HORIZONTAL_SCROLL_INTENT_TOKENS.includes(cls)) return true
+						if (HORIZONTAL_CLIP_INTENT_TOKENS.includes(cls)) return true
+						// Tailwind `line-clamp-1`, `line-clamp-2`, … all set
+						// `overflow: hidden` for multi-line ellipsis.
+						if (cls.startsWith('line-clamp-')) return true
+					}
+				}
+				return false
+			}
+
+			const excluded = new Set<Element>()
+			for (const selector of excludedSelectors) {
+				for (const el of document.querySelectorAll(selector)) {
+					excluded.add(el)
 				}
 			}
-			return false
-		}
 
-		const excluded = new Set<Element>()
-		for (const selector of excludedSelectors) {
-			for (const el of document.querySelectorAll(selector)) {
-				excluded.add(el)
+			const offenders: {
+				selector: string
+				scrollWidth: number
+				clientWidth: number
+			}[] = []
+
+			// Skip <html> and <body> — the document-level check below covers those.
+			// Every other element that reports more scrollable content than its own
+			// client box (and was not tagged as an intended horizontal scroller, and
+			// is not on the known-offender exclusion list) is silently
+			// clipping or unintentionally horizontally scrolling — the exact class
+			// of failure that reached `main` in #1700.
+			for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+				if (el.scrollWidth <= el.clientWidth + tolerance) continue
+				if (hasHorizontalOverflowIntent(el)) continue
+				if (excluded.has(el)) continue
+				offenders.push({
+					selector: describe(el),
+					scrollWidth: el.scrollWidth,
+					clientWidth: el.clientWidth,
+				})
 			}
-		}
 
-		const offenders: {
-			selector: string
-			scrollWidth: number
-			clientWidth: number
-		}[] = []
-
-		// Skip <html> and <body> — the document-level check below covers those.
-		// Every other element that reports more scrollable content than its own
-		// client box (and was not tagged as an intended horizontal scroller, and
-		// is not on the surface's known-offender exclusion list) is silently
-		// clipping or unintentionally horizontally scrolling — the exact class
-		// of failure that reached `main` in #1700.
-		for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
-			if (el.scrollWidth <= el.clientWidth + tolerance) continue
-			if (hasHorizontalOverflowIntent(el)) continue
-			if (excluded.has(el)) continue
-			offenders.push({
-				selector: describe(el),
-				scrollWidth: el.scrollWidth,
-				clientWidth: el.clientWidth,
-			})
-		}
-
-		return {
-			innerWidth,
-			docScrollWidth: document.documentElement.scrollWidth,
-			offenders,
-		}
-	}, { tolerance: HORIZONTAL_OVERFLOW_TOLERANCE_PX, excludedSelectors })
+			return {
+				innerWidth,
+				docScrollWidth: document.documentElement.scrollWidth,
+				offenders,
+			}
+		},
+		{ tolerance: HORIZONTAL_OVERFLOW_TOLERANCE_PX, excludedSelectors: KNOWN_OFFENDER_EXCLUSIONS },
+	)
 
 	// Document-level check — kept, because `overflow-x: clip` on html/body in
 	// `apps/web/src/app.css` is the reason inner overflow can hide from this
