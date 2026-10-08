@@ -30,16 +30,42 @@ public enum MaskinStatus {
 		return MaskinStatusPalette.all[key] != nil ? key : nil
 	}
 
-	/// v4 brand rule: done is ink on a neutral fill (with a check glyph at the call site), never
-	/// green. The generated palette still carries the web's green pair for these keys, so the
-	/// native clients override them here.
-	static let doneKeys: Set<String> = ["done", "completed", "succeeded"]
+	/// How a status is drawn, which comes from its category (`StatusCategory` in MaskinCore, handoff
+	/// 1E), never its name: Patina for what is under way or wants the person, grey for backlog and
+	/// cancelled, ink for done. Never green, amber or blue. MaskinUI cannot see MaskinCore, so the
+	/// key sets here mirror its table; `StatusCategoryVisualsTests` keeps the two in step.
+	public enum Tone: Sendable, Equatable { case grey, patina, ink }
+
+	static let patinaKeys: Set<String> = [
+		"in_progress", "active", "live", "processing", "clustered", "in_review", "waiting_for_input",
+		"started",
+	]
+	static let inkKeys: Set<String> = ["done", "completed", "validated", "succeeded", "scored", "paid"]
+	/// Failure and risk keep their palette entries: a session that failed must still read as one.
+	static let alertKeys: Set<String> = ["failed", "blocked", "at_risk", "breached"]
+
+	/// The tone of a status key (after aliases). Unknown keys are grey.
+	public static func tone(for status: String) -> Tone {
+		if patinaKeys.contains(status) { return .patina }
+		let key = aliases[status] ?? status
+		if patinaKeys.contains(key) { return .patina }
+		if inkKeys.contains(key) { return .ink }
+		return .grey
+	}
+
+	public static let patina = MaskinColorPair(bg: MaskinColor.sigTint, fg: MaskinColor.sigInk)
 	public static let done = MaskinColorPair(bg: MaskinColor.doneBg, fg: MaskinColor.doneFg)
 
 	public static func colors(for status: String) -> MaskinColorPair {
-		guard let key = tokenKey(for: status) else { return fallback }
-		if doneKeys.contains(key) { return done }
-		return MaskinStatusPalette.all[key] ?? fallback
+		let key = aliases[status] ?? status
+		if alertKeys.contains(key), !patinaKeys.contains(status) {
+			return MaskinStatusPalette.all[key] ?? fallback
+		}
+		switch tone(for: status) {
+		case .patina: return patina
+		case .ink: return done
+		case .grey: return fallback
+		}
 	}
 
 	/// Human label: "in_progress" → "in progress", with the product's special cases.

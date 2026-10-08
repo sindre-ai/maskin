@@ -16,6 +16,7 @@ struct ConversationListView: View {
 	let onNewChat: () -> Void
 
 	@State private var picking = SelectionModel()
+	@State private var undoOffer: UndoOffer?
 
 	/// People with several conversations whose rows are open, keyed by section and person.
 	@State private var expanded: Set<String> = []
@@ -76,6 +77,7 @@ struct ConversationListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.onChange(of: store.scope) { picking.exit() }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
+		.undoToast($undoOffer)
 		.chatSearch(store: store, text: $search)
 		.onAppear { store.groupBy = ConversationGroupBy(rawValue: storedGroupBy) ?? .person }
 	}
@@ -263,18 +265,32 @@ struct ConversationListView: View {
 	@ViewBuilder
 	private func bulkActions(allIDs: [String]) -> some View {
 		let ids = picking.ordered(in: allIDs)
-		Menu("More") {
+		Menu {
 			if store.scope == .active {
 				Button("Pin", systemImage: "pin") { run(ids) { await store.setPinned($0, true) } }
 				Button("Unpin", systemImage: "pin.slash") { run(ids) { await store.setPinned($0, false) } }
 				Button("Mark as unread", systemImage: "envelope.badge") { run(ids) { await store.markUnread($0) } }
 			}
 		}
-		.disabled(picking.isEmpty || store.scope != .active)
-		Button(store.scope == .archived ? "Unarchive" : "Archive") {
-			run(ids) { await store.setArchived($0, store.scope != .archived) }
+		label: {
+			SelectionBarLabel(title: "More")
 		}
-		.fontWeight(.semibold)
+		.disabled(picking.isEmpty || store.scope != .active)
+		Button {
+			let archiving = store.scope != .archived
+			run(ids) { picked in
+				let result = await store.setArchived(picked, archiving)
+				if result.succeeded > 0 {
+					undoOffer = UndoOffer(
+						message: "\(archiving ? "Archived" : "Unarchived") \(result.succeeded). Undo."
+					) { _ = await store.setArchived(picked, !archiving) }
+				}
+				return result
+			}
+		} label: {
+			SelectionBarLabel(title: store.scope == .archived ? "Unarchive" : "Archive", isPrimary: true)
+		}
+		.buttonStyle(.plain)
 		.disabled(picking.isEmpty)
 	}
 

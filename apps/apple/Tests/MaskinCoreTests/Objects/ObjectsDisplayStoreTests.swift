@@ -96,14 +96,14 @@ struct ObjectsBoardStoreTests {
 		return (ObjectsBoardStore(remote: remote), remote)
 	}
 
-	@Test("loads one type's columns in the workflow's order and hides the empty ones")
+	@Test("loads one type's columns in the workflow's order, empty ones included")
 	func columns() async {
 		let (store, remote) = board()
 		await store.load(type: "task", sort: .needsYou)
 		#expect(store.phase == .loaded)
 		#expect(remote.boardQueries.first?.type == "task")
 		#expect(store.columns.map(\.value) == ["backlog", "todo", "in_progress", "in_review", "validated", "done", "discarded"])
-		#expect(store.shownColumns.map(\.value) == ["todo", "in_progress"])
+		#expect(store.shownColumns.map(\.value) == store.columns.map(\.value))
 		#expect(store.shownColumns.first { $0.value == "in_progress" }?.total == 2)
 	}
 
@@ -123,7 +123,7 @@ struct ObjectsBoardStoreTests {
 		]
 		let (store, _) = board(objects)
 		await store.load(type: "task", sort: .name)
-		let column = try! #require(store.shownColumns.first)
+		let column = try! #require(store.shownColumns.first { $0.value == "todo" })
 		#expect(store.cards(in: column, needsYouOnly: false).map(\.id) == ["a", "z"])
 		#expect(store.cards(in: column, needsYouOnly: true).map(\.id) == ["a"])
 		#expect(store.count(in: column, needsYouOnly: false) == 2)
@@ -173,6 +173,6 @@ struct ObjectsBoardStoreTests {
 		await store.load(type: "bet", sort: .needsYou)
 		#expect(store.type == "bet")
 		#expect(store.columns.allSatisfy { _ in true })
-		#expect(store.shownColumns.map(\.value) == ["active"])
+		#expect(store.shownColumns.map(\.value) == ["signal", "define", "active", "live", "succeeded", "failed", "paused", "archived"])
 	}
 }

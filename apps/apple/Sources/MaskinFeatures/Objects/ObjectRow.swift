@@ -119,10 +119,7 @@ struct ObjectRow: View {
 						working: object.hasActiveSession)
 				}
 				if showsStatus {
-					Text(MaskinStatus.label(for: object.status))
-						.maskinText(.subhead).fontWeight(.semibold)
-						.foregroundStyle(ObjectsStatusTone.of(object).color)
-						.lineLimit(1)
+					StatusWord(status: object.status, tone: ObjectsStatusTone.of(object).color)
 				}
 				Spacer(minLength: MaskinSpace.s3)
 				if object.unreadCount > 0 { UnreadBadge(count: object.unreadCount) }

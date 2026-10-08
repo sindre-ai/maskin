@@ -10,6 +10,7 @@ public struct ObjectsScreen: View {
 	private let services: ObjectsServices
 	@State private var store: ObjectsStore
 	@State private var board: ObjectsBoardStore
+	@State private var picking = SelectionModel()
 	@State private var path: [ObjectRoute] = []
 	@Namespace private var zoom
 	@State private var selection: String?
@@ -48,14 +49,14 @@ public struct ObjectsScreen: View {
 
 	/// Search is the list's own `.searchable`; Display holds the filters and grouping.
 	private var shellActions: ShellActions {
-		ShellActions(display: ShellDisplayMenu { ObjectsDisplayMenu(store: store) })
+		ShellActions(display: ShellDisplayMenu { ObjectsDisplayMenu(store: store, picking: picking) })
 	}
 
 	// MARK: iPhone
 
 	private var stack: some View {
 		NavigationStack(path: $path) {
-			ObjectsListView(store: store, board: board, selection: nil, zoomNamespace: zoom)
+			ObjectsListView(store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking)
 				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
@@ -68,7 +69,7 @@ public struct ObjectsScreen: View {
 
 	private var split: some View {
 		NavigationSplitView {
-			ObjectsListView(store: store, board: board, selection: $selection)
+			ObjectsListView(store: store, board: board, selection: $selection, picking: picking)
 				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {

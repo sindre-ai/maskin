@@ -11,9 +11,11 @@ struct ObjectsBoardView: View {
 	/// Set in a split view, where a card drives the selection instead of pushing.
 	let selection: Binding<String?>?
 	var zoomNamespace: Namespace.ID?
+	/// Called after a card moved column, with the toast text and the way back.
+	var offerUndo: (String, @escaping @MainActor () async -> Void) -> Void = { _, _ in }
 
-	/// Wide enough for a title over two lines, narrow enough that the next column peeks in.
-	private static let columnWidth: CGFloat = 272
+	/// Handoff 1B: 300pt columns that snap sideways, the next one peeking in on a phone.
+	private static let columnWidth: CGFloat = 300
 
 	var body: some View {
 		Group {
@@ -43,13 +45,13 @@ struct ObjectsBoardView: View {
 			ScrollView { LoadingSkeleton().padding(MaskinSpace.s9) }
 		case .failed(let message):
 			ScrollView {
-				VStack(spacing: MaskinSpace.s7) {
-					OfflineBanner(isVisible: board.isOffline)
-					EmptyState(
-						symbol: "exclamationmark.triangle", title: "Couldn't load the board", message: message
-					) {
-						Button("Try again") { Task { await board.refresh() } }
-							.buttonStyle(.secondaryAction)
+				Group {
+					if board.isOffline {
+						AmberNotice.offline(since: store.freshness.updatedAt) { Task { await board.refresh() } }
+					} else {
+						AmberNotice(
+							title: "Couldn't load the board", message: message, actionTitle: "Retry"
+						) { Task { await board.refresh() } }
 					}
 				}
 				.padding(MaskinSpace.s9)
@@ -71,6 +73,11 @@ struct ObjectsBoardView: View {
 	private var columns: some View {
 		let needsYouOnly = store.display.needsYouOnly
 		return ScrollView {
+			if let error = board.moveError {
+				FormError(error)
+					.onTapGesture { board.clearMoveError() }
+					.padding(.horizontal, MaskinSpace.s9)
+			}
 			ScrollView(.horizontal, showsIndicators: false) {
 				LazyHStack(alignment: .top, spacing: MaskinSpace.s5) {
 					ForEach(board.shownColumns) { column in
@@ -90,6 +97,9 @@ struct ObjectsBoardView: View {
 		let cards = board.cards(in: column, needsYouOnly: needsYouOnly)
 		return VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			HStack(spacing: MaskinSpace.s4) {
+				if !column.value.isEmpty {
+					StatusCategoryGlyph(category: StatusCategory.of(column.value))
+				}
 				Text(MaskinStatus.label(for: column.value).uppercased())
 					.maskinText(.microLabelLarge)
 					.foregroundStyle(MaskinColor.ink4)
@@ -104,7 +114,7 @@ struct ObjectsBoardView: View {
 			.accessibilityElement(children: .combine)
 			.accessibilityAddTraits(.isHeader)
 			if cards.isEmpty {
-				Text("Nothing here yet")
+				Text("No \(MaskinStatus.label(for: column.value).lowercased()) items")
 					.maskinText(.subhead)
 					.foregroundStyle(MaskinColor.ink5)
 					.padding(.horizontal, MaskinSpace.s3)
@@ -135,6 +145,22 @@ struct ObjectsBoardView: View {
 		.padding(.bottom, MaskinSpace.s4)
 		.frame(width: Self.columnWidth, alignment: .top)
 		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
+		// A long-press drag of a card lands here and changes its status.
+		.dropDestination(for: String.self) { ids, _ in
+			guard let id = ids.first, !column.value.isEmpty else { return false }
+			move(id, to: column.value)
+			return true
+		}
+	}
+
+	private func move(_ id: String, to status: String) {
+		MaskinHaptics.play(.selection)
+		Task {
+			guard let change = await board.move(id, toColumn: status) else { return }
+			offerUndo("Moved to \(MaskinStatus.label(for: status)). Undo.") {
+				_ = await board.move(id, toColumn: change.from)
+			}
+		}
 	}
 
 	@ViewBuilder private func card(_ object: WorkObject) -> some View {
@@ -143,13 +169,25 @@ struct ObjectsBoardView: View {
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsDriver: store.display.shows(.driver), showsUpdated: store.display.shows(.updated))
-		if let selection {
-			Button { selection.wrappedValue = object.id } label: { content }
-				.buttonStyle(.maskinPressed(.shrink))
-		} else {
-			NavigationLink(value: ObjectRoute(id: object.id)) { content }
-				.buttonStyle(.maskinPressed(.shrink))
-				.zoomSource(id: object.id, in: zoomNamespace)
+		Group {
+			if let selection {
+				Button { selection.wrappedValue = object.id } label: { content }
+					.buttonStyle(.maskinPressed(.shrink))
+			} else {
+				NavigationLink(value: ObjectRoute(id: object.id)) { content }
+					.buttonStyle(.maskinPressed(.shrink))
+					.zoomSource(id: object.id, in: zoomNamespace)
+			}
+		}
+		.draggable(object.id)
+		// The same move without dragging, for VoiceOver and a steady hand.
+		.contextMenu {
+			Menu("Move to", systemImage: "arrow.right") {
+				ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) {
+					status in
+					Button(MaskinStatus.label(for: status)) { move(object.id, to: status) }
+				}
+			}
 		}
 	}
 }

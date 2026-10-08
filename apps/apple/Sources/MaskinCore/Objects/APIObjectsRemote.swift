@@ -120,7 +120,9 @@ public struct APIObjectsRemote: ObjectsRemote {
 					.init(
 						path: .init(id: objectId),
 						body: .json(
-							.init(title: patch.title, content: patch.content, status: patch.status))))
+							.init(
+								title: patch.title, content: patch.content, status: patch.status,
+								driver: patch.driver))))
 			}
 			switch output {
 			case .ok(let ok): return try Self.convert(ok.body.json, as: ObjectDTO.self).model
