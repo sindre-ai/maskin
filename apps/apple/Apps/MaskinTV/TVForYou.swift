@@ -8,6 +8,8 @@ import SwiftUI
 struct TVForYou: View {
 	let environment: AppEnvironment
 	let store: ForYouStore?
+	let stories: StoriesStore?
+	@State private var playing: BriefSequence?
 
 	private var entries: [FeedEntry] {
 		(store?.entries ?? []).filter { $0.section == .needs }
@@ -18,6 +20,11 @@ struct TVForYou: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 40) {
 					Text("For you").font(.system(size: 64, weight: .bold))
+					if let stories {
+						TVStoryRow(stories: stories) { card in
+							playing = BriefSequence.make(cards: stories.cards, opening: card)
+						}
+					}
 					content
 				}
 				.padding(.horizontal, 96)
@@ -26,6 +33,11 @@ struct TVForYou: View {
 			}
 			.navigationDestination(for: String.self) { id in
 				if let store { TVDecision(store: store, id: id) }
+			}
+		}
+		.fullScreenCover(item: Binding(get: { playing.map(PlayingSequence.init) }, set: { if $0 == nil { playing = nil } })) { item in
+			if let stories {
+				TVBriefingPlayer(stories: stories, sequence: item.sequence) { playing = nil }
 			}
 		}
 	}
@@ -113,4 +125,10 @@ extension String {
 		let t = trimmingCharacters(in: .whitespacesAndNewlines)
 		return t.isEmpty ? nil : t
 	}
+}
+
+/// `BriefSequence` has no identity of its own, and a full-screen cover needs one.
+private struct PlayingSequence: Identifiable {
+	let sequence: BriefSequence
+	var id: String { sequence.slides.map(\.id).joined(separator: "|") + "@\(sequence.startIndex)" }
 }
