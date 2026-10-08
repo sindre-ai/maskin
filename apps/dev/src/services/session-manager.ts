@@ -119,6 +119,7 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
+import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import {
@@ -2044,6 +2045,32 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "Your goal this run" block for a non-interactive launch. Built on the
+	 * first launch and saved on `sessions.config.run_goal` (a jsonb merge, so
+	 * other keys such as `llm_route` are untouched) so the later independent
+	 * check can see what the agent was shown. Launch runs again on resume: the
+	 * saved text is reused, never rebuilt or overwritten. A failure here only
+	 * costs the block, never the launch.
+	 */
+	private async resolveRunGoalBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.run_goal === 'string') return config.run_goal
+		try {
+			const block = await buildRunGoalBlock(this.db, session, frontendBaseUrl())
+			await saveRunGoal(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = { ...config, run_goal: block }
+			return block
+		} catch (err) {
+			logger.warn('Failed to build run goal block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
 	 * Build the launch spec for a session — env vars (including integration
 	 * credentials), image, and resource limits. The shape mirrors
 	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
@@ -2215,7 +2242,8 @@ export class SessionManager extends EventEmitter {
 			// through the system prompt instead.
 			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
 		} else {
-			envVars.ACTION_PROMPT = `${startupBlock}${session.actionPrompt}`
+			const goalBlock = await this.resolveRunGoalBlock(session)
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:
