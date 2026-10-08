@@ -393,6 +393,129 @@ public final class ObjectsStore {
 		if let text = result.failureNotice(action: action, past: past, noun: "object") { actionError = text }
 	}
 
+	// MARK: Selection and swipe actions
+
+	/// The statuses every picked object's type offers, in workspace order of the first one. Set
+	/// status is only offered what applies to all of them.
+	public func commonStatuses(for ids: [String]) -> [String] {
+		let types = ids.compactMap { id in objects.first { $0.id == id }?.type }
+		guard let first = types.first else { return [] }
+		return directory.schema.statuses(for: first).filter { status in
+			types.allSatisfy { directory.schema.statuses(for: $0).contains(status) }
+		}
+	}
+
+	/// Whether every picked object's type has somewhere to archive to.
+	public func canArchive(_ ids: [String]) -> Bool {
+		let types = ids.compactMap { id in objects.first { $0.id == id }?.type }
+		return !types.isEmpty
+			&& types.allSatisfy { StatusFlow.archiveTarget(in: directory.schema.statuses(for: $0)) != nil }
+	}
+
+	/// Moves each object to its type's archive status (bulk), each its own optimistic write. The
+	/// undo holds the ones that landed.
+	public func archive(_ ids: [String]) async -> (result: BulkResult, undo: StatusUndo) {
+		let moved = await move(ids, action: "archive", past: "archived") { object in
+			StatusFlow.archiveTarget(in: self.directory.schema.statuses(for: object.type))
+		}
+		return moved
+	}
+
+	/// Sets each object to `status` (bulk) and remembers where each came from.
+	public func setStatusRecording(_ ids: [String], to status: String) async -> (
+		result: BulkResult, undo: StatusUndo
+	) {
+		await move(ids, action: "update", past: "updated") { object in
+			self.directory.schema.statuses(for: object.type).contains(status) ? status : nil
+		}
+	}
+
+	/// Approve: the object's next status per `StatusFlow`. Nil when it has none (nothing happens).
+	public func approve(_ id: String) async -> StatusUndo? {
+		let moved = await move([id], action: "update", past: "updated") { object in
+			StatusFlow.approveTarget(from: object.status, in: self.directory.schema.statuses(for: object.type))
+		}
+		return moved.undo.isEmpty ? nil : moved.undo
+	}
+
+	/// The status Approve would move this object to, or nil to hide the action.
+	public func approveTarget(for object: WorkObject) -> String? {
+		StatusFlow.approveTarget(from: object.status, in: directory.schema.statuses(for: object.type))
+	}
+
+	/// Puts every change in `undo` back. Works for an object the list no longer holds (archived
+	/// away by a refresh): the write goes straight to the server and the list reloads.
+	@discardableResult
+	public func undo(_ undo: StatusUndo) async -> BulkResult {
+		var result = BulkResult()
+		var missing = false
+		for change in undo.changes {
+			if objects.contains(where: { $0.id == change.id }) {
+				if await setStatus(change.id, change.from) { result.succeeded += 1 } else { result.failed += 1 }
+			} else {
+				missing = true
+				do {
+					_ = try await remote.update(
+						objectId: change.id, patch: ObjectPatch(status: change.from),
+						idempotencyKey: IdempotencyKey.make())
+					result.succeeded += 1
+				} catch {
+					result.failed += 1
+					actionError = Self.message(error)
+				}
+			}
+		}
+		if missing { await refreshInPlace() }
+		finish(result, action: "undo", past: "restored")
+		return result
+	}
+
+	/// Assigns each object to `actorId` (bulk), optimistic with rollback per object.
+	@discardableResult
+	public func assign(_ ids: [String], to actorId: String) async -> BulkResult {
+		var result = BulkResult()
+		for id in ids {
+			guard let index = objects.firstIndex(where: { $0.id == id }) else { continue }
+			let previous = objects[index]
+			guard previous.driverId != actorId else { continue }
+			objects[index].driverId = actorId
+			do {
+				let saved = try await remote.update(
+					objectId: id, patch: ObjectPatch(driver: actorId), idempotencyKey: IdempotencyKey.make())
+				var merged = saved
+				if let now = objects.first(where: { $0.id == id }) { merged.isStarred = now.isStarred }
+				apply(merged)
+				result.succeeded += 1
+			} catch {
+				if let i = objects.firstIndex(where: { $0.id == id }) { objects[i] = previous }
+				actionError = Self.message(error)
+				result.failed += 1
+			}
+		}
+		finish(result, action: "assign", past: "assigned")
+		return result
+	}
+
+	private func move(
+		_ ids: [String], action: String, past: String, target: (WorkObject) -> String?
+	) async -> (result: BulkResult, undo: StatusUndo) {
+		var result = BulkResult()
+		var changes: [StatusChange] = []
+		for id in ids {
+			guard let object = objects.first(where: { $0.id == id }), let status = target(object),
+				status != object.status
+			else { continue }
+			if await setStatus(id, status) {
+				result.succeeded += 1
+				changes.append(StatusChange(id: id, from: object.status, to: status))
+			} else {
+				result.failed += 1
+			}
+		}
+		finish(result, action: action, past: past)
+		return (result, StatusUndo(changes: changes))
+	}
+
 	/// Optimistic status change with rollback.
 	@discardableResult
 	public func setStatus(_ id: String, _ status: String) async -> Bool {

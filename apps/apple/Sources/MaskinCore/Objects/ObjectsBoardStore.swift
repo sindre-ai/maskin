@@ -1,4 +1,5 @@
 import Foundation
+import MaskinAPI
 import Observation
 
 /// The Objects board: one type's objects in a column per status, read from `GET /objects/board`.
@@ -22,6 +23,8 @@ public final class ObjectsBoardStore {
 	/// Column ids a "more" request is in flight for.
 	public private(set) var loadingMore: Set<String> = []
 	public private(set) var type: String?
+	/// The last failed move, cleared by the next successful one.
+	public private(set) var moveError: String?
 
 	@ObservationIgnored private let remote: any ObjectsRemote
 	@ObservationIgnored private var sort: ObjectsSort = .needsYou
@@ -31,11 +34,10 @@ public final class ObjectsBoardStore {
 
 	public init(remote: any ObjectsRemote) { self.remote = remote }
 
-	/// Columns worth showing: the ones holding something (every column when the type is empty, so
-	/// the board still reads as a workflow).
+	/// Every status of the type, in workspace order, so a card can be dropped into an empty one.
+	/// Only the "no status" column is hidden while it is empty.
 	public var shownColumns: [ObjectsBoardColumn] {
-		let filled = columns.filter { $0.total > 0 }
-		return filled.isEmpty ? columns : filled
+		columns.filter { !$0.value.isEmpty || $0.total > 0 }
 	}
 
 	/// The cards of a column in the chosen order, narrowed to what needs the person when asked.
@@ -131,6 +133,33 @@ public final class ObjectsBoardStore {
 		}
 	}
 
+	/// Moves a card to another column: the status changes optimistically (the card jumps columns,
+	/// both counts follow) and a failed write puts everything back. Returns what to undo, or nil
+	/// when nothing moved (same column, unknown card or column, failed write).
+	@discardableResult
+	public func move(_ id: String, toColumn value: String) async -> StatusChange? {
+		guard let moved = ObjectsBoardMoves.moving(id, to: value, in: columns) else { return nil }
+		let before = columns
+		columns = moved.columns
+		do {
+			let saved = try await remote.update(
+				objectId: id, patch: ObjectPatch(status: value), idempotencyKey: IdempotencyKey.make())
+			moveError = nil
+			if let column = columns.firstIndex(where: { $0.value == value }),
+				let card = columns[column].objects.firstIndex(where: { $0.id == id })
+			{
+				columns[column].objects[card] = saved
+			}
+			return moved.change
+		} catch {
+			columns = before
+			moveError = (error as? ObjectsError)?.message ?? error.localizedDescription
+			return nil
+		}
+	}
+
+	public func clearMoveError() { moveError = nil }
+
 	/// Runs until cancelled: object events and reconnects refetch the board.
 	public func observe(_ signals: AsyncStream<HubSignal>) async {
 		for await signal in signals {
@@ -144,5 +173,28 @@ public final class ObjectsBoardStore {
 				break
 			}
 		}
+	}
+}
+
+/// Pure column arithmetic for a card dropped into another column.
+public enum ObjectsBoardMoves {
+	/// `columns` with card `id` taken out of its column and put at the top of the column holding
+	/// `value`, both totals adjusted, plus the change that undoes it. Nil when the card or the
+	/// target column is unknown or they are the same column.
+	public static func moving(
+		_ id: String, to value: String, in columns: [ObjectsBoardColumn]
+	) -> (columns: [ObjectsBoardColumn], change: StatusChange)? {
+		guard let from = columns.firstIndex(where: { $0.objects.contains { $0.id == id } }),
+			let to = columns.firstIndex(where: { $0.value == value }), from != to,
+			let card = columns[from].objects.first(where: { $0.id == id })
+		else { return nil }
+		var result = columns
+		result[from].objects.removeAll { $0.id == id }
+		result[from].total = max(0, result[from].total - 1)
+		var landed = card
+		landed.status = value
+		result[to].objects.insert(landed, at: 0)
+		result[to].total += 1
+		return (result, StatusChange(id: id, from: columns[from].value, to: value))
 	}
 }

@@ -38,8 +38,8 @@ public enum ObjectsSorter {
 	}
 }
 
-/// How a row's status word is coloured. Patina for what is running or wants the person, ink for
-/// done, grey for paused or put away; never green, amber or blue.
+/// How a row's status word is coloured, from its category: Patina for what is running or wants the
+/// person, ink for done, grey for backlog and cancelled; never green, amber or blue.
 public enum ObjectsStatusTone: Sendable, Equatable {
 	case patina
 	case ink
@@ -47,15 +47,13 @@ public enum ObjectsStatusTone: Sendable, Equatable {
 	case neutral
 
 	public static func of(_ object: WorkObject) -> ObjectsStatusTone {
-		let status = object.status.lowercased()
-		if ["paused", "parked", "discarded", "archived", "holding"].contains(status) { return .quiet }
-		if ["done", "completed", "validated", "succeeded", "failed", "scored", "clustered"].contains(status) {
-			return .ink
+		switch StatusCategory.of(object.status) {
+		case .done: return .ink
+		case .cancelled: return .quiet
+		case .needsYou, .active: return .patina
+		case .backlog:
+			if ObjectsUrgency.needsYou(object) || object.hasActiveSession { return .patina }
+			return ["paused", "parked", "holding"].contains(object.status.lowercased()) ? .quiet : .neutral
 		}
-		if ObjectsUrgency.rank(object) <= 2 || object.hasActiveSession {
-			return .patina
-		}
-		if ["active", "live", "in_progress", "running", "processing"].contains(status) { return .patina }
-		return .neutral
 	}
 }

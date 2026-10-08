@@ -11,19 +11,21 @@ struct ObjectsListView: View {
 	let selection: Binding<String?>?
 	/// Set on iPhone, where a row pushes its detail with a zoom.
 	var zoomNamespace: Namespace.ID?
+	/// Owned by the screen so the Display menu's "Select" can start it.
+	let picking: SelectionModel
 
+	@State private var undoOffer: UndoOffer?
 	@State private var search = ""
 	@State private var searchPresented = false
 	@State private var pendingDelete: WorkObject?
 	@State private var statusTarget: WorkObject?
-	@State private var picking = SelectionModel()
-	@State private var confirmBulkDelete = false
 
 	var body: some View {
 		VStack(spacing: 0) {
 			typePicker
 			if store.isOffline && !store.objects.isEmpty {
-				OfflineBanner().padding(.horizontal, MaskinSpace.s9).padding(.bottom, MaskinSpace.s4)
+				AmberNotice.offline(since: store.freshness.updatedAt) { Task { await store.reload() } }
+					.padding(.horizontal, MaskinSpace.s9).padding(.bottom, MaskinSpace.s4)
 			}
 			content
 		}
@@ -33,18 +35,7 @@ struct ObjectsListView: View {
 		.onChange(of: store.display.layout) { picking.exit() }
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
-		.confirmationDialog(
-			"Delete \(picking.count) \(picking.count == 1 ? "object" : "objects")?",
-			isPresented: $confirmBulkDelete, titleVisibility: .visible
-		) {
-			Button("Delete", role: .destructive) {
-				let ids = picking.ordered(in: allIDs)
-				picking.exit()
-				Task { await store.delete(ids) }
-			}
-		} message: {
-			Text("This can't be undone.")
-		}
+		.undoToast($undoOffer)
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
@@ -84,28 +75,65 @@ struct ObjectsListView: View {
 
 	private var allIDs: [String] { store.groups.flatMap { $0.objects.map(\.id) } }
 
-	/// Status, star and delete over the picked objects, as text in the selection bar.
+	/// Set status, Assign and Archive (primary) over the picked objects. Actions that don't apply
+	/// to every picked type are disabled.
 	@ViewBuilder private var bulkActions: some View {
 		let ids = picking.ordered(in: allIDs)
-		Menu("More") {
-			Menu("Status", systemImage: "circle.dashed") {
-				ForEach(store.statusOptions, id: \.self) { status in
-					Button(MaskinStatus.label(for: status)) { run { await store.setStatus(ids, to: status) } }
+		let statuses = store.commonStatuses(for: ids)
+		Menu {
+			ForEach(statuses, id: \.self) { status in
+				Button(MaskinStatus.label(for: status)) {
+					runRecording(ids, verb: "Moved") { await store.setStatusRecording(ids, to: status) }
 				}
 			}
-			Button("Star", systemImage: "star") { run { await store.setStarred(ids, true) } }
-			Button("Unstar", systemImage: "star.slash") { run { await store.setStarred(ids, false) } }
+		} label: {
+			SelectionBarLabel(title: "Set status")
 		}
-		.disabled(picking.isEmpty)
-		Button("Delete", role: .destructive) { confirmBulkDelete = true }
-			.fontWeight(.semibold)
-			.disabled(picking.isEmpty)
+		.disabled(picking.isEmpty || statuses.isEmpty)
+		Menu {
+			ForEach(assignees) { actor in
+				Button(actor.name) {
+					MaskinHaptics.play(.selection)
+					picking.exit()
+					Task { await store.assign(ids, to: actor.id) }
+				}
+			}
+		} label: {
+			SelectionBarLabel(title: "Assign")
+		}
+		.disabled(picking.isEmpty || assignees.isEmpty)
+		Button {
+			runRecording(ids, verb: "Archived") { await store.archive(ids) }
+		} label: {
+			SelectionBarLabel(title: "Archive", isPrimary: true)
+		}
+		.buttonStyle(.plain)
+		.disabled(picking.isEmpty || !store.canArchive(ids))
 	}
 
-	private func run(_ action: @escaping () async -> BulkResult) {
+	/// People first, then agents, each by name.
+	private var assignees: [ActorRef] {
+		store.directory.actors.values.sorted {
+			$0.isAgent != $1.isAgent ? !$0.isAgent : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+		}
+	}
+
+	/// Runs a status-changing bulk action and offers "Archived {n}. Undo." (or "Moved {n}. Undo.").
+	private func runRecording(
+		_ ids: [String], verb: String,
+		_ action: @escaping () async -> (result: BulkResult, undo: StatusUndo)
+	) {
 		MaskinHaptics.play(.selection)
 		picking.exit()
-		Task { _ = await action() }
+		Task {
+			let outcome = await action()
+			offerUndo(outcome.undo, message: "\(verb) \(outcome.undo.count). Undo.")
+		}
+	}
+
+	private func offerUndo(_ undo: StatusUndo, message: String) {
+		guard !undo.isEmpty else { return }
+		undoOffer = UndoOffer(message: message) { await store.undo(undo) }
 	}
 
 	// MARK: Pieces
@@ -141,7 +169,11 @@ struct ObjectsListView: View {
 
 	@ViewBuilder private var content: some View {
 		if store.display.layout == .board {
-			ObjectsBoardView(store: store, board: board, selection: selection, zoomNamespace: zoomNamespace)
+			ObjectsBoardView(
+				store: store, board: board, selection: selection, zoomNamespace: zoomNamespace,
+				offerUndo: { message, undo in
+					undoOffer = UndoOffer(message: message) { await undo() }
+				})
 		} else if store.objects.isEmpty || (store.visibleObjects.isEmpty && !store.hasMore) {
 			emptyContent
 				.id("empty")
@@ -156,13 +188,13 @@ struct ObjectsListView: View {
 			ScrollView { LoadingSkeleton().padding(MaskinSpace.s9) }
 		case .failed(let message):
 			ScrollView {
-				VStack(spacing: MaskinSpace.s7) {
-					OfflineBanner(isVisible: store.isOffline)
-					EmptyState(
-						symbol: "exclamationmark.triangle", title: "Couldn't load objects", message: message
-					) {
-						Button("Try again") { Task { await store.reload() } }
-							.buttonStyle(.secondaryAction)
+				Group {
+					if store.isOffline {
+						AmberNotice.offline(since: store.freshness.updatedAt) { Task { await store.reload() } }
+					} else {
+						AmberNotice(
+							title: "Couldn't load objects", message: message, actionTitle: "Retry"
+						) { Task { await store.reload() } }
 					}
 				}
 				.padding(MaskinSpace.s9)
@@ -266,6 +298,19 @@ struct ObjectsListView: View {
 			EdgeInsets(
 				top: MaskinSpace.s4, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 		.swipeActions(edge: .leading) {
+			if !picking.isActive, let target = store.approveTarget(for: object) {
+				Button {
+					MaskinHaptics.play(.selection)
+					Task {
+						if let undo = await store.approve(object.id) {
+							offerUndo(undo, message: "Moved to \(MaskinStatus.label(for: target)). Undo.")
+						}
+					}
+				} label: {
+					Label("Approve", systemImage: "checkmark")
+				}
+				.tint(MaskinColor.sigInk)
+			}
 			if !picking.isActive { Button {
 				MaskinHaptics.play(.selection)
 				Task { await store.toggleStar(object.id) }
@@ -316,8 +361,12 @@ struct ObjectsListView: View {
 /// list or board, then (list only) the status and starred filters and the grouping.
 struct ObjectsDisplayMenu: View {
 	@Bindable var store: ObjectsStore
+	let picking: SelectionModel
 
 	var body: some View {
+		if store.display.layout == .list {
+			Button("Select", systemImage: "checkmark.circle") { picking.enter() }
+		}
 		Section("Sort by") {
 			Picker(
 				"Sort by",

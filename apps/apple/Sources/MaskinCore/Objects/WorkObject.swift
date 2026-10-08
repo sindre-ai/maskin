@@ -219,11 +219,16 @@ public struct ObjectPatch: Sendable, Equatable {
 	public var title: String?
 	public var content: String?
 	public var status: String?
+	/// The actor to drive the object (assign). Nil leaves the driver alone.
+	public var driver: String?
 
-	public init(title: String? = nil, content: String? = nil, status: String? = nil) {
+	public init(
+		title: String? = nil, content: String? = nil, status: String? = nil, driver: String? = nil
+	) {
 		self.title = title
 		self.content = content
 		self.status = status
+		self.driver = driver
 	}
 
 	func applied(to object: WorkObject) -> WorkObject {
@@ -231,6 +236,7 @@ public struct ObjectPatch: Sendable, Equatable {
 		if let title { copy.title = title }
 		if let content { copy.content = content }
 		if let status { copy.status = status }
+		if let driver { copy.driverId = driver }
 		return copy
 	}
 }
