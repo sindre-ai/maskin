@@ -12,6 +12,7 @@ import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -350,8 +351,10 @@ async function spawnOrJoinConversationSession(params: {
 	} = params
 
 	try {
-		await sessionManager.createSession(workspaceId, {
+		await startSession({
+			workspaceId,
 			actorId: agentId,
+			callerKind: 'chat',
 			actionPrompt: buildConversationReplyPrompt({
 				conversationId,
 				conversationHistory,
@@ -366,6 +369,12 @@ async function spawnOrJoinConversationSession(params: {
 				conversation: { conversation_id: conversationId, message_id: messageId },
 			},
 			createdBy: message.actorId,
+			// Chat-only spawn: the conversation_id column on the session row
+			// already carries the linkage a UI needs. Explicit null/null per spec
+			// §3.3 (conversation responder branch).
+			initiatedFromObjectId: null,
+			initiatedFromObjectType: null,
+			await: 'first-response',
 		})
 		// The seed prompt above inlines recent history up to and including this
 		// message — any turn still buffered for this pair from a previous, dead
@@ -535,7 +544,7 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 	return false
 }
 
-async function checkRelevance(params: {
+export async function checkRelevance(params: {
 	agent: {
 		id: string
 		name: string
@@ -587,6 +596,7 @@ async function checkRelevance(params: {
 		const adapter = createLLMAdapter(credentials.provider, {
 			api_key: credentials.apiKey,
 			base_url: credentials.baseUrl,
+			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
 		})
 		const transcript = formatConversationTranscript(conversationHistory)
 		const response = await adapter.chat({

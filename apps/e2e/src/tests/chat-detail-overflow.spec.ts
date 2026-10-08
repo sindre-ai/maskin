@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI } from '../helpers/api.helper'
+import { sendFromComposer } from '../helpers/composer.helper'
 import { type NamedViewport, SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -310,7 +311,7 @@ test.describe('Chat detail — horizontal overflow gate', () => {
 		const messageText = `Overflow QA reply ${Date.now()}`
 		const composer = page.getByLabel('Message this conversation').first()
 		await composer.fill(messageText)
-		await composer.press('Enter')
+		await sendFromComposer(page, composer, viewport.width)
 
 		await expect(page.getByTestId('thread-messages').getByText(messageText)).toBeVisible({
 			timeout: 10_000,

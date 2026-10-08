@@ -32,8 +32,9 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 	}
 }
 
-function makeRunner() {
+function makeRunner(opts: { existingSandboxes?: string[] } = {}) {
 	const calls: Array<{ args: readonly string[] }> = []
+	const existing = new Set(opts.existingSandboxes ?? [])
 	const run = async (
 		_bin: string,
 		args: readonly string[],
@@ -41,12 +42,19 @@ function makeRunner() {
 		calls.push({ args })
 		if (args[0] === '--version') return { stdout: 'microsandbox 0.5.4', stderr: '' }
 		if (args[0] === 'list') {
-			const sessionId = calls
+			// A live sandbox appears in `list` after either an explicit
+			// `existingSandboxes` seed (stop tests can name the id they want
+			// to look present) or after a `create` command earlier in the
+			// same run. `stopSandbox` matches on name via listSandboxNames,
+			// so tests must be able to make a specific id look present.
+			const created = calls
 				.map((c) => (c.args[0] === 'create' ? c.args[c.args.indexOf('--name') + 1] : null))
 				.filter((x): x is string => x !== null)
-				.pop()
+			const names = [...existing, ...created]
 			return {
-				stdout: JSON.stringify(sessionId ? [{ name: sessionId, status: 'Running' }] : []),
+				stdout: JSON.stringify(
+					names.length > 0 ? names.map((name) => ({ name, status: 'Running' })) : [],
+				),
 				stderr: '',
 			}
 		}
@@ -1274,35 +1282,46 @@ describe('POST /sessions/:id/stop', () => {
 	})
 
 	it('stops the sandbox immediately (not deferred) given a valid bearer token', async () => {
-		const { run, calls } = makeRunner()
+		const { run, calls } = makeRunner({ existingSandboxes: ['sess-stop'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
 
 		const res = await app.request('/sessions/sess-stop/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 		})
 
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true })
+		expect(await res.json()).toEqual({ stopped: 'sandbox-stopped' })
 		expect(calls.find((c) => c.args[0] === 'stop')?.args).toEqual(['stop', 'sess-stop'])
 	})
 
-	it('is idempotent — swallows a stop failure (e.g. sandbox already gone) and still returns ok', async () => {
+	it('is idempotent — reports sandbox-not-found without shelling out when the sandbox is already gone', async () => {
+		// A stop request for a session whose sandbox is no longer known to
+		// `msb list` used to shell out anyway and swallow the failure — the
+		// new handler observes the list first and returns `sandbox-not-found`
+		// without invoking `msb stop`, matching the settle-side contract
+		// where an absent sandbox is not itself a stop failure.
+		const { run, calls } = makeRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const run = async (_bin: string, args: readonly string[]) => {
-			if (args[0] === 'stop') throw new Error('sandbox not found')
-			return { stdout: '', stderr: '' }
-		}
 		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
 
 		const res = await app.request('/sessions/sess-gone/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'complete', source: 'sandbox-exit' }),
 		})
 
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true })
+		expect(await res.json()).toEqual({ stopped: 'sandbox-not-found' })
+		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
 	})
 
 	it('rejects an invalid session id with 400 and does not shell out', async () => {
@@ -1322,7 +1341,7 @@ describe('POST /sessions/:id/stop', () => {
 
 describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', () => {
 	it('seeds the forced-stop sentinel into sessionExitCodes before stopping the sandbox', async () => {
-		const { run } = makeRunner()
+		const { run } = makeRunner({ existingSandboxes: ['sess-stop'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const sessionExitCodes = new Map<string, number>()
 		const app = buildApp({
@@ -1334,7 +1353,11 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 		const res = await app.request('/sessions/sess-stop/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 		})
 
 		expect(res.status).toBe(200)
@@ -1343,8 +1366,17 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 	it('still seeds the sentinel even when the underlying stopSandbox call fails', async () => {
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		// Sandbox in the `list` output so we reach the `stop` shell-out below,
+		// which throws to exercise the "already gone" outcome; the seed must
+		// have already happened by then.
 		const run = async (_bin: string, args: readonly string[]) => {
 			if (args[0] === 'stop') throw new Error('sandbox not found')
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'sess-gone', status: 'Running' }]),
+					stderr: '',
+				}
+			}
 			return { stdout: '', stderr: '' }
 		}
 		const sessionExitCodes = new Map<string, number>()
@@ -1357,10 +1389,15 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 		const res = await app.request('/sessions/sess-gone/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 		})
 
 		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ stopped: 'sandbox-already-gone' })
 		expect(sessionExitCodes.get('sess-gone')).toBe(FORCED_STOP_EXIT_CODE)
 	})
 
@@ -1385,7 +1422,7 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 	})
 
 	it('self-cleans an orphaned sentinel after the TTL elapses (no live monitor ever consumed it)', async () => {
-		const { run } = makeRunner()
+		const { run } = makeRunner({ existingSandboxes: ['sess-orphan'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const sessionExitCodes = new Map<string, number>()
 		const app = buildApp({
@@ -1399,7 +1436,11 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 		try {
 			const res = await app.request('/sessions/sess-orphan/stop', {
 				method: 'POST',
-				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+				headers: {
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 			})
 			expect(res.status).toBe(200)
 			expect(sessionExitCodes.get('sess-orphan')).toBe(FORCED_STOP_EXIT_CODE)
@@ -1413,7 +1454,7 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 	})
 
 	it('does not clobber a value a live monitor already wrote over the sentinel before the TTL fires', async () => {
-		const { run } = makeRunner()
+		const { run } = makeRunner({ existingSandboxes: ['sess-raced'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const sessionExitCodes = new Map<string, number>()
 		const app = buildApp({
@@ -1427,7 +1468,11 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 		try {
 			const res = await app.request('/sessions/sess-raced/stop', {
 				method: 'POST',
-				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+				headers: {
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 			})
 			expect(res.status).toBe(200)
 
@@ -2790,6 +2835,49 @@ describe('stall detection wiring', () => {
 
 		advance(60_000)
 		expect(stallTracker.counts().undelivered).toBe(1)
+	})
+
+	it('queues a model switch as a control request without opening a pending turn', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-model', { interactive: true })
+
+		const res = await app.request('/sessions/sess-wire-model/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ model: 'deepseek/deepseek-v4-flash' }),
+		})
+		expect(res.status).toBe(200)
+
+		// Delivered to the CLI verbatim and in order with the turns around it.
+		const stream = await app.request('/sessions/sess-wire-model/input/stream')
+		const reader = stream.body?.getReader()
+		if (!reader) throw new Error('stream response has no body')
+		const first = await reader.read()
+		const framed = JSON.parse(new TextDecoder().decode(first.value))
+		const control = JSON.parse(framed.turn)
+		expect(control).toMatchObject({
+			type: 'control_request',
+			request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+		})
+		expect(typeof control.request_id).toBe('string')
+		await reader.cancel()
+
+		// Nothing is waiting on the CLI for a reply, so the stall tracker has no
+		// turn to count as undelivered however long this sits.
+		advance(120_000)
+		expect(stallTracker.counts().undelivered).toBe(0)
+	})
+
+	it('rejects a model switch whose model name is not a model name', async () => {
+		const { app } = setup()
+		for (const model of ['', 'a b', 'x"y', 42, null]) {
+			const res = await app.request('/sessions/sess-wire-model-bad/input', {
+				method: 'POST',
+				headers: auth,
+				body: JSON.stringify({ model }),
+			})
+			expect(res.status).toBe(400)
+		}
 	})
 
 	it('records the guest ack from the input stream, moving the session to no_output', async () => {

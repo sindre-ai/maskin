@@ -25,6 +25,7 @@ import {
 	DEFAULT_MAX_RESPONSE_TOKENS,
 	MAX_FETCH_HANDLE_IDS,
 	RESPONSE_TOKEN_CAP_ENV_VAR,
+	RESUME_CURSOR,
 	TOKEN_CAP_TARGETS,
 	applyResponseTokenCap,
 	estimateResponseTokens,
@@ -391,6 +392,61 @@ describe('applyResponseTokenCap', () => {
 		}
 		expect(capped.structuredContent.next_cursor).toBe(inheritedCursor)
 		expect(capped.structuredContent.page.next_cursor).toBe(inheritedCursor)
+	})
+
+	it('reports page.returned as the rows that ship, not the pre-trim page size', () => {
+		const rows = Array.from({ length: 40 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = makeListObjectsResponseWithCursor(rows, '2026-06-30T12:00:00.000Z')
+		response.structuredContent.page = {
+			...response.structuredContent.page,
+			limit: 40,
+			returned: rows.length,
+		} as typeof response.structuredContent.page
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 500 })
+		expect(result.truncated).toBe(true)
+		const capped = result.response as {
+			structuredContent: { objects: unknown[]; page: { limit: number; returned: number } }
+		}
+		expect(capped.structuredContent.objects.length).toBeLessThan(rows.length)
+		expect(capped.structuredContent.page.returned).toBe(capped.structuredContent.objects.length)
+		expect(capped.structuredContent.page.limit).toBe(40)
+	})
+
+	it('resumes the walk after the last shipped row when the tool supplies a resume cursor, even on a final page', () => {
+		// A final page carries no next_cursor, so there is nothing to rewrite. The
+		// tool-supplied builder makes trimmed rows reachable through the cursor.
+		const rows = Array.from({ length: 30 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = {
+			content: [{ type: 'text', text: 'x' }],
+			structuredContent: {
+				heroCard: {
+					kind: 'list',
+					tool: 'list_objects',
+					page: { limit: 25, offset: 0, hasMore: false },
+				},
+				objects: rows,
+				page: { limit: 30, returned: rows.length },
+			},
+			[RESUME_CURSOR]: (last: unknown) => `after:${(last as { id: string }).id}`,
+		}
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 2500 })
+		expect(result.truncated).toBe(true)
+		const capped = result.response as {
+			structuredContent: {
+				heroCard: { page: { hasMore: boolean } }
+				objects: Array<{ id: string }>
+				next_cursor?: string
+				page: { next_cursor?: string; returned: number }
+			}
+		}
+		const kept = capped.structuredContent.objects
+		expect(kept.length).toBeGreaterThan(0)
+		expect(kept.length).toBeLessThan(rows.length)
+		const expected = `after:${kept[kept.length - 1].id}`
+		expect(capped.structuredContent.next_cursor).toBe(expected)
+		expect(capped.structuredContent.page.next_cursor).toBe(expected)
+		expect(capped.structuredContent.page.returned).toBe(kept.length)
+		expect(capped.structuredContent.heroCard.page.hasMore).toBe(true)
 	})
 
 	it('leaves next_cursor untouched when the pre-trim payload had no cursor', () => {

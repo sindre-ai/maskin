@@ -34,6 +34,7 @@ import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
+import fileCommentsRoutes from './routes/file-comments'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
@@ -60,6 +61,7 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -264,6 +266,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
 	//     secret enforced inside the handler, not our API key.
+	//   - POST /api/invites/:token/accept and GET /api/invites/preview: the
+	//     invitee is not yet a member of any workspace, so the standard
+	//     Bearer + X-Workspace-Id middleware cannot admit them. The accept
+	//     handler reads Authorization itself for the authenticated branch;
+	//     preview is IP-rate-limited inside the handler. Frontends MUST NOT
+	//     send X-Workspace-Id on these calls.
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -276,6 +284,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
+		if (path === '/api/invites/preview' && method === 'GET') return next()
+		if (method === 'POST' && /^\/api\/invites\/[^/]+\/accept$/.test(path)) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 		// R11-C · linkedin-unipile fan-out webhook. Unipile POSTs the
 		// `account.reconnect` event from outside our network, so it cannot
@@ -283,6 +293,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// `unipile-signature` HMAC header, verified inside the handler
 		// against `UNIPILE_WEBHOOK_SECRET`.
 		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
+		// The linkedin-unipile MCP endpoints are POST-only and answer every GET with
+		// a bare 405 (routes/integrations-linkedin-unipile-mcp.ts). MCP clients
+		// probe them with GET to open a server-to-client stream and retry, ~250k
+		// times a week, and each one paid two auth round trips to be told no.
+		// Same response, answered before auth.
+		if (method === 'GET' && /^\/api\/integrations\/linkedin-unipile\/mcp(\/[^/]+)?$/.test(path)) {
+			return c.text('Method Not Allowed', 405)
+		}
 
 		return auth(c, next)
 	})
@@ -350,6 +368,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
 	app.route('/api/workspaces', workspaceSkillsRoutes)
+	app.route('/api/invites', workspaceInvitationsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
@@ -391,6 +410,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/imports', importsRoutes)
 	app.route('/api/installed-loops', installedLoopsRoutes)
 	app.route('/api/files', filesRoutes)
+	// Mounted at the same prefix — Hono composes multiple sub-apps at one
+	// prefix so the nested /:id/comments paths sit under the existing files
+	// surface without touching files.ts.
+	app.route('/api/files', fileCommentsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)

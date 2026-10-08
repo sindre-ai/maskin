@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { type events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
@@ -46,7 +46,7 @@ export interface PostCommentResult {
  * `PgNotifyBridge` after this transaction commits.
  */
 export async function postComment(
-	db: Database,
+	db: Database | Transaction,
 	input: PostCommentInput,
 ): Promise<PostCommentResult> {
 	const entityType = input.entityType ?? 'object'

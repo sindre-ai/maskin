@@ -109,6 +109,12 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Invite emails. Set RESEND_API_KEY and APP_URL together: with a key and no
+      # APP_URL, invite creation returns 500. Do not add EMAIL_FROM here: the
+      # email package reads it with ??, so an empty value would beat the
+      # notifications@maskin.io default.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      APP_URL: ${APP_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

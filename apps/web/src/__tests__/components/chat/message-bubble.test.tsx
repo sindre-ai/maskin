@@ -114,9 +114,10 @@ describe('MessageBubble', () => {
 		expect(label.closest('div')?.className).not.toContain('bg-primary')
 	})
 
-	it('keeps the pre-v4 sentence-case label and no hover row when v4Polish is off', () => {
+	it('keeps the pre-v4 sentence-case label and no Retry action when v4Polish is off', () => {
 		// Rollback state for the chats-v4-polish bet: the flag off must render the
-		// pre-bet bubble exactly — "You attached" as prose and no action row.
+		// pre-bet bubble exactly — "You attached" as prose and no v4 Retry action.
+		// Copy is a bug fix, not a v4 delta, so it is deliberately not flag-gated.
 		renderBubble(
 			buildMessage({
 				actorId: 'me',
@@ -127,7 +128,6 @@ describe('MessageBubble', () => {
 		)
 		expect(screen.getByText('You attached')).toBeInTheDocument()
 		expect(screen.queryByText('YOU ATTACHED')).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Copy message' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
 
@@ -217,15 +217,37 @@ describe('MessageBubble — agent hover row (v4)', () => {
 		expect(retryMutate).toHaveBeenCalledWith({ messageId: 42 })
 	})
 
-	it('leaves the user branch hover row unchanged (Edit + Retry, no new Copy)', () => {
-		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', id: 7 }), true)
-		// The pre-v4 own-message action row uses Edit + Retry; v4 must not add
-		// a new "Copy message" button here. (The label 'Copy message' is the
-		// agent branch's new button — asserting it is absent proves the user
-		// row still has the same two actions it had before.)
+	it('adds Copy to the user branch alongside Edit + Retry', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		Object.defineProperty(navigator, 'clipboard', {
+			configurable: true,
+			value: { writeText },
+		})
+		renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				id: 7,
+				content: 'My own words.',
+			}),
+			true,
+		)
 		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Ask agents to respond again/ })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Copy message' })).not.toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
+		expect(writeText).toHaveBeenCalledWith('My own words.')
+	})
+
+	it('offers Copy on own and agent messages when v4Polish is off, but no Retry on the agent row', () => {
+		const own = renderBubble(
+			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', id: 8 }),
+		)
+		expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
+		own.unmount()
+		renderBubble(buildMessage({ id: 9 }))
+		expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
 
 	it('does not render the hover row on an optimistic bubble (id ≤ 0)', () => {

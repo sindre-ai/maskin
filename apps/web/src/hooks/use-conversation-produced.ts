@@ -137,11 +137,14 @@ export function useConversationProduced(
 	const query = useQuery({
 		queryKey: ['conversations', 'produced', conversationId, window?.after, window?.before],
 		queryFn: () =>
-			api.events.history(workspaceId, {
-				after: window?.after as string,
-				...(window?.before ? { before: window.before } : {}),
-				limit: '500',
-			}),
+			api.events.historyUpTo(
+				workspaceId,
+				{
+					after: window?.after as string,
+					...(window?.before ? { before: window.before } : {}),
+				},
+				500,
+			),
 		enabled: enabled && !!conversationId && !!window,
 	})
 

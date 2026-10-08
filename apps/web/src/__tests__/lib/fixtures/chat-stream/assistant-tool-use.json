@@ -12,7 +12,7 @@
 				"input": { "type": "bet", "limit": 5 }
 			}
 		],
-		"model": "claude-sonnet-4-5",
+		"model": "claude-sonnet-5-5",
 		"stop_reason": "tool_use",
 		"usage": { "input_tokens": 50, "output_tokens": 20 }
 	},
