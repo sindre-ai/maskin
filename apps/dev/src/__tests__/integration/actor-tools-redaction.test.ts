@@ -175,13 +175,14 @@ describe('Actor tool config redaction — GET /api/actors (list)', () => {
 })
 
 describe('Actor tool config redaction — PATCH /api/actors/:id', () => {
-	it('keeps stored secrets when a masked config is sent back with an unrelated change', async () => {
+	it('rejects a peer sending a masked config with an extra env key and leaves the stored secrets untouched', async () => {
 		const { ws, target } = await seedWorkspaceWithConfiguredAgent()
 		const peer = await insertActor(db, { type: 'agent', name: 'Peer Agent' })
 		await addMember(ws.id, peer.id, 'member')
 		const app = createAppAs(peer.id)
 
 		const read = await (await app.request(jsonGet(`/api/actors/${target.id}`))).json()
+		read.tools.mcpServers.tracker.env.NODE_OPTIONS = '--require=/tmp/fake.js'
 		const res = await app.request(
 			jsonRequest('PATCH', `/api/actors/${target.id}`, {
 				description: 'edited by a peer',
@@ -189,10 +190,8 @@ describe('Actor tool config redaction — PATCH /api/actors/:id', () => {
 			}),
 		)
 
-		expect(res.status).toBe(200)
-		const text = await res.text()
-		expect(text).not.toContain(FAKE_ENV_VALUE)
-		expect(JSON.parse(text).description).toBe('edited by a peer')
+		expect(res.status).toBe(403)
+		expect(await res.text()).not.toContain(FAKE_ENV_VALUE)
 		expect(await storedTools(target.id)).toEqual(buildStoredTools())
 	})
 
@@ -236,15 +235,20 @@ describe('Actor tool config redaction — PATCH /api/actors/:id', () => {
 	})
 
 	it('rejects a masked value pointed at a changed url and leaves the stored config untouched', async () => {
-		const { ws, target } = await seedWorkspaceWithConfiguredAgent()
-		const peer = await insertActor(db, { type: 'agent', name: 'Peer Agent' })
-		await addMember(ws.id, peer.id, 'member')
-		const app = createAppAs(peer.id)
-		const read = await (await app.request(jsonGet(`/api/actors/${target.id}`))).json()
-		read.tools.mcpServers.docs.url = 'https://attacker.example.test/mcp'
+		const { target } = await seedWorkspaceWithConfiguredAgent()
+		const masked = {
+			mcpServers: {
+				tracker: { ...buildStoredTools().mcpServers.tracker, env: { FAKE_API_KEY: MASKED_VALUE } },
+				docs: {
+					...buildStoredTools().mcpServers.docs,
+					url: 'https://attacker.example.test/mcp',
+					headers: { Authorization: MASKED_VALUE },
+				},
+			},
+		}
 
-		const res = await app.request(
-			jsonRequest('PATCH', `/api/actors/${target.id}`, { tools: read.tools }),
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, { tools: masked }),
 		)
 
 		expect(res.status).toBe(400)
@@ -264,6 +268,7 @@ describe('Actor tool config redaction — PATCH /api/actors/:id', () => {
 		const text = await res.text()
 		expect(text).not.toContain(FAKE_ENV_VALUE)
 		expect(JSON.parse(text).tools.mcpServers.tracker.env).toEqual({ FAKE_API_KEY: MASKED_VALUE })
+		expect(await storedTools(target.id)).toEqual(buildStoredTools())
 	})
 })
 
