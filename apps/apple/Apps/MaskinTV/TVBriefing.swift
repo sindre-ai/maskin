@@ -44,13 +44,13 @@ private struct TVStoryCard: View {
 			}
 			Spacer(minLength: 0)
 			Text(card.headline)
-				.font(.system(size: 30, weight: .bold))
+				.font(.system(size: 44, weight: .bold))
 				.foregroundStyle(isSeen ? MaskinColor.ink : MaskinColor.stFg)
 				.multilineTextAlignment(.leading)
 				.lineLimit(3)
 		}
-		.padding(28)
-		.frame(width: 300, height: 210, alignment: .leading)
+		.padding(34)
+		.frame(width: 460, height: 260, alignment: .leading)
 		.background(isSeen ? AnyShapeStyle(MaskinSurface.card) : AnyShapeStyle(MaskinGradient.unseenBrief),
 			in: RoundedRectangle(cornerRadius: 32, style: .continuous))
 	}

@@ -16,21 +16,19 @@ struct TVRoot: View {
 	enum Tab: Hashable { case forYou, team, flows, objects, search, profile }
 
 	var body: some View {
-		TabView(selection: $tab) {
-			TVForYou(
-				environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision
-			)
-			.tabItem { Text("For you") }.tag(Tab.forYou)
-			TVTeam(environment: environment)
-				.tabItem { Text("Team") }.tag(Tab.team)
-			TVFlows(environment: environment, loops: loops)
-				.tabItem { Text("Flows") }.tag(Tab.flows)
-			TVObjects(environment: environment)
-				.tabItem { Text("Objects") }.tag(Tab.objects)
-			TVSearch(environment: environment)
-				.tabItem { Image(systemName: "magnifyingglass") }.tag(Tab.search)
-			TVProfile(environment: environment)
-				.tabItem { Text("Profile") }.tag(Tab.profile)
+		ZStack {
+			TVBackdrop()
+			VStack(spacing: 0) {
+				TVTopBar(
+					items: [
+						.init(tab: .forYou, title: "For you", count: forYou?.store.entries.filter { $0.section == .needs }.count ?? 0),
+						.init(tab: .team, title: "Team"),
+						.init(tab: .flows, title: "Flows"),
+						.init(tab: .objects, title: "Objects"),
+					], selection: $tab, search: .search, profile: .profile, initials: initials)
+				screen
+			}
+			.ignoresSafeArea()
 		}
 		.overlay(alignment: .topTrailing) {
 			// Last data stays on screen while the connection is down; this says so.
@@ -56,6 +54,23 @@ struct TVRoot: View {
 			_ = await (flows, briefings)
 		}
 		.onDisappear { loops?.stop() }
+	}
+
+	@ViewBuilder private var screen: some View {
+		switch tab {
+		case .forYou:
+			TVForYou(environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision)
+		case .team: TVTeam(environment: environment)
+		case .flows: TVFlows(environment: environment, loops: loops)
+		case .objects: TVObjects(environment: environment)
+		case .search: TVSearch(environment: environment)
+		case .profile: TVProfile(environment: environment)
+		}
+	}
+
+	private var initials: String {
+		let words = (environment.auth.session?.name ?? "").split(separator: " ")
+		return String(words.prefix(2).compactMap(\.first)).uppercased()
 	}
 
 	/// The briefing and every flow's pages, loaded once per workspace.
