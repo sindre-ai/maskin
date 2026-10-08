@@ -131,3 +131,19 @@ import Testing
 		#expect(ThreadLayout.sections(for: []).isEmpty)
 	}
 }
+
+@Suite("ThreadLayout stability")
+struct ThreadLayoutStabilityTests {
+	@Test("two layouts of the same messages carry the same row ids")
+	func idsAreStable() {
+		var parent = chatMsg(1, by: "relay", agent: true, "handing off")
+		parent.spawnedSessions = [
+			SpawnedSession(id: "sub1", status: "running", actorID: "dev", actorName: "Dev", actionPrompt: "Fix it")
+		]
+		let messages = [parent, chatMsg(2, by: "relay", agent: true, "next")]
+		let a = ThreadLayout.items(for: messages, unreadAfter: 0, currentActorID: "me")
+		let b = ThreadLayout.items(for: messages, unreadAfter: 0, currentActorID: "me")
+		#expect(a.map(\.id) == b.map(\.id))
+		#expect(ThreadLayout.sections(for: a).map(\.id) == ThreadLayout.sections(for: b).map(\.id))
+	}
+}

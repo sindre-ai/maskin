@@ -275,13 +275,20 @@ struct ChatThreadView: View {
 							.padding(.horizontal, MaskinSpace.s9)
 							.padding(.top, MaskinSpace.s3)
 					}
+					// An overlay, not a sibling row: appearing and disappearing must not resize the
+					// scroll view, which would re-run the bottom anchor each time.
 					thread
-					if store.isCatchingUp {
-						MonoLabel("Loading new messages…")
-							.frame(maxWidth: .infinity)
-							.padding(.vertical, MaskinSpace.s3)
-							.transition(.opacity)
-					}
+						.overlay(alignment: .bottom) {
+							if store.isCatchingUp {
+								MonoLabel("Loading new messages…")
+									.padding(.vertical, MaskinSpace.s3)
+									.padding(.horizontal, MaskinSpace.s7)
+									.background(MaskinSurface.card.opacity(0.92), in: Capsule())
+									.padding(.bottom, MaskinSpace.s3)
+									.allowsHitTesting(false)
+									.transition(.opacity)
+							}
+						}
 				}
 				.animation(MaskinMotion.standard, value: store.syncProblem)
 				.animation(MaskinMotion.standard, value: store.isCatchingUp)
@@ -289,26 +296,44 @@ struct ChatThreadView: View {
 		}
 	}
 
+	/// The thread's rows. Short threads in a plain stack (see `ThreadRendering`; its day headers
+	/// scroll with the text, only a lazy stack can pin them), long ones in a lazy stack that pins them.
+	@ViewBuilder
+	private func threadRows(_ proxy: ScrollViewProxy) -> some View {
+		if ThreadRendering.usesLazyStack(rowCount: store.messages.count) {
+			LazyVStack(alignment: .leading, spacing: MaskinSpace.s5, pinnedViews: [.sectionHeaders]) {
+				threadContent(proxy, lazy: true)
+			}
+		} else {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				threadContent(proxy, lazy: false)
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func threadContent(_ proxy: ScrollViewProxy, lazy: Bool) -> some View {
+		if store.hasEarlier {
+			ProgressView()
+				.frame(maxWidth: .infinity)
+				// Only once the reader has scrolled: while the thread is still settling at the
+				// bottom this spinner can flash into view, and loading history then ends with
+				// a jump to the old boundary, leaving the newest messages below the fold.
+				.onAppear { if !followingOpen { loadEarlier(proxy) } }
+		}
+		ThreadTranscript(
+			store: store, lazy: lazy, onStop: { stopTarget = $0 }, onEdit: { editing = $0 },
+			onQuote: { composer.quote(author: $0.actorName, content: $0.content) }, matchIDs: matchSet,
+			currentMatchID: currentMatchID)
+		Color.clear.frame(height: 1).id(Self.bottomID)
+			.onAppear { if !usesGeometryTracking { reachedBottom() } }
+			.onDisappear { if !usesGeometryTracking { isAtBottom = false } }
+	}
+
 	private var thread: some View {
 		ScrollViewReader { proxy in
 			ScrollView {
-				LazyVStack(alignment: .leading, spacing: MaskinSpace.s5, pinnedViews: [.sectionHeaders]) {
-					if store.hasEarlier {
-						ProgressView()
-							.frame(maxWidth: .infinity)
-							// Only once the reader has scrolled: while the thread is still settling at the
-							// bottom this spinner can flash into view, and loading history then ends with
-							// a jump to the old boundary, leaving the newest messages below the fold.
-							.onAppear { if !followingOpen { loadEarlier(proxy) } }
-					}
-					ThreadTranscript(
-						store: store, onStop: { stopTarget = $0 }, onEdit: { editing = $0 },
-						onQuote: { composer.quote(author: $0.actorName, content: $0.content) }, matchIDs: matchSet,
-						currentMatchID: currentMatchID)
-					Color.clear.frame(height: 1).id(Self.bottomID)
-						.onAppear { if !usesGeometryTracking { reachedBottom() } }
-						.onDisappear { if !usesGeometryTracking { isAtBottom = false } }
-				}
+				threadRows(proxy)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.top, MaskinSpace.s5)
 				.padding(.bottom, MaskinSpace.s7)
@@ -336,12 +361,13 @@ struct ChatThreadView: View {
 			.onChange(of: store.messages.last?.id) { _, _ in
 				// Follow new messages only while the reader is at the bottom (or just sent one);
 				// otherwise leave them where they are and offer a jump.
-				if followingOpen {
-					jumpToBottom(proxy)
-				} else if isAtBottom || store.messages.last?.actorID == store.currentActorID {
-					scrollToBottom(proxy)
-				} else {
-					unseenCount += 1
+				switch ThreadScrollPolicy.onNewestChanged(
+					followingOpen: followingOpen, isAtBottom: isAtBottom,
+					newestIsMine: store.messages.last?.actorID == store.currentActorID)
+				{
+				case .jump: jumpToBottom(proxy)
+				case .follow: scrollToBottom(proxy)
+				case .countUnseen: unseenCount += 1
 				}
 			}
 			.overlay(alignment: .bottom) {

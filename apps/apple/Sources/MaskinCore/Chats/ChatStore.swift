@@ -89,6 +89,11 @@ public final class ChatStore {
 	@ObservationIgnored private var syncing = false
 	@ObservationIgnored private var syncQueued = false
 	@ObservationIgnored private var syncQueuedFull = false
+	/// Session events arrive in bursts (an agent's activity ticks several times a second): they
+	/// are folded into one trailing re-read after this pause, never one read each.
+	@ObservationIgnored var sessionEventCoalesce: Duration = .milliseconds(750)
+	@ObservationIgnored private var sessionEventTask: Task<Void, Never>?
+	@ObservationIgnored private var sessionEventNeedsSync = false
 	@ObservationIgnored private var syncWaiters: [CheckedContinuation<Void, Never>] = []
 	@ObservationIgnored private var readSent = 0
 	/// A delivered message keeps the row id of the optimistic bubble, so SwiftUI never swaps it.
@@ -252,12 +257,9 @@ public final class ChatStore {
 						await self.sync(full: event.action == "message_updated")
 						await self.refreshSessions()
 					case .event(let event) where event.entityType == .actor || event.entityType == .session:
-						// A handed-off session's row lives on its message: re-read the page when one of
-						// ours (or any, while one is live) changed state.
-						if event.entityType == .session, self.tracksSpawnedSession(event.entityId) {
-							await self.sync(full: true)
-						}
-						await self.refreshSessions()
+						// A handed-off session's row lives on its message: re-read the page only when
+						// one of THIS thread's sessions changed, never for the workspace's other work.
+						self.noteSessionEvent(rereadsThread: event.entityType == .session && self.ownsSpawnedSession(event.entityId))
 					case .event:
 						break
 					}
@@ -304,6 +306,8 @@ public final class ChatStore {
 		deliveryObserver = nil
 		poller?.cancel()
 		poller = nil
+		sessionEventTask?.cancel()
+		sessionEventTask = nil
 		retryTask?.cancel()
 		retryTask = nil
 		trace?.stop()
@@ -319,10 +323,25 @@ public final class ChatStore {
 		confirmed.contains { $0.spawnedSessions.contains { $0.isLive } }
 	}
 
-	private func tracksSpawnedSession(_ id: String?) -> Bool {
-		if hasLiveSpawnedSession { return true }
+	private func ownsSpawnedSession(_ id: String?) -> Bool {
 		guard let id else { return false }
 		return confirmed.contains { $0.spawnedSessions.contains { $0.id == id } }
+	}
+
+	/// Fold a burst of session/actor events into one trailing pass.
+	private func noteSessionEvent(rereadsThread: Bool) {
+		sessionEventNeedsSync = sessionEventNeedsSync || rereadsThread
+		guard sessionEventTask == nil else { return }
+		let pause = sessionEventCoalesce
+		sessionEventTask = Task { [weak self] in
+			try? await Task.sleep(for: pause)
+			guard let self, !Task.isCancelled else { return }
+			let reread = self.sessionEventNeedsSync
+			self.sessionEventNeedsSync = false
+			self.sessionEventTask = nil
+			if reread { await self.sync(full: true) }
+			await self.refreshSessions()
+		}
 	}
 
 	/// First frame from disk: the newest page of this thread, before any network call.
@@ -494,7 +513,7 @@ public final class ChatStore {
 				mergeNewest(page)
 				isCatchingUp = false
 				if let detail = await freshDetail {
-					self.detail = detail
+					if self.detail != detail { self.detail = detail }
 					readSent = max(readSent, detail.lastReadMessageID ?? 0)
 				}
 				syncProblem = nil
@@ -526,9 +545,10 @@ public final class ChatStore {
 
 	public func refreshSessions() async {
 		guard let sessions = try? await api.sessions(conversationID: conversationID) else { return }
-		agentSessions = sessions.sorted {
+		let sorted = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
+		if sorted != agentSessions { agentSessions = sorted }
 		// Not awaited: fetching a finished turn's history must never delay the thread itself.
 		Task { [trace, sessions = agentSessions] in await trace?.update(sessions: sessions) }
 		onSessionsRefreshed?(agentSessions)
@@ -734,34 +754,48 @@ public final class ChatStore {
 	func mergeNewest(_ page: MessagePage) {
 		let held = lastServerID
 		let wasEmpty = confirmed.isEmpty
+		var base = confirmed
 		if let held, page.hasMore, let first = page.messages.first?.serverID, first > held {
-			confirmed = []
+			base = []
 			hasEarlier = true
 		}
-		merge(page.messages)
+		publish(merged(page.messages, into: base))
 		if wasEmpty { hasEarlier = page.hasMore }
 	}
 
 	/// Fold server rows into the confirmed list, ordered by server id however they arrive. A row
 	/// already present is updated in place (keeping its row id), so SwiftUI never re-creates it.
 	func merge(_ incoming: [ChatMessage]) {
+		publish(merged(incoming, into: confirmed))
+	}
+
+	/// Publish only a real change: re-reading an unchanged thread must not make the view rebuild.
+	private func publish(_ result: (rows: [ChatMessage], clearsReply: Bool)) {
+		if result.clearsReply { awaitingReplySince = nil }
+		if result.rows != confirmed { confirmed = result.rows }
+	}
+
+	private func merged(_ incoming: [ChatMessage], into base: [ChatMessage]) -> (rows: [ChatMessage], clearsReply: Bool) {
+		var rows = base
+		var clears = false
 		for var message in incoming {
 			guard let serverID = message.serverID else { continue }
-			if let index = confirmed.firstIndex(where: { $0.serverID == serverID }) {
-				message.id = confirmed[index].id
-				confirmed[index] = message
+			if let index = rows.firstIndex(where: { $0.serverID == serverID }) {
+				message.id = rows[index].id
+				rows[index] = message
 			} else {
 				if let alias = aliases[serverID] { message.id = alias }
-				confirmed.append(message)
+				rows.append(message)
 			}
 			if message.author == .agent, awaitingReplySince != nil,
-				let sent = confirmed.last(where: { $0.actorID == currentActorID })?.serverID,
+				let sent = rows.last(where: { $0.actorID == currentActorID })?.serverID,
 				serverID > sent
 			{
-				awaitingReplySince = nil
+				clears = true
 			}
 		}
-		confirmed.sort { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
+		rows.sort { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
+		return (rows, clears)
 	}
 
 	static func message(_ error: Error) -> String {
