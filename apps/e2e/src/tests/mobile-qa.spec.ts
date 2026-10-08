@@ -22,15 +22,8 @@ const LONG_UNBROKEN_URL =
 // inner-scroller overflow while the underlying fix lands, so the gate does
 // not block unrelated PRs. Every entry MUST cite its follow-up task and be
 // removed in that task's PR — this is a receipt, not a permanent whitelist.
-//
-// - The desktop sidebar wrapper (div.fixed.inset-y-0.z-10 around
-//   [data-sidebar="sidebar"], apps/web/src/components/ui/sidebar.tsx)
-//   overflows its own client box by 8px at md and up. It is the app shell, so
-//   it shows on every authed surface.
-//   Follow-up: task 0b5738af-3993-410e-87d7-a5ce2b6a516d.
-const KNOWN_OFFENDER_EXCLUSIONS: readonly string[] = [
-	'div.fixed.inset-y-0.z-10:has(> [data-sidebar="sidebar"])',
-]
+// Currently empty: the desktop sidebar wrapper entry was removed with its fix.
+const KNOWN_OFFENDER_EXCLUSIONS: readonly string[] = []
 
 async function assertNoHorizontalOverflow(page: Page, surface: string, viewport: NamedViewport) {
 	// `load` instead of `networkidle` — the app holds an SSE connection to /api/events,
