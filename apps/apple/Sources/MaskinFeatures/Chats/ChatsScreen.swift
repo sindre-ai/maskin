@@ -80,7 +80,8 @@ private struct ChatsContainer: View {
 				environment: environment, title: store.scope == .archived ? "Archived" : "Team",
 				actions: ShellActions(
 					new: { showNewChat = true }, newLabel: "New conversation",
-					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) }))
+					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
+                    displaySymbol: ShellActions.slidersSymbol))
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {

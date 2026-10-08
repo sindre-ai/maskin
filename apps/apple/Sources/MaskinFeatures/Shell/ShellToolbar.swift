@@ -14,10 +14,14 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Live, New, Display, then the avatar in a capsule of its own. The per-tab
-/// sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
+/// Order in the pill is Display, Live, New, then the avatar, all inside ONE glass capsule (a single
+/// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
+	/// Three horizontal lines: For you and Flows.
+	public static let filterSymbol = "line.3.horizontal.decrease"
+	/// Sliders: Team and Objects.
+	public static let slidersSymbol = "slider.horizontal.3"
 	/// The "+" button (Team: New conversation). Nil hides it.
 	public var new: (() -> Void)?
 	/// The "+" button's accessibility label.
@@ -26,11 +30,14 @@ public struct ShellActions {
 	public var live: Bool
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
+	/// The Display menu's glyph: three lines (filter / sort) or sliders (display options).
+	public var displaySymbol: String
 
 	public init(
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
-		display: ShellDisplayMenu? = nil
+		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol
 	) {
+		self.displaySymbol = displaySymbol
 		self.new = new
 		self.newLabel = newLabel
 		self.live = live
@@ -80,52 +87,65 @@ private struct ShellToolbarModifier: ViewModifier {
 			.shellTitle(title)
 			.trackScrolled($scrolled)
 			.toolbar {
+				// One group, one glass capsule: the tools and the avatar share it (separate items or a
+				// ToolbarSpacer would split them into separate capsules).
 				ToolbarItemGroup(placement: .primaryAction) {
-					if actions.live {
-						Button {
-							liveMeeting.present(.dailyBriefing)
-						} label: {
-							Label(LiveMeetingRequest.dailyBriefing.buttonLabel, systemImage: "waveform")
-						}
-						.shellLiveButton()
-					}
-					if let new = actions.new, !scrolled {
-						Button(action: new) { Label(actions.newLabel, systemImage: "plus") }
-					}
 					if let display = actions.display {
 						Menu {
 							display.content
 						} label: {
-							Label("Display", systemImage: "line.3.horizontal.decrease")
+							Label("Display", systemImage: actions.displaySymbol)
+								.foregroundStyle(MaskinColor.ink)
 						}
 					}
-				}
-				if showsAvatar {
-					AvatarToolbarItem(name: environment.auth.session?.name ?? "") {
-						runtime?.showProfile = true
+					if actions.live {
+						Button {
+							liveMeeting.present(.dailyBriefing)
+						} label: {
+							ShellInkCircle(
+								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
+						}
+						.buttonStyle(.plain)
+					}
+					if let new = actions.new, !scrolled {
+						Button(action: new) {
+							ShellInkCircle(symbol: "plus", label: actions.newLabel)
+						}
+						.buttonStyle(.plain)
+					}
+					if showsAvatar {
+						Button {
+							runtime?.showProfile = true
+						} label: {
+							ActorAvatar(
+								name: environment.auth.session?.name ?? "", kind: .human, size: MaskinSpace.s14
+							)
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.contentShape(Circle())
+						}
+						.buttonStyle(.plain)
+						.accessibilityLabel("Account")
 					}
 				}
 			}
 	}
 }
 
-/// The profile button: the person's initials, 48pt, in a glass capsule of its own at the
-/// trailing edge, apart from the tool group before it.
-private struct AvatarToolbarItem: ToolbarContent {
-	let name: String
-	let action: () -> Void
+/// A solid ink circle with a white glyph: the primary action of a bar (Live, New). It sits inside
+/// the bar's glass capsule rather than being a glass button of its own.
+struct ShellInkCircle: View {
+	let symbol: String
+	let label: String
 
-	var body: some ToolbarContent {
-		if #available(iOS 26, macOS 26, *) {
-			ToolbarSpacer(.fixed, placement: .primaryAction)
-		}
-		ToolbarItem(placement: .primaryAction) {
-			Button(action: action) {
-				ActorAvatar(name: name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s2)
-					.frame(width: MaskinSpace.touchMin + MaskinSpace.s2, height: MaskinSpace.touchMin + MaskinSpace.s2)
-			}
-			.accessibilityLabel("Account")
-		}
+	var body: some View {
+		Image(systemName: symbol)
+			.font(.system(size: 16, weight: .semibold))
+			.foregroundStyle(MaskinSurface.onInverse)
+			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+			.background(Circle().fill(MaskinSurface.inverse))
+			.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+			.contentShape(Circle())
+			.accessibilityLabel(label)
 	}
 }
 
@@ -189,13 +209,5 @@ extension View {
 				})
 		}
 		return AnyView(self)
-	}
-
-	/// The dark, prominent Live button of the pill (glass on iOS 26).
-	func shellLiveButton() -> some View {
-		if #available(iOS 26, macOS 26, *) {
-			return AnyView(buttonStyle(.glassProminent).tint(MaskinSurface.inverse))
-		}
-		return AnyView(buttonStyle(.borderedProminent).tint(MaskinSurface.inverse))
 	}
 }

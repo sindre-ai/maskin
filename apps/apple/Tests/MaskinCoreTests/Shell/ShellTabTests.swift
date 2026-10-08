@@ -14,9 +14,9 @@ struct ShellTabTests {
 	}
 
 	@Test func barItemsPerTab() {
-		#expect(ShellTab.forYou.barItems == [.live, .display, .avatar])
-		#expect(ShellTab.chats.barItems == [.new, .display, .avatar])
-		#expect(ShellTab.loops.barItems == [.avatar])
+		#expect(ShellTab.forYou.barItems == [.display, .live, .avatar])
+		#expect(ShellTab.chats.barItems == [.display, .new, .avatar])
+		#expect(ShellTab.loops.barItems == [.display, .avatar])
 		#expect(ShellTab.objects.barItems == [.display, .avatar])
 	}
 

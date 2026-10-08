@@ -67,18 +67,21 @@ struct ChatThreadView: View {
 			.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 			#endif
 			.toolbar {
-				ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
-				// Live (when an agent is in the chat) and a flat menu, in one group so iOS keeps both in
-				// the bar instead of folding them into a "More" overflow.
-				ToolbarItemGroup(placement: .primaryAction) {
-					if let lead = liveLead {
-						Button {
-							liveMeeting.present(.thread(chat: store, lead: lead))
-						} label: {
-							Label("Live", systemImage: "waveform")
-						}
-						.shellLiveButton()
+				// The other person's avatar tile in the centre of a direct chat; a group keeps its pill below.
+				ToolbarItem(placement: .principal) {
+					if let counterpart {
+						ActorAvatar(
+							name: counterpart.name, kind: counterpart.kind == .agent ? .agent : .human,
+							size: MaskinSpace.s14, seed: counterpart.id
+						)
+						.accessibilityLabel(counterpart.name)
+					} else {
+						Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
 					}
+				}
+				// The menu first, then Live (when an agent is in the chat) at the far right, in one
+				// group so they share a capsule and iOS keeps both in the bar instead of a "More" overflow.
+				ToolbarItemGroup(placement: .primaryAction) {
 					Menu {
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
@@ -121,6 +124,15 @@ struct ChatThreadView: View {
 						}
 					} label: {
 						Label("Chat options", systemImage: "ellipsis")
+							.foregroundStyle(MaskinColor.ink)
+					}
+					if let lead = liveLead {
+						Button {
+							liveMeeting.present(.thread(chat: store, lead: lead))
+						} label: {
+							ShellInkCircle(symbol: "waveform", label: "Live")
+						}
+						.buttonStyle(.plain)
 					}
 				}
 			}
