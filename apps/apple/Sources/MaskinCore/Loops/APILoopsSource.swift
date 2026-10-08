@@ -213,8 +213,6 @@ public struct APILoopsSource: LoopsAPI {
 		var pill: String
 		var entryCondition: String?
 		var closeCondition: String?
-		/// Absent from servers older than loop tags.
-		var tags: [String]?
 		var inProgressCount: Int
 		var closedCount: Int
 		var medianTimeToCloseMs: Double?
@@ -229,7 +227,7 @@ public struct APILoopsSource: LoopsAPI {
 			LoopSummary(
 				id: id, name: name, content: content, status: LoopPill(wire: status),
 				pill: LoopPill(wire: pill), entryCondition: entryCondition,
-				closeCondition: closeCondition, tags: tags ?? [], inProgressCount: inProgressCount,
+				closeCondition: closeCondition, inProgressCount: inProgressCount,
 				closedCount: closedCount, medianTimeToClose: medianTimeToCloseMs.map { $0 / 1000 },
 				agentIDs: agentIds, triggerIDs: triggerIds, waitingCount: waitingCount,
 				createdAt: AutomationDates.parse(createdAt), updatedAt: AutomationDates.parse(updatedAt),

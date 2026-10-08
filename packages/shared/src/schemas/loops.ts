@@ -35,10 +35,6 @@ export const loopSummarySchema = z.object({
 	entryCondition: z.string().nullable(),
 	/** Plain-language close condition — metadata field, may be omitted. */
 	closeCondition: z.string().nullable(),
-	/** Free-form labels from `metadata.tags` (team, business unit, part of the
-	 * business) so a long list of loops can be filtered. Trimmed, de-duplicated,
-	 * in the order they were set. Empty array when none — never null. */
-	tags: z.array(z.string()),
 	/** Objects (bets/tasks/insights) currently being processed by this loop —
 	 * COUNT of objects reached via an `in_loop` relationship edge (source=loop,
 	 * target=child; child objects carry no `metadata.loop_id` back-reference)

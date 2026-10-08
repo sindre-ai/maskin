@@ -29,7 +29,6 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
-		tags: [],
 		inProgressCount: 0,
 		closedCount: 0,
 		medianTimeToCloseMs: null,

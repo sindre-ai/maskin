@@ -32,12 +32,6 @@ struct LoopRow: View {
 						.maskinText(.caption)
 						.foregroundStyle(MaskinColor.ink4)
 				}
-				if !loop.tags.isEmpty {
-					Text(loop.tags.joined(separator: " · "))
-						.maskinText(.microLabel)
-						.foregroundStyle(MaskinColor.ink4)
-						.lineLimit(1)
-				}
 				HStack(alignment: .center, spacing: MaskinSpace.s4) {
 					if loop.waitingCount > 0 {
 						Text("\(loop.waitingCount) \(loop.waitingCount == 1 ? "needs" : "need") you")
