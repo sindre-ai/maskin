@@ -1,5 +1,6 @@
 import MaskinCore
 import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 /// Lock-screen widgets. The circular and inline ones are count-only. The rectangular one shows the
@@ -55,8 +56,8 @@ private struct CircularView: View {
 					.widgetAccentable()
 					.accessibilityLabel(s.unreadCount > 0 ? "\(s.unreadLabel) unread" : "Nothing needs you")
 			case .signedOut, .unavailable:
-				GlyphShape()
-					.stroke(style: StrokeStyle(lineWidth: 2.4, lineCap: .square, lineJoin: .miter))
+				MaskinMark()
+					.stroke(style: MaskinMark.strokeStyle(side: 22))
 					.frame(width: 22, height: 22)
 					.widgetAccentable()
 					.accessibilityLabel("Maskin")
@@ -71,8 +72,8 @@ private struct RectangularView: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 1) {
 			HStack(spacing: 4) {
-				GlyphShape()
-					.stroke(style: StrokeStyle(lineWidth: 1.6, lineCap: .square, lineJoin: .miter))
+				MaskinMark()
+					.stroke(style: MaskinMark.strokeStyle(side: 11))
 					.frame(width: 11, height: 11)
 				Text("MASKIN").font(.system(size: 10, weight: .semibold, design: .monospaced))
 			}

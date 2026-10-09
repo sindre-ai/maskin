@@ -161,7 +161,7 @@ struct ProfileSheet: View {
 	/// The workspace you are working in, with Switch.
 	private var workspaceCard: some View {
 		HStack(spacing: MaskinSpace.s8) {
-			ProfileTile(symbol: "square.stack.3d.up")
+			MaskinLogoTile(size: ProfileTile.size)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text("Workspace").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				Text(environment.workspaces.selected?.name ?? "Choose workspace")

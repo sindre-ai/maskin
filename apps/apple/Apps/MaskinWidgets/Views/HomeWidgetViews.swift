@@ -66,7 +66,7 @@ struct UpdatedNote: View {
 private struct HeaderLabel: View {
 	var body: some View {
 		HStack(spacing: MaskinSpace.s3) {
-			BrandGlyph(size: 16)
+			MaskinLogoTile(size: 16)
 			MonoLabel("Needs you")
 		}
 		.widgetAccentable()
@@ -404,7 +404,7 @@ private struct NoticeView: View {
 					.foregroundStyle(MaskinColor.ink4)
 					.accessibilityHidden(true)
 			} else {
-				BrandGlyph(size: compact ? 28 : 34)
+				MaskinLogoTile(size: compact ? 28 : 34)
 			}
 			Spacer(minLength: 0)
 			Text(title)

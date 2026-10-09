@@ -106,24 +106,11 @@ public struct ActorAvatar: View {
 
 	public var body: some View {
 		let shape = shape
-		Text(ActorIdentity.initials(for: name))
-			.font(MaskinTypeface.sans(size * (shape == .circle ? 0.4 : 0.36), weight: .semibold, relativeTo: .caption))
-			.minimumScaleFactor(0.6)
-			.foregroundStyle(MaskinColor.avFg)
-			.frame(width: size, height: size)
-			.background {
-				// A touch of depth so a character reads as an object, not a flat chip.
-				shape.fill(MaskinGradient.avatar)
-					.overlay(
-						shape.fill(
-							LinearGradient(
-								colors: [Color.white.opacity(0.22), .clear], startPoint: .top, endPoint: .center))
-					)
-					.overlay(shape.strokeBorder(MaskinColor.avFg.opacity(0.12), lineWidth: 1))
-			}
+		let isPlatform = kind == .agent && isMaskinPlatformAgent(name: name)
+		avatarFace(shape: shape, isPlatform: isPlatform)
 			.opacity(mood == .paused ? 0.55 : 1)
 			.overlay {
-				if working { WorkingRing(shape: shape) }
+				if working { WorkingRing(shape: isPlatform ? .roundedSquare : shape) }
 			}
 			.overlay(alignment: .topTrailing) {
 				if kind == .agent {
@@ -146,6 +133,30 @@ public struct ActorAvatar: View {
 			}
 			.accessibilityElement(children: .ignore)
 			.accessibilityLabel(accessibilityName)
+	}
+
+	/// The face: the logo tile for the Maskin platform agent, otherwise initials on the avatar gradient.
+	@ViewBuilder
+	private func avatarFace(shape: AgentShape, isPlatform: Bool) -> some View {
+		if isPlatform {
+			MaskinLogoTile(size: size)
+		} else {
+			Text(ActorIdentity.initials(for: name))
+				.font(MaskinTypeface.sans(size * (shape == .circle ? 0.4 : 0.36), weight: .semibold, relativeTo: .caption))
+				.minimumScaleFactor(0.6)
+				.foregroundStyle(MaskinColor.avFg)
+				.frame(width: size, height: size)
+				.background {
+					// A touch of depth so a character reads as an object, not a flat chip.
+					shape.fill(MaskinGradient.avatar)
+						.overlay(
+							shape.fill(
+								LinearGradient(
+									colors: [Color.white.opacity(0.22), .clear], startPoint: .top, endPoint: .center))
+						)
+						.overlay(shape.strokeBorder(MaskinColor.avFg.opacity(0.12), lineWidth: 1))
+				}
+		}
 	}
 }
 

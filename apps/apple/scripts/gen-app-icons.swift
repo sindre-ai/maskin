@@ -1,9 +1,9 @@
 #!/usr/bin/env swift
-// Generates the Maskin app icons: the Patina brand icon (board "Maskin iOS Brand Directions" 4a) is a
-// white open-stroke "M" (path M14 54 V18 L32 40 L50 18 V54 on a 64 grid, stroke 9, square caps, mitre
-// joins, ~58% of the tile) on a 160deg gradient: light #3a8c82 -> #276a62, dark #1c2321 -> #0d1110,
-// tinted = white M on grey (the system re-tints it). The launch screen keeps the older #FAFAF8-on-
-// #111110 mark (viewBox 80x80, `drawMark`).
+// Generates the Maskin app icons from the design handoff master (icons/ICONS.md): a square
+// #18181b tile with the white open-stroke mark (path M14 54 V18 L32 40 L50 18 V54 on a 64 grid,
+// stroke 9, square caps, mitre joins) at 58% of the icon size, centred on the 64 grid (21% inset
+// per side). No gradient. The dark appearance is the same tile; tinted = white mark on grey (the
+// system re-tints it). The launch screen uses the same tile colour with the white mark.
 //
 //   swift apps/apple/scripts/gen-app-icons.swift
 //
@@ -11,37 +11,20 @@
 //   - iOS: opaque full-bleed 1024x1024 in light, dark and tinted appearances; watchOS: the light one.
 //   - macOS: a 824/1024 rounded plate with a soft shadow at 16...1024 px (macOS does not mask).
 //   - launch screen: transparent mark (LaunchMark) + LaunchBackground colour for iOS and tvOS.
-//   - tvOS: layered brand assets (back Patina gradient, front white M on transparent) + top shelf images.
+//   - tvOS: layered brand assets (back #18181b, front white mark on transparent) + top shelf images.
 import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-let background = CGColor(srgbRed: 0x11 / 255, green: 0x11 / 255, blue: 0x10 / 255, alpha: 1)
-let glyph = CGColor(srgbRed: 0xFA / 255, green: 0xFA / 255, blue: 0xF8 / 255, alpha: 1)
+let tileHex: UInt32 = 0x18181B
 
-/// Draws the mark inside `rect` (the 80x80 viewBox is mapped onto it, y flipped to match SVG).
+/// The mark alone filling `rect` (the 64 grid mapped onto it), for the transparent launch image.
 func drawMark(_ ctx: CGContext, in rect: CGRect) {
-	let s = rect.width / 80
-	func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-		CGPoint(x: rect.minX + x * s, y: rect.minY + (80 - y) * s)
-	}
-	ctx.setStrokeColor(glyph)
-	ctx.setLineWidth(6 * s)
-	ctx.setLineCap(.square)
-	ctx.setLineJoin(.miter)
-	ctx.setMiterLimit(10)
-	ctx.beginPath()
-	ctx.move(to: p(17, 60))
-	ctx.addLine(to: p(17, 20))
-	ctx.addLine(to: p(40, 46))
-	ctx.addLine(to: p(63, 20))
-	ctx.addLine(to: p(63, 60))
-	ctx.strokePath()
+	drawBrandM(ctx, in: rect, fraction: 1)
 }
 
-
-// MARK: - Patina brand icon
+// MARK: - Brand icon
 
 func rgb(_ hex: UInt32) -> CGColor {
 	CGColor(
@@ -67,11 +50,12 @@ func fillGradient(_ ctx: CGContext, in rect: CGRect, from: UInt32, to: UInt32, a
 	ctx.restoreGState()
 }
 
-/// The brand M (64 grid, stroke 9) sized so its ink is `fraction` of the tile, centred on the path.
+/// The brand mark (64 grid, stroke 9) scaled so the 64 grid is `fraction` of the tile and centred
+/// on the grid (32, 32), exactly as the handoff master `maskin-app-icon.svg` does.
 func drawBrandM(_ ctx: CGContext, in rect: CGRect, color: CGColor = rgb(0xFFFFFF), fraction: CGFloat = 0.58) {
-	let s = rect.height * fraction / 45  // path ink is ~36 wide x 36 tall plus the 9 stroke
+	let s = min(rect.width, rect.height) * fraction / 64
 	func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-		CGPoint(x: rect.midX + (x - 32) * s, y: rect.midY - (y - 36) * s)
+		CGPoint(x: rect.midX + (x - 32) * s, y: rect.midY - (y - 32) * s)
 	}
 	ctx.setStrokeColor(color)
 	ctx.setLineWidth(9 * s)
@@ -91,8 +75,8 @@ enum IconStyle {
 	case light, dark, tinted
 	var stops: (UInt32, UInt32) {
 		switch self {
-		case .light: (0x3A8C82, 0x276A62)
-		case .dark: (0x1C2321, 0x0D1110)
+		case .light: (tileHex, tileHex)
+		case .dark: (tileHex, tileHex)
 		case .tinted: (0x3C3C3C, 0x1C1C1C)  // grey; the system applies the tint
 		}
 	}
@@ -186,10 +170,10 @@ func writeJSON(_ json: String, to path: String) {
 }
 
 let info = #""info" : { "author" : "xcode", "version" : 1 }"#
-// #111110 in both appearances; the launch screen is dark regardless of system theme.
+// #18181b in both appearances; the launch screen is dark regardless of system theme.
 let launchColor = """
 	{ "colors" : [ { "color" : { "color-space" : "srgb", "components" :
-	{ "alpha" : "1.000", "blue" : "0x10", "green" : "0x11", "red" : "0x11" } }, "idiom" : "universal" } ],
+	{ "alpha" : "1.000", "blue" : "0x1B", "green" : "0x18", "red" : "0x18" } }, "idiom" : "universal" } ],
 	  \(info) }
 	"""
 let launchMarkJSON = """

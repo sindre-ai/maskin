@@ -1,5 +1,6 @@
 import MaskinCore
 import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 /// The actor's workspaces, the selected one checked. Picking one switches the whole app (the
@@ -19,7 +20,8 @@ public struct WorkspaceSwitcher: View {
 						store.select(workspace.id)
 						dismiss()
 					} label: {
-						HStack {
+						HStack(spacing: MaskinSpace.s8) {
+							MaskinLogoTile(size: MaskinSpace.s14)
 							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 								Text(workspace.name).foregroundStyle(MaskinColor.ink)
 								Text(
