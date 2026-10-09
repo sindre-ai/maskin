@@ -86,6 +86,29 @@ describe('files/$fileId C shortcut', () => {
 		expect(screen.queryByTestId('review-panel')).toBeNull()
 	})
 
+	it('leaves a plain C alone while text is selected', () => {
+		renderRoute()
+		const selection = vi.spyOn(window, 'getSelection').mockReturnValue({
+			toString: () => 'copy me',
+		} as Selection)
+		press({ key: 'c' })
+		expect(screen.queryByTestId('review-panel')).toBeNull()
+		selection.mockRestore()
+	})
+
+	it('ignores C typed into a text input', () => {
+		renderRoute()
+		const input = document.createElement('input')
+		document.body.appendChild(input)
+		act(() => {
+			input.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'c', bubbles: true, cancelable: true }),
+			)
+		})
+		expect(screen.queryByTestId('review-panel')).toBeNull()
+		input.remove()
+	})
+
 	it.each([
 		['Cmd+C', { key: 'c', metaKey: true }],
 		['Ctrl+C', { key: 'c', ctrlKey: true }],
