@@ -4478,6 +4478,25 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
 				workspaceId: wsId,
 			})
+			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
+			// Images go back as a real image block so the model can see them; the
+			// base64 bytes would otherwise arrive as ~50k chars of opaque text.
+			if (
+				file?.mimeType?.startsWith('image/') &&
+				file.encoding === 'base64' &&
+				typeof file.content === 'string'
+			) {
+				const { content: data, ...metadata } = result as Record<string, unknown> & {
+					content: string
+				}
+				return {
+					_meta: meta('get_file', config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{ type: 'text' as const, text: JSON.stringify(metadata) },
+						{ type: 'image' as const, data, mimeType: file.mimeType },
+					],
+				}
+			}
 			return {
 				_meta: meta('get_file', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],

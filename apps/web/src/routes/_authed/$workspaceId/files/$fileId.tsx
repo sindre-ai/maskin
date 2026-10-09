@@ -167,6 +167,10 @@ function FileViewerPage() {
 				return
 			}
 			if (isEditable) return
+			// Leave Cmd/Ctrl+C (copy) and other shortcuts to the browser, and don't
+			// toggle the panel while the user has text selected.
+			if (event.metaKey || event.ctrlKey || event.altKey) return
+			if (window.getSelection()?.toString()) return
 			if (event.key === 'c' || event.key === 'C') {
 				event.preventDefault()
 				setPanelOpen((prev) => !prev)

@@ -1,14 +1,16 @@
 import { randomBytes } from 'node:crypto'
-import { promises as dns } from 'node:dns'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
+import {
+	skjaldOutcomePayloadSchema,
+	skjaldTranscriptionCompletedPayloadSchema,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
@@ -39,8 +41,16 @@ import {
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
+	isSubdomainName,
+	isValidHostname,
+	precheckResendDomain,
+} from '../lib/integrations/providers/resend/dns-precheck'
+import {
 	DomainAlreadyClaimedError,
 	DomainRegisterError,
+	type ResendDomainListPage,
+	adoptResendDomain,
+	findResendDomainByName,
 	registerResendDomain,
 } from '../lib/integrations/providers/resend/domain-register'
 import {
@@ -48,7 +58,10 @@ import {
 	resendEmailReceivedSchema,
 } from '../lib/integrations/providers/resend/schemas'
 import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
-import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
+import {
+	upsertSkjaldMeeting,
+	upsertSkjaldOutcomeMeeting,
+} from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -95,6 +108,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
@@ -990,9 +1004,38 @@ app.openapi(connectRoute, (async (c) => {
 				: null
 
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
+			// Server-side guard behind the dialog's advisory pre-check: a malformed
+			// name never reaches Resend, and a bare domain that already carries
+			// someone else's mail is refused, since adding our MX to it reroutes
+			// the whole domain. A bare domain with no mail stays allowed.
+			if (!isValidHostname(resendSubdomain)) {
+				return c.json(
+					createApiError('BAD_REQUEST', 'Not a valid hostname', [
+						{ field: 'code', message: 'INVALID_DOMAIN' },
+					]),
+					400,
+				)
+			}
+			const precheck = isSubdomainName(resendSubdomain)
+				? null
+				: await precheckResendDomain(resendSubdomain)
+			if (precheck?.warn) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						'This name already carries mail, use a dedicated hostname such as mail.example.com',
+						[
+							{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
+							{ field: 'existing_mx', message: precheck.existingMx.join(', ') },
+						],
+					),
+					400,
+				)
+			}
+
 			// Step 1 — verify the API key against Resend by listing domains.
 			// 401 → INVALID_API_KEY (Step 1 error state).
-			const verifyRes = await fetch('https://api.resend.com/domains', {
+			const verifyRes = await fetch('https://api.resend.com/domains?limit=100', {
 				method: 'GET',
 				headers: { Authorization: `Bearer ${resendApiKey}` },
 			})
@@ -1026,10 +1069,33 @@ app.openapi(connectRoute, (async (c) => {
 				)
 			}
 
-			// Step 2 — register the subdomain on the customer's Resend account.
+			// Step 2 — adopt the subdomain if it already exists in the customer's
+			// Resend account, otherwise register it. Every Resend call runs before
+			// the row insert, so a failure here never leaves a resend_domain_id.
+			const domainList = (await verifyRes.json().catch(() => ({}))) as ResendDomainListPage
 			let registration: Awaited<ReturnType<typeof registerResendDomain>>
 			try {
-				registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				const existingDomainId = await findResendDomainByName(
+					resendApiKey,
+					resendSubdomain,
+					domainList,
+				)
+				if (existingDomainId) {
+					const [claimedBy] = await db
+						.select({ id: integrations.id })
+						.from(integrations)
+						.where(
+							and(
+								eq(integrations.provider, 'resend'),
+								sql`${integrations.config}->'resend'->>'resend_domain_id' = ${existingDomainId}`,
+							),
+						)
+						.limit(1)
+					if (claimedBy) throw new DomainAlreadyClaimedError('domain_already_claimed')
+					registration = await adoptResendDomain(resendApiKey, existingDomainId)
+				} else {
+					registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				}
 			} catch (err) {
 				if (err instanceof DomainAlreadyClaimedError) {
 					return c.json(
@@ -1062,13 +1128,18 @@ app.openapi(connectRoute, (async (c) => {
 				throw err
 			}
 
+			// An adopted domain may already be verified; seed the real status so the
+			// poller does not leave it sitting at pending.
+			const resendVerificationStatus = mapTopStatus(
+				registration.verificationStatus as ResendDomainGetResponse['status'],
+			)
 			const resendConfig: IntegrationConfig = {
 				system_actor_id: systemActor.id,
 				...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
 				resend: {
 					receive_subdomain: resendSubdomain,
 					resend_domain_id: registration.resendDomainId,
-					verification_status: 'pending',
+					verification_status: resendVerificationStatus,
 					last_polled_at: null,
 					webhook_url: webhookUrl,
 					dns_records: registration.dnsRecords,
@@ -1116,7 +1187,7 @@ app.openapi(connectRoute, (async (c) => {
 				integration_id: resendRow.id,
 				webhook_url: webhookUrl,
 				dns_records: registration.dnsRecords,
-				verification_status: 'pending',
+				verification_status: resendVerificationStatus,
 			})
 		}
 
@@ -2097,29 +2168,7 @@ app.openapi(dnsPrecheckRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'domain is required'), 400)
 	}
 
-	// A subdomain has at least three labels (mail.example.com → true;
-	// example.com → false). We treat any three-plus-label input as a
-	// subdomain, which is the shape the design assumes — sending on a bare
-	// apex changes the whole domain's mail routing, whereas a subdomain is
-	// carved out.
-	const parts = trimmed.split('.')
-	const isSubdomain = parts.length >= 3
-
-	let existingMx: string[] = []
-	try {
-		const records = await dns.resolveMx(trimmed)
-		existingMx = records.sort((a, b) => a.priority - b.priority).map((r) => r.exchange)
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException).code
-		if (code !== 'ENOTFOUND' && code !== 'ENODATA') {
-			logger.warn('resend.dns_precheck.error', { domain: trimmed, err: String(err) })
-		}
-	}
-
-	const isResendMx = existingMx.some(
-		(h) => h.toLowerCase().includes('resend') || h.toLowerCase().includes('amazonses'),
-	)
-	const warn = !isSubdomain && existingMx.length > 0 && !isResendMx
+	const { existingMx, isSubdomain, warn } = await precheckResendDomain(trimmed)
 	return c.json({ existing_mx: existingMx, is_subdomain: isSubdomain, warn })
 }) as RouteHandler<typeof dnsPrecheckRoute, Env>)
 
@@ -2939,24 +2988,46 @@ webhookApp.post('/skjald/:token', async (c) => {
 		}
 	}
 
-	if (eventType !== 'transcription.completed') {
+	// `transcription.completed` is the desktop app's event; `outcome.created` / `outcome.updated` are what the iOS
+	// app and the v2 destinations send (the written-up outcome, with the transcript only when the person allows it).
+	// Both end in the same `meeting` object, matched on Skjald's meeting id.
+	const isOutcomeEvent = eventType === 'outcome.created' || eventType === 'outcome.updated'
+	if (eventType !== 'transcription.completed' && !isOutcomeEvent) {
 		// Unknown/future event type — ack without processing so Skjald doesn't retry.
 		await releaseClaim()
 		return c.json({ ok: true, skipped: 'unhandled_event' })
 	}
 
-	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
-	if (!parsedPayload.success) {
+	let upsertMeeting: (() => Promise<{ objectId: string; action: 'created' | 'updated' }>) | null =
+		null
+	if (isOutcomeEvent) {
+		const parsed = skjaldOutcomePayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldOutcomeMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	} else {
+		const parsed = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	}
+	if (!upsertMeeting) {
 		await releaseClaim()
-		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
+		return c.json(createApiError('BAD_REQUEST', `Invalid ${eventType} payload`), 400)
 	}
 
 	try {
-		const result = await upsertSkjaldMeeting(db, {
-			workspaceId: integration.workspaceId,
-			systemActorId,
-			payload: parsedPayload.data,
-		})
+		const result = await upsertMeeting()
 
 		await commitWebhookDelivery(db, {
 			eventRows: [
@@ -3707,7 +3778,7 @@ function clearOAuthNonceCookie(c: Context<Env>, providerName: string): void {
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 // In production, use the configured origin to prevent X-Forwarded-Host injection
-function resolvePublicOrigin(
+export function resolvePublicOrigin(
 	requestUrl: string,
 	headers: Record<string, string | undefined>,
 ): string {

@@ -632,6 +632,28 @@ describe('TriggerRunner', () => {
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
+
+		it('does not fire a reminder set more than 24.8 days out until its real time', async () => {
+			const thirtyDays = 30 * 24 * 60 * 60 * 1000
+			const scheduledAt = new Date(Date.now() + thirtyDays).toISOString()
+			const trigger = buildTrigger({
+				type: 'reminder',
+				config: { scheduled_at: scheduledAt },
+			})
+			mockResults.selectQueue = [
+				[], // cron triggers
+				[trigger], // reminder triggers
+			]
+			mockResults.insert = [{ triggerId: 't1' }]
+			await runner.start()
+
+			// Past the setTimeout ceiling (2^31-1 ms): the clamped timer re-arms, it does not fire.
+			await vi.advanceTimersByTimeAsync(2_147_483_647 + 1_000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			await vi.advanceTimersByTimeAsync(thirtyDays - 2_147_483_647)
+			expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		})
 	})
 
 	describe('hot-reload via events', () => {
