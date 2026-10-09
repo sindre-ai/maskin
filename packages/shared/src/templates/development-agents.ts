@@ -125,7 +125,7 @@ const strategistTools = {
 		exa: {
 			url: 'https://mcp.exa.ai/mcp',
 			type: 'http',
-			headers: { 'x-api-key': '8c0b8f5e-9077-4411-abfc-975f3a93c77c' },
+			headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 		},
 		playwright: {
 			env: {},
@@ -139,7 +139,7 @@ const strategistTools = {
 const exaTool = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http',
-	headers: { 'x-api-key': '8c0b8f5e-9077-4411-abfc-975f3a93c77c' },
+	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 }
 
 const playwrightTool = {
