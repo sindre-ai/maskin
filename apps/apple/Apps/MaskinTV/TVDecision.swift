@@ -29,11 +29,13 @@ struct TVDecision: View {
 				}
 				.padding(.horizontal, 96)
 				.padding(.top, 56)
+				.padding(.bottom, 80)
 			} else {
 				EmptyState(symbol: "checkmark.circle", title: "Done")
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.ignoresSafeArea()
 		.navigationDestination(item: $thread) { TVThread(environment: environment, conversationID: $0.id) }
 		.alert("Can't open the thread", isPresented: $askFailed) {
 			Button("OK", role: .cancel) {}
@@ -55,22 +57,34 @@ struct TVDecision: View {
 	}
 
 	private func left(_ card: ForYouCard) -> some View {
-		VStack(alignment: .leading, spacing: 32) {
-			Text(store.senderName(of: card) ?? "Chief of Staff")
-				.font(.system(size: 28, weight: .semibold)).foregroundStyle(MaskinColor.ink4)
-			Text(card.decision?.title.trimmedNonEmpty ?? card.headline)
-				.font(.system(size: 48, weight: .bold))
-			if let summary = card.decision?.summary.trimmedNonEmpty {
-				Text(summary).font(.system(size: 30)).foregroundStyle(MaskinColor.ink3)
+		let sender = store.senderName(of: card) ?? "Chief of Staff"
+		return VStack(alignment: .leading, spacing: 34) {
+			HStack(spacing: 18) {
+				Text(sender == "Chief of Staff" ? "Co" : String(sender.split(separator: " ").prefix(2).compactMap(\.first)))
+					.font(.system(size: 28, weight: .bold)).foregroundStyle(MaskinColor.avFg)
+					.frame(width: 62, height: 62)
+					.background(MaskinGradient.avatar, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+				Text(sender).font(.system(size: 36, weight: .semibold))
+				if let when = card.latestActivityAt {
+					Text(when.formatted(date: .omitted, time: .shortened))
+						.font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
+				}
 			}
+			Text(card.decision?.summary.trimmedNonEmpty ?? card.headline)
+				.font(.system(size: 52)).lineSpacing(6)
 			if let ask = card.decision?.ask.trimmedNonEmpty {
-				Text(ask).font(.system(size: 36, weight: .semibold))
+				Text(ask).font(.system(size: 36, weight: .semibold)).foregroundStyle(MaskinColor.ink3)
 			}
-			if let context = card.contextTitle {
-				Text(context).font(.system(size: 26, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
+			Spacer(minLength: 0)
+			HStack(spacing: 14) {
+				Circle().fill(MaskinPatina.dotWatch).frame(width: 18, height: 18)
+				Text((card.objectType ?? "object").uppercased())
+					.font(.system(size: 24, weight: .medium, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
+				Text(card.objectTitle ?? card.headline).font(.system(size: 34, weight: .semibold))
 			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
+		.foregroundStyle(MaskinColor.ink)
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 	}
 
 	@ViewBuilder private func right(_ entry: FeedEntry) -> some View {
@@ -90,6 +104,16 @@ struct TVDecision: View {
 					Text("Decide on iPhone or Watch").font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
 				}
 				askButton(entry.card)
+				if let pick = entry.card.decision?.recommended {
+					Text("Suggested: \(pick.label). Every choice can be undone unless noted.")
+						.font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
+						.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
+				}
+				Button { dismiss() } label: {
+					Label("Back", systemImage: "chevron.left").font(.system(size: 32, weight: .semibold))
+						.foregroundStyle(MaskinColor.ink3).frame(maxWidth: .infinity, minHeight: 80)
+				}
+				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 			}
 		}
 	}

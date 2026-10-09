@@ -157,9 +157,16 @@ struct TVBriefingPlayer: View {
 			VStack(alignment: .leading, spacing: 36) {
 				progress
 				if slides.indices.contains(index) {
-					Text(slides[index].unit.uppercased())
-						.font(.system(size: 26, weight: .semibold, design: .monospaced))
-						.foregroundStyle(MaskinPatina.viewerAccent)
+					HStack {
+						Text(slides[index].unit.uppercased())
+							.font(.system(size: 26, weight: .semibold, design: .monospaced))
+							.foregroundStyle(MaskinColor.stFg)
+							.padding(.horizontal, 22).padding(.vertical, 10)
+							.background(MaskinSurface.fillStrong, in: Capsule())
+						Spacer(minLength: 0)
+						Text("Narrated · \(index + 1) of \(slides.count)")
+							.font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
+					}
 					Text(slides[index].text)
 						.font(.system(size: slides[index].isPage ? 56 : 52, weight: .bold))
 						.foregroundStyle(MaskinColor.stFg)
@@ -171,22 +178,22 @@ struct TVBriefingPlayer: View {
 					Button {
 						narrator.isPaused ? narrator.resume() : narrator.pause()
 					} label: {
-						TVCapsuleLabel(title: narrator.isPaused ? "Play" : "Pause", symbol: narrator.isPaused ? "play.fill" : "pause.fill")
+						TVCapsuleLabel(title: narrator.isPaused ? "Play" : "Pause", slim: true)
 					}
 					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 					.focused($focus, equals: .pause)
 					if chief != nil {
 						Button(action: tellMeMore) {
-							TVCapsuleLabel(title: opening ? "Opening…" : "Tell me more", symbol: "bubble.left.fill")
+							TVCapsuleLabel(title: opening ? "Opening…" : "Tell me more", slim: true)
 						}
 						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 						.focused($focus, equals: .more)
 					}
-					Button(action: finish) { TVCapsuleLabel(title: "Close", symbol: "xmark") }
+					Button(action: finish) { TVCapsuleLabel(title: "Close", slim: true) }
 						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 						.focused($focus, equals: .close)
 				}
-				.frame(maxWidth: 900)
+				.frame(maxWidth: .infinity)
 			}
 			.padding(.horizontal, 96)
 			.padding(.vertical, 56)

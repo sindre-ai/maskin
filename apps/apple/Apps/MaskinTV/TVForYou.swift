@@ -10,6 +10,7 @@ struct TVForYou: View {
 	let forYou: ForYouRuntime?
 	let stories: StoriesStore?
 	@Binding var openDecision: String?
+	@Binding var chromeHidden: Bool
 	@State private var path: [String] = []
 	@State private var playing: BriefSequence?
 
@@ -40,6 +41,19 @@ struct TVForYou: View {
 				if let store { TVDecision(environment: environment, store: store, chief: forYou?.chief, id: id) }
 			}
 		}
+		#if DEBUG
+		.task(id: entries.first?.id) {
+			// MASKIN_DEMO_SCREEN=decision | briefing opens that screen once the data is in.
+			let demo = ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"]
+			if demo == "decision", let id = entries.first?.id, path.isEmpty { path = [id] }
+		}
+		.task(id: stories?.cards.first?.id) {
+			if ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"] == "briefing", let stories,
+				let card = stories.cards.first, playing == nil
+			{ playing = BriefSequence.make(cards: stories.cards, opening: card) }
+		}
+		#endif
+		.onChange(of: path) { _, path in chromeHidden = !path.isEmpty }
 		.onChange(of: openDecision) { _, id in
 			guard let id else { return }
 			path = [id]
