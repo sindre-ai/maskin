@@ -140,4 +140,76 @@ describe('callLlm', () => {
 		expect(result).toEqual({ ok: true, content: '' })
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 	})
+
+	describe('zero-retention gate (MASKIN_FALLBACK_ZDR)', () => {
+		const okResponse = {
+			ok: true,
+			status: 200,
+			json: async () => ({ choices: [{ message: { content: 'hi' } }] }),
+		}
+
+		function sentBody(fetchMock: ReturnType<typeof vi.fn>) {
+			const [, init] = fetchMock.mock.calls[0]
+			return JSON.parse((init as { body: string }).body)
+		}
+
+		afterEach(() => {
+			Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_ZDR')
+		})
+
+		it('sends no provider block when the flag is off (default)', async () => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+			const fetchMock = vi.fn().mockResolvedValue(okResponse)
+			vi.stubGlobal('fetch', fetchMock)
+
+			await callLlm({ system: 's', user: 'u' })
+			expect(sentBody(fetchMock)).not.toHaveProperty('provider')
+		})
+
+		it.each(['true', '1'])(
+			'sends provider: { zdr: true } on the funded key when the flag is %s',
+			async (value) => {
+				process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+				process.env.MASKIN_FALLBACK_ZDR = value
+				const fetchMock = vi.fn().mockResolvedValue(okResponse)
+				vi.stubGlobal('fetch', fetchMock)
+
+				await callLlm({ system: 's', user: 'u' })
+				expect(sentBody(fetchMock).provider).toEqual({ zdr: true })
+			},
+		)
+
+		it('logs chat_zdr_no_eligible_host and returns the usual http_error without retrying on a no-endpoints 404', async () => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+			process.env.MASKIN_FALLBACK_ZDR = 'true'
+			const fetchMock = vi.fn().mockResolvedValue({
+				ok: false,
+				status: 404,
+				text: async () => 'No endpoints found matching your data policy',
+			})
+			vi.stubGlobal('fetch', fetchMock)
+			const errorSpy = vi.spyOn(console, 'error')
+
+			const result = await callLlm({ system: 's', user: 'u' })
+			expect(result).toEqual({ ok: false, reason: 'http_error', status: 404 })
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(JSON.stringify(errorSpy.mock.calls)).toContain('chat_zdr_no_eligible_host')
+		})
+
+		it('treats a 404 with other text as an ordinary http_error when the flag is on', async () => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+			process.env.MASKIN_FALLBACK_ZDR = 'true'
+			const fetchMock = vi.fn().mockResolvedValue({
+				ok: false,
+				status: 404,
+				text: async () => 'model not found',
+			})
+			vi.stubGlobal('fetch', fetchMock)
+			const errorSpy = vi.spyOn(console, 'error')
+
+			const result = await callLlm({ system: 's', user: 'u' })
+			expect(result).toEqual({ ok: false, reason: 'http_error', status: 404 })
+			expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('chat_zdr_no_eligible_host')
+		})
+	})
 })
