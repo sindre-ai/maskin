@@ -182,6 +182,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		// mounted even after StrictMode double-renders and unmount cycles.
 		const [parseFailed, setParseFailed] = useState(false)
 		const parseErrorReportedRef = useRef(false)
+		// Set by the first doc-changing transaction, cleared once onChange has
+		// fired. Without it a focus + blur with no edit re-serialises the markdown
+		// and saves it, where the Textarea path returns early when the draft
+		// equals the saved content.
+		const dirtyRef = useRef(false)
 
 		const tiptapExtensions = useMemo(
 			() => buildExtensions(variant, disallowedNodes, placeholder, extensions),
@@ -205,16 +210,20 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				editable: !readOnly,
 				autofocus: autoFocus,
 				onBlur: ({ editor: e }) => {
-					try {
-						const markdown = e.storage.markdown.getMarkdown() as string
-						onChange(markdown)
-					} catch (err) {
-						console.error('[maskin] markdown editor onBlur getMarkdown failed', err)
+					if (dirtyRef.current) {
+						try {
+							const markdown = e.storage.markdown.getMarkdown() as string
+							onChange(markdown)
+							dirtyRef.current = false
+						} catch (err) {
+							console.error('[maskin] markdown editor onBlur getMarkdown failed', err)
+						}
 					}
 					onBlur?.()
 				},
 				onFocus: () => onFocus?.(),
 				onUpdate: ({ editor: e }) => {
+					dirtyRef.current = true
 					if (!onChangeInternal) return
 					try {
 						onChangeInternal(e.storage.markdown.getMarkdown() as string)
