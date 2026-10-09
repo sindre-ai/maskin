@@ -17,8 +17,18 @@ struct MaskinShortcuts: AppShortcutsProvider {
 				"What needs me in \(.applicationName)",
 				"What needs me on \(.applicationName)",
 				"What's waiting on me in \(.applicationName)",
+				"What's blocked on me in \(.applicationName)",
+				"What's blocked on me on \(.applicationName)",
 			],
 			shortTitle: "What needs me?", systemImageName: "bell.badge")
+		AppShortcut(
+			intent: OvernightBriefIntent(),
+			phrases: [
+				"Overnight brief in \(.applicationName)",
+				"What did the agents do overnight in \(.applicationName)",
+				"My \(.applicationName) overnight brief",
+			],
+			shortTitle: "Overnight brief", systemImageName: "moon.stars")
 		AppShortcut(
 			intent: AskAgentIntent(),
 			phrases: [

@@ -133,16 +133,29 @@ private struct LockScreenTurnView: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			// Brand header: the mark and "MASKIN . LIVE", with the elapsed time at the trailing edge.
 			HStack(spacing: MaskinSpace.s4) {
-				StatusGlyph(status: state.status)
-				Text(state.agentName).font(.headline).lineLimit(1)
+				LiveActivityMarkTile(size: 22)
+				Text("MASKIN \u{00B7} LIVE")
+					.font(.system(.caption2, design: .monospaced).weight(.semibold))
+					.tracking(0.8)
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
 				Spacer(minLength: MaskinSpace.s4)
-				ElapsedLabel(state: state).font(.subheadline)
+				StatusGlyph(status: state.status).font(.footnote)
+				ElapsedLabel(state: state).font(.footnote)
 			}
-			Text(state.step)
-				.font(.subheadline)
-				.foregroundStyle(.secondary)
-				.lineLimit(2)
+			// No progress bar: nothing in the turn reports a percentage.
+			HStack(spacing: MaskinSpace.s5) {
+				LiveActivityAgentTile(name: state.agentName, size: 44)
+				VStack(alignment: .leading, spacing: 2) {
+					Text(state.agentName).font(.headline).lineLimit(1)
+					Text(state.step)
+						.font(.subheadline)
+						.foregroundStyle(.secondary)
+						.lineLimit(2)
+				}
+			}
 			TurnActions(attributes: attributes, state: state)
 		}
 		.accessibilityElement(children: .combine)
