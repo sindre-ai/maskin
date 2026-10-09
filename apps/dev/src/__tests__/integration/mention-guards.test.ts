@@ -387,7 +387,10 @@ describe('Reused helper_return marker (integration)', () => {
 	}
 
 	const rowsFor = (actorId: string) =>
-		db.select().from(sessions).where(and(eq(sessions.actorId, actorId), FROM_DISPATCHER))
+		db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.actorId, actorId), FROM_DISPATCHER))
 	const isReturn = (row: { config: unknown }) =>
 		(row.config as { mention?: { helper_return?: boolean } }).mention?.helper_return === true
 
@@ -490,7 +493,10 @@ describe('Mention spawn link (integration)', () => {
 	}
 
 	const startedRows = (actorId: string) =>
-		db.select().from(sessions).where(and(eq(sessions.actorId, actorId), FROM_DISPATCHER))
+		db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.actorId, actorId), FROM_DISPATCHER))
 
 	it('links the mentioned agent’s session to the author’s own live session, depth 1', async () => {
 		const { ws, author, helper, object } = await setup()
