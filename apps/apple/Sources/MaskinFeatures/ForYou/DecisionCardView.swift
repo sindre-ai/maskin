@@ -2,6 +2,9 @@ import MaskinCore
 import MaskinDesign
 import MaskinUI
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// One For You card. Stateless about the network: everything it shows arrives as values, every
 /// gesture leaves as a closure, so it renders in a snapshot test exactly as on screen.
@@ -118,7 +121,7 @@ struct DecisionCardView: View {
 					.foregroundStyle(ForYouPalette.heldNote)
 			}
 			RelativeTime(card.latestActivityAt, style: .compact, compactDayLimit: 7)
-				.font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.inkPlaceholder)
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(sender.map { "Chief of Staff, for \($0)" } ?? "Chief of Staff")
@@ -154,6 +157,9 @@ struct DecisionCardView: View {
 				let upper = AttributedString.Index(range.upperBound, within: attributed)
 			else { continue }
 			attributed[lower..<upper].underlineStyle = .single
+			#if canImport(UIKit)
+			attributed[lower..<upper].uiKit.underlineColor = UIColor(MaskinColor.sigHi)
+			#endif
 			if actions.open != nil {
 				attributed[lower..<upper].link = URL(string: "\(Self.objectScheme)://open")
 			}
@@ -573,7 +579,7 @@ private struct OptionPill: View {
 			.multilineTextAlignment(.leading)
 			.fixedSize(horizontal: false, vertical: true)
 			.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: recommended ? MaskinFontWeight.w650 : MaskinFontWeight.semibold))
-			.foregroundStyle(recommended ? Color.white : MaskinColor.ink)
+			.foregroundStyle(recommended ? MaskinPatina.decisionInkText : MaskinColor.ink)
 			.padding(.horizontal, MaskinSpace.s8)
 			.padding(.vertical, MaskinSpace.s5)
 			.frame(minHeight: MaskinSpace.touchMin)

@@ -158,18 +158,30 @@ struct BriefViewer: View {
 			}
 			.frame(height: MaskinSpace.s2)
 			HStack(spacing: MaskinSpace.s5) {
-				if card.loopID == nil { ChiefOfStaffTile(size: MaskinSpace.s12) }
-				Text(card.unit.uppercased())
-					.maskinText(.microLabelLarge)
-					.foregroundStyle(MaskinPatina.viewerAccent)
-					.lineLimit(1)
+				if card.loopID == nil {
+					ChiefOfStaffTile(size: MaskinSpace.s14 + MaskinSpace.s3)
+				} else {
+					ActorAvatar(name: card.unit, kind: .agent, size: MaskinSpace.s14 + MaskinSpace.s3)
+				}
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text(card.headline)
+						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650))
+						.foregroundStyle(Color.white)
+						.lineLimit(1)
+					Text("\(card.unit) \u{00B7} \(Self.clock(BriefSequence.duration(of: card)))")
+						.font(MaskinTypeface.sans(MaskinFontSize.t14))
+						.foregroundStyle(MaskinColor.patina100.opacity(0.7))
+						.lineLimit(1)
+				}
 				Spacer(minLength: 0)
 				Button(action: close) {
 					Image(systemName: "xmark")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
-						.foregroundStyle(MaskinColor.patina50)
+						.foregroundStyle(Color.white)
+						.frame(width: MaskinSpace.s14 + MaskinSpace.s3, height: MaskinSpace.s14 + MaskinSpace.s3)
+						.background(Color.white.opacity(0.16), in: Circle())
 						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-						.maskinGlass(in: Circle(), interactive: true)
+						.contentShape(Circle())
 				}
 				.buttonStyle(.maskinPressed)
 				.keyboardShortcut(.cancelAction)
@@ -188,6 +200,12 @@ struct BriefViewer: View {
 			}
 		}
 		.accessibilityAction(named: "Close", close)
+	}
+
+	/// "0:25": a slide's length as a clock.
+	private static func clock(_ seconds: TimeInterval) -> String {
+		let total = Int(seconds.rounded())
+		return "\(total / 60):" + String(format: "%02d", total % 60)
 	}
 
 	@ViewBuilder
@@ -216,23 +234,36 @@ struct BriefViewer: View {
 	private func actions(_ card: StoryCard) -> some View {
 		HStack(spacing: MaskinSpace.s5) {
 			Button { tellMeMore(card) } label: {
-				Label("Tell me more", systemImage: "sparkles")
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold))
-					.foregroundStyle(MaskinColor.patina900)
-					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
-					.background(MaskinPatina.viewerAccent, in: Capsule())
+				HStack {
+					Text("Ask about this")
+						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650))
+					Spacer(minLength: 0)
+					Image(systemName: "chevron.right")
+						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
+						.foregroundStyle(MaskinColor.patina100.opacity(0.6))
+						.accessibilityHidden(true)
+				}
+				.foregroundStyle(Color.white)
+				.padding(.horizontal, MaskinSpace.s10)
+				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin + MaskinSpace.s9)
+				.background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+				.overlay(
+					RoundedRectangle(cornerRadius: 26, style: .continuous)
+						.strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+				.contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
 			}
 			.buttonStyle(.maskinPressed(.shrink))
 			if case .page(let output) = card.content {
 				Button { fullPage = output } label: {
-					Label("Open page", systemImage: "arrow.up.forward.square")
-						.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold))
-						.foregroundStyle(MaskinColor.patina50)
-						.padding(.horizontal, MaskinSpace.s11)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.maskinGlassCapsule(interactive: true)
+					Image(systemName: "arrow.up.forward.square")
+						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold))
+						.foregroundStyle(Color.white)
+						.frame(width: MaskinSpace.touchMin + MaskinSpace.s9, height: MaskinSpace.touchMin + MaskinSpace.s9)
+						.background(Color.white.opacity(0.1), in: Circle())
+						.overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
 				}
 				.buttonStyle(.maskinPressed(.shrink))
+				.accessibilityLabel("Open page")
 				.accessibilityHint("Opens the page so you can scroll and use it")
 			}
 		}
@@ -245,15 +276,15 @@ struct BriefViewer: View {
 	}
 }
 
-/// One segment of the progress strip: a faint track with the ring gradient filling it.
+/// One segment of the progress strip: a faint track with solid white filling it.
 private struct ProgressSegment: View {
 	let fill: Double
 
 	var body: some View {
 		GeometryReader { proxy in
-			Capsule().fill(MaskinColor.patina50.opacity(0.25))
+			Capsule().fill(Color.white.opacity(0.25))
 				.overlay(alignment: .leading) {
-					Capsule().fill(MaskinPatina.viewerRing)
+					Capsule().fill(Color.white)
 						.frame(width: proxy.size.width * min(max(fill, 0), 1))
 				}
 				.clipShape(Capsule())

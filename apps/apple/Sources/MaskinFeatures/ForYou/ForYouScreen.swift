@@ -247,11 +247,14 @@ struct ForYouFeedView: View {
 			} else {
 				swipeHint
 				ForEach(groups(of: entries), id: \.bucket) { group in
-					SectionHeader(
-						title: title(for: group.bucket), count: group.entries.count,
-						action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
-					)
-					.modifier(ReadableRow(width: readableWidth))
+					// The primary group is the feed itself: the design shows no header above it.
+					if group.bucket != .needs {
+						SectionHeader(
+							title: title(for: group.bucket), count: group.entries.count,
+							action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
+						)
+						.modifier(ReadableRow(width: readableWidth))
+					}
 					ForEach(group.entries) { entry in feedRow(entry) }
 				}
 			}
