@@ -41,7 +41,7 @@ import { useState } from 'react'
 // packages/db/src/schema.ts). Anything not listed here renders as one row and
 // silently drops extra installs, so adding a provider to this set is what makes
 // its second install visible at all.
-const MULTI_INSTALL_PROVIDERS = new Set(['github', 'linkedin-unipile'])
+const MULTI_INSTALL_PROVIDERS = new Set(['github', 'linkedin-unipile', 'skjald'])
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
@@ -158,6 +158,9 @@ function IntegrationsPage() {
 									workspaceId={workspaceId}
 									linkableCount={provider.name === 'github' ? linkableCount : 0}
 									onRequestLink={() => setLinkGithubOpen(true)}
+									onRequestSkjaldConnect={
+										provider.name === 'skjald' ? () => setSkjaldDialogOpen(true) : undefined
+									}
 								/>
 							)
 						}
@@ -470,12 +473,15 @@ function GroupedProviderRow({
 	workspaceId,
 	linkableCount,
 	onRequestLink,
+	onRequestSkjaldConnect,
 }: {
 	provider: ProviderInfo
 	installations: IntegrationResponse[]
 	workspaceId: string
 	linkableCount: number
 	onRequestLink: () => void
+	/** Skjald connects from its own app, so "Add another" opens the how-to dialog instead of /connect. */
+	onRequestSkjaldConnect?: () => void
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -561,7 +567,11 @@ function GroupedProviderRow({
 								variant="outline"
 								size="sm"
 								className="w-full md:flex-1"
-								onClick={() => connect.mutate({ provider: provider.name })}
+								onClick={() =>
+									onRequestSkjaldConnect
+										? onRequestSkjaldConnect()
+										: connect.mutate({ provider: provider.name })
+								}
 								disabled={connect.isPending}
 							>
 								<Plus className="h-3.5 w-3.5 mr-1" />
