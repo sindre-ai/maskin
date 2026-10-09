@@ -269,7 +269,7 @@ function SkillsPage() {
 	}
 
 	const headerActions = (
-		<div className="flex items-center gap-2 shrink-0">
+		<div className="flex flex-wrap items-center gap-2">
 			<DisplayPanel
 				columns={SKILL_SORT_COLUMNS}
 				sort={sort}
