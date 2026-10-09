@@ -18,15 +18,13 @@
 import type { SeedAgent, SeedSkill, SeedTrigger } from './development-agents'
 
 /**
- * Exa MCP server. The key is never stored in the actor row: the header is an
- * envsubst placeholder, filled from the AGENT_SECRET_EXA_API_KEY process env on
- * the API service via the actor's tools.envFrom (see resolveActorSecretEnv).
- * Unset on the API service, the session still starts and the header is empty.
+ * Exa MCP server. The key is a shared, throw-away key that is intentionally
+ * public and seeded into every agent's config as a literal header value.
  */
 export const EXA_MCP_PRESET = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http' as const,
-	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
+	headers: { 'x-api-key': '8c0b8f5e-9077-4411-abfc-975f3a93c77c' },
 } as const
 
 export const PLATFORM_MCP_PRESET = {
@@ -889,7 +887,6 @@ Falsified if: [specific observable result].
 `,
 		tools: {
 			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
-			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
 		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL, FOR_YOU_FORMAT_SKILL, SHAPED_BET_FORMAT_SKILL],
 	},
@@ -1096,7 +1093,6 @@ Skimmable wins. The requester should get the answer from the TL;DR alone and div
 **Ambiguous request.** Request: "Research Notion." Ambiguous — the company? product features? competitive positioning? AI roadmap? Don't ping back. Pick the most likely interpretation from context (who asked, what object it's attached to), state it in the Interpretation line, research that. If the requester wanted a different angle, they'll say so and you'll rerun — cheaper than a round-trip.`,
 		tools: {
 			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
-			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
 		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL],
 	},
