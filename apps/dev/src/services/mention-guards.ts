@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, actors, sessions } from '@maskin/db/schema'
+import { events, actors, objects, sessions } from '@maskin/db/schema'
 import { and, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import {
 	type MentionGuardReason,
@@ -152,21 +152,63 @@ async function isDuplicateMention(
 }
 
 /**
- * A comment's helper_return metadata is just a string any author can write.
- * It only counts when the session it names belongs to the comment's author and
- * has taken its one-shot return claim (helper_returned_at is set). Returns that
- * session's hop depth, which the session woken by the return inherits, or null
- * when the marker is not genuine.
+ * The object a finished helper's return is posted on: the helper's own object,
+ * else the sender's, first one that exists in the workspace. Shared by the
+ * poster (services/helper-return.ts) and verifyHelperReturn so they cannot drift.
+ */
+export async function resolveReturnObjectId(
+	db: Database,
+	ctx: {
+		workspaceId: string
+		helperObjectId: string | null
+		senderObjectId: string | null
+	},
+): Promise<string | null> {
+	for (const objectId of [ctx.helperObjectId, ctx.senderObjectId]) {
+		if (!objectId) continue
+		const [row] = await db
+			.select({ workspaceId: objects.workspaceId })
+			.from(objects)
+			.where(eq(objects.id, objectId))
+			.limit(1)
+		if (row?.workspaceId === ctx.workspaceId) return objectId
+	}
+	return null
+}
+
+/**
+ * A comment's helper_return metadata is just a string any author can write, so
+ * it only counts when all of these hold:
+ *  - the session it names belongs to the comment's author and has taken its
+ *    one-shot return claim (helper_returned_at is set);
+ *  - the mentioned actor is the sender of that helper session (the actor behind
+ *    its spawned_by_session_id);
+ *  - the comment is on the object the return is posted to;
+ *  - no earlier comment already used the marker for the same object and target,
+ *    so a marker works once.
+ * Returns the helper session's hop depth, which the session woken by the return
+ * inherits, or null when the marker is not genuine.
  */
 export async function verifyHelperReturn(
 	db: Database,
-	ctx: { sessionId: string; commenterId: string },
+	ctx: {
+		sessionId: string
+		commenterId: string
+		mentionedActorId: string
+		objectId: string
+		commentEventId: number
+	},
 ): Promise<{ hopDepth: number } | null> {
 	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ctx.sessionId)) {
 		return null
 	}
-	const [row] = await db
-		.select({ config: sessions.config })
+	const [helper] = await db
+		.select({
+			config: sessions.config,
+			workspaceId: sessions.workspaceId,
+			spawnedBySessionId: sessions.spawnedBySessionId,
+			initiatedFromObjectId: sessions.initiatedFromObjectId,
+		})
 		.from(sessions)
 		.where(
 			and(
@@ -176,7 +218,48 @@ export async function verifyHelperReturn(
 			),
 		)
 		.limit(1)
-	return row ? { hopDepth: readHopDepth(row.config) } : null
+	if (!helper?.spawnedBySessionId) return null
+
+	const [sender] = await db
+		.select({
+			workspaceId: sessions.workspaceId,
+			actorId: sessions.actorId,
+			initiatedFromObjectId: sessions.initiatedFromObjectId,
+		})
+		.from(sessions)
+		.where(eq(sessions.id, helper.spawnedBySessionId))
+		.limit(1)
+	if (!sender || sender.workspaceId !== helper.workspaceId) return null
+	if (sender.actorId !== ctx.mentionedActorId) return null
+
+	const destinationId = await resolveReturnObjectId(db, {
+		workspaceId: helper.workspaceId,
+		helperObjectId: helper.initiatedFromObjectId,
+		senderObjectId: sender.initiatedFromObjectId,
+	})
+	if (destinationId !== ctx.objectId) return null
+
+	// Once: an earlier comment by this author on this object that mentions the
+	// same actor and names the same session already used the marker. Ordered by
+	// event id, so concurrent copies resolve the same way: only the first passes.
+	const [used] = await db
+		.select({ id: events.id })
+		.from(events)
+		.where(
+			and(
+				eq(events.entityType, 'object'),
+				eq(events.entityId, ctx.objectId),
+				eq(events.actorId, ctx.commenterId),
+				eq(events.action, 'commented'),
+				lt(events.id, ctx.commentEventId),
+				sql`${events.data}->'metadata'->>'helper_return' = ${ctx.sessionId}`,
+				sql`${events.data}->'mentions' @> ${JSON.stringify([ctx.mentionedActorId])}::jsonb`,
+			),
+		)
+		.limit(1)
+	if (used) return null
+
+	return { hopDepth: readHopDepth(helper.config) }
 }
 
 /** Depth stored in sessions.config.hop_depth; anything unreadable counts as 0. */

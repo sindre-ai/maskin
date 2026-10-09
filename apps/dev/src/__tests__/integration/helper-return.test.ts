@@ -451,7 +451,8 @@ describe('buildReturnMessage', () => {
 			const text = buildReturnMessage({
 				kind,
 				helperName: 'Helper',
-				sessionUrl: 'https://maskin.io/x',
+				sessionId: 'sess-1',
+				agentUrl: 'https://maskin.io/x',
 				reason: 'it broke',
 			})
 			expect(text).not.toContain('`')

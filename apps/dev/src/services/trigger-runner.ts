@@ -2510,13 +2510,17 @@ export class CommentDispatcher {
 		let hopDepth: number | undefined
 		if (ctx.commenterIsAgent) {
 			// The helper_return marker is plain comment metadata, so it is only
-			// believed when the named session really is this author's and has taken
-			// its return claim. Anything else is treated as an ordinary mention.
+			// believed when the named session is this author's, has taken its return
+			// claim, and this comment is that session's return: to its sender, on the
+			// return object, not used before. Anything else is an ordinary mention.
 			const verifiedReturn =
 				ctx.helperReturnSessionId !== null
 					? await verifyHelperReturn(this.db, {
 							sessionId: ctx.helperReturnSessionId,
 							commenterId: ctx.commenterId,
+							mentionedActorId: ctx.actor.id,
+							objectId: ctx.objectId,
+							commentEventId: ctx.eventId,
 						})
 					: null
 			isHelperReturn = verifiedReturn !== null
