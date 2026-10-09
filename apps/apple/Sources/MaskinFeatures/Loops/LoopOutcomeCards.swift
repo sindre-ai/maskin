@@ -60,7 +60,7 @@ struct LoopTargetsSection: View {
 			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 				HStack {
 					Text("TARGET")
-						.maskinText(.microLabel)
+						.maskinText(.microLabelLarge)
 						.foregroundStyle(MaskinColor.ink5)
 					Spacer(minLength: MaskinSpace.s4)
 					if let owner = directory.actor(card.target.ownerID) {
@@ -113,7 +113,7 @@ struct OutcomeScoreRow: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			MonoLabel("Outcomes")
+			MonoLabel("Outcomes", size: .section)
 				.padding(.horizontal, MaskinSpace.s9)
 			ScrollView(.horizontal, showsIndicators: false) {
 				LazyHStack(spacing: MaskinSpace.s5) {
@@ -124,7 +124,7 @@ struct OutcomeScoreRow: View {
 				}
 				.padding(.horizontal, MaskinSpace.s7)
 			}
-			MonoLabel("Flows")
+			MonoLabel("Flows", size: .section)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.top, MaskinSpace.s3)
 		}
@@ -147,7 +147,7 @@ struct OutcomeScoreRow: View {
 			Text(card.loopName).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(1)
 		}
 		.padding(MaskinSpace.s7)
-		.frame(width: MaskinSpace.s14 * 4, alignment: .leading)
+		.frame(width: MaskinSpace.s14 * 5 + MaskinSpace.s5, alignment: .leading)
 		.background(
 			MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
 		)

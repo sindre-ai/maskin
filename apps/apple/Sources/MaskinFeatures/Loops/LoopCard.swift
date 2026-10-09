@@ -18,8 +18,10 @@ struct LoopCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
-			if let update { latest(update) }
 			if let target { targetBlock(target) }
+			Divider().overlay(MaskinSurface.separator)
+			if let update { latest(update) }
+			stats
 		}
 		.padding(.vertical, MaskinSpace.s9)
 		.padding(.horizontal, MaskinSpace.s10)
@@ -32,9 +34,9 @@ struct LoopCard: View {
 	private var header: some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s8) {
 			Image(systemName: "arrow.triangle.2.circlepath")
-				.font(.system(size: MaskinSpace.s10, weight: .semibold))
+				.font(.system(size: MaskinSpace.s11, weight: .semibold))
 				.foregroundStyle(MaskinColor.sigInk)
-				.frame(width: MaskinSpace.s14 + MaskinSpace.s4, height: MaskinSpace.s14 + MaskinSpace.s4)
+				.frame(width: MaskinSpace.s14 + MaskinSpace.s8, height: MaskinSpace.s14 + MaskinSpace.s8)
 				.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 				.accessibilityHidden(true)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
@@ -72,7 +74,31 @@ struct LoopCard: View {
 		}
 		.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
 		.foregroundStyle(MaskinColor.ink4)
-		.lineLimit(1)
+		.lineLimit(2)
+		.fixedSize(horizontal: false, vertical: true)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	/// Three real counts the API has: work in flight, cycles closed, decisions waiting on the viewer.
+	private var stats: some View {
+		HStack(alignment: .top, spacing: MaskinSpace.s4) {
+			stat("\(loop.inProgressCount)", "in progress")
+			stat("\(loop.closedCount)", "cycles done")
+			stat("\(loop.waitingCount)", "decisions for you")
+		}
+	}
+
+	private func stat(_ value: String, _ label: String) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			Text(value)
+				.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.w750, relativeTo: .title3))
+				.tracking(-0.02 * MaskinFontSize.t20)
+				.foregroundStyle(MaskinColor.ink)
+			Text(label)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink5)
+				.lineLimit(2)
+		}
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
@@ -93,8 +119,8 @@ struct LoopCard: View {
 					.foregroundStyle(card.status.textColor)
 			}
 			Text(card.target.label)
-				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
-				.foregroundStyle(MaskinColor.ink3)
+				.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold, relativeTo: .body))
+				.foregroundStyle(MaskinColor.ink2)
 				.lineLimit(1)
 			OutcomeBar(fraction: card.target.fraction, status: card.status)
 				.padding(.top, MaskinSpace.s3)
