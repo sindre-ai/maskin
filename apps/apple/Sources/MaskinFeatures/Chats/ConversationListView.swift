@@ -3,8 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The Team list: pinned chats as tiles, then UNREAD and PEOPLE & AGENTS (one row per person or
-/// agent) or, as "One list", every conversation in inset cards by day. Search, a New chat button,
+/// The Team list: pinned chats as tiles, then UNREAD (one row per person or agent) over every conversation in day groups, or, as "One list", every conversation in inset cards by day. Search, a New chat button,
 /// a Display menu and loading, empty and offline states. Swipe left archives; pin, archive and
 /// unread also live in the long-press menu.
 struct ConversationListView: View {
@@ -20,8 +19,6 @@ struct ConversationListView: View {
 
 	/// People with several conversations whose rows are open, keyed by section and person.
 	@State private var expanded: Set<String> = []
-	/// PEOPLE & AGENTS past its cap of five.
-	@State private var showAllPeople = false
 
 	@AppStorage(ChatsDisplayMenu.groupByKey) private var storedGroupBy = ConversationGroupBy.person.rawValue
 
@@ -50,10 +47,10 @@ struct ConversationListView: View {
 					.listRowSeparator(.hidden)
 			}
 			if let team {
-				teamContent(team, selection: rowSelection)
+				teamContent(team, groups: sections.groups, selection: rowSelection)
 			} else {
 				pinnedTiles(sections.pinned, selection: rowSelection)
-				flatGroups(sections)
+				flatGroups(sections.groups)
 			}
 			if search.isEmpty, !store.conversations.isEmpty || store.scope == .archived {
 				Button(store.scope == .archived ? "Back to chats" : "Archived") {
@@ -129,8 +126,8 @@ struct ConversationListView: View {
 
 	/// "One list": every conversation on its own row, in day groups.
 	@ViewBuilder
-	private func flatGroups(_ sections: ConversationListSections) -> some View {
-		ForEach(sections.groups) { group in
+	private func flatGroups(_ groups: [ConversationGroup], showCounts: Bool = false) -> some View {
+		ForEach(groups) { group in
 			Section {
 				ForEach(group.items) { conversation in
 					HStack(spacing: MaskinSpace.s5) {
@@ -156,7 +153,7 @@ struct ConversationListView: View {
 
 	/// The person view: pinned tiles, UNREAD, PEOPLE & AGENTS.
 	@ViewBuilder
-	private func teamContent(_ team: TeamSections, selection: Binding<String?>) -> some View {
+	private func teamContent(_ team: TeamSections, groups: [ConversationGroup], selection: Binding<String?>) -> some View {
 		pinnedTiles(team.pinned, selection: selection)
 		if !team.unread.isEmpty {
 			Section {
@@ -173,30 +170,7 @@ struct ConversationListView: View {
 				}
 			}
 		}
-		if !team.people.isEmpty {
-			Section {
-				personRows(team.visiblePeople(showAll: showAllPeople), section: "people")
-				if let label = team.morePeopleLabel(showAll: showAllPeople) {
-					Button {
-						withAnimation(.snappy) { showAllPeople.toggle() }
-					} label: {
-						HStack {
-							Text(label).maskinText(.body).fontWeight(.semibold).foregroundStyle(MaskinColor.ink2)
-							Spacer(minLength: 0)
-							Image(systemName: "chevron.down")
-								.font(.footnote.weight(.semibold))
-								.foregroundStyle(MaskinColor.ink5)
-								.rotationEffect(.degrees(showAllPeople ? 180 : 0))
-						}
-						.contentShape(Rectangle())
-					}
-					.buttonStyle(.maskinPressed)
-					.rowChrome()
-				}
-			} header: {
-				TeamSectionHeader(label: "People & agents", count: team.people.count)
-			}
-		}
+		flatGroups(groups, showCounts: true)
 	}
 
 	@ViewBuilder
@@ -440,8 +414,8 @@ struct PinnedTile: View {
 		.accessibilityAddTraits(.isButton)
 	}
 
-	/// 54pt: the tile's avatar.
-	static let avatarSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s11 + MaskinSpace.s1
+	/// 44pt: the tile's avatar.
+	static let avatarSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s7
 }
 
 
@@ -522,8 +496,8 @@ struct TeamSectionHeader<Trailing: View>: View {
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			Text(label.uppercased()).maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
-			Text("\(count)").maskinText(.microLabel).foregroundStyle(countColor)
+			MonoLabel(label, color: MaskinColor.ink5, size: .section)
+			MonoLabel("\(count)", color: countColor, size: .section)
 			Spacer(minLength: 0)
 			trailing
 		}
