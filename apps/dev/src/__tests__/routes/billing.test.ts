@@ -872,6 +872,38 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({ credit_balance_cents: 0 })
 	})
 
+	it('reports credit_topup_available true when the top-up price env is set', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ credit_topup_available: true })
+	})
+
+	it('reports credit_topup_available false when the top-up price env is unset', async () => {
+		process.env.STRIPE_PRICE_CREDITS_CUSTOM = ''
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ credit_topup_available: false })
+	})
+
+	it('reports credit_topup_available false when Stripe is not configured at all', async () => {
+		process.env.STRIPE_SECRET_KEY = ''
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ credit_topup_available: false })
+	})
+
 	it('reports a zero credit balance for a trial workspace', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
