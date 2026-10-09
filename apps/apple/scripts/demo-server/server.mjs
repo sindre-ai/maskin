@@ -22,7 +22,7 @@ const PORT = Number(process.env.PORT ?? 3000)
 function deref(node) {
 	let n = node
 	let guard = 0
-	while (n && n.$ref && guard++ < 50) {
+	while (n?.$ref && guard++ < 50) {
 		n = n.$ref
 			.replace(/^#\//, '')
 			.split('/')
@@ -36,7 +36,8 @@ function sample(schema, depth = 0) {
 	if (!s || depth > 8) return null
 	if (s.enum) return s.enum[0]
 	if (s.const !== undefined) return s.const
-	if (s.anyOf) return sample(s.anyOf.find((x) => deref(x)?.type !== 'null') ?? s.anyOf[0], depth + 1)
+	if (s.anyOf)
+		return sample(s.anyOf.find((x) => deref(x)?.type !== 'null') ?? s.anyOf[0], depth + 1)
 	if (s.oneOf) return sample(s.oneOf[0], depth + 1)
 	if (s.allOf) return Object.assign({}, ...s.allOf.map((x) => sample(x, depth + 1)))
 	const type = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type
@@ -120,7 +121,8 @@ const server = createServer(async (req, res) => {
 	// What the curated fixtures build on: a minimal valid body for this route, and one minimal item
 	// of the first array in it, so a fixture only states the fields it wants to show.
 	const base = route ? generic(route).body : null
-	const arrayProp = base && !Array.isArray(base) ? Object.keys(base).find((k) => Array.isArray(base[k])) : null
+	const arrayProp =
+		base && !Array.isArray(base) ? Object.keys(base).find((k) => Array.isArray(base[k])) : null
 	const itemSchema = route ? firstArrayItemSchema(route) : null
 	const custom = overrides({
 		method,
@@ -133,7 +135,8 @@ const server = createServer(async (req, res) => {
 		item: itemSchema ? sample(itemSchema) : {},
 	})
 	if (custom) return json(res, custom.status ?? 200, custom.body)
-	if (!route) return json(res, 404, { error: { code: 'NOT_FOUND', message: 'demo: no such route' } })
+	if (!route)
+		return json(res, 404, { error: { code: 'NOT_FOUND', message: 'demo: no such route' } })
 	const out = generic(route)
 	console.log(`generic ${method.toUpperCase()} ${url.pathname}`)
 	return json(res, out.status, out.body)

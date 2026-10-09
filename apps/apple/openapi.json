@@ -5772,6 +5772,63 @@
 							}
 						}
 					},
+					"400": {
+						"description": "Masked tool config value with no stored value to keep",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"403": {
 						"description": "Caller may not update this actor",
 						"content": {
@@ -10605,7 +10662,7 @@
 						}
 					},
 					"403": {
-						"description": "Workspace is not entitled to BYO LLM credentials",
+						"description": "Caller is not a human workspace admin or owner (for name, llm_keys or custom_llm), or the workspace is not entitled to BYO LLM credentials",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -10662,7 +10719,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace not found",
+						"description": "Workspace not found, or the caller is not a member of it",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -11235,7 +11292,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace not found",
+						"description": "Workspace not found, or the caller is not a member of it",
 						"content": {
 							"application/json": {
 								"schema": {
