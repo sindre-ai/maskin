@@ -17,6 +17,25 @@ struct MaskinApp: App {
 		@State private var watchBridge = WatchSessionBridge()
 	#endif
 
+	/// Debug builds sign in from `MASKIN_DEMO_SESSION` (see scripts/design-review.sh), in memory,
+	/// so a simulator without a Keychain can be screenshotted against the demo server.
+	@MainActor private static func makeEnvironment(source: String) -> AppEnvironment {
+		#if DEBUG
+			if let raw = ProcessInfo.processInfo.environment["MASKIN_DEMO_SESSION"],
+				let session = try? JSONDecoder().decode(StoredSession.self, from: Data(raw.utf8))
+			{
+				let environment = AppEnvironment(
+					baseURL: apiBaseURL, clientSource: source, secretStore: InMemorySecretStore())
+				try? environment.auth.adopt(session)
+				return environment
+			}
+		#endif
+		let environment = AppEnvironment(
+			baseURL: apiBaseURL, clientSource: source, secretStore: KeychainSecretStore())
+		environment.auth.restore()
+		return environment
+	}
+
 	init() {
 		#if os(macOS)
 			let source = "macos"
@@ -25,9 +44,7 @@ struct MaskinApp: App {
 			let source = "ios"
 			let platform = DevicePlatform.ios
 		#endif
-		let environment = AppEnvironment(
-			baseURL: Self.apiBaseURL, clientSource: source, secretStore: KeychainSecretStore())
-		environment.auth.restore()
+		let environment = Self.makeEnvironment(source: source)
 		MaskinIntentsContext.configure(baseURL: Self.apiBaseURL, clientSource: source)
 		IntentsHost.attach(environment: environment)
 		// Agent names, thread links and Spotlight entries belong to the account that is leaving.

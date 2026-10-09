@@ -143,7 +143,11 @@ const server = createServer(async (req, res) => {
 })
 
 function json(res, status, body) {
-	res.writeHead(status, { 'Content-Type': 'application/json' })
+	// List endpoints declare a required X-Total-Count header; the generated client rejects a response without it.
+	const total = Array.isArray(body)
+		? body.length
+		: (Object.values(body ?? {}).find(Array.isArray)?.length ?? 0)
+	res.writeHead(status, { 'Content-Type': 'application/json', 'X-Total-Count': String(total) })
 	res.end(JSON.stringify(body))
 }
 

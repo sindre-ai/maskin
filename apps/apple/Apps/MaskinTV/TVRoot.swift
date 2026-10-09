@@ -9,23 +9,39 @@ struct TVRoot: View {
 	let forYou: ForYouRuntime?
 	@State private var loops: LoopsStore?
 	@State private var stories: StoriesStore?
-	@State private var tab: Tab = .forYou
+	/// A full-screen page (Decision) takes the top bar away; Menu brings it back.
+	@State private var chromeHidden = false
+	@State private var tab: Tab = Tab.demoStart
 	/// A decision a Top Shelf item (or any maskin:// link) asked to open.
 	@State private var openDecision: String?
 
-	enum Tab: Hashable { case forYou, team, flows, objects, search, profile }
+	enum Tab: Hashable {
+		case forYou, team, flows, objects, search, profile
+
+		/// Debug builds can open on any tab so a screen can be screenshotted without a remote.
+		static var demoStart: Tab {
+			#if DEBUG
+			let names: [String: Tab] = [
+				"team": .team, "flows": .flows, "objects": .objects, "search": .search, "profile": .profile,
+			]
+			return ProcessInfo.processInfo.environment["MASKIN_DEMO_TAB"].flatMap { names[$0] } ?? .forYou
+			#else
+			return .forYou
+			#endif
+		}
+	}
 
 	var body: some View {
 		ZStack {
 			TVBackdrop()
 			VStack(spacing: 0) {
-				TVTopBar(
+				if !chromeHidden { TVTopBar(
 					items: [
 						.init(tab: .forYou, title: "For you", count: forYou?.store.entries.filter { $0.section == .needs }.count ?? 0),
 						.init(tab: .team, title: "Team"),
 						.init(tab: .flows, title: "Flows"),
 						.init(tab: .objects, title: "Objects"),
-					], selection: $tab, search: .search, profile: .profile, initials: initials)
+					], selection: $tab, search: .search, profile: .profile, initials: initials) }
 				screen
 			}
 			.ignoresSafeArea()
@@ -59,9 +75,10 @@ struct TVRoot: View {
 	@ViewBuilder private var screen: some View {
 		switch tab {
 		case .forYou:
-			TVForYou(environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision)
+			TVForYou(environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision,
+				chromeHidden: $chromeHidden)
 		case .team: TVTeam(environment: environment)
-		case .flows: TVFlows(environment: environment, loops: loops)
+		case .flows: TVFlows(environment: environment, loops: loops, chromeHidden: $chromeHidden)
 		case .objects: TVObjects(environment: environment)
 		case .search: TVSearch(environment: environment)
 		case .profile: TVProfile(environment: environment)

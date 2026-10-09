@@ -26,33 +26,43 @@ struct TVThread: View {
 	private var recent: [ChatMessage] { WatchChat.recent(chat.messages, limit: 7) }
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 32) {
-			Text(chat.title).font(.system(size: 48, weight: .bold)).lineLimit(1)
-			VStack(alignment: .leading, spacing: 18) {
+		VStack(alignment: .leading, spacing: 24) {
+			header
+			Spacer(minLength: 0)
+			VStack(alignment: .leading, spacing: 20) {
 				ForEach(recent) { message in bubble(message) }
 				if let working = chat.workingAgents().first {
 					Text("\(working.name) is working…").font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
-			Spacer(minLength: 0)
 			if let notice = chat.notice {
 				Text(notice).font(.system(size: 26)).foregroundStyle(MaskinColor.danger)
 			}
-			HStack(spacing: 24) {
-				Button { composing = true } label: { TVCapsuleLabel(title: "Dictate", prominent: true, symbol: "mic.fill") }
+			HStack(spacing: 16) {
+				Button { composing = true } label: {
+					TVCapsuleLabel(title: "Dictate", prominent: true, symbol: "mic.fill", slim: true)
+				}
+				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+				Button { composing = true } label: { TVCapsuleLabel(title: "Type", symbol: "keyboard", slim: true) }
 					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 				ForEach(Array(TVChat.quickReplies.enumerated()), id: \.offset) { _, phrase in
-					Button { chat.send(phrase) } label: { TVCapsuleLabel(title: phrase) }
+					Button { chat.send(phrase) } label: { TVCapsuleLabel(title: phrase, slim: true) }
 						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 				}
-				Button { dismiss() } label: { TVCapsuleLabel(title: "Back") }
-					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+				Spacer(minLength: 0)
+				Button { dismiss() } label: {
+					Label("Back", systemImage: "chevron.left").font(.system(size: 34, weight: .semibold))
+						.foregroundStyle(MaskinColor.ink3).padding(.horizontal, 28).frame(minHeight: 72)
+				}
+				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 36))
 			}
 		}
 		.padding(.horizontal, 96)
-		.padding(.vertical, 56)
+		.padding(.top, 56)
+		.padding(.bottom, 48)
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.ignoresSafeArea()
 		.alert("Reply", isPresented: $composing) {
 			TextField("Say or type your reply", text: $draft)
 			Button("Send") {
@@ -66,20 +76,27 @@ struct TVThread: View {
 		.onDisappear { chat.stop() }
 	}
 
+	private var header: some View {
+		HStack(spacing: 24) {
+			Text(chat.title == "Chief of Staff" ? "Co" : String(chat.title.split(separator: " ").prefix(2).compactMap(\.first)))
+				.font(.system(size: 34, weight: .bold)).foregroundStyle(MaskinColor.avFg)
+				.frame(width: 76, height: 76)
+				.background(MaskinGradient.avatar, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+			Text(chat.title).font(.system(size: 48, weight: .bold)).lineLimit(1)
+		}
+	}
+
 	private func bubble(_ message: ChatMessage) -> some View {
 		let mine = message.actorID == chat.currentActorID
 		return HStack {
-			if mine { Spacer(minLength: 160) }
+			if mine { Spacer(minLength: 240) }
 			VStack(alignment: .leading, spacing: 6) {
-				if !mine {
-					Text(message.actorName).font(.system(size: 22, weight: .semibold)).foregroundStyle(MaskinColor.ink4)
-				}
 				Text(message.content).font(.system(size: 30)).lineLimit(5)
 			}
-			.padding(.horizontal, 28).padding(.vertical, 18)
+			.padding(.horizontal, 28).padding(.vertical, 20)
 			.foregroundStyle(mine ? MaskinSurface.onInverse : MaskinColor.ink)
-			.background(mine ? MaskinSurface.inverse : MaskinSurface.card, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-			if !mine { Spacer(minLength: 160) }
+			.background(mine ? MaskinSurface.inverse : MaskinSurface.fillStrong, in: RoundedRectangle(cornerRadius: 36, style: .continuous))
+			if !mine { Spacer(minLength: 240) }
 		}
 	}
 }
