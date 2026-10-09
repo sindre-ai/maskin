@@ -30,6 +30,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
+		maskinSessionId?: string
 	}
 }
 
@@ -333,6 +334,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		metadata: body.metadata,
 		decision: body.decision,
 		attention: body.attention,
+		authorSessionId: c.get('maskinSessionId'),
 	})
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of

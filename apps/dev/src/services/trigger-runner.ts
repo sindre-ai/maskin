@@ -29,6 +29,8 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { resolveSpawnLink } from './helper-link'
+import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
@@ -1959,9 +1961,13 @@ interface CommentEventData {
 	content?: unknown
 	mentions?: unknown
 	parentEventId?: unknown
+	/** Session the author was running, from X-Maskin-Session-Id (lib/comments.ts). A claim only. */
+	authorSessionId?: unknown
 	metadata?: {
 		suppress_auto_dispatch?: unknown
 		suppress_dispatch_actor_ids?: unknown
+		/** Set on the comment a finished helper posts back to its sender (services/helper-return.ts). */
+		helper_return?: unknown
 	} | null
 }
 
@@ -2079,6 +2085,9 @@ export class CommentDispatcher {
 				parentEventId,
 				suppressedActorIds,
 				content: typeof data.content === 'string' ? data.content : '',
+				helperReturnSessionId:
+					typeof data.metadata?.helper_return === 'string' ? data.metadata.helper_return : null,
+				authorSessionId: typeof data.authorSessionId === 'string' ? data.authorSessionId : null,
 			})
 			return
 		}
@@ -2113,11 +2122,18 @@ export class CommentDispatcher {
 		parentEventId: number | null
 		suppressedActorIds: Set<string>
 		content: string
+		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
+		// The commenter rides along in the same lookup so the loop guards can tell
+		// an agent-authored mention from a human one without an extra query.
 		const mentionedActors = await this.db
 			.select({ id: actors.id, type: actors.type })
 			.from(actors)
-			.where(inArray(actors.id, ctx.mentions))
+			.where(inArray(actors.id, [...ctx.mentions, ctx.commenterId]))
+		const commenterIsAgent = mentionedActors.some(
+			(a) => a.id === ctx.commenterId && a.type === 'agent',
+		)
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
 		// don't resolve to an actor row; both cases quietly drop out here).
@@ -2156,6 +2172,9 @@ export class CommentDispatcher {
 				actor,
 				content: ctx.content,
 				parentEventId: ctx.parentEventId,
+				commenterIsAgent,
+				helperReturnSessionId: ctx.helperReturnSessionId,
+				authorSessionId: ctx.authorSessionId,
 			})
 			anyDispatched = true
 		}
@@ -2446,6 +2465,9 @@ export class CommentDispatcher {
 		actor: { id: string; type: string }
 		content: string
 		parentEventId: number | null
+		commenterIsAgent: boolean
+		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
 		const [notification] = await this.db.transaction((tx) =>
 			insertNotificationsWithEvents(tx, {
@@ -2478,6 +2500,64 @@ export class CommentDispatcher {
 
 		if (ctx.actor.type !== 'agent') return
 
+		// Loop guards. Only agent-authored mentions are limited: a human can always
+		// wake an agent. A blocked mention keeps its notification (written above),
+		// it just does not start a session.
+		let isHelperReturn = false
+		// Depth the woken session carries in config.hop_depth. A session woken by a
+		// return inherits the depth of the helper that returned, so a sender that
+		// keeps re-delegating cannot reset the chain.
+		let hopDepth: number | undefined
+		if (ctx.commenterIsAgent) {
+			// The helper_return marker is plain comment metadata, so it is only
+			// believed when the named session really is this author's and has taken
+			// its return claim. Anything else is treated as an ordinary mention.
+			const verifiedReturn =
+				ctx.helperReturnSessionId !== null
+					? await verifyHelperReturn(this.db, {
+							sessionId: ctx.helperReturnSessionId,
+							commenterId: ctx.commenterId,
+						})
+					: null
+			isHelperReturn = verifiedReturn !== null
+			if (verifiedReturn) hopDepth = verifiedReturn.hopDepth
+			const decision = await evaluateAgentMentionGuards(this.db, {
+				workspaceId: ctx.workspaceId,
+				commentEventId: ctx.eventId,
+				commenterId: ctx.commenterId,
+				mentionedActorId: ctx.actor.id,
+				objectId: ctx.objectId,
+				content: ctx.content,
+				isHelperReturn,
+			})
+			if (!decision.allowed) {
+				logger.info('Mention blocked by loop guard', {
+					event_id: ctx.event.event_id,
+					reason: decision.reason,
+					resolved_actor_id: ctx.actor.id,
+					object_id: ctx.objectId,
+				})
+				return
+			}
+		}
+
+		// Link the mentioned agent's session to the session the author was running,
+		// so its outcome can be sent back. A return never links: the session it wakes
+		// must have no link of its own, or returns could chain.
+		let spawnedBySessionId: string | undefined
+		if (!isHelperReturn) {
+			const link = await resolveSpawnLink(this.db, {
+				claimedSessionId: ctx.authorSessionId,
+				authenticatedActorId: ctx.commenterId,
+				workspaceId: ctx.workspaceId,
+				objectId: ctx.objectId,
+			})
+			if (link.linked) {
+				spawnedBySessionId = link.spawnedBySessionId
+				hopDepth = link.hopDepth
+			}
+		}
+
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
 		const senderLine = await loadSenderLine(this.db, ctx.commenterId)
 		startSession({
@@ -2498,8 +2578,11 @@ export class CommentDispatcher {
 					commenter_actor_id: ctx.commenterId,
 					notification_id: notification.id,
 					comment_event_id: ctx.eventId,
+					...(isHelperReturn ? { helper_return: true } : {}),
 				},
+				...(hopDepth ? { hop_depth: hopDepth } : {}),
 			},
+			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
 			sourceCommentEventId: ctx.eventId,
 			createdBy: ctx.commenterId,
