@@ -155,7 +155,10 @@ export function ActorAvatar({
 					className={cn(
 						baseClasses,
 						'cursor-pointer transition-opacity hover:opacity-80',
-						'after:absolute after:left-1/2 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""]',
+						// Anchored to the right edge so the 44px hit area only grows leftward: a
+						// centred one pokes past the button's right edge and counts as horizontal
+						// overflow on every ancestor scroller.
+						'after:absolute after:right-0 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-y-1/2 after:content-[""]',
 					)}
 				>
 					{content}
