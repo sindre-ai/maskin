@@ -417,13 +417,10 @@ function StepOne({
 }) {
 	return (
 		<div className="space-y-4">
-			<div className="rounded-md border border-brand/40 bg-brand-subtle p-3">
+			<div className="rounded-md border border-sig/40 bg-sig-tint p-3">
 				<div className="flex gap-2">
-					<Info
-						className="mt-0.5 h-4 w-4 shrink-0 text-brand-subtle-foreground"
-						aria-hidden="true"
-					/>
-					<p className="text-xs text-brand-subtle-foreground">
+					<Info className="mt-0.5 h-4 w-4 shrink-0 text-sig-ink" aria-hidden="true" />
+					<p className="text-xs text-sig-ink">
 						Create a key in your Resend dashboard under <strong>API Keys → Create</strong>. Give it{' '}
 						<strong>Full access</strong> — the agent needs to both send mail and fetch inbound
 						bodies.{' '}
@@ -431,7 +428,7 @@ function StepOne({
 							href="https://resend.com/api-keys"
 							target="_blank"
 							rel="noreferrer"
-							className="underline underline-offset-2 hover:text-brand"
+							className="underline underline-offset-2 hover:text-foreground"
 						>
 							Where to find it →
 						</a>
@@ -507,13 +504,10 @@ function StepTwo({
 					record we ask for takes over inbound mail for whatever you enter here.
 				</p>
 			</div>
-			<div className="rounded-md border border-brand/40 bg-brand-subtle p-3">
+			<div className="rounded-md border border-sig/40 bg-sig-tint p-3">
 				<div className="flex gap-2">
-					<Info
-						className="mt-0.5 h-4 w-4 shrink-0 text-brand-subtle-foreground"
-						aria-hidden="true"
-					/>
-					<div className="text-xs text-brand-subtle-foreground">
+					<Info className="mt-0.5 h-4 w-4 shrink-0 text-sig-ink" aria-hidden="true" />
+					<div className="text-xs text-sig-ink">
 						<p className="font-medium">Why a subdomain.</p>
 						<p className="mt-1">
 							If your root domain already carries human mail (Gmail, Workspace, iCloud), adding the
@@ -960,7 +954,7 @@ function StepFourDone({ domain, workspaceId }: { domain: string; workspaceId: st
 						<strong>Actors → &lt;agent&gt; → Email surfaces</strong>. That&apos;s what makes inbound
 						mail actually reach one.
 					</p>
-					<p className="mt-2 text-xs text-brand">Open Actors →</p>
+					<p className="mt-2 text-xs text-foreground underline underline-offset-2">Open Actors →</p>
 				</a>
 				<a
 					href={`/${workspaceId}/triggers`}
@@ -971,7 +965,7 @@ function StepFourDone({ domain, workspaceId }: { domain: string; workspaceId: st
 						Point a loop or a trigger at email.received — for example, the outbound-sales loop can
 						now wake within seconds of a reply.
 					</p>
-					<p className="mt-2 text-xs text-brand">New trigger →</p>
+					<p className="mt-2 text-xs text-foreground underline underline-offset-2">New trigger →</p>
 				</a>
 			</div>
 			<p className="text-[11px] text-muted-foreground">

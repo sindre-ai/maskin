@@ -105,7 +105,7 @@ describe('SpawnBar', () => {
 		expect(bar).not.toBeNull()
 		expect(bar).toHaveClass('w-1')
 		expect(bar).toHaveClass('h-full')
-		expect(bar).toHaveClass('bg-brand')
+		expect(bar).toHaveClass('bg-sig')
 		expect(bar).toHaveAttribute('aria-hidden', 'true')
 	})
 })

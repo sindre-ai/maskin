@@ -9,7 +9,7 @@ import { CheckCircle2, Clock, PauseCircle, XCircle } from 'lucide-react'
  * chat message that spawned an agent session.
  *
  * Two pieces:
- *  - a vertical `--brand` bar to the right of the message bubble (`w-1 h-full`)
+ *  - a vertical `--sig` bar to the right of the message bubble (`w-1 h-full`)
  *    rendered inline by MessageBubble
  *  - a spawn chip below the bubble reading "Session started · <duration> ·
  *    <status>"
@@ -121,7 +121,7 @@ export function SpawnChip({ info, className }: { info: MessageSpawnInfo; classNa
 }
 
 /**
- * Persistent vertical --brand bar rendered to the right of the message bubble.
+ * Persistent vertical --sig bar rendered to the right of the message bubble.
  * `w-1 h-full` per the acceptance criteria; sits inside the bubble's flex row
  * so it self-aligns with the bubble height. Purely decorative — screen-reader
  * users hear the spawn chip's caption below the bubble.
@@ -131,7 +131,7 @@ export function SpawnBar({ className }: { className?: string }) {
 		<span
 			aria-hidden="true"
 			data-testid="spawn-bar"
-			className={cn('block h-full w-1 shrink-0 self-stretch rounded-full bg-brand', className)}
+			className={cn('block h-full w-1 shrink-0 self-stretch rounded-full bg-sig', className)}
 		/>
 	)
 }

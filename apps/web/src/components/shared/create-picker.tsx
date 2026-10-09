@@ -109,7 +109,7 @@ const OBJECT_TYPE_PLACEHOLDER: Record<string, string> = {
 }
 
 // The 5px spine is a text-free indicator, so it needs a saturated fill that
-// survives both themes — the `-text` tokens are (#4338ca / #a5b4fc etc.), the
+// survives both themes — the `-text` tokens are (#3f3f46 / #d4d4d8 etc.), the
 // `-bg` tokens are pale tints. Never `bg-accent` here: see
 // `.claude/rules/known-pitfalls.md`.
 const SPINE_CLASS: Record<string, string> = {

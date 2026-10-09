@@ -11,7 +11,7 @@ import {
 /** Per-mime tinted 32×32 (sm=24×24) square with a lucide glyph. Carries
  *  `aria-hidden` so the accessible name comes from the filename to its right,
  *  per Designer §7 accessibility. Palette is drawn from the existing v2
- *  zinc + accent tokens: md=cyan, html=indigo, img=fuchsia, pdf=red,
+ *  zinc + accent tokens: md=cyan, html=zinc, img=fuchsia, pdf=red,
  *  code=emerald; unknown types fall back to muted. */
 export function MimeTile({
 	mimeType,
@@ -50,8 +50,8 @@ function mimeStyle(mimeType: string) {
 	}
 	if (m.includes('html')) {
 		return {
-			bg: 'bg-indigo-50 dark:bg-indigo-950/40',
-			text: 'text-indigo-700 dark:text-indigo-300',
+			bg: 'bg-zinc-100 dark:bg-zinc-800/60',
+			text: 'text-zinc-700 dark:text-zinc-300',
 			Icon: Globe,
 		}
 	}

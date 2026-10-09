@@ -951,7 +951,7 @@ export function TriggerForm({
 
 			{/* Meta row (mockup 1604–1609) */}
 			<div className="mt-3 flex flex-wrap items-center gap-2">
-				<span className="inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-md bg-brand-subtle px-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-brand-subtle-foreground">
+				<span className="inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-md bg-sig-tint px-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-sig-ink">
 					{TRIGGER_TYPE_INFO[type].label}
 				</span>
 				{sourceLabel && (
@@ -1111,7 +1111,7 @@ export function TriggerForm({
 													{NEW_RIBBON_ACTIONS.has(a) && (
 														<span
 															aria-label="NEW"
-															className="inline-flex h-4 items-center rounded-sm bg-brand-subtle px-1 font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-brand-subtle-foreground"
+															className="inline-flex h-4 items-center rounded-sm bg-sig-tint px-1 font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-sig-ink"
 														>
 															NEW
 														</span>

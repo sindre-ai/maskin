@@ -7,9 +7,9 @@ const SPAWN_PULSE_MS = 2200
  * that message's DOM node to appear, then:
  * - scrolls it into view (respecting the `scroll-mt-[60px]` on the wrapper so
  *   the fixed thread header doesn't clip it),
- * - stamps `data-origin-spawn` for the persistent brand-bar spawn marker
+ * - stamps `data-origin-spawn` for the persistent Patina-bar spawn marker
  *   (styled in `app.css`), and
- * - stamps `data-origin-pulse` for the 2.2s ease-out brand-tinted highlight,
+ * - stamps `data-origin-pulse` for the 2.2s ease-out Patina-tinted highlight,
  *   cleared after `SPAWN_PULSE_MS` so nothing loops.
  *
  * Returns an announcement string for the `<output>` (`role=status
@@ -49,7 +49,7 @@ export function useOriginDeepLinkScroll({
 
 		jumpedForRef.current = messageId
 		// Persistent marker — stays until the user navigates away. Read from
-		// the CSS in `app.css` (`[data-origin-spawn] { ...vertical --brand bar }`).
+		// the CSS in `app.css` (`[data-origin-spawn] { ...vertical --sig bar }`).
 		node.dataset.originSpawn = 'true'
 		// One-shot pulse — background transition applied via a keyframe
 		// animation, cleaned up after the animation fires so nothing loops.

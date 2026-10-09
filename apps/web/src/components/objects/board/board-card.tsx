@@ -67,7 +67,7 @@ export function BoardCard({
 				// `accent` is a near-white background token in light mode, so it cannot
 				// carry a resting-state indicator on a white card — `muted`/`brand` read
 				// in both modes. Matches the v2 list row's selected state.
-				'data-[state=selected]:border-brand data-[state=selected]:bg-muted data-[state=selected]:ring-2 data-[state=selected]:ring-brand/40',
+				'data-[state=selected]:border-primary data-[state=selected]:bg-muted data-[state=selected]:ring-2 data-[state=selected]:ring-primary/30',
 			)}
 		>
 			<div className="flex items-start gap-2">

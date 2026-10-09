@@ -42,7 +42,7 @@ const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
 // The 34px glyph tile (mockup 1547) — one tint per trigger kind, always a
 // semantic pair so both modes stay legible.
 const TRIGGER_TYPE_TILE: Record<string, string> = {
-	event: 'bg-brand-subtle text-brand-subtle-foreground',
+	event: 'bg-sig-tint text-sig-ink',
 	cron: 'bg-secondary text-secondary-foreground',
 	reminder: 'bg-muted text-muted-foreground',
 }

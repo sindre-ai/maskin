@@ -202,7 +202,7 @@ export function BulkActionBar({
 						type="button"
 						onClick={onSelectAll}
 						title="Select all (a)"
-						className="shrink-0 whitespace-nowrap text-xs font-semibold text-brand hover:underline"
+						className="shrink-0 whitespace-nowrap text-xs font-semibold text-foreground underline underline-offset-2 hover:text-muted-foreground"
 					>
 						Select all {totalCount}
 					</button>

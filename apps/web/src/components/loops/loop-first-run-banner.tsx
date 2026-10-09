@@ -13,14 +13,14 @@ import type { TriggerResponse } from '@/lib/api'
  */
 export function LoopFirstRunBanner({ triggers }: { triggers: TriggerResponse[] }) {
 	return (
-		<div className="flex items-start gap-3 rounded-xl border border-brand-subtle-foreground/30 bg-brand-subtle px-3.5 py-3">
+		<div className="flex items-start gap-3 rounded-xl border border-sig-ink/30 bg-sig-tint px-3.5 py-3">
 			<span
 				aria-hidden="true"
 				className="grid size-6 shrink-0 place-items-center rounded-lg bg-primary text-[11px] text-primary-foreground"
 			>
 				✦
 			</span>
-			<p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-brand-subtle-foreground">
+			<p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-sig-ink">
 				Built from what you said — nothing has fired yet. The first cycle opens{' '}
 				{describeFirstFire(triggers)}.
 			</p>

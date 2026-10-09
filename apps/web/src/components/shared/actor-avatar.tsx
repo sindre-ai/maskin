@@ -97,7 +97,7 @@ export function ActorAvatar({
 	imageUrl?: string
 	/** `strong` fills the plate with the identity colour and reverses the glyph. */
 	tone?: ActorAvatarTone
-	/** Composes a violet conic-gradient ring around the avatar, animating
+	/** Composes a Patina conic-gradient ring around the avatar, animating
 	 *  clockwise ~1.6s/rev; `prefers-reduced-motion: reduce` renders a static
 	 *  300° arc. Wired on the Objects list row to `object.active_session_state
 	 *  === 'running'` — the D2 delta of the v4 polish bet. `aria-label` names
@@ -173,7 +173,7 @@ export function ActorAvatar({
 	)
 }
 
-// Wraps the avatar in a fixed-thickness violet conic-gradient ring, animated
+// Wraps the avatar in a fixed-thickness Patina conic-gradient ring, animated
 // clockwise via CSS. Kept as an inline component so callers keep using
 // `<ActorAvatar working />` without threading the wrapper themselves.
 //
@@ -181,7 +181,7 @@ export function ActorAvatar({
 // motion fallback are defined in `app.css` (a `@keyframes actor-avatar-ring`
 // and the paired `@media (prefers-reduced-motion: reduce)` override). Keeping
 // the visual definition in CSS keeps this component's markup readable and
-// lets `@theme` tokens (var(--violet)) flow into it without JS colour math.
+// lets `@theme` tokens (var(--sig)) flow into it without JS colour math.
 function WorkingRing({
 	working,
 	children,

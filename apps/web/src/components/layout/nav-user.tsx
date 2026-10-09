@@ -57,7 +57,7 @@ export function NavUser() {
 							aria-label={`Your account, ${displayName}`}
 							className="h-auto rounded-lg py-[7px] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
-							<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-[10px] font-bold text-brand-subtle-foreground">
+							<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sig-tint text-[10px] font-bold text-sig-ink">
 								{initial}
 							</span>
 							{/* The row identifies the person and the workspace they are in —
@@ -84,7 +84,7 @@ export function NavUser() {
 						    sub-line for the email — the one fact the row has no space for. */}
 						<DropdownMenuLabel className="p-0 font-normal">
 							<div className="flex items-center gap-2 px-2 pb-[9px] pt-[7px] text-left">
-								<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-brand-subtle text-[11px] font-bold text-brand-subtle-foreground">
+								<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sig-tint text-[11px] font-bold text-sig-ink">
 									{initial}
 								</span>
 								<span className="grid min-w-0 flex-1 leading-[1.3]">

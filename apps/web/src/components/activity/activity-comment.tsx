@@ -389,14 +389,14 @@ export function ActivityComment({
 			className={cn(
 				'mt-1.5 inline-flex items-center gap-2 text-left',
 				isBubble
-					? 'rounded-full border border-border bg-background px-[11px] py-1 transition-colors hover:border-brand-subtle'
+					? 'rounded-full border border-border bg-background px-[11px] py-1 transition-colors hover:border-border-strong'
 					: 'ml-7 gap-1.5',
 			)}
 		>
 			<span
 				className={cn(
 					'text-[11px] font-semibold',
-					isBubble ? 'text-brand' : 'text-muted-foreground hover:text-foreground',
+					isBubble ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
 				)}
 			>
 				{replies.length} {replies.length === 1 ? 'reply' : 'replies'}

@@ -37,7 +37,7 @@ export function AgentPortraitCard({
 		<div
 			className={cn(
 				'group relative flex flex-col items-center gap-3 rounded-xl border bg-card p-5 text-center shadow-md transition-colors',
-				isRunning && 'border-brand/60',
+				isRunning && 'border-sig/60',
 				status === 'failed' && 'border-error',
 				status === 'paused' && 'border-border',
 				status === 'idle' && 'border-border hover:border-border-strong',
@@ -129,7 +129,7 @@ function AvatarPortrait({
 		status === 'failed'
 			? 'stroke-error'
 			: status === 'running'
-				? 'stroke-brand'
+				? 'stroke-sig'
 				: status === 'paused'
 					? 'stroke-muted-foreground/60'
 					: 'stroke-border'
