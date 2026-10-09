@@ -116,7 +116,6 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'For teams running real workflows day to day.',
 		features: [
 			`${formatCredits(CAP_DEFAULTS.pro)} of usage included each month`,
-			'Buy usage credits any time to keep going past your included usage',
 			formatOwnershipCap(OWNERSHIP_CAPS.pro),
 			formatSeatCap(SEAT_CAPS.pro),
 			'Hosted by Maskin — no API key needed',
@@ -130,7 +129,6 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'Heavier loops, volume rates, one invoice.',
 		features: [
 			`${formatCredits(CAP_DEFAULTS.team)} of usage included each month`,
-			'Buy usage credits any time to keep going past your included usage',
 			formatOwnershipCap(OWNERSHIP_CAPS.team),
 			formatSeatCap(SEAT_CAPS.team),
 			'Hosted by Maskin — no API key needed',
@@ -407,11 +405,13 @@ export function BillingSection({
 				enterprise={enterprise}
 			/>
 
-			<BuyCreditsDialog
-				open={buyCreditsOpen}
-				onOpenChange={setBuyCreditsOpen}
-				workspaceId={workspaceId}
-			/>
+			{usage.credit_topup_available && (
+				<BuyCreditsDialog
+					open={buyCreditsOpen}
+					onOpenChange={setBuyCreditsOpen}
+					workspaceId={workspaceId}
+				/>
+			)}
 		</div>
 	)
 }
@@ -502,14 +502,16 @@ function UsageBanner({
 				</div>
 			)}
 
-			{isPaid && (
+			{isPaid && (usage.credit_topup_available || usage.credit_balance_cents > 0) && (
 				<div className="flex items-center justify-between gap-2">
 					<span className="text-xs text-muted-foreground">
 						{formatCredits(usage.credit_balance_cents)} usage credits
 					</span>
-					<Button size="sm" variant="outline" onClick={onBuyCredits}>
-						Buy usage credits
-					</Button>
+					{usage.credit_topup_available && (
+						<Button size="sm" variant="outline" onClick={onBuyCredits}>
+							Buy usage credits
+						</Button>
+					)}
 				</div>
 			)}
 

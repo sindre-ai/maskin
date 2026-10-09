@@ -21,6 +21,7 @@ async function mockUsage(
 		hard_cap_usd_cents: number | null
 		period_resets_in_ms: number | null
 		credit_balance_cents?: number
+		credit_topup_available?: boolean
 	},
 ) {
 	await page.route('**/api/billing/usage*', async (route) => {
@@ -32,6 +33,7 @@ async function mockUsage(
 				stripe_customer_id: null,
 				stripe_subscription_id: null,
 				credit_balance_cents: 0,
+				credit_topup_available: true,
 				...usage,
 			}),
 		})
@@ -145,6 +147,29 @@ test.describe('Billing plans — Settings UI', () => {
 			await expect(bar).toBeVisible()
 			const barClass = await bar.getAttribute('class')
 			expect(barClass).not.toContain('bg-error')
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`hides Buy usage credits when top-up is unavailable — ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await mockUsage(page, {
+				plan: 'pro',
+				status: 'active',
+				usd_cents_used: 600,
+				hard_cap_usd_cents: 4_900,
+				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
+				credit_balance_cents: 0,
+				credit_topup_available: false,
+			})
+
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await page.goto(`/${account.workspaceId}/settings/billing`)
+
+			await expect(page.getByText('Pro — $49/mo')).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Buy usage credits' })).toHaveCount(0)
 		})
 	}
 

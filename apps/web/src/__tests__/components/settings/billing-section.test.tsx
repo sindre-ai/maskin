@@ -33,6 +33,7 @@ const baseUsage = {
 	stripe_customer_id: null,
 	stripe_subscription_id: null,
 	credit_balance_cents: 0,
+	credit_topup_available: true,
 	linkedin_identity_addon: null,
 }
 
@@ -325,6 +326,75 @@ describe('BillingSection', () => {
 		// A spendable balance is expected, already-paid-for usage — the bar must not read as an error.
 		const bar = screen.getByRole('progressbar')
 		expect(bar.className).not.toContain('bg-error')
+	})
+
+	it('hides the Buy usage credits button when top-up is unavailable but still shows a remaining balance', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 4_900,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			credit_balance_cents: 4_000,
+			credit_topup_available: false,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
+	})
+
+	it('hides the whole credits row when top-up is unavailable and the balance is zero', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 4_900,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			credit_balance_cents: 0,
+			credit_topup_available: false,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		expect(screen.queryByText(/usage credits/)).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
+	})
+
+	it('does not advertise buying usage credits on the plan cards', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 4_900,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		expect(screen.getAllByText(/of usage included each month/).length).toBeGreaterThan(0)
+		expect(screen.queryByText(/Buy usage credits any time/)).not.toBeInTheDocument()
 	})
 
 	it('shows the hard-blocked (error) bar when over cap with a zero credit balance', async () => {

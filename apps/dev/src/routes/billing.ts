@@ -48,6 +48,19 @@ function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'enterprise'): num
 	return resolvePlanCapCents(plan)
 }
 
+/**
+ * Whether POST /credits/checkout can succeed. Mirrors the route's own gates
+ * (Stripe configured, top-up Price set) but reads defensively, since
+ * `/api/billing/usage` must keep serving usage when Stripe is unconfigured.
+ */
+function isCreditTopupAvailable(): boolean {
+	try {
+		return readStripeEnv().priceCreditsCustom !== null
+	} catch {
+		return false
+	}
+}
+
 type Env = {
 	Variables: {
 		db: Database
@@ -132,6 +145,9 @@ const usageResponseSchema = z.object({
 	// Prepaid usage-credits balance, in USD cents. Only meaningful for
 	// pro/team — see `lib/credit-billing.ts`.
 	credit_balance_cents: z.number().int().nonnegative(),
+	// True only when the top-up Price env is set and Stripe is configured, i.e. when
+	// POST /credits/checkout can succeed. The web app hides Buy usage credits otherwise.
+	credit_topup_available: z.boolean(),
 	linkedin_identity_addon: linkedinIdentityAddonSchema,
 })
 
@@ -271,6 +287,7 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 		stripe_customer_id: billing?.stripe_customer_id ?? null,
 		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 		credit_balance_cents: creditBalanceCents,
+		credit_topup_available: isCreditTopupAvailable(),
 		linkedin_identity_addon: linkedinIdentityAddon,
 	}
 }
@@ -494,6 +511,12 @@ app.openapi(buyCreditsRoute, async (c) => {
 			error: err instanceof Error ? err.message : String(err),
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+
+	// The top-up Price is optional config: without it there is nothing to
+	// charge against, so the endpoint is unavailable rather than misconfigured.
+	if (!stripeEnv.priceCreditsCustom) {
+		return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
 	}
 
 	const stripe = getStripeClient(stripeEnv)
