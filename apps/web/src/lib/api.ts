@@ -505,6 +505,21 @@ export const api = {
 				// OAuth `state`; without `include` it is dropped and the callback 400s.
 				credentials: 'include',
 			}),
+		/** "Connect with Maskin" from the Skjald app: approve it for this workspace and get the redirect that carries the one-time code back. */
+		skjaldAuthorize: (
+			workspaceId: string,
+			body: {
+				state: string
+				redirect_uri: string
+				code_challenge: string
+				code_challenge_method: 'S256'
+			},
+		) =>
+			request<{ redirect_url: string; workspace_name: string }>('/integrations/skjald/authorize', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 		resendDnsPrecheck: (workspaceId: string, domain: string) =>
 			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
 				'/integrations/resend/dns-precheck',
