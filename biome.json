@@ -32,7 +32,13 @@
 			"routeTree.gen.ts",
 			".claude",
 			".codex",
-			"maskin.io"
+			"maskin.io",
+			"apps/apple/.build",
+			"apps/apple/Maskin.xcodeproj",
+			"apps/apple/openapi.json",
+			"apps/apple/Sources/MaskinAPI/openapi.json",
+			"**/*.xcassets",
+			"**/*.xcassets/**"
 		]
 	}
 }

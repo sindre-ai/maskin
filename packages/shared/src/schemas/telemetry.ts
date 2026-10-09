@@ -30,20 +30,32 @@ const toolNameSchema = z
 
 const sessionIdSchema = z.string().min(1).max(128).optional()
 
+// Replace an invalid value with `fallback` instead of failing the parse — the
+// behaviour of `schema.catch(fallback)`, built from `z.preprocess` because
+// `ZodCatch` has no OpenAPI mapping: a single `.catch()` anywhere in a
+// documented route makes `getOpenAPI31Document()` throw, which takes down
+// `/api/openapi.json` and every SDK generated from it (the Apple client's
+// `apps/apple/openapi.json` snapshot included). `ZodEffects` is read through
+// to its inner schema, so the documented shape is the strict one.
+function degradeTo<T extends z.ZodTypeAny>(schema: T, fallback: z.infer<T>) {
+	return z.preprocess((value) => (schema.safeParse(value).success ? value : fallback), schema)
+}
+
 // Argument KEY NAMES only — never values. Constrained to identifier-like
 // strings and a bounded count so a misbehaving or hostile client can't smuggle
 // free text (which is exactly what this field exists to keep out) through the
 // boundary by passing an object whose keys are sentences.
-const argKeysSchema = z
-	.array(
-		z
-			.string()
-			.min(1)
-			.max(64)
-			.regex(/^[A-Za-z0-9_.-]+$/, 'arg key must be identifier-like'),
-	)
-	.max(64)
-	.optional()
+const argKeysSchema = degradeTo(
+	z
+		.array(
+			z
+				.string()
+				.min(1)
+				.max(64)
+				.regex(/^[A-Za-z0-9_.-]+$/, 'arg key must be identifier-like'),
+		)
+		.max(64)
+		.optional(),
 	// Degrade, don't reject. `arg_keys` is optional analytics riding along on an
 	// event whose primary job is the pre-existing `mcp_telemetry` row (tool
 	// name, rich-render flag, duration). Failing the whole body would 400 the
@@ -51,24 +63,27 @@ const argKeysSchema = z
 	// client sink logs one line per process lifetime, so the loss would be
 	// invisible. A tool declaring a param the regex rejects (custom extensions
 	// define their own schemas) must cost us the key list, not the event.
-	.catch([])
+	[],
+)
 
 // Response field names, ranked by bytes. Same constraints as `arg_keys` and
 // the same degrade-don't-reject behaviour: a rejected name must cost the name,
 // not the size event it rides on.
 const MAX_TOP_FIELDS = 8
 
-const fieldNamesSchema = z
-	.array(
-		z
-			.string()
-			.min(1)
-			.max(64)
-			.regex(/^[A-Za-z0-9_.-]+$/, 'field name must be identifier-like'),
-	)
-	.max(MAX_TOP_FIELDS)
-	.optional()
-	.catch([])
+const fieldNamesSchema = degradeTo(
+	z
+		.array(
+			z
+				.string()
+				.min(1)
+				.max(64)
+				.regex(/^[A-Za-z0-9_.-]+$/, 'field name must be identifier-like'),
+		)
+		.max(MAX_TOP_FIELDS)
+		.optional(),
+	[],
+)
 
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
@@ -155,7 +170,7 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	// field. `alignTopFields` below re-imposes the invariant at the consumer;
 	// it can't be a `.transform` here because this object is a member of a
 	// `z.discriminatedUnion`, which (zod 3) accepts only bare ZodObjects.
-	top_field_bytes: z.array(z.number().int().min(0)).max(MAX_TOP_FIELDS).optional().catch([]),
+	top_field_bytes: degradeTo(z.array(z.number().int().min(0)).max(MAX_TOP_FIELDS).optional(), []),
 	// True when the producer's shape measurement faulted, making every shape
 	// field above a fallback rather than an observation. Without it, a fault is
 	// indistinguishable from a correct measurement of a tool that has no row
