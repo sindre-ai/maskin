@@ -117,9 +117,7 @@ private struct ShellToolbarModifier: ViewModifier {
 						Button {
 							runtime?.showProfile = true
 						} label: {
-							ActorAvatar(
-								name: environment.auth.session?.name ?? "", kind: .human, size: MaskinSpace.s14
-							)
+							ShellNavAvatar(name: environment.auth.session?.name ?? "")
 							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 							.contentShape(Circle())
 						}
@@ -140,12 +138,31 @@ struct ShellInkCircle: View {
 	var body: some View {
 		Image(systemName: symbol)
 			.font(.system(size: 16, weight: .semibold))
-			.foregroundStyle(MaskinSurface.onInverse)
+			.foregroundStyle(MaskinSurface.onNavInk)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-			.background(Circle().fill(MaskinSurface.inverse))
+			.background(Circle().fill(MaskinSurface.navInk))
 			.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 			.contentShape(Circle())
 			.accessibilityLabel(label)
+	}
+}
+
+/// The profile button in the bar: a Patina tint disc with a thin ring and the person's one initial.
+struct ShellNavAvatar: View {
+	let name: String
+
+	private var initial: String {
+		name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?"
+	}
+
+	var body: some View {
+		Text(initial)
+			.font(.system(size: 17, weight: .bold))
+			.foregroundStyle(MaskinColor.sigInk)
+			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+			.background(Circle().fill(MaskinColor.sigTint))
+			.overlay(Circle().strokeBorder(MaskinColor.sig.opacity(0.3), lineWidth: 1))
+			.accessibilityHidden(true)
 	}
 }
 
@@ -162,14 +179,14 @@ extension EnvironmentValues {
 }
 
 extension View {
-	/// The screen title as the system's large title: it sits above the content and collapses into
-	/// the bar as the person scrolls (Apple's pattern for a tab's root screen). macOS keeps the
+	/// The screen title as the system's large title: on its own row below the bar's glass capsule,
+	/// collapsing into the bar as the person scrolls (Apple's pattern for a tab's root screen). macOS keeps the
 	/// system title.
 	fileprivate func shellTitle(_ title: String?) -> some View {
 		#if os(iOS)
 			return self
 				.navigationTitle(title ?? "")
-				.toolbarTitleDisplayMode(title == nil ? .inline : .inlineLarge)
+				.toolbarTitleDisplayMode(title == nil ? .inline : .large)
 		#else
 			return navigationTitle(title ?? "")
 		#endif
