@@ -87,6 +87,12 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		searchingReferences = false
 	}
 
+	/// "Post to Build's timeline…" from the object's first word.
+	private var timelinePlaceholder: String {
+		let first = store.object?.displayTitle.split(separator: " ").first.map(String.init) ?? ""
+		return first.isEmpty ? "Post to the timeline — @ to tag, / to link" : "Post to \(first)'s timeline…"
+	}
+
 	public var body: some View {
 		Group {
 			if store.object != nil {
@@ -105,8 +111,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.ambientBackground()
 		.safeAreaInset(edge: .bottom) {
-			// Commenting lives on the Activity page, where the thread is.
-			if store.object != nil, page == .activity {
+			// The composer stays on every page; sending jumps to Activity, where the thread is.
+			if store.object != nil {
 				VStack(spacing: MaskinSpace.s4) {
 					if let match = MentionTrigger.find(in: comment) {
 						MentionSuggestions(
@@ -148,7 +154,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							.onTapGesture { attachments.notice = nil }
 					}
 					GlassComposer(
-						text: $comment, placeholder: "Comment — @ to tag, / to link",
+						text: $comment, placeholder: timelinePlaceholder,
 						canSend: !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 							&& !attachments.isUploading && !attachments.hasFailedAttachment,
 						onAttach: { askingAttachment = true },
@@ -162,6 +168,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							linked = []
 							attachments.clear()
 							followNextItem = true
+							withAnimation(MaskinMotion.spring) { page = .activity }
 							Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files) }
 						},
 						listening: $dictating, mic: { DictationButton(text: $comment, listening: $dictating) })
@@ -200,7 +207,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			}
 		}
 		// The title scrolls away with the overview's header, so it lives in the bar for every page.
-		.navigationTitle(store.object?.displayTitle ?? "")
+		.navigationTitle(page == .overview || page == nil ? "" : (store.object?.displayTitle ?? ""))
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			// The tab bar would sit on top of the composer, as in a chat. iPad keeps it.
@@ -211,11 +218,17 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				if let object = store.object {
 					Button {
 						MaskinHaptics.play(.selection)
-						Task { await store.toggleStar() }
+						withAnimation(MaskinMotion.spring) { page = .activity }
 					} label: {
-						Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
+						Label("Activity", systemImage: "bubble.left.and.text.bubble.right")
 					}
 					Menu {
+						Button {
+							MaskinHaptics.play(.selection)
+							Task { await store.toggleStar() }
+						} label: {
+							Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
+						}
 						ShareLink(item: shareText(object)) { Label("Share", systemImage: "square.and.arrow.up") }
 						Button {
 							editing = true
@@ -228,7 +241,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							Label("Delete", systemImage: "trash")
 						}
 					} label: {
-						Label("More", systemImage: "ellipsis.circle")
+						Label("More", systemImage: "ellipsis")
 					}
 				}
 			}
@@ -254,39 +267,43 @@ public struct ObjectDetailScreen<Decision: View>: View {
 
 	private var hasDecision: Bool { Decision.self != EmptyView.self }
 
+	/// Segmented control: a rounded track with the selected page on a raised card.
 	private var pageBar: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s2) {
-				ForEach(pages, id: \.part) { item in
-					let selected = (page ?? .overview) == item.part
-					Button {
-						withAnimation(MaskinMotion.spring) { page = item.part }
-					} label: {
-						HStack(spacing: MaskinSpace.s3) {
-							Text(item.title)
-							if let count = item.count, count > 0 {
-								Text("\(count)").foregroundStyle(MaskinColor.ink5)
-							}
-							if item.needsYou {
-								Circle().fill(MaskinColor.sig)
-									.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
-									.accessibilityLabel("Needs you")
-							}
+		HStack(spacing: 0) {
+			ForEach(pages, id: \.part) { item in
+				let selected = (page ?? .overview) == item.part
+				Button {
+					withAnimation(MaskinMotion.spring) { page = item.part }
+				} label: {
+					HStack(spacing: MaskinSpace.s3) {
+						Text(item.title)
+						if let count = item.count, count > 0 {
+							Text("\(count)").foregroundStyle(MaskinColor.ink5)
 						}
-						.maskinText(.subhead)
-						.fontWeight(selected ? .semibold : .regular)
-						.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
-						.padding(.horizontal, MaskinSpace.s6)
-						.frame(minHeight: MaskinSpace.s14)
-						.background(selected ? MaskinSurface.fill : Color.clear, in: Capsule())
-						.contentShape(Capsule())
+						if item.needsYou {
+							Circle().fill(MaskinColor.sig)
+								.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+								.accessibilityLabel("Needs you")
+						}
 					}
-					.buttonStyle(.maskinPressed(.shrink))
-					.accessibilityAddTraits(selected ? .isSelected : [])
+					.maskinText(.subhead)
+					.fontWeight(selected ? .semibold : .medium)
+					.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin - MaskinSpace.s2)
+					.background {
+						if selected {
+							Capsule().fill(MaskinSurface.card)
+						}
+					}
+					.contentShape(Capsule())
 				}
+				.buttonStyle(.maskinPressed(.shrink))
+				.accessibilityAddTraits(selected ? .isSelected : [])
 			}
-			.padding(.horizontal, MaskinSpace.s9)
 		}
+		.padding(MaskinSpace.s2)
+		.background(MaskinSurface.fill, in: Capsule())
+		.padding(.horizontal, MaskinSpace.s9)
 	}
 
 	private var pages: [(part: ObjectDetailPart, title: String, count: Int?, needsYou: Bool)] {
