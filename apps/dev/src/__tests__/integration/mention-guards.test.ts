@@ -264,9 +264,12 @@ describe('Agent-mention loop guards (integration)', () => {
 	it('a genuine return (own session, claim taken) is exempt and not counted', async () => {
 		const { ws, a, b, object } = await world()
 		// a is the helper, b is the sender. a's session took its return claim.
+		const senderSession = await insertSession(db, ws.id, b.id, b.id, { status: 'completed' })
 		const helperSession = await insertSession(db, ws.id, a.id, b.id, {
 			status: 'completed',
 			helperReturnedAt: new Date(),
+			spawnedBySessionId: senderSession.id,
+			initiatedFromObjectId: object.id,
 		})
 		const id = await comment({
 			workspaceId: ws.id,
@@ -300,6 +303,124 @@ describe('Agent-mention loop guards (integration)', () => {
 			1 + MENTION_GUARD_LIMITS.maxAgentMentionsPerWindow,
 		)
 	}, 60_000)
+})
+
+describe('Reused helper_return marker (integration)', () => {
+	let bridge: EventEmitter & PgNotifyBridge
+	let started: StartedSession[]
+	let dispatcher: CommentDispatcher
+
+	beforeEach(() => {
+		capturePosthogEvent.mockClear()
+		started = []
+		bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+		const sm = createRecordingSessionManager(started)
+		configureSessionLifecycle({ db, sessionManager: sm as unknown as SessionManager })
+		dispatcher = new CommentDispatcher(db, bridge, sm as unknown as SessionManager)
+		dispatcher.start()
+	})
+
+	afterEach(() => {
+		dispatcher.stop()
+		vi.restoreAllMocks()
+	})
+
+	// helper has returned to sender on object; stranger is neither.
+	async function world() {
+		const human = getTestActorId()
+		const ws = await insertWorkspace(db, human)
+		const mk = (name: string) =>
+			insertActor(db, {
+				type: 'agent',
+				name,
+				email: `${name.toLowerCase()}-${Math.random().toString(36).slice(2)}@integration.test`,
+				apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
+			})
+		const [helper, sender, stranger] = await Promise.all([
+			mk('Helper'),
+			mk('Sender'),
+			mk('Stranger'),
+		])
+		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'return' })
+		const elsewhere = await insertObject(db, ws.id, human, { type: 'task', title: 'elsewhere' })
+		const senderSession = await insertSession(db, ws.id, sender.id, sender.id, {
+			status: 'completed',
+		})
+		const helperSession = await insertSession(db, ws.id, helper.id, sender.id, {
+			status: 'completed',
+			helperReturnedAt: new Date(),
+			spawnedBySessionId: senderSession.id,
+			initiatedFromObjectId: object.id,
+		})
+		return { ws, helper, sender, stranger, object, elsewhere, helperSession }
+	}
+
+	async function post(
+		ws: { id: string },
+		from: { id: string },
+		to: { id: string },
+		objectId: string,
+		marker: string,
+		content: string,
+	) {
+		const id = await comment({
+			workspaceId: ws.id,
+			actorId: from.id,
+			entityId: objectId,
+			content,
+			mentions: [to.id],
+			metadata: { helper_return: marker },
+		})
+		bridge.emit('event', {
+			workspace_id: ws.id,
+			actor_id: from.id,
+			action: 'commented',
+			entity_type: 'object',
+			entity_id: objectId,
+			event_id: String(id),
+		} satisfies PgEvent)
+		await new Promise((r) => setTimeout(r, 250))
+	}
+
+	const rowsFor = (actorId: string) =>
+		db.select().from(sessions).where(eq(sessions.actorId, actorId))
+	const isReturn = (row: { config: unknown }) =>
+		(row.config as { mention?: { helper_return?: boolean } }).mention?.helper_return === true
+
+	it('works once: a reused marker is an ordinary mention, so the cap applies', async () => {
+		const { ws, helper, sender, object, helperSession } = await world()
+		// The reviewer's repro: six comments, all naming the same returned session.
+		for (let i = 0; i < 6; i++) {
+			await post(ws, helper, sender, object.id, helperSession.id, `reuse ${i}, please look`)
+		}
+		const rows = await rowsFor(sender.id)
+		expect(rows.filter(isReturn)).toHaveLength(1)
+		expect(rows).toHaveLength(1 + MENTION_GUARD_LIMITS.maxAgentMentionsPerWindow)
+	}, 60_000)
+
+	it('the marker only counts for the sender of the helper session', async () => {
+		const { ws, helper, stranger, object, helperSession } = await world()
+		await post(ws, helper, stranger, object.id, helperSession.id, 'wake someone else')
+		const rows = await rowsFor(stranger.id)
+		expect(rows).toHaveLength(1)
+		expect(rows.some(isReturn)).toBe(false)
+	})
+
+	it('the marker only counts on the object the return is posted to', async () => {
+		const { ws, helper, sender, elsewhere, helperSession } = await world()
+		await post(ws, helper, sender, elsewhere.id, helperSession.id, 'wrong thread')
+		const rows = await rowsFor(sender.id)
+		expect(rows).toHaveLength(1)
+		expect(rows.some(isReturn)).toBe(false)
+	})
+
+	it('a failed forged attempt elsewhere does not use up the real return', async () => {
+		const { ws, helper, sender, stranger, object, elsewhere, helperSession } = await world()
+		await post(ws, helper, stranger, object.id, helperSession.id, 'forged target')
+		await post(ws, helper, sender, elsewhere.id, helperSession.id, 'forged object')
+		await post(ws, helper, sender, object.id, helperSession.id, 'the real return')
+		expect((await rowsFor(sender.id)).filter(isReturn)).toHaveLength(1)
+	})
 })
 
 describe('Mention spawn link (integration)', () => {
@@ -405,10 +526,15 @@ describe('Mention spawn link (integration)', () => {
 
 	it('a genuine return wakes the sender with no link, inheriting the helper’s depth', async () => {
 		const { ws, author: sender, helper, object } = await setup()
+		const senderSession = await insertSession(db, ws.id, sender.id, sender.id, {
+			status: 'completed',
+		})
 		const helperSession = await insertSession(db, ws.id, helper.id, sender.id, {
 			status: 'completed',
 			helperReturnedAt: new Date(),
 			config: { hop_depth: 2 },
+			spawnedBySessionId: senderSession.id,
+			initiatedFromObjectId: object.id,
 		})
 		// The return is posted as the helper, mentions the sender and, as required,
 		// carries no author session id.

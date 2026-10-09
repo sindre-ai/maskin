@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { actors, objects, sessions } from '@maskin/db/schema'
+import { actors, sessions } from '@maskin/db/schema'
 import { buildWebAppHref, resolveWebAppBaseUrl } from '@maskin/shared'
 import type { SessionResult } from '@maskin/shared'
 import { and, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
@@ -9,7 +9,7 @@ import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
-import { MENTION_GUARD_LIMITS } from './mention-guards'
+import { MENTION_GUARD_LIMITS, resolveReturnObjectId } from './mention-guards'
 import type { SessionManager } from './session-manager'
 
 /**
@@ -161,7 +161,8 @@ async function doReturn(
 	const content = buildReturnMessage({
 		kind,
 		helperName: helperActor?.name ?? 'The helper',
-		sessionUrl: buildWebAppHref(resolveWebAppBaseUrl(process.env), helper.workspaceId, {
+		sessionId,
+		agentUrl: buildWebAppHref(resolveWebAppBaseUrl(process.env), helper.workspaceId, {
 			kind: 'session',
 			id: sessionId,
 			actorId: helper.actorId,
@@ -241,15 +242,8 @@ async function resolveDestination(
 	// First hit wins: the helper's own object, the sender's object, the sender's
 	// conversation. Nothing else: a cron-started sender has nowhere to be woken,
 	// and inventing a destination would post somewhere nobody asked.
-	for (const objectId of [ctx.helperObjectId, ctx.senderObjectId]) {
-		if (!objectId) continue
-		const [row] = await db
-			.select({ workspaceId: objects.workspaceId })
-			.from(objects)
-			.where(eq(objects.id, objectId))
-			.limit(1)
-		if (row?.workspaceId === ctx.workspaceId) return { kind: 'object', objectId }
-	}
+	const objectId = await resolveReturnObjectId(db, ctx)
+	if (objectId) return { kind: 'object', objectId }
 	if (ctx.senderConversationId) {
 		return { kind: 'conversation', conversationId: ctx.senderConversationId }
 	}
@@ -288,9 +282,13 @@ function describeFailure(result: unknown): string | null {
 export function buildReturnMessage(ctx: {
 	kind: HelperKind
 	helperName: string
-	sessionUrl: string
+	sessionId: string
+	agentUrl: string
 	reason: string | null
 }): string {
+	// Sessions have no page of their own: the link goes to the helper's agent page,
+	// so it is labelled as that and the session id is given for get_session.
+	const where = `Session id: ${ctx.sessionId} (get_session and get_session_logs read it). Agent page: ${ctx.agentUrl}.`
 	const options =
 		'You could retry with a narrower task, do it yourself, or try another way. Sending the same request again unchanged tends to fail the same way.'
 	// The reason is text recorded on the helper's session, so it goes in as a
@@ -300,12 +298,12 @@ export function buildReturnMessage(ctx: {
 		: ''
 	switch (ctx.kind) {
 		case 'completed':
-			return `${ctx.helperName} finished the work you handed it. Its session: ${ctx.sessionUrl}. Read its comments on this object or its logs for what it produced.`
+			return `${ctx.helperName} finished the work you handed it. ${where} Read its comments on this object or its logs for what it produced.`
 		case 'failed':
-			return `${ctx.helperName} stopped with an error. Session: ${ctx.sessionUrl}.${quoted}\n\n${options}`
+			return `${ctx.helperName} stopped with an error. ${where}${quoted}\n\n${options}`
 		case 'timeout':
-			return `${ctx.helperName} ran out of time. Session: ${ctx.sessionUrl}.${quoted}\n\n${options}`
+			return `${ctx.helperName} ran out of time. ${where}${quoted}\n\n${options}`
 		case 'user_stopped':
-			return `A person stopped ${ctx.helperName}. Session: ${ctx.sessionUrl}.`
+			return `A person stopped ${ctx.helperName}. ${where}`
 	}
 }
