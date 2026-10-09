@@ -1,11 +1,11 @@
 # Protected paths for the `risk-classifier` skill (packages/risk-classifier).
 #
 # Any file in a PR diff matching one of these globs floors the score to 100
-# (TWO-HUMAN REQUIRED), overriding the additive signal sum — see "Apply the
+# (HUMAN REVIEW REQUIRED), overriding the additive signal sum — see "Apply the
 # floors" in the risk-classifier skill and R1 in the risk-gate skill.
 #
 # This file is itself a protected path (see the last entry below) — edits
-# here are always two-human PRs, per the classifier's own rule.
+# here are always human-review PRs, per the classifier's own rule.
 #
 # Glob syntax: `**` matches any characters including `/`, `*` matches within
 # a path segment, `?` matches one character. Patterns are anchored at both
@@ -48,6 +48,19 @@ protected_paths:
 
   # --- CI/CD workflows ---
   - ".github/workflows/**"
+
+  # --- agent-governing files (the agent's own rulebook) ---
+  # A change here rewrites the instructions every agent session reads, so it
+  # must never be auto-merge-eligible. Note the anchoring (see
+  # packages/risk-classifier/src/lib/match.ts): patterns bind at both ends and
+  # `.` is escaped, so a bare `CLAUDE.md` or `.claude/**` would match only the
+  # repo-root location and leave e.g. apps/web/CLAUDE.md un-floored. The `**/`
+  # prefix is required so the entry binds at any depth. The repo keeps only a
+  # repo-root `.claude/` today, but the depth-agnostic form is used anyway so a
+  # per-app `.claude/` the moment one lands is floored without a follow-up edit
+  # to this file — same forward-looking intent as the payments/billing block.
+  - "**/.claude/**"
+  - "**/CLAUDE.md"
 
   # --- the risk-classifier's own floor configuration (self-protecting) ---
   - ".maskin/**"

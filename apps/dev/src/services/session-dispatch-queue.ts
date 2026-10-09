@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
-import { events, sessionDispatchAttempts, sessions } from '@maskin/db/schema'
+import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, lte } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { type SettleDependencies, settleSession } from './session-lifecycle'
 
 /**
  * Postgres-backed dispatch queue for session-start calls from apps/dev to
@@ -59,6 +60,16 @@ export interface SessionDispatchQueueOptions {
 	 * Should comfortably exceed the slowest dispatch RTT. Default 60s.
 	 */
 	leaseMs?: number
+	/**
+	 * Upper bound on one tick. A batch that has not settled by then is
+	 * abandoned and the next tick is allowed to run. Without it, a single
+	 * awaited call that never settles — a DB query on a connection that died
+	 * silently, a dispatch with no socket timeout — pins the `running` flag
+	 * forever and every session in every workspace stalls in `starting`.
+	 * Defaults to `leaseMs`, after which the abandoned row is reclaimable
+	 * anyway; the stable idempotency key dedupes a late double-fire.
+	 */
+	tickTimeoutMs?: number
 	/**
 	 * Append a `system`-stream line to a session's transcript (SessionManager's
 	 * insertSystemLog). Optional and best-effort — a log write must never stop
@@ -122,6 +133,9 @@ export function dispatchIdempotencyKey(sessionId: string): string {
 const DISPATCH_FAILED_MESSAGE =
 	'This session could not be started — no agent server accepted it after several attempts. Nothing was run. Start a new session to try again.'
 
+/** The only statuses a dispatch failure may still turn into a failed session. */
+const DISPATCHABLE_STATUSES: readonly string[] = ['pending', 'queued', 'starting']
+
 export class SessionDispatchQueue {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
@@ -132,8 +146,10 @@ export class SessionDispatchQueue {
 	private readonly tickMs: number
 	private readonly batchSize: number
 	private readonly leaseMs: number
+	private readonly tickTimeoutMs: number
 	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 	private readonly onPermanentFailure?: SessionDispatchQueueOptions['onPermanentFailure']
+	private readonly settleDeps: SettleDependencies
 
 	constructor(
 		private db: Database,
@@ -147,8 +163,18 @@ export class SessionDispatchQueue {
 		this.tickMs = opts.tickMs ?? DEFAULTS.tickMs
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
+		this.tickTimeoutMs = opts.tickTimeoutMs ?? this.leaseMs
 		this.appendSystemLog = opts.appendSystemLog
 		this.onPermanentFailure = opts.onPermanentFailure
+		// Dispatch-queue sessions never reached an agent-server, so there is no
+		// sandbox to stop and no `/agent` workspace to push. settleSession's
+		// classification guard also skips pushAgentFiles for `dispatch_failure`,
+		// but naming the no-op here keeps the intent legible.
+		this.settleDeps = {
+			db: this.db,
+			stopSandbox: async () => 'skipped-none-live',
+			pushAgentFiles: async () => 'skipped-no-workspace',
+		}
 	}
 
 	/**
@@ -223,13 +249,35 @@ export class SessionDispatchQueue {
 	async tick(): Promise<void> {
 		if (this.running) return
 		this.running = true
-		try {
+		let timer: NodeJS.Timeout | undefined
+		let current: string | null = null
+		const timedOut = new Promise<'timeout'>((resolve) => {
+			timer = setTimeout(() => resolve('timeout'), this.tickTimeoutMs)
+			timer.unref?.()
+		})
+		const batch = (async () => {
 			for (let i = 0; i < this.batchSize; i++) {
+				current = null
 				const claimed = await this.claimOne()
 				if (!claimed) break
+				current = claimed.sessionId
 				await this.processOne(claimed)
 			}
+			return 'done' as const
+		})()
+		try {
+			if ((await Promise.race([batch, timedOut])) === 'timeout') {
+				// The hung batch keeps running detached; swallow its eventual
+				// rejection so it can't surface as an unhandled one.
+				batch.catch(() => undefined)
+				logger.error('Session dispatch queue tick timed out — abandoning batch', {
+					tickTimeoutMs: this.tickTimeoutMs,
+					stage: current ? 'dispatch' : 'claim',
+					sessionId: current,
+				})
+			}
 		} finally {
+			clearTimeout(timer)
 			this.running = false
 		}
 	}
@@ -444,36 +492,41 @@ export class SessionDispatchQueue {
 			reset_at: null,
 			verbatim_output: errorMessage,
 		}
-		// Scoped to the UPDATE alone, so a null return means exactly one thing:
-		// the session row was already terminal. Widening this `try` to cover the
-		// bookkeeping below would conflate "already terminal" with "a later write
-		// failed", and the caller acts on that distinction — `handlePermanentFailure`
-		// reads a null as "no live session, nothing to notify about" and skips
-		// `onPermanentFailure`. A transient events-insert error would then quietly
-		// withhold the workspace-level pause and let the trigger keep firing at
-		// full rate: the exact flood the hook exists to stop (Sentry MASKIN-DEV-6).
-		let updated: { id: string; workspaceId: string; actorId: string } | undefined
+		// settleSession is the only writer of `sessions.status` for terminal
+		// values. It runs the conditional UPDATE (CAS on non-terminal), inserts
+		// the `session_failed` audit row, and returns `alreadySettled: true` on
+		// a raced write — the caller's null-return semantics are preserved by
+		// re-reading `workspaceId` from the row post-settle only when settle
+		// actually flipped it.
+		let settled: Awaited<ReturnType<typeof settleSession>>
 		try {
-			;[updated] = await this.db
-				.update(sessions)
-				.set({
-					status: 'failed',
-					result: {
-						error: errorMessage,
-						exit_code: null,
-						failure_reason: resolvedFailureReason,
-					},
-					completedAt: new Date(),
-					updatedAt: new Date(),
+			// settleSession only refuses the four terminal statuses, so without
+			// this check a running, paused or waiting_for_input session would be
+			// overwritten to failed by a dispatch worker that lost the race for it.
+			const [current] = await this.db
+				.select({ status: sessions.status })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (current && !DISPATCHABLE_STATUSES.includes(current.status)) {
+				logger.info('Dispatch failure ignored — session already left the dispatchable states', {
+					sessionId,
+					status: current.status,
 				})
-				.where(
-					and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed','failed')`),
-				)
-				.returning({
-					id: sessions.id,
-					workspaceId: sessions.workspaceId,
-					actorId: sessions.actorId,
-				})
+				return null
+			}
+			settled = await settleSession(
+				sessionId,
+				{
+					kind: 'fail',
+					classification: 'dispatch_failure',
+					source: 'dispatch-queue',
+					reason: errorMessage,
+					exitCode: 0,
+					failureReason: resolvedFailureReason,
+				},
+				this.settleDeps,
+			)
 		} catch (err) {
 			// Surface but never throw — the row is already marked failed in the
 			// queue, the worker should keep draining the rest of the batch.
@@ -484,36 +537,24 @@ export class SessionDispatchQueue {
 			return null
 		}
 
-		if (!updated) return null
+		if (settled.alreadySettled) return null
 
-		// Everything below is best-effort reporting on a session that is already
-		// failed. Each failure is logged and swallowed so it cannot cost the
-		// caller the workspace id it needs to open the pause.
-		try {
-			await this.db.insert(events).values({
-				workspaceId: updated.workspaceId,
-				actorId: updated.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: updated.id,
-				data: {
-					error: errorMessage,
-					reason_code: resolvedFailureReason.reason_code,
-					source: 'dispatch_queue',
-				},
-			})
-		} catch (err) {
-			logger.error('Failed to record session_failed event from dispatch queue', {
-				sessionId,
-				error: String(err),
-			})
-		}
+		// Re-read workspaceId — settleSession did the UPDATE but doesn't return
+		// the row's columns; the null-return contract in the docstring above
+		// keys off a live transition, and callers use the returned workspaceId
+		// to open the workspace-level pause.
+		const [workspaceRow] = await this.db
+			.select({ workspaceId: sessions.workspaceId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!workspaceRow) return null
 
 		// Best-effort, and deliberately after the row is already failed: a
 		// log-write failure must not leave the session stuck non-terminal.
 		if (this.appendSystemLog) {
 			try {
-				await this.appendSystemLog(updated.id, resolvedFailureReason.human_message)
+				await this.appendSystemLog(sessionId, resolvedFailureReason.human_message)
 			} catch (err) {
 				logger.warn('Failed to append dispatch-failure log line', {
 					sessionId,
@@ -522,7 +563,7 @@ export class SessionDispatchQueue {
 			}
 		}
 
-		return updated.workspaceId
+		return workspaceRow.workspaceId
 	}
 
 	private backoffMs(attempt: number): number {

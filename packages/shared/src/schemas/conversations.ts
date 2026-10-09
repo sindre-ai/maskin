@@ -79,6 +79,21 @@ export const messageFinalOutputSchema = z.object({
 			nudges: z.number().int().min(0).max(10),
 		})
 		.optional(),
+	/**
+	 * Set when the turn ended because the model returned an empty completion
+	 * (no reply, no tool call) and retrying did not produce one. A separate axis
+	 * from `error_kind` and `pseudo_tool_calls`: nothing was wrong with the API
+	 * call and nothing was written as text, the model simply said nothing.
+	 * `attempts` counts the extra asks after the CLI's own nudge; `model` is the
+	 * one the session runs on and `fallback_model` the one tried last, if any.
+	 */
+	empty_completion: z
+		.object({
+			attempts: z.number().int().min(0).max(10),
+			model: z.string().max(128).nullable(),
+			fallback_model: z.string().max(128).optional(),
+		})
+		.optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),
@@ -236,15 +251,32 @@ export const updateConversationParticipantStateSchema = z
 	.object({
 		pinned: z.boolean().optional(),
 		archived: z.boolean().optional(),
+		// Advance-only read cursor. The route wraps this in GREATEST() so read
+		// state never regresses; a *reset* is `mark_unread` below, not a lower id.
 		last_read_message_id: z.number().int().positive().optional(),
+		/**
+		 * Reset the caller's read cursor to "nothing read yet". Writes null
+		 * directly rather than a sentinel id, because null is already the one
+		 * value the read queries COALESCE to 0 and a fresh participant row starts
+		 * at — so 0 never has to travel on the wire, and last_read_message_id
+		 * stays positive-only.
+		 */
+		mark_unread: z.boolean().optional(),
 	})
 	.refine(
 		(v) =>
-			v.pinned !== undefined || v.archived !== undefined || v.last_read_message_id !== undefined,
+			v.pinned !== undefined ||
+			v.archived !== undefined ||
+			v.last_read_message_id !== undefined ||
+			v.mark_unread !== undefined,
 		{
-			message: 'At least one of pinned, archived, or last_read_message_id must be provided',
+			message:
+				'At least one of pinned, archived, last_read_message_id, or mark_unread must be provided',
 		},
 	)
+	.refine((v) => !(v.mark_unread === true && v.last_read_message_id !== undefined), {
+		message: 'mark_unread and last_read_message_id cannot be provided together',
+	})
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>

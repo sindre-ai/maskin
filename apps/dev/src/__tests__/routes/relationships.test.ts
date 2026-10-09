@@ -186,7 +186,19 @@ describe('Relationships Routes', () => {
 					(v) => (v as Record<string, unknown>).action !== 'workspace_knowledge_referenced',
 				),
 			).toBe(true)
-			expect(capturePosthogEventMock).not.toHaveBeenCalled()
+			// The `workspace_knowledge_referenced` PostHog capture must not fire on
+			// a non-`derived_from` edge; the S2 writer hook (bet 34706e2f) adds a
+			// separate `relationship_created` capture on every relationships write,
+			// which does fire here — the two events serve different purposes and are
+			// asserted independently.
+			expect(
+				capturePosthogEventMock.mock.calls.some(
+					(args) => args[0] === 'workspace_knowledge_referenced',
+				),
+			).toBe(false)
+			expect(
+				capturePosthogEventMock.mock.calls.some((args) => args[0] === 'relationship_created'),
+			).toBe(true)
 		})
 	})
 
@@ -197,11 +209,32 @@ describe('Relationships Routes', () => {
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
 			mockResults.select = [r1, r2]
 
-			const res = await app.request(jsonGet('/api/relationships'))
+			const res = await app.request(jsonGet('/api/relationships', { 'X-Workspace-Id': wsId }))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+		})
+
+		it('returns 400 when the X-Workspace-Id header is missing', async () => {
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.select = [buildRelationship()]
+
+			const res = await app.request(jsonGet('/api/relationships'))
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 and no edges when the caller is not a member of the workspace', async () => {
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [[]] // isWorkspaceMember: no row
+			mockResults.select = [buildRelationship()]
+
+			const res = await app.request(jsonGet('/api/relationships', { 'X-Workspace-Id': wsId }))
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body).not.toBeInstanceOf(Array)
 		})
 	})
 
@@ -210,8 +243,15 @@ describe('Relationships Routes', () => {
 			const sourceObj = buildObject()
 			const rel = buildRelationship({ sourceId: sourceObj.id })
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
-			// First select: relationship, second: source object lookup, third: membership check
-			mockResults.selectQueue = [[rel], [sourceObj], [buildWorkspaceMember()]]
+			// Selects, in order: relationship lookup, then a parallel object +
+			// file workspace lookup for the source endpoint (Slice 1 fix — the
+			// endpoint may live in either table), then the membership check.
+			mockResults.selectQueue = [
+				[rel],
+				[sourceObj],
+				[], // files lookup returns nothing when source is an object
+				[buildWorkspaceMember()],
+			]
 			mockResults.insert = [{}] // event
 
 			const res = await app.request(
@@ -223,6 +263,29 @@ describe('Relationships Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
+		})
+
+		it('returns 200 when deleting a file-endpoint edge', async () => {
+			// Before Slice 1 this path 404s: the workspace check only hit
+			// `objects`, so a source that lived in `files` fell through. The
+			// fix parallel-queries both tables and takes the first hit.
+			const rel = buildRelationship({ sourceId: '00000000-0000-0000-0000-000000fileid1' })
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [
+				[rel],
+				[], // objects lookup misses
+				[{ workspaceId: wsId }], // files lookup hits
+				[buildWorkspaceMember()],
+			]
+			mockResults.insert = [{}] // event
+
+			const res = await app.request(
+				jsonDelete(`/api/relationships/${rel.id}`, {
+					'X-Workspace-Id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 404 when relationship not found', async () => {

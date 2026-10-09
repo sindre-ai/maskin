@@ -31,7 +31,12 @@ vi.mock('@/hooks/use-sessions', () => ({
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/hooks/use-events', () => ({
-	useSessionAffectedObjects: () => ({ affectedObjects: [], isLoading: false }),
+	useSessionAffectedObjects: () => ({
+		affectedObjects: [],
+		producedObjects: [],
+		producedFiles: [],
+		isLoading: false,
+	}),
 }))
 
 describe('AgentSessionsSection', () => {

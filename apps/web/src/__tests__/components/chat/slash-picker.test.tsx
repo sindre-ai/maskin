@@ -73,10 +73,15 @@ function renderPicker(
 }
 
 describe('SLASH_KINDS registry', () => {
-	it('ships with the two initial kinds in a stable order', () => {
-		expect(SLASH_KINDS.map((k) => k.id)).toEqual(['agent', 'item'])
-		expect(SLASH_KINDS.find((k) => k.id === 'agent')?.multi).toBe(false)
+	it('ships with the three built-in kinds in a stable order', () => {
+		// `create` is the third kind, added for the v2 unified `/` picker — its
+		// three static rows (task/bet/insight) are the NEWKIND fallback so the
+		// picker never dead-ends. `agent` is multi-select so the composer's
+		// mentions array stacks agent picks the same way the inline `@` picker does.
+		expect(SLASH_KINDS.map((k) => k.id)).toEqual(['agent', 'item', 'create'])
+		expect(SLASH_KINDS.find((k) => k.id === 'agent')?.multi).toBe(true)
 		expect(SLASH_KINDS.find((k) => k.id === 'item')?.multi).toBe(true)
+		expect(SLASH_KINDS.find((k) => k.id === 'create')?.multi).toBe(false)
 	})
 })
 
@@ -113,7 +118,7 @@ describe('<SlashPicker>', () => {
 		expect(screen.queryByText('Hank Human')).not.toBeInTheDocument()
 	})
 
-	it('single-selecting an agent fires onSelect and requests close', async () => {
+	it('multi-selecting an agent fires onSelect without closing (mention picker parity)', async () => {
 		const user = userEvent.setup()
 		const { onSelect, onOpenChange } = renderPicker({ initialKindId: 'agent' })
 
@@ -125,7 +130,9 @@ describe('<SlashPicker>', () => {
 			kind: 'agent',
 			ref: { id: 'actor-a', name: 'Reviewer' },
 		})
-		expect(onOpenChange).toHaveBeenCalledWith(false)
+		// Multi-select agent kind — picker stays open so the user can chain a
+		// second mention without re-triggering.
+		expect(onOpenChange).not.toHaveBeenCalledWith(false)
 	})
 
 	it('multi-selecting an object fires onSelect without closing', async () => {
@@ -228,7 +235,7 @@ describe('<SlashPicker>', () => {
 		vi.mocked(api.actors.list).mockResolvedValueOnce([])
 		renderPicker({ initialKindId: 'agent' })
 
-		expect(await screen.findByText('No agents found.')).toBeInTheDocument()
+		expect(await screen.findByText('No agent by that name')).toBeInTheDocument()
 	})
 
 	it('reuses the useActors query cache instead of refetching on open', async () => {

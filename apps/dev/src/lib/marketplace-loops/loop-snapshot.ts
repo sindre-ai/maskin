@@ -103,6 +103,25 @@ export function expandBrowserCapability(tools: unknown): unknown {
 	}
 }
 
+// llm_config carries the actor's own provider credential (llmConfig.apiKey) and
+// can carry endpoint/header overrides. item_snapshot is readable outside the
+// publishing workspace, so llmConfig is deny-by-default: only these keys
+// survive and every other key (including ones added later) is dropped.
+// Installers supply their own apiKey after install.
+const LLM_CONFIG_ALLOWLIST = ['provider', 'model'] as const
+
+function allowlistLlmConfig(llmConfig: unknown): Record<string, unknown> | null {
+	if (llmConfig === null || typeof llmConfig !== 'object' || Array.isArray(llmConfig)) {
+		return null
+	}
+	const source = llmConfig as Record<string, unknown>
+	const out: Record<string, unknown> = {}
+	for (const key of LLM_CONFIG_ALLOWLIST) {
+		if (key in source) out[key] = source[key]
+	}
+	return out
+}
+
 export function actorSnapshot(row: ActorSnapshotSource): Record<string, unknown> {
 	// apiKey, memory, agentState, isSystem, createdBy, timestamps are
 	// install-time / runtime state — they never belong in a publish.
@@ -112,7 +131,7 @@ export function actorSnapshot(row: ActorSnapshotSource): Record<string, unknown>
 		description: row.description,
 		systemPrompt: row.systemPrompt,
 		llmProvider: row.llmProvider,
-		llmConfig: row.llmConfig,
+		llmConfig: allowlistLlmConfig(row.llmConfig),
 		tools: stripMcpServers(row.tools),
 	}
 }

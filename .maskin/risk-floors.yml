@@ -2,12 +2,12 @@
 #
 # Each pattern is matched (as a JS RegExp, `new RegExp(pattern, 'm')`) against
 # every line of the unified diff. Any match floors the score to
-# max(additive_sum, 60) — at least TWO-HUMAN REQUIRED-adjacent, regardless of
+# max(additive_sum, 60) — at least HUMAN REVIEW REQUIRED-adjacent, regardless of
 # how small the diff is. See "Apply the floors" in the risk-classifier skill
 # and R1/R4 in the risk-gate skill.
 #
 # This file is itself a protected path (.maskin/protected-paths.yml) — edits
-# here are always two-human PRs.
+# here are always human-review PRs.
 #
 # Patterns are single-quoted so backslashes are literal in YAML (no double
 # escaping) — write them exactly as the JS RegExp source. A literal single

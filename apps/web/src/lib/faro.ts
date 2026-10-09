@@ -146,6 +146,12 @@ export function resetFaroUser(): void {
 	}
 }
 
+// The invite accept route carries its one-time credential in the path
+// (/invites/<token>/accept), unlike other ids in paths, so it is redacted.
+function redactInviteToken(path: string): string {
+	return path.replace(/^\/invites\/[^/]+\/accept$/, '/invites/:token/accept')
+}
+
 /**
  * Records a failed `/api` call — the point where a backend problem becomes
  * visible to a user. Sends the method, the path with its query stripped, the
@@ -164,7 +170,7 @@ export function reportApiFailure(attrs: {
 			method: attrs.method,
 			// A relative path, so split rather than parse — stripQuery would
 			// resolve it against the origin and report an absolute URL.
-			path: attrs.path.split('?')[0].split('#')[0],
+			path: redactInviteToken(attrs.path.split('?')[0].split('#')[0]),
 			status: String(attrs.status),
 			...(attrs.code ? { code: attrs.code } : {}),
 		})

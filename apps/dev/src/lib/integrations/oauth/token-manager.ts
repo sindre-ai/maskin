@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { events, integrations } from '@maskin/db/schema'
+import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
+import { recordEvent } from '../../events/record-event'
 import { logger } from '../../logger'
 import { IntegrationAuthRevokedError } from '../errors'
 import type { ResolvedProvider, StoredCredentials } from '../types'
@@ -147,7 +148,7 @@ export class TokenManager {
 				.returning({ id: integrations.id })
 
 			if (updated.length > 0 && row) {
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId: row.workspaceId,
 					actorId: row.createdBy,
 					action: 'updated',
@@ -354,7 +355,7 @@ export class TokenManager {
 			.where(eq(integrations.id, integrationId))
 
 		try {
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId,
 				action: 'updated',

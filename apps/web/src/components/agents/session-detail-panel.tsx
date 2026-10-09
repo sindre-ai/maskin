@@ -1,10 +1,12 @@
 import { AgentOutput } from '@/components/shared/agent-output'
 import { ObjectReference } from '@/components/shared/object-reference'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatSize } from '@/lib/file-utils'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { toastSessionCreateError } from '@/lib/session-errors'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -208,6 +210,10 @@ interface SessionDetailPanelProps {
 }
 
 function SessionStatusBadge({ status }: { status: string }) {
+	// Bucketing matches AgentSessionsSection.deriveState so the pill on the agent
+	// page and the pill in this detail sheet render the same label for the same
+	// session — a queued session that reads Running upstairs must not read as
+	// something else in the log sidebar.
 	const config: Record<string, { icon: React.ElementType; label: string; className: string }> = {
 		completed: {
 			icon: CheckCircle2,
@@ -231,18 +237,33 @@ function SessionStatusBadge({ status }: { status: string }) {
 		},
 		starting: {
 			icon: Spinner,
-			label: 'Starting',
+			label: 'Running',
 			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		pending: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		queued: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		snapshotting: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		waiting_for_input: {
+			icon: Clock,
+			label: 'Waiting',
+			className: 'bg-muted text-muted-foreground',
 		},
 		paused: {
 			icon: Clock,
 			label: 'Paused',
 			className: 'bg-status-paused-bg text-status-paused-text',
-		},
-		snapshotting: {
-			icon: Clock,
-			label: 'Snapshotting',
-			className: 'bg-status-processing-bg text-status-processing-text',
 		},
 		idle: {
 			icon: PauseCircle,
@@ -373,7 +394,11 @@ export function SessionDetailPanel({
 		open,
 		{ live: open && isLive },
 	)
-	const { affectedObjects, isLoading: objectsLoading } = useSessionAffectedObjects(
+	const {
+		producedObjects,
+		producedFiles,
+		isLoading: objectsLoading,
+	} = useSessionAffectedObjects(
 		session?.startedAt ?? null,
 		session?.completedAt ?? null,
 		workspaceId,
@@ -465,33 +490,80 @@ export function SessionDetailPanel({
 							</div>
 						)}
 
-						{/* Objects affected */}
+						{/* Produced — S2 rename (bet 34706e2f, task 5). Objects first,
+						    Files sub-group second; the Files heading is hidden
+						    entirely when its count is 0 so the panel never carries a
+						    dangling "Files · 0" line. */}
 						<div className="mt-6">
 							<h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-2">
 								<FileText size={13} />
-								Objects affected
-								{affectedObjects.length > 0 && (
-									<span className="opacity-60">({affectedObjects.length})</span>
+								Produced
+								{producedObjects.length + producedFiles.length > 0 && (
+									<span className="opacity-60">
+										({producedObjects.length + producedFiles.length})
+									</span>
 								)}
 							</h4>
 							{objectsLoading ? (
 								<div className="flex items-center justify-center py-4">
 									<Spinner />
 								</div>
-							) : affectedObjects.length === 0 ? (
+							) : producedObjects.length === 0 && producedFiles.length === 0 ? (
 								<p className="text-sm text-muted-foreground py-2 text-center">
-									No objects affected
+									Nothing produced yet
 								</p>
 							) : (
-								<div className="space-y-1">
-									{affectedObjects.map((obj) => (
-										<ObjectReference
-											key={obj.entityId}
-											objectId={obj.entityId}
-											workspaceId={workspaceId}
-											variant="block"
-										/>
-									))}
+								<div className="flex flex-col gap-3">
+									{producedObjects.length > 0 ? (
+										<section aria-label={`Objects · ${producedObjects.length}`}>
+											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
+												Objects · {producedObjects.length}
+											</h5>
+											<div className="space-y-1">
+												{producedObjects.map((obj) => (
+													<ObjectReference
+														key={obj.entityId}
+														objectId={obj.entityId}
+														workspaceId={workspaceId}
+														variant="block"
+													/>
+												))}
+											</div>
+										</section>
+									) : null}
+									{producedFiles.length > 0 ? (
+										<section aria-label={`Files · ${producedFiles.length}`}>
+											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
+												Files · {producedFiles.length}
+											</h5>
+											<ul className="flex flex-col gap-1">
+												{producedFiles.map((file) => (
+													<li key={file.fileId}>
+														<Link
+															to="/$workspaceId/files/$fileId"
+															params={{ workspaceId, fileId: file.fileId }}
+															className="flex items-center gap-2.5 rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[13px] transition-colors hover:border-[color:var(--border-hover)] hover:bg-background hover:shadow-xs"
+														>
+															<TypeBadge type="file" variant="tile" size="sm" />
+															<span className="flex min-w-0 flex-1 flex-col">
+																<span className="truncate font-medium text-foreground">
+																	{file.name ?? 'Untitled file'}
+																</span>
+																<span className="truncate text-[10.5px] font-mono text-muted-foreground">
+																	{[
+																		file.mimeType,
+																		file.sizeBytes != null ? formatSize(file.sizeBytes) : null,
+																	]
+																		.filter(Boolean)
+																		.join(' · ')}
+																</span>
+															</span>
+														</Link>
+													</li>
+												))}
+											</ul>
+										</section>
+									) : null}
 								</div>
 							)}
 						</div>

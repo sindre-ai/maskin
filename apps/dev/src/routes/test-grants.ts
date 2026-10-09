@@ -1,9 +1,10 @@
 import { timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { errorSchema } from '../lib/openapi-schemas'
 
 /**
@@ -124,7 +125,7 @@ app.openapi(grantRoute, async (c) => {
 
 	await db.update(workspaces).set(update).where(eq(workspaces.id, id))
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: id,
 		actorId,
 		action: 'updated',

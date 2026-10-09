@@ -3,11 +3,13 @@ import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
 	actors,
+	conversations,
 	files,
 	objects,
 	readState,
 	relationships,
 	sessions,
+	starState,
 	subscriptions,
 	triggers,
 	workspaces,
@@ -49,7 +51,6 @@ import {
 	ilike,
 	inArray,
 	lt,
-	lte,
 	ne,
 	or,
 	sql,
@@ -62,7 +63,9 @@ import {
 	trackKnowledgeObjectRead,
 } from '../lib/analytics/knowledge-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
+import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-titles'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -80,6 +83,12 @@ import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import type { SessionManager } from '../services/session-manager'
 import {
+	getStarredObjectIds,
+	isObjectStarredByActor,
+	starObject,
+	unstarObject,
+} from '../services/star-state'
+import {
 	autoSubscribe,
 	getSubscriberCount,
 	getUnreadCount,
@@ -92,6 +101,10 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		/** Set by app-factory when the request carried a well-formed
+		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
+		 * mutations to their originating session. */
+		maskinSessionId?: string
 	}
 }
 
@@ -131,9 +144,38 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
  * `createdAt` (or any non-unique sort key) can re-appear across pages.
  */
 function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
-	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
+	const resolved = resolveSortColumn(query.sort) ?? objects.createdAt
+	const sortExpr =
+		resolved === objects.createdAt || resolved === objects.updatedAt
+			? truncateToMs(resolved)
+			: resolved
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Postgres stores timestamps to the microsecond, but the cursor round-trips
+ * through a JS Date (milliseconds). A bulk insert stamps every row with one
+ * microsecond-precision `created_at`, so seeking past the truncated value
+ * skips those tied rows under desc and replays them under asc. Ordering and
+ * seeking on the millisecond-truncated value keeps the sort key and the cursor
+ * on the same grid; `id` breaks the tie inside a millisecond.
+ */
+function truncateToMs(column: Column): SQL {
+	// updatedAt is converted to UTC first so the expression is IMMUTABLE and
+	// matches objects_ws_updated_at_ms_idx (migration 0088). The ORDER BY, the
+	// snapshot filter and the seek must all go through this one function, and
+	// bind their value through `seekBound`, or the planner cannot use the index.
+	if (column === objects.updatedAt) {
+		return sql`date_trunc('milliseconds', ${column} AT TIME ZONE 'UTC')`
+	}
+	return sql`date_trunc('milliseconds', ${column})`
+}
+
+/** A cursor / snapshot timestamp, typed the same way `truncateToMs` types its column. */
+function seekBound(column: Column, iso: string): SQL {
+	if (column === objects.updatedAt) return sql`(${iso}::timestamptz AT TIME ZONE 'UTC')`
+	return sql`${iso}::timestamptz`
 }
 
 /**
@@ -240,20 +282,24 @@ function buildCursorConditions(
 	includeKeyset = true,
 ): SQL[] {
 	const conditions: SQL[] = []
-	const seekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const rawSeekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const seekColumn = truncateToMs(rawSeekColumn)
 	if (query.snapshot_at) {
-		conditions.push(lte(seekColumn, new Date(query.snapshot_at)))
+		const snapshot = seekBound(rawSeekColumn, new Date(query.snapshot_at).toISOString())
+		conditions.push(sql`${seekColumn} <= ${snapshot}`)
 	}
 	if (includeKeyset && isCursorSeekActive(query)) {
-		const lastCa = new Date(query.cursor_created_at as string)
+		const lastCa = seekBound(
+			rawSeekColumn,
+			new Date(query.cursor_created_at as string).toISOString(),
+		)
 		const lastId = query.cursor_id as string
-		if (query.order === 'asc') {
-			const seek = or(gt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		} else {
-			const seek = or(lt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		}
+		const past = query.order === 'asc' ? sql`>` : sql`<`
+		const seek = or(
+			sql`${seekColumn} ${past} ${lastCa}`,
+			and(sql`${seekColumn} = ${lastCa}`, gt(objects.id, lastId)),
+		)
+		if (seek) conditions.push(seek)
 	}
 	return conditions
 }
@@ -620,14 +666,18 @@ app.openapi(createObjectRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 500)
 	}
 
-	// Log event
-	await db.insert(events).values({
+	// Log event · pass the session context so `recordEvent` can also upsert
+	// a `session → object` `produced_by` edge when the caller's session id
+	// arrived on the `X-Maskin-Session-Id` header and the
+	// `graph-provenance-writes` flag is on for the session's actor.
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
 		entityType: body.type,
 		entityId: created.id,
 		data: created,
+		provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 	})
 
 	// Auto-subscribe the creator so they're notified about future comments.
@@ -692,6 +742,7 @@ const listObjectsRoute = createRoute({
 
 app.openapi(listObjectsRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
@@ -725,16 +776,86 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(useKeyset ? 0 : query.offset)
-		.orderBy(...orderBy)
+	// X-Total-Count is the real match count under the walk's snapshot — the filters
+	// and the `snapshot_at` freeze, but not the keyset seek, so it stays constant
+	// across every page of one walk.
+	const [results, [totalRow]] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(useKeyset ? 0 : query.offset)
+			.orderBy(...orderBy),
+		db
+			.select({ value: count() })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					...filterConditions,
+					...buildCursorConditions(query, false),
+				),
+			),
+	])
+	c.header('X-Total-Count', String(totalRow?.value ?? 0))
 
-	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	// D2 · Working-ring predicate. Hydrate the active session's status as a
+	// scalar the client reads with `=== 'running'` — mirrors the read_state
+	// per-viewer scalar pattern in subscriptions.ts and stays a single bounded
+	// batch call per list request. Rows without an active session get `null`.
+	// D5 · one secondary query per list request for the actor's star_state
+	// rows, merged into each row as `is_starred_by_me` — same pattern.
+	const [sessionStatesByObjectId, starredIds] = await Promise.all([
+		hydrateActiveSessionStates(db, results),
+		getStarredObjectIds(db, {
+			actorId,
+			objectIds: results.map((r) => r.id),
+		}),
+	])
+
+	return c.json(
+		results.map((row) => ({
+			...serialize(row),
+			active_session_state: sessionStatesByObjectId.get(row.id) ?? null,
+			is_starred_by_me: starredIds.has(row.id),
+		})) as z.infer<typeof objectResponseSchema>[],
+		200,
+	)
 })
+
+/**
+ * Batch-fetch `sessions.status` for every object in `rows` that carries a
+ * non-null `activeSessionId`. Returned map is keyed by object id (not session
+ * id) so the caller can attach the scalar without a second lookup. If a row
+ * points at a deleted session, its entry is absent from the map (client reads
+ * `null` — no ring).
+ */
+async function hydrateActiveSessionStates(
+	db: Database,
+	rows: Array<typeof objects.$inferSelect>,
+): Promise<Map<string, string>> {
+	const sessionIdToObjectIds = new Map<string, string[]>()
+	for (const row of rows) {
+		if (!row.activeSessionId) continue
+		const existing = sessionIdToObjectIds.get(row.activeSessionId)
+		if (existing) existing.push(row.id)
+		else sessionIdToObjectIds.set(row.activeSessionId, [row.id])
+	}
+	if (sessionIdToObjectIds.size === 0) return new Map()
+
+	const sessionRows = await db
+		.select({ id: sessions.id, status: sessions.status })
+		.from(sessions)
+		.where(inArray(sessions.id, [...sessionIdToObjectIds.keys()]))
+
+	const statesByObjectId = new Map<string, string>()
+	for (const s of sessionRows) {
+		const objectIds = sessionIdToObjectIds.get(s.id) ?? []
+		for (const objectId of objectIds) statesByObjectId.set(objectId, s.status)
+	}
+	return statesByObjectId
+}
 
 // GET /board - List board columns with per-column pagination
 const boardObjectsRoute = createRoute({
@@ -962,10 +1083,36 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	}
 
 	// Fetch all relationships where this object is source or target
-	const rels = await db
+	const directRels = await db
 		.select()
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
+
+	// S2 · walk one hop upstream through `produced_by` — the session that
+	// produced this object may itself have been spawned from a chat, and Task
+	// 4's Origin block needs the conversation cell alongside the session
+	// cell. The session's `spawned` edge does NOT touch this object directly,
+	// so a second query is required. Skipped when no `produced_by` edges are
+	// present (the absence contract: no session → no Origin block).
+	const producingSessionIds = new Set<string>()
+	for (const rel of directRels) {
+		if (rel.type === 'produced_by' && rel.sourceType === 'session' && rel.targetId === id) {
+			producingSessionIds.add(rel.sourceId)
+		}
+	}
+	let ancestorRels: (typeof relationships.$inferSelect)[] = []
+	if (producingSessionIds.size > 0) {
+		ancestorRels = await db
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.type, 'spawned'),
+					inArray(relationships.targetId, [...producingSessionIds]),
+				),
+			)
+	}
+	const rels = [...directRels, ...ancestorRels]
 
 	// Resolve endpoints by object/file id, not by the stored `sourceType`/
 	// `targetType` label. Some legacy edges were written with a specialised
@@ -1039,26 +1186,63 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
-	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession, starredIds] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
 		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 		object.activeSessionId
 			? db
-					.select({ currentActivity: sessions.currentActivity })
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
 					.from(sessions)
 					.where(eq(sessions.id, object.activeSessionId))
 					.limit(1)
 					.then((rows) => rows[0] ?? null)
 			: Promise.resolve(null),
+		// Hydrate the star flag for the primary object plus every connected
+		// object in a single round-trip — the graph payload's connected_objects
+		// array is rendered as list rows on the client, same UX as the top-level
+		// list, so parity is expected.
+		getStarredObjectIds(db, {
+			actorId,
+			objectIds: [id, ...connectedObjects.map((co) => co.id)],
+		}),
 	])
 
-	// Build a title lookup keyed by object id so each relationship can carry the
-	// titles of its endpoints. Agents reading this payload should reference
-	// connected objects by title in human-facing output, not by UUID.
+	// Build a title lookup keyed by endpoint id so each relationship can carry
+	// the titles of its endpoints. Agents reading this payload should reference
+	// connected endpoints by title in human-facing output, not by UUID. Files
+	// as first-class endpoints (Slice 1): the file's `name` populates the
+	// title slot so an edge pointing at a file stops reading back as `null`;
+	// files are hydrated further below into `filesSummary` as the source of
+	// truth for the FE's `fileMap`. S2: `conversation` and `session` endpoints
+	// batch-resolve through `resolveEndpointTitles` so a `spawned` /
+	// `produced_by` edge doesn't render as an unlabelled row.
 	const titleById = new Map<string, string | null>()
 	titleById.set(object.id, object.title ?? null)
 	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
+	if (attachedFileIds.size > 0) {
+		const fileTitleRows = await db
+			.select({ id: files.id, name: files.name })
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...attachedFileIds])))
+		for (const row of fileTitleRows) titleById.set(row.id, row.name ?? null)
+	}
+
+	const provenanceConversationIds = new Set<string>()
+	const provenanceSessionIds = new Set<string>()
+	for (const rel of rels) {
+		if (rel.sourceType === 'conversation') provenanceConversationIds.add(rel.sourceId)
+		else if (rel.sourceType === 'session') provenanceSessionIds.add(rel.sourceId)
+		if (rel.targetType === 'conversation') provenanceConversationIds.add(rel.targetId)
+		else if (rel.targetType === 'session') provenanceSessionIds.add(rel.targetId)
+	}
+	if (provenanceConversationIds.size > 0 || provenanceSessionIds.size > 0) {
+		const provenanceTitles = await resolveEndpointTitles(db, {
+			conversationIds: [...provenanceConversationIds],
+			sessionIds: [...provenanceSessionIds],
+		})
+		for (const [id, title] of provenanceTitles) titleById.set(id, title)
+	}
 
 	// Collect every file id this object touches: (1) files attached via
 	// relationships whose endpoint resolves to a row in `files` (already
@@ -1117,16 +1301,21 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			object: {
 				...serialize(object),
 				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
+				active_session_state: activeSession?.status ?? null,
 				is_subscribed: subscribed,
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
+				is_starred_by_me: starredIds.has(object.id),
 			},
 			relationships: rels.map((r) => ({
 				...serialize(r),
 				sourceTitle: titleById.get(r.sourceId) ?? null,
 				targetTitle: titleById.get(r.targetId) ?? null,
 			})),
-			connected_objects: serializeArray(connectedObjects),
+			connected_objects: connectedObjects.map((co) => ({
+				...serialize(co),
+				is_starred_by_me: starredIds.has(co.id),
+			})),
 			events: serializedEvents,
 			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
@@ -1286,16 +1475,64 @@ app.openapi(traverseGraphRoute, async (c) => {
 		}
 		for (const seen of visited) candidateIds.delete(seen)
 
-		let discovered: { id: string; type: string; title: string | null }[] = []
+		const discovered: { id: string; type: string; title: string | null }[] = []
 		if (candidateIds.size > 0) {
-			// Workspace scoping + file/object filter in one query: only rows in
-			// `objects` with matching workspaceId come back. File endpoints and
-			// cross-workspace ids drop out here.
-			const rows = await db
-				.select({ id: objects.id, type: objects.type, title: objects.title })
-				.from(objects)
-				.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...candidateIds])))
-			discovered = rows.map((r) => ({ id: r.id, type: r.type, title: r.title ?? null }))
+			const candidateArr = [...candidateIds]
+			// Every frontier admits all four endpoint kinds — `object`, `file`,
+			// `conversation`, `session` — as first-class BFS nodes. Objects and
+			// files fire in parallel (Slice 1 shape); the two provenance tables
+			// then run on the remaining ids (S2, cheaper because most frontiers
+			// resolve fully in the first pair). Cross-workspace ids drop out
+			// via the workspaceId filter on every table.
+			const [objectRows, fileRows] = await Promise.all([
+				db
+					.select({ id: objects.id, type: objects.type, title: objects.title })
+					.from(objects)
+					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, candidateArr))),
+				db
+					.select({ id: files.id, name: files.name })
+					.from(files)
+					.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, candidateArr))),
+			])
+			for (const r of objectRows) {
+				discovered.push({ id: r.id, type: r.type, title: r.title ?? null })
+			}
+			for (const r of fileRows) {
+				discovered.push({ id: r.id, type: 'file', title: r.name ?? null })
+			}
+
+			// S2 · admit `conversation` and `session` endpoints too. Sessions
+			// use a distilled `actionPrompt` headline as their title, matching
+			// what `resolveEndpointTitles` returns for the flat read paths.
+			const alreadySeen = new Set([...objectRows.map((r) => r.id), ...fileRows.map((r) => r.id)])
+			const remaining = candidateArr.filter((id) => !alreadySeen.has(id))
+			if (remaining.length > 0) {
+				const conversationRows = await db
+					.select({ id: conversations.id, title: conversations.title })
+					.from(conversations)
+					.where(
+						and(eq(conversations.workspaceId, workspaceId), inArray(conversations.id, remaining)),
+					)
+				for (const r of conversationRows) {
+					discovered.push({ id: r.id, type: 'conversation', title: r.title })
+					alreadySeen.add(r.id)
+				}
+
+				const remaining2 = candidateArr.filter((id) => !alreadySeen.has(id))
+				if (remaining2.length > 0) {
+					const sessionRows = await db
+						.select({ id: sessions.id, actionPrompt: sessions.actionPrompt })
+						.from(sessions)
+						.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.id, remaining2)))
+					for (const r of sessionRows) {
+						discovered.push({
+							id: r.id,
+							type: 'session',
+							title: sessionTitleFrom(r.actionPrompt, r.id),
+						})
+					}
+				}
+			}
 		}
 
 		const discoveredIds = new Set(discovered.map((n) => n.id))
@@ -1431,7 +1668,7 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
-	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
 			workspaceId: object.workspaceId,
@@ -1446,21 +1683,24 @@ app.openapi(getObjectRoute, async (c) => {
 		}),
 		object.activeSessionId
 			? db
-					.select({ currentActivity: sessions.currentActivity })
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
 					.from(sessions)
 					.where(eq(sessions.id, object.activeSessionId))
 					.limit(1)
 					.then((rows) => rows[0] ?? null)
 			: Promise.resolve(null),
+		isObjectStarredByActor(db, { actorId, objectId: id }),
 	])
 
 	return c.json(
 		{
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
+			active_session_state: activeSession?.status ?? null,
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
+			is_starred_by_me: starred,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
 	)
@@ -1596,13 +1836,14 @@ app.openapi(updateObjectRoute, async (c) => {
 			row as unknown as Record<string, unknown>,
 			OBJECT_DIFF_FIELDS,
 		)
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: current.workspaceId,
 			actorId,
 			action,
 			entityType: current.type,
 			entityId: id,
 			data: { changes },
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 		})
 
 		// Fan out a notification row to every subscriber when a bet reaches a
@@ -1773,7 +2014,7 @@ app.openapi(verifyObjectRoute, async (c) => {
 
 		updated = row
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: current.workspaceId,
 			actorId,
 			action: verified ? 'verified' : 'unverified',
@@ -1784,6 +2025,7 @@ app.openapi(verifyObjectRoute, async (c) => {
 				verified_by: verified ? actorId : (currentMeta.verified_by ?? null),
 				verified_at: verified ? nextMeta.verified_at : (currentMeta.verified_at ?? null),
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 		})
 	})
 
@@ -1960,7 +2202,7 @@ app.openapi(undoWriteRoute, async (c) => {
 
 		reverted = row
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: current.workspaceId,
 			actorId,
 			action: 'knowledge_write_undone',
@@ -1971,6 +2213,7 @@ app.openapi(undoWriteRoute, async (c) => {
 				original_actor_id: eventRow.actorId,
 				changes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 		})
 	})
 
@@ -2200,7 +2443,7 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 					.set({ type: toType, status: newStatus, updatedAt: now })
 					.where(inArray(objects.id, ids))
 			}
-			await tx.insert(events).values(eventValues)
+			await recordEvents(tx, eventValues)
 		})
 
 		return c.json(
@@ -2238,7 +2481,8 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 			.delete(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
 
-		await tx.insert(events).values(
+		await recordEvents(
+			tx,
 			toDelete.map(({ id: objectId }) => ({
 				workspaceId,
 				actorId,
@@ -2383,13 +2627,14 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					updated as unknown as Record<string, unknown>,
 					OBJECT_DIFF_FIELDS,
 				)
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId: plan.previous.workspaceId,
 					actorId,
 					action: plan.action,
 					entityType: plan.previous.type,
 					entityId: plan.id,
 					data: { changes },
+					provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 				})
 			}
 		})
@@ -2419,28 +2664,150 @@ app.openapi(deleteObjectRoute, async (c) => {
 	}
 
 	await db.transaction(async (tx) => {
-		// Polymorphic subscription + read_state rows aren't FK'd to objects, so
-		// drop them explicitly to avoid orphans pointing at a freed entity_id.
+		// Polymorphic subscription + read_state + star_state rows aren't FK'd to
+		// objects, so drop them explicitly to avoid orphans pointing at a freed
+		// entity_id.
 		await tx
 			.delete(subscriptions)
 			.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
 		await tx
 			.delete(readState)
 			.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
+		await tx
+			.delete(starState)
+			.where(and(eq(starState.entityType, 'object'), eq(starState.entityId, id)))
 
 		await tx.delete(objects).where(eq(objects.id, id))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
 			entityType: existing.type,
 			entityId: id,
 			data: existing,
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 		})
 	})
 
 	return c.json({ deleted: true as const }, 200)
+})
+
+// ── POST/DELETE /{id}/star — server-persisted per-actor star toggle ──────
+//
+// Cross-device sync for D5 of the Objects v4 polish bet. Toggle is idempotent
+// on both sides (repeat POST = still starred, repeat DELETE = still not), no
+// request body, actor derived from the API-key middleware. Both writes emit
+// an events row tagged `mutation_type: 'star'` — this is the signal the D5
+// Won criterion (PostHog cross-device check) reads. Do not drop the tag.
+//
+// Cross-workspace guard: the object's workspaceId must match the caller's
+// `X-Workspace-Id` header. A member of workspace A trying to star an object
+// in workspace B gets 403 rather than 404 — the header-scoping check that
+// authMiddleware already applied means we know exactly which workspace the
+// caller claimed to be in, so it's a genuine authorization failure, not a
+// resource-existence question.
+
+const toggleStarResponseSchema = z.object({
+	is_starred_by_me: z.boolean(),
+	starred_at: z.string().nullable(),
+})
+
+const starObjectRoute = createRoute({
+	method: 'post',
+	path: '/{id}/star',
+	tags: ['Objects'],
+	summary: 'Star an object as the current actor (idempotent)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: toggleStarResponseSchema } },
+			description: 'Object is starred (was or is now)',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object is in a different workspace than the caller',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+	},
+})
+
+const unstarObjectRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/star',
+	tags: ['Objects'],
+	summary: 'Unstar an object as the current actor (idempotent)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: toggleStarResponseSchema } },
+			description: 'Object is not starred (was or is now)',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object is in a different workspace than the caller',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+	},
+})
+
+app.openapi(starObjectRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	if (object.workspaceId !== workspaceId) {
+		return c.json(createApiError('FORBIDDEN', 'Object is not in the caller’s workspace'), 403)
+	}
+
+	const result = await starObject(db, {
+		workspaceId: object.workspaceId,
+		actorId,
+		objectId: id,
+		objectType: object.type,
+	})
+
+	return c.json(
+		{ is_starred_by_me: result.isStarredByMe, starred_at: result.starredAt.toISOString() },
+		200,
+	)
+})
+
+app.openapi(unstarObjectRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	if (object.workspaceId !== workspaceId) {
+		return c.json(createApiError('FORBIDDEN', 'Object is not in the caller’s workspace'), 403)
+	}
+
+	const result = await unstarObject(db, {
+		workspaceId: object.workspaceId,
+		actorId,
+		objectId: id,
+		objectType: object.type,
+	})
+
+	return c.json({ is_starred_by_me: result.isStarredByMe, starred_at: null }, 200)
 })
 
 export default app

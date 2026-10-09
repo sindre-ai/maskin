@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AnthropicAdapter } from '../../../lib/llm/anthropic'
 import { createLLMAdapter } from '../../../lib/llm/index'
 import { OpenAIAdapter } from '../../../lib/llm/openai'
@@ -21,5 +21,23 @@ describe('createLLMAdapter', () => {
 
 	it('throws for unknown provider', () => {
 		expect(() => createLLMAdapter('unknown', {})).toThrow('Unsupported LLM provider: unknown')
+	})
+})
+
+describe('createLLMAdapter extra_body', () => {
+	it('passes extra_body to the OpenAI adapter request body', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () =>
+				Promise.resolve({ choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }] }),
+		})
+		vi.stubGlobal('fetch', fetchMock)
+		const adapter = createLLMAdapter('openai', {
+			api_key: 'k',
+			extra_body: { provider: { zdr: true } },
+		})
+		await adapter.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }] })
+		vi.unstubAllGlobals()
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).provider).toEqual({ zdr: true })
 	})
 })

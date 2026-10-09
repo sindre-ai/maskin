@@ -6,6 +6,19 @@ import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
+// D8 (bet/d166-loops-v4-polish) analytics helper — mocked here so the polish
+// variant's `mark_read_clicked` fire is observable without pulling posthog-js
+// into jsdom. The default `TimelineTab` invocations never call it.
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackMarkReadClicked: vi.fn(),
+	}
+})
+
+import { trackMarkReadClicked } from '@/lib/analytics'
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
@@ -36,9 +49,10 @@ function mockGraph(
 	relationships: ReturnType<typeof buildRelationshipResponse>[] = [],
 	connectedObjects: ReturnType<typeof buildObjectResponse>[] = [],
 	object = buildObjectResponse({}),
+	files: Array<{ id: string; name: string; mimeType: string; sizeBytes: number; url: string }> = [],
 ) {
 	vi.mocked(useObjectGraph).mockReturnValue({
-		data: { object, relationships, connected_objects: connectedObjects, events },
+		data: { object, relationships, connected_objects: connectedObjects, events, files },
 	} as never)
 }
 
@@ -108,6 +122,47 @@ describe('TimelineTab', () => {
 		expect(within(third).queryByText('Link')).toBeNull()
 		expect(within(third).getByText('breaks into')).toBeInTheDocument()
 		expect(within(third).getAllByRole('link', { name: /Timeline tab/i })).not.toHaveLength(0)
+	})
+
+	// Regression: a file endpoint on an `attached` edge is NOT an object row —
+	// ObjectReference would useObject(fileId) and 404, rendering "deleted
+	// object" (the bug Magnus reported on the object timeline while the right
+	// sidebar still rendered the same file correctly). The row must resolve
+	// against graph.files and render the filename linked to the file viewer.
+	it('renders a file endpoint on an attached edge as the file, not "deleted object"', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-file',
+				sourceId: 'obj-1',
+				sourceType: 'bet',
+				targetId: 'file-1',
+				targetType: 'file',
+				targetTitle: 'design.pdf',
+				type: 'attached',
+				createdBy: 'actor-1',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+		const files = [
+			{
+				id: 'file-1',
+				name: 'design.pdf',
+				mimeType: 'application/pdf',
+				sizeBytes: 12345,
+				url: 'http://localhost:5173/ws/files/file-1',
+			},
+		]
+		mockGraph([], relationships, [], object, files)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const items = screen.getAllByRole('listitem')
+		expect(items).toHaveLength(1)
+		const row = items[0]
+		expect(within(row).getByText('attached')).toBeInTheDocument()
+		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
+		expect(within(row).queryByText(/deleted object/i)).toBeNull()
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and
@@ -220,6 +275,47 @@ describe('TimelineTab', () => {
 		expect(within(items[2]).getByText(/session/i)).toBeInTheDocument()
 	})
 
+	// Loop detail passes agent-work events (session lifecycle, trigger fires)
+	// via `additionalEvents` because those rows carry `entityId = session.id`
+	// (or trigger.id), not the loop id, so the object graph doesn't surface
+	// them. Without this, the loop's own row events alone leave the timeline
+	// effectively empty.
+	it('merges additionalEvents alongside graph events, deduping by id', () => {
+		const object = buildObjectResponse({ id: 'loop-1', type: 'bet' })
+		const graphEvent = buildEventResponse({
+			id: 1,
+			action: 'created',
+			entityType: 'bet',
+			entityId: 'loop-1',
+			actorId: 'actor-1',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		const extraEvent = buildEventResponse({
+			id: 2,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: 'trigger-1',
+			actorId: 'actor-2',
+			createdAt: '2026-01-02T00:00:00Z',
+		})
+		// A duplicate id must not double up.
+		const duplicateOfGraph = buildEventResponse({
+			id: 1,
+			action: 'created',
+			entityType: 'bet',
+			entityId: 'loop-1',
+			actorId: 'actor-1',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		mockGraph([graphEvent], [], [], object)
+
+		render(<TimelineTab object={object} additionalEvents={[extraEvent, duplicateOfGraph]} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
+	})
+
 	it('renders an empty state when there is nothing to show', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph([], [], [], object)
@@ -329,8 +425,8 @@ describe('TimelineTab', () => {
 		await user.click(screen.getByRole('button', { name: /2 new updates/ }))
 		expect(scrollIntoView).toHaveBeenCalledTimes(1)
 
-		await user.click(screen.getByRole('button', { name: 'Mark read' }))
-		expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull()
+		await user.click(screen.getByRole('button', { name: /Mark all read/ }))
+		expect(screen.queryByRole('button', { name: /Mark all read/ })).toBeNull()
 		// Dismissing the divider must also persist the read high-water mark —
 		// a local-only dismiss would let the unread badge come back on remount.
 		expect(vi.mocked(useMarkRead)).toHaveBeenCalledWith('ws-1')
@@ -338,6 +434,47 @@ describe('TimelineTab', () => {
 			{ entityType: 'object', entityId: 'obj-1', lastEventId: 20 },
 			expect.anything(),
 		)
+	})
+
+	// D8 pruned last_read_event_id — the reader's read cursor points at an
+	// event the server has since deleted / pruned. Server treats it as
+	// "all read" (unread_count=0), even though newer comment events are still
+	// present in the loaded window. In that state the NEW divider must be
+	// hidden entirely, per the acceptance criterion, and no Mark all read
+	// affordance appears. Explicit test — a regression that started rendering
+	// the divider for a pruned pointer would fail here.
+	it('renders no NEW divider when the last_read_event_id was pruned (unread_count=0 with newer comments loaded)', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', unread_count: 0 })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 30,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 20,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-02T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		// Two loaded comments, but no divider — pruned pointer resolves to
+		// unread_count=0 and the divider is hidden with no reserved space
+		// (per D8: "Zero unread → divider hidden entirely").
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
+		expect(screen.queryByRole('separator', { name: /unread items below/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /Mark all read/ })).toBeNull()
 	})
 
 	it('threads replies under their parent comment instead of listing them', () => {
@@ -408,7 +545,10 @@ describe('TimelineTab', () => {
 		expect(screen.getAllByRole('listitem')).not.toHaveLength(0)
 	})
 
-	it('leaves short runs unfolded', () => {
+	// Defect 3 (Loops v4 v1): a repeated same-actor, same-event-type pair —
+	// "Chief of Staff updated loop" back to back — folds at 2, below the
+	// general three-row threshold.
+	it('folds a repeated same-actor, same-type pair', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(
 			Array.from({ length: 2 }, (_, i) =>
@@ -428,15 +568,90 @@ describe('TimelineTab', () => {
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
+		const fold = screen.getByRole('button', { name: /2 agent updates/ })
+		expect(fold).toHaveAttribute('aria-expanded', 'false')
+	})
+
+	it('leaves a short run from different actors unfolded', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			Array.from({ length: 2 }, (_, i) =>
+				buildEventResponse({
+					id: 30 + i,
+					action: 'updated',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					actorId: `actor-${i + 1}`,
+					createdAt: `2026-02-0${i + 1}T00:00:00Z`,
+				}),
+			),
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
 		expect(screen.queryByRole('button', { name: /agent updates/ })).toBeNull()
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
-	// Regression: `visible` runs newest-first, so a status_changed event CLOSES
-	// the phase above it and OPENS the older one below. The older phase must be
-	// labelled with the status the object moved AWAY from (`old`). Labelling it
-	// with `new` made every divider below the top repeat the one above it and
-	// left the oldest phase unlabelled.
-	it('labels each phase divider with the status that phase actually sat in', () => {
+
+	// Defect 3 (Loops v4 v1) regression: the loop's `created` event must not
+	// fold into a run of consecutive `updated` events by the same actor. Only
+	// the same-actor + same-event-type stretch collapses.
+	it('does not fold a foreign event type into a run of same-actor updates', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'loop' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 53,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-04T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 52,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 51,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-02T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 50,
+					action: 'created',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-01T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const fold = screen.getByRole('button', { name: /agent updates/ })
+		expect(fold).toHaveTextContent('3 agent updates')
+	})
+	// D10: phase dividers only fire at lifecycle-phase boundaries. active is in
+	// BUILT and define is in SHAPING, so the define→active transition draws one
+	// divider labelled SHAPING for the older group. The scope→define transition
+	// stays inside SHAPING (both statuses map to SHAPING), so no divider fires
+	// between the two comment rows below.
+	it('emits a phase divider at each lifecycle-phase boundary crossing', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' })
 		mockGraph(
 			[
@@ -461,7 +676,7 @@ describe('TimelineTab', () => {
 					entityType: 'bet',
 					entityId: 'obj-1',
 					createdAt: '2026-01-02T00:00:00Z',
-					data: { changes: [{ field: 'status', old: 'scope', new: 'define' }] },
+					data: { changes: [{ field: 'status', old: 'shaped', new: 'define' }] },
 				}),
 				buildEventResponse({
 					id: 10,
@@ -478,15 +693,285 @@ describe('TimelineTab', () => {
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
-		// Newest phase first: active (current) → define → scope. Each status
-		// appears exactly once; the pre-fix code rendered active, active, define.
-		// Scoped to the dividers themselves: v2 status_changed rows also carry a
-		// status badge with the same word, so an unscoped text query interleaves
-		// them with the phase labels.
-		const labels = screen
-			.getAllByText(/^(active|define|scope)$/)
-			.filter((el) => el.closest('button[aria-expanded]'))
-			.map((el) => el.textContent?.trim())
-		expect(labels).toEqual(['active', 'define', 'scope'])
+		// Two lifecycle groups: BUILT (current: active) at top, SHAPING (define →
+		// shaped) below — so exactly two phase separators, one per group. The
+		// shaped→define transition stays inside SHAPING and produces no divider.
+		const separators = screen.getAllByRole('separator', { name: /phase/i })
+		expect(separators).toHaveLength(2)
+		expect(separators[0]).toHaveAccessibleName(/BUILT phase/)
+		expect(separators[1]).toHaveAccessibleName(/SHAPING phase/)
+	})
+
+	// D8 delta (bet/d166-loops-v4-polish) — every assertion below exercises
+	// the polish variant, opted in via the `loopsV4PolishUnread` prop the
+	// loop-detail route passes when the sub-flag is on. Objects (the other
+	// consumer of TimelineTab) never sets the prop, so these behaviours are
+	// scoped to the loop-detail surface by construction.
+	describe('loops-v4-polish.unread variant', () => {
+		beforeEach(() => {
+			vi.mocked(trackMarkReadClicked).mockReset()
+			markReadMutate.mockReset()
+		})
+
+		it('renders the "NEW · {n} unread" red divider (SPEC copy verbatim) when unread activity is present', () => {
+			const object = buildObjectResponse({ id: 'loop-1', type: 'loop', unread_count: 2 })
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 20,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T10:00:00Z',
+					}),
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T09:00:00Z',
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+
+			// The polish divider carries the SPEC's exact copy `NEW · {n} unread`.
+			expect(screen.getByTestId('loops-v4-unread-divider')).toHaveTextContent('NEW · 2 unread')
+			// The default divider must not co-render — one boundary, one skin.
+			expect(screen.queryByText('2 new')).toBeNull()
+		})
+
+		it('never renders the polish divider without the prop, even when there is unread activity (Objects surface untouched)', () => {
+			const object = buildObjectResponse({ id: 'obj-1', type: 'bet', unread_count: 1 })
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'bet',
+						entityId: 'obj-1',
+						createdAt: '2026-09-08T09:00:00Z',
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			expect(screen.queryByTestId('loops-v4-unread-divider')).toBeNull()
+			// D8 · Object detail default now uses NewDivider ("New — 1 item").
+			expect(screen.getByText('New — 1 item')).toBeInTheDocument()
+		})
+
+		it('announces the unread count to screen readers on mount via a stable aria-live region', () => {
+			const object = buildObjectResponse({ id: 'loop-1', type: 'loop', unread_count: 3 })
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 30,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T10:00:00Z',
+					}),
+					buildEventResponse({
+						id: 20,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T09:00:00Z',
+					}),
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T08:00:00Z',
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+
+			const region = screen.getByRole('status')
+			expect(region).toHaveTextContent('3 unread activity items')
+			// aria-live must live on the host, not the swapped-in content — so
+			// the SR announcement doesn't race the DOM swap when the boundary
+			// disappears after Mark read.
+			expect(region).toHaveAttribute('aria-live', 'polite')
+			expect(region).toHaveAttribute('aria-atomic', 'true')
+		})
+
+		it('leaves the aria-live host empty (no announcement) when there is no unread activity', () => {
+			const object = buildObjectResponse({ id: 'loop-1', type: 'loop', unread_count: 0 })
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T09:00:00Z',
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+
+			expect(screen.getByRole('status').textContent).toBe('')
+		})
+
+		it('fires mark_read_clicked with {loop_id, unread_count} and persists the server read marker on Mark read', async () => {
+			const user = userEvent.setup()
+			const object = buildObjectResponse({ id: 'loop-1', type: 'loop', unread_count: 2 })
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 20,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T10:00:00Z',
+					}),
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: '2026-09-08T09:00:00Z',
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+
+			await user.click(screen.getByRole('button', { name: 'Mark read' }))
+
+			expect(trackMarkReadClicked).toHaveBeenCalledWith({
+				loop_id: 'loop-1',
+				unread_count: 2,
+			})
+			// Per-viewer read marker persists via the shared `read_state` row —
+			// same mutation the pre-bet divider fires, exercised through the
+			// object-scoped useMarkRead. No new table on the backend.
+			expect(markReadMutate).toHaveBeenCalledWith(
+				{ entityType: 'object', entityId: 'loop-1', lastEventId: 20 },
+				expect.anything(),
+			)
+		})
+
+		it('does not fire mark_read_clicked when the pre-bet divider is used (no polish prop)', async () => {
+			const user = userEvent.setup()
+			const object = buildObjectResponse({ id: 'obj-1', type: 'bet', unread_count: 1 })
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'bet',
+						entityId: 'obj-1',
+						createdAt: '2026-09-08T09:00:00Z',
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			// D8 · Object detail default now uses NewDivider ("✓ Mark all read").
+			await user.click(screen.getByRole('button', { name: /Mark all read/ }))
+
+			expect(trackMarkReadClicked).not.toHaveBeenCalled()
+		})
+
+		it('renders the EARLIER divider when the stream carries activity older than the current window', () => {
+			const object = buildObjectResponse({ id: 'loop-1', type: 'loop' })
+			const nowIso = new Date().toISOString()
+			const eightDaysAgoIso = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 20,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: nowIso,
+					}),
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: eightDaysAgoIso,
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+
+			expect(screen.getByTestId('loops-v4-earlier-divider')).toHaveTextContent('EARLIER')
+		})
+
+		it('does not render the EARLIER divider when every entry is inside the current window', () => {
+			const object = buildObjectResponse({ id: 'loop-1', type: 'loop' })
+			const nowIso = new Date().toISOString()
+			mockGraph(
+				[
+					buildEventResponse({
+						id: 20,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: nowIso,
+					}),
+					buildEventResponse({
+						id: 10,
+						action: 'commented',
+						entityType: 'loop',
+						entityId: 'loop-1',
+						createdAt: nowIso,
+					}),
+				],
+				[],
+				[],
+				object,
+			)
+
+			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+
+			expect(screen.queryByTestId('loops-v4-earlier-divider')).toBeNull()
+		})
 	})
 })

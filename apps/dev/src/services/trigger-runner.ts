@@ -1,20 +1,78 @@
 import type { Database } from '@maskin/db'
-import { events, actors, objects, sessions, triggers, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	objects,
+	sessions,
+	triggerCooldowns,
+	triggerDispatches,
+	triggers,
+	workspaceMembers,
+	workspaceSuppressions,
+} from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { type SQL, and, eq, inArray, sql } from 'drizzle-orm'
+import { type SQL, and, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
 } from '../lib/analytics/comment-responder-events'
+import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
+import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
+import {
+	type TriggerQueueDrainSource,
+	trackTriggerCronTickDropped,
+} from '../lib/analytics/trigger-queue-events'
+import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
+import {
+	QUEUE_EVENT_ENTITY_TYPE,
+	QUEUE_RETENTION_MS,
+	QUEUE_SWEEP_INTERVAL_MS,
+	drainQueue,
+	enqueueDroppedEvent,
+	findDueTriggerIds,
+	findDueWorkspaceIds,
+	sweepQueueRetention,
+} from './trigger-event-queue'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
+
+/**
+ * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * `SessionManager.createSession()` call. The two fields on the sessions row
+ * are FK-constrained to `objects.id`, so passing an entity id that isn't an
+ * object row (a slack.message uuid, a session id, a webhook delivery id)
+ * would trip the FK on insert. This helper resolves the id → object type
+ * with one PK read, or returns `null / null` when the entity isn't an
+ * object — matching the same "not a uuid → not an object" posture the
+ * `getObjectContext()` hydration path already uses in `handleEvent()`.
+ */
+async function loadInitiatedFromObject(
+	db: Database,
+	entityId: string | null | undefined,
+): Promise<{
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
+}> {
+	if (!entityId || !UUID_RE.test(entityId)) {
+		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+	}
+	const [row] = await db
+		.select({ id: objects.id, type: objects.type })
+		.from(objects)
+		.where(eq(objects.id, entityId))
+		.limit(1)
+	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+}
 
 /**
  * Guards the objects-table hydration lookup: `objects.id` is a uuid column, so
@@ -49,6 +107,8 @@ interface TriggerFailureState {
 	count: number
 	lastFailedAt: Date
 	backoffUntil: Date
+	/** Why the window opened; 'retry_at_x' rows are queued under that reason. */
+	reason?: string
 }
 
 /** Maximum backoff duration: 30 minutes */
@@ -97,7 +157,16 @@ interface WorkspaceSuppression {
 	/** Firing resumes on its own once `now >= until`. */
 	until: Date
 	reason: string
+	/** Persisted alongside the row for diagnosis; never read back into the hot path. */
+	metadata?: Record<string, unknown>
 }
+
+/**
+ * A provider-supplied reset time (session_failed data.retry_at) further out
+ * than the queue's retention would strand queued events past their 7 days, so
+ * it is treated like an unparseable one and the exponential fallback runs.
+ */
+const RETRY_AT_MAX_MS = QUEUE_RETENTION_MS
 
 /**
  * Fallback pause for a cap with no known reset time. `PlanCapExceededError`
@@ -160,17 +229,76 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
 	'claude_subscription_recovered',
 ])
 
+/**
+ * Trigger-entity actions `handleTriggerChange` acts on: a human (or a route)
+ * creating, editing or deleting a trigger. Every other action on entity_type
+ * 'trigger' is runner-authored bookkeeping about the trigger — `trigger_fired`
+ * at three sites, `auto_paused`, and so on — and must leave backoff and
+ * schedules alone. Resetting on those made a failing trigger clear its own
+ * backoff each time it fired, so the exponential steps never escalated, and
+ * the reset is also a queue drain point, so a cooling trigger's queue drained
+ * early. Allowlist, not denylist, so a new runner-written action is safe by
+ * default.
+ */
+const TRIGGER_CRUD_ACTIONS = new Set(['created', 'updated', 'deleted'])
+
+/** Largest delay setTimeout honours (2^31-1 ms, ~24.8 days); above it Node fires after ~1 ms. */
+const MAX_TIMEOUT_MS = 2_147_483_647
+
+/** The trigger fields a human edits; a change in any of them counts as an edit. */
+function triggerFingerprint(trigger: typeof triggers.$inferSelect): string {
+	return JSON.stringify([
+		trigger.name,
+		trigger.type,
+		trigger.enabled,
+		trigger.config,
+		trigger.actionPrompt,
+		trigger.targetActorId,
+	])
+}
+
+/**
+ * Sweep expired rows every 60s (per tech spec §3.2) — DELETE cooldown and
+ * suppression rows whose expiry timestamp is more than one hour in the past.
+ * Keeps the tables small; expired rows above 1h serve no purpose since neither
+ * the in-memory Map nor the load path re-hydrates them.
+ */
+const COOLDOWN_SWEEP_INTERVAL_MS = 60_000
+/** Rows older than 1h past their expiry are candidates for the sweep. */
+const COOLDOWN_SWEEP_GRACE_MS = 60 * 60_000
+/**
+ * trigger_dispatches rows are retained for 30 days after dispatch, then
+ * swept. Long enough that no legitimate replay window ever exceeds it
+ * (queue TTL is 7 days per §4.5), short enough to keep the table bounded.
+ * Piggy-backs on the cooldown sweep interval — same 60s tick, one extra
+ * DELETE. Tech spec §3.4.
+ */
+const DISPATCH_SWEEP_RETENTION_MS = 30 * 24 * 60 * 60_000
+
 export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
-	private sessionManager: SessionManager
 	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
 	private eventHandler: ((event: PgEvent) => void) | null = null
 	private sessionEventHandler: ((event: PgEvent) => void) | null = null
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
+	/**
+	 * triggerId -> fingerprint of the editable config as of the last created or
+	 * updated event. Lets `handleTriggerChange` tell a real edit from an updated
+	 * event that changed nothing that matters (a Slack setup status write, a
+	 * metadata touch). In-memory only: an unseen trigger counts as edited, so the
+	 * first event after a restart resets, as it did before.
+	 */
+	private triggerFingerprints: Map<string, string> = new Map()
 	/** workspaceId -> active workspace-wide pause. See `WorkspaceSuppression`. */
 	private workspaceSuppressions: Map<string, WorkspaceSuppression> = new Map()
+	/** Background sweep of expired cooldown / suppression rows (§3.2). */
+	private cooldownSweepInterval: NodeJS.Timeout | null = null
+	/** 30s drain sweep for the event queue (§4.4). */
+	private queueSweepInterval: NodeJS.Timeout | null = null
+	/** Scopes ('trigger:<id>' / 'workspace:<id>') being drained by THIS process, so two drains never interleave and break per-trigger FIFO. */
+	private drainingScopes: Set<string> = new Set()
 	// A session's terminal outcome can be reported more than once: e.g.
 	// SessionManager.stopSession() writes a provisional session_failed row,
 	// and the agent-server's own genuine completion report — if it arrives,
@@ -185,10 +313,9 @@ export class TriggerRunner {
 	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
 	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
-	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
+	constructor(db: Database, bridge: PgNotifyBridge, _sessionManager: SessionManager) {
 		this.db = db
 		this.bridge = bridge
-		this.sessionManager = sessionManager
 	}
 
 	async start() {
@@ -221,6 +348,35 @@ export class TriggerRunner {
 		// Load and schedule reminder triggers
 		await this.loadReminders()
 
+		// Hydrate the in-memory cooldown and suppression Maps from Postgres so
+		// backoff windows survive a server restart (fixes bet #7). Both throw
+		// on read failure so boot fails fast — running with empty Maps against
+		// a live DB is exactly the deploy-wipe bug this fix exists to prevent.
+		// Ordered AFTER cron/reminder loads so cron scheduling side effects
+		// (schedule → next tick) are attached before any freshly-hydrated
+		// backoff can gate them — matters only for tests that assert on the
+		// exact selectQueue order; runtime behaviour is order-independent
+		// because triggers do not fire before the first cron tick.
+		await this.loadCooldowns()
+		await this.loadSuppressions()
+
+		// Background sweep of expired rows keeps both tables bounded (§3.2).
+		this.cooldownSweepInterval = setInterval(() => {
+			this.sweepExpiredCooldowns().catch((err) =>
+				logger.error('Cooldown sweep failed', { error: String(err) }),
+			)
+		}, COOLDOWN_SWEEP_INTERVAL_MS)
+		this.cooldownSweepInterval.unref?.()
+
+		// Background drain of the event queue (§4.4). Runs on every instance;
+		// FOR UPDATE SKIP LOCKED keeps concurrent sweeps off each other's rows.
+		this.queueSweepInterval = setInterval(() => {
+			this.sweepEventQueue().catch((err) =>
+				logger.error('Event queue sweep failed', { error: String(err) }),
+			)
+		}, QUEUE_SWEEP_INTERVAL_MS)
+		this.queueSweepInterval.unref?.()
+
 		logger.info('Trigger runner started')
 	}
 
@@ -245,18 +401,66 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.processedSessionOutcomes.clear()
+		this.triggerFingerprints.clear()
 		this.workspaceSuppressions.clear()
+		if (this.cooldownSweepInterval) {
+			clearInterval(this.cooldownSweepInterval)
+			this.cooldownSweepInterval = null
+		}
+		if (this.queueSweepInterval) {
+			clearInterval(this.queueSweepInterval)
+			this.queueSweepInterval = null
+		}
 	}
 
-	private recordTriggerFailure(triggerId: string): void {
+	private async recordTriggerFailure(
+		triggerId: string,
+		reason?: string,
+		/** Provider-supplied reset time; replaces the exponential window when present. */
+		backoffUntilOverride?: Date,
+	): Promise<void> {
 		const now = new Date()
 		const existing = this.triggerFailures.get(triggerId)
 		const count = (existing?.count ?? 0) + 1
-		const backoffUntil = calculateBackoffUntil(count, now)
+		const backoffUntil = backoffUntilOverride ?? calculateBackoffUntil(count, now)
+
+		// Persist FIRST, then update the in-memory cache. A DB write failure logs
+		// ERROR and rethrows — silently falling back to memory-only reintroduces
+		// the deploy-wipe bug this store exists to prevent (§6.3).
+		try {
+			await this.db
+				.insert(triggerCooldowns)
+				.values({
+					triggerId,
+					count,
+					lastFailedAt: now,
+					backoffUntil,
+					reason: reason ?? null,
+					updatedAt: now,
+				})
+				.onConflictDoUpdate({
+					target: triggerCooldowns.triggerId,
+					set: {
+						count,
+						lastFailedAt: now,
+						backoffUntil,
+						reason: reason ?? null,
+						updatedAt: now,
+					},
+				})
+		} catch (err) {
+			logger.error('Failed to persist trigger cooldown', {
+				triggerId,
+				error: String(err),
+			})
+			throw err
+		}
+
 		this.triggerFailures.set(triggerId, {
 			count,
 			lastFailedAt: now,
 			backoffUntil,
+			reason,
 		})
 		logger.warn(
 			`Trigger '${triggerId}' failure #${count}, in backoff until ${backoffUntil.toISOString()}`,
@@ -290,11 +494,28 @@ export class TriggerRunner {
 	 * Lifts a pause early. Called when a workspace is updated, so upgrading a
 	 * plan or connecting a Claude subscription resumes automations on the next
 	 * tick instead of after the pause runs out.
+	 *
+	 * DELETEs the persisted row too so the pause doesn't come back on the next
+	 * restart via loadSuppressions(). DB delete failures log ERROR and rethrow
+	 * — same rationale as recordTriggerFailure (§6.3).
 	 */
-	private clearWorkspaceSuppression(workspaceId: string): void {
-		if (this.workspaceSuppressions.delete(workspaceId)) {
-			logger.info(`Workspace ${workspaceId} trigger suppression cleared — workspace updated`)
+	private async clearWorkspaceSuppression(workspaceId: string): Promise<void> {
+		if (!this.workspaceSuppressions.delete(workspaceId)) return
+		try {
+			await this.db
+				.delete(workspaceSuppressions)
+				.where(eq(workspaceSuppressions.workspaceId, workspaceId))
+		} catch (err) {
+			logger.error('Failed to delete persisted workspace suppression', {
+				workspaceId,
+				error: String(err),
+			})
+			throw err
 		}
+		logger.info(`Workspace ${workspaceId} trigger suppression cleared — workspace updated`)
+		this.drainWorkspaceQueue(workspaceId, 'workspace_unsuppress').catch((err) =>
+			logger.error('Workspace queue drain failed', { workspaceId, error: String(err) }),
+		)
 	}
 
 	/**
@@ -309,11 +530,11 @@ export class TriggerRunner {
 	 *    states into 3,675 Sentry events.
 	 *  - Anything else. Still `error`, and now rare enough to be worth alerting on.
 	 */
-	private handleSessionCreateFailure(
+	private async handleSessionCreateFailure(
 		workspaceId: string,
 		err: unknown,
 		triggerName?: string,
-	): void {
+	): Promise<void> {
 		const now = new Date()
 
 		if (err instanceof PlanCapExceededError) {
@@ -326,7 +547,7 @@ export class TriggerRunner {
 				err.periodEnd !== null && err.periodEnd > now.getTime()
 					? new Date(err.periodEnd)
 					: new Date(now.getTime() + PLAN_CAP_FALLBACK_SUPPRESSION_MS)
-			this.suppressWorkspace(
+			await this.suppressWorkspace(
 				workspaceId,
 				{
 					until,
@@ -342,7 +563,7 @@ export class TriggerRunner {
 		// automations offline for an hour over a network blip, so let those fall
 		// through to the error branch and retry on the next tick.
 		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
-			this.suppressWorkspace(
+			await this.suppressWorkspace(
 				workspaceId,
 				{
 					until: new Date(now.getTime() + NO_CREDENTIALS_SUPPRESSION_MS),
@@ -387,7 +608,12 @@ export class TriggerRunner {
 		this.suppressWorkspace(workspaceId, {
 			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
 			reason: 'no LLM credentials connected for this workspace',
-		})
+		}).catch((err) =>
+			logger.error('handleDispatchPermanentFailure: suppressWorkspace failed', {
+				workspaceId,
+				error: String(err),
+			}),
+		)
 	}
 
 	/**
@@ -395,14 +621,47 @@ export class TriggerRunner {
 	 * already suppressed for the same reason stays quiet, so the log carries one
 	 * line per workspace per billing period rather than one per trigger per tick.
 	 */
-	private suppressWorkspace(
+	private async suppressWorkspace(
 		workspaceId: string,
 		suppression: WorkspaceSuppression,
 		triggerName?: string,
-	): void {
+	): Promise<void> {
 		const existing = this.workspaceSuppressions.get(workspaceId)
+		const now = new Date()
+
+		// Persist FIRST, then update the in-memory cache — same discipline as
+		// recordTriggerFailure. Falling back to memory-only on DB failure would
+		// silently reintroduce the deploy-wipe bug (§6.3).
+		try {
+			await this.db
+				.insert(workspaceSuppressions)
+				.values({
+					workspaceId,
+					suppressedUntil: suppression.until,
+					reason: suppression.reason,
+					metadata: suppression.metadata ?? null,
+					createdAt: now,
+					updatedAt: now,
+				})
+				.onConflictDoUpdate({
+					target: workspaceSuppressions.workspaceId,
+					set: {
+						suppressedUntil: suppression.until,
+						reason: suppression.reason,
+						metadata: suppression.metadata ?? null,
+						updatedAt: now,
+					},
+				})
+		} catch (err) {
+			logger.error('Failed to persist workspace suppression', {
+				workspaceId,
+				error: String(err),
+			})
+			throw err
+		}
+
 		this.workspaceSuppressions.set(workspaceId, suppression)
-		if (existing && existing.until > new Date() && existing.reason === suppression.reason) return
+		if (existing && existing.until > now && existing.reason === suppression.reason) return
 
 		logger.warn('Trigger sessions paused for workspace', {
 			workspaceId,
@@ -412,11 +671,22 @@ export class TriggerRunner {
 		})
 	}
 
-	private resetTriggerBackoff(triggerId: string): void {
-		if (this.triggerFailures.has(triggerId)) {
-			logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
-			this.triggerFailures.delete(triggerId)
+	private async resetTriggerBackoff(triggerId: string): Promise<void> {
+		if (!this.triggerFailures.has(triggerId)) return
+		try {
+			await this.db.delete(triggerCooldowns).where(eq(triggerCooldowns.triggerId, triggerId))
+		} catch (err) {
+			logger.error('Failed to delete persisted trigger cooldown', {
+				triggerId,
+				error: String(err),
+			})
+			throw err
 		}
+		this.triggerFailures.delete(triggerId)
+		logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
+		this.drainTriggerQueue(triggerId, 'backoff_lift').catch((err) =>
+			logger.error('Trigger queue drain failed', { triggerId, error: String(err) }),
+		)
 	}
 
 	private async handleSessionOutcome(event: PgEvent): Promise<void> {
@@ -433,21 +703,84 @@ export class TriggerRunner {
 		dedupeTimeout.unref?.()
 		this.processedSessionOutcomes.set(sessionId, dedupeTimeout)
 
-		// Look up the session to find which trigger spawned it
+		// Look up the session to find which trigger spawned it, and whether the
+		// session is itself a scheduler-fired retry (retry_of != null) or has a
+		// retry scheduled (retry_at != null). §17.6: the trigger-runner defers
+		// to session-retry-scheduler.ts on retry chains — it should not
+		// double-account a subscription-limit failure as a trigger backoff, or
+		// pre-emptively record a trigger failure for a session the scheduler is
+		// about to retry on the same triggerId.
 		const [session] = await this.db
-			.select({ triggerId: sessions.triggerId })
+			.select({
+				triggerId: sessions.triggerId,
+				retryOf: sessions.retryOf,
+				retryAt: sessions.retryAt,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
 		if (!session?.triggerId) return
 
+		// Scheduler-fired retry — the trigger's failure/backoff bookkeeping
+		// already accounted for the original session; skip the re-fire so a
+		// retry chain doesn't inflate the failure count.
+		if (session.retryOf) return
+
 		if (event.action === 'session_completed') {
-			this.resetTriggerBackoff(session.triggerId)
+			await this.resetTriggerBackoff(session.triggerId)
+		} else if (session.retryAt) {
+			// session_failed / session_timeout but the scheduler is going to
+			// retry on the same triggerId — don't record a backoff yet; wait
+			// for the retry chain's terminal outcome.
 		} else {
-			// session_failed or session_timeout
-			this.recordTriggerFailure(session.triggerId)
+			// session_failed or session_timeout with no retry scheduled. A
+			// provider-truth reset time (§4.6) beats the exponential guess: the
+			// trigger AND the workspace hold until then, and the queue drains when
+			// it arrives.
+			const retryAt = await this.readRetryAt(event)
+			if (retryAt) {
+				await this.recordTriggerFailure(session.triggerId, 'retry_at_x', retryAt)
+				await this.suppressWorkspace(event.workspace_id, {
+					until: retryAt,
+					reason: 'retry_at_x',
+					metadata: { source_event_id: event.event_id, retry_at: retryAt.toISOString() },
+				})
+				return
+			}
+			await this.recordTriggerFailure(session.triggerId, event.action)
 		}
+	}
+
+	/**
+	 * The provider's reset time from a credit-exhaustion session_failed, or null
+	 * to fall back to the exponential backoff. Null when the flag is off, the
+	 * event is not a classified credit_exhaustion carrying a string retry_at,
+	 * or retry_at is unparseable, already past, or beyond RETRY_AT_MAX_MS —
+	 * event data is external input, and an epoch-9999 timestamp would otherwise
+	 * pause a workspace for good.
+	 */
+	private async readRetryAt(event: PgEvent): Promise<Date | null> {
+		if (event.action !== 'session_failed') return null
+		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return null
+		const data = await this.fetchEventData(event.event_id)
+		if (data?.classification !== 'credit_exhaustion' || typeof data.retry_at !== 'string') {
+			return null
+		}
+		const retryAt = new Date(data.retry_at)
+		const now = Date.now()
+		if (
+			Number.isNaN(retryAt.getTime()) ||
+			retryAt.getTime() <= now ||
+			retryAt.getTime() - now > RETRY_AT_MAX_MS
+		) {
+			logger.warn('Ignoring unusable retry_at on session_failed — using exponential backoff', {
+				eventId: event.event_id,
+				retryAt: data.retry_at,
+			})
+			return null
+		}
+		return retryAt
 	}
 
 	private async fetchEventData(eventId: string): Promise<Record<string, unknown> | null> {
@@ -458,7 +791,12 @@ export class TriggerRunner {
 		return (row?.data as Record<string, unknown>) ?? null
 	}
 
-	private async handleEvent(event: PgEvent) {
+	/**
+	 * `replay` narrows the pass to ONE trigger: the queue drain uses it to
+	 * re-run a single cooling trigger's held event without re-dispatching the
+	 * event to every healthy trigger that already handled it.
+	 */
+	private async handleEvent(event: PgEvent, replay?: { onlyTriggerId: string }) {
 		// Hot-reload: react to trigger CRUD events
 		if (event.entity_type === 'trigger') {
 			await this.handleTriggerChange(event)
@@ -473,10 +811,20 @@ export class TriggerRunner {
 		// constant for why neither `entity_type === 'workspace'` alone nor
 		// `action === 'updated'` alone is correct.
 		if (event.entity_type === 'workspace' && SUPPRESSION_CLEARING_ACTIONS.has(event.action)) {
-			this.clearWorkspaceSuppression(event.workspace_id)
+			await this.clearWorkspaceSuppression(event.workspace_id)
 		}
 
-		if (this.isWorkspaceSuppressed(event.workspace_id)) return
+		if (this.isWorkspaceSuppressed(event.workspace_id)) {
+			const suppression = this.workspaceSuppressions.get(event.workspace_id)
+			if (suppression) {
+				await this.holdDroppedEvent(event, {
+					reason: suppression.reason === 'retry_at_x' ? 'retry_at_x' : 'workspace_suppression',
+					triggerId: null,
+					replayAfter: suppression.until,
+				})
+			}
+			return
+		}
 
 		// Find matching event triggers for this workspace
 		const matchingTriggers = await this.db
@@ -487,6 +835,7 @@ export class TriggerRunner {
 					eq(triggers.workspaceId, event.workspace_id),
 					eq(triggers.type, 'event'),
 					eq(triggers.enabled, true),
+					replay ? eq(triggers.id, replay.onlyTriggerId) : undefined,
 				),
 			)
 
@@ -502,11 +851,27 @@ export class TriggerRunner {
 		// Lazily resolve {current, previous} for object entity events. New-shape events
 		// (`data.changes`) don't carry the full pre/post snapshots, so we hydrate `current`
 		// from the objects table and reconstruct `previous` by reversing the recorded diff.
+		// For `commented` events the same hydration runs — `current` carries the target
+		// object's `type` so `filter.on_target_type` can match (tech spec §5.4 fold 6).
+		// `previous` stays undefined for commented events; a comment is not an object mutation.
 		let objectContext: { current?: ObjectData; previous?: ObjectData } | undefined
 		const resolveObjectContext = async (): Promise<{
 			current?: ObjectData
 			previous?: ObjectData
 		}> => {
+			// Commented events carry no `data.previous` / `data.updated` / `data.changes`,
+			// but `entity_id` still points at the object the comment landed on — so
+			// hydrate `current` straight from the objects table and skip the diff path.
+			if (event.action === 'commented') {
+				if (!event.entity_id || !UUID_RE.test(event.entity_id)) return {}
+				const [row] = await this.db
+					.select()
+					.from(objects)
+					.where(eq(objects.id, event.entity_id))
+					.limit(1)
+				if (!row) return {}
+				return { current: row as unknown as ObjectData }
+			}
 			const data = await getEventData()
 			if (!data) return {}
 			// Legacy `{previous, updated}` snapshot ships both sides intact.
@@ -538,6 +903,35 @@ export class TriggerRunner {
 			return objectContext
 		}
 
+		// Build the record the matcher walks for `filter` and `conditions`. For
+		// object-update events the natural root is the hydrated `current` row
+		// (so `filter.status` works). For `commented` events the natural root
+		// is the event's data JSON with two virtual keys added: `actorId` from
+		// the event row so `filter.actorId` matches the author (the JSON
+		// payload has no author field), and `on_target_type` from the hydrated
+		// object row so `filter.on_target_type` pins to bet/task/insight (tech
+		// spec §5.4 fold 6). For every other event action the root stays the
+		// raw data payload — no shape change.
+		const buildFilterRoot = async (
+			data: Record<string, unknown>,
+		): Promise<Record<string, unknown>> => {
+			if (event.action === 'commented') {
+				const ctx = await getObjectContext()
+				const targetType = (ctx.current as { type?: string } | undefined)?.type
+				return {
+					...data,
+					actorId: event.actor_id,
+					...(targetType !== undefined ? { on_target_type: targetType } : {}),
+				}
+			}
+			const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
+			if (isObjectUpdate) {
+				const ctx = await getObjectContext()
+				return (ctx.current ?? data) as Record<string, unknown>
+			}
+			return data
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -554,24 +948,57 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
+			// Flag-gate `commented` action so a workspace that hasn't rolled to
+			// trigger_engine_v2 can never end up with commented-action triggers
+			// silently dead in the matcher — the trigger builder rejects the flag-off
+			// state with an error, so a saved trigger with action=commented always
+			// implies its workspace is expected to be on v2. If the flag flips off
+			// again (kill switch), the trigger stops firing entirely; better than
+			// firing with the on_target_type row hidden. Ships as one call site here;
+			// S1's two gate points (loadCooldowns / loadSuppressions) share the
+			// same temporary helper and get swapped to the S7 public resolver in
+			// one aggregate-merge pass.
+			if (
+				event.action === 'commented' &&
+				!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)
+			) {
+				continue
+			}
+
 			// Check filter conditions — for status_changed / updated events the entity lives
 			// on `data.updated` (legacy) or must be hydrated from the objects table (new
-			// {changes} shape). Use getObjectContext() + resolvePath() so dotted paths
-			// (e.g. "metadata.decision_type") also work correctly.
+			// {changes} shape). For `commented` the root merges `data`, the comment's
+			// `actorId`, and the target object's `__target_type` (tech spec §5.4 fold 6).
+			//
+			// Matcher v2 (tech spec §2.1) is flag-gated per workspace: when
+			// `trigger_engine_v2` is ON, array-valued entries take any-of semantics
+			// and every miss emits `trigger_match_failed` so the bet #8 dashboard
+			// can watch dead triggers reactivate. When OFF, today's strict-equality
+			// body runs unchanged (array values reference-equal against a literal
+			// array → always false, matching v1 behaviour); no PostHog row emitted
+			// so a pre-rollout workspace does not spam analytics.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
-				// Object-ness is resolved dynamically: getObjectContext() hydrates
-				// from the objects table and returns {} for non-object entities, so
-				// custom workspace-defined object types match filters too.
-				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
-				const ctx = isObjectUpdate ? await getObjectContext() : {}
-				const filterRoot = (ctx.current ?? data) as Record<string, unknown>
+				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
-				const matches = Object.entries(filter).every(
-					([key, value]) => resolvePath(filterRoot, key) === value,
-				)
-				if (!matches) continue
+				if (isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) {
+					const result = evaluateFilterV2(filter, filterRoot)
+					if (!result.matches) {
+						void trackTriggerMatchFailed({
+							workspaceId: event.workspace_id,
+							triggerId: trigger.id,
+							eventId: event.event_id,
+							filterShape: result.missShape,
+						})
+						continue
+					}
+				} else {
+					const matches = Object.entries(filter).every(
+						([key, value]) => resolvePath(filterRoot, key) === value,
+					)
+					if (!matches) continue
+				}
 			}
 
 			// Check status transition conditions
@@ -583,13 +1010,13 @@ export class TriggerRunner {
 
 			// Check conditions — resolves against the full event payload with a `metadata`
 			// fallback for legacy internal-object triggers. For updated/status_changed events
-			// the "current" object (i.e. NEW.updated) is the natural root.
+			// the "current" object (i.e. NEW.updated) is the natural root. For commented
+			// events the root matches the filter root, so a condition like
+			// `data.mentions contains <uuid>` reads the same shape.
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
 				if (!data) continue
-				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
-				const ctx = isObjectUpdate ? await getObjectContext() : {}
-				const conditionRoot = (ctx.current ?? data) as Record<string, unknown>
+				const conditionRoot = await buildFilterRoot(data)
 				if (!evaluateConditions(config.conditions, conditionRoot)) continue
 			}
 
@@ -599,6 +1026,11 @@ export class TriggerRunner {
 				logger.info(
 					`Trigger '${trigger.name}' in backoff until ${backoffState.backoffUntil.toISOString()}, skipping`,
 				)
+				await this.holdDroppedEvent(event, {
+					reason: backoffState.reason === 'retry_at_x' ? 'retry_at_x' : 'trigger_backoff',
+					triggerId: trigger.id,
+					replayAfter: backoffState.backoffUntil,
+				})
 				continue
 			}
 
@@ -613,8 +1045,34 @@ export class TriggerRunner {
 			const dataForPrompt = await getEventData()
 			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
 
+			// Idempotency claim — S2 of the trigger-engine fix bet (tech spec §3.4).
+			// Ships UNCONDITIONAL (no flag check): during blue-green rolling deploys
+			// both trigger-runner instances receive the same PG NOTIFY payload and
+			// would otherwise both dispatch. First INSERT to succeed claims the
+			// (trigger_id, event_id); the other's ON CONFLICT DO NOTHING returns
+			// zero rows and the dispatch skips. Load-bearing during rollback per
+			// §7.3 — a kill-switch flip must not re-open this window, so the
+			// guard cannot sit behind the v2 gate.
+			const eventIdBigint = Number(event.event_id)
+			const claimed = await this.db
+				.insert(triggerDispatches)
+				.values({ triggerId: trigger.id, eventId: eventIdBigint })
+				.onConflictDoNothing()
+				.returning({ triggerId: triggerDispatches.triggerId })
+			if (claimed.length === 0) {
+				logger.info(
+					`Trigger ${trigger.id} already dispatched event ${event.event_id} by another process`,
+				)
+				await trackTriggerDispatchDeduped({
+					workspaceId: event.workspace_id,
+					triggerId: trigger.id,
+					eventId: event.event_id,
+				})
+				continue
+			}
+
 			// Log trigger fired event
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: event.workspace_id,
 				actorId: trigger.targetActorId,
 				action: 'trigger_fired',
@@ -629,37 +1087,76 @@ export class TriggerRunner {
 			})
 
 			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
-			this.sessionManager
-				.createSession(event.workspace_id, {
-					actorId: trigger.targetActorId,
-					actionPrompt: prompt,
-					triggerId: trigger.id,
-					createdBy: trigger.createdBy,
-				})
-				.then(async (session) => {
+			const initiatedFrom = await loadInitiatedFromObject(this.db, event.entity_id)
+			startSession({
+				workspaceId: event.workspace_id,
+				actorId: trigger.targetActorId,
+				callerKind: 'trigger',
+				actionPrompt: prompt,
+				triggerId: trigger.id,
+				triggerType: trigger.type,
+				createdBy: trigger.createdBy,
+				...initiatedFrom,
+				await: 'none',
+			})
+				.then(async (handle) => {
+					// Stamp the claim row with the session id. Diagnostic only —
+					// if this UPDATE fails, the trigger_dispatches row still
+					// guards against double-fire; its presence is the guarantee,
+					// not session_id (tech spec §6.4).
+					await this.db
+						.update(triggerDispatches)
+						.set({ sessionId: handle.sessionId })
+						.where(
+							and(
+								eq(triggerDispatches.triggerId, trigger.id),
+								eq(triggerDispatches.eventId, eventIdBigint),
+							),
+						)
+						.catch((err) =>
+							logger.debug('Could not stamp trigger_dispatches.session_id', {
+								triggerId: trigger.id,
+								eventId: event.event_id,
+								sessionId: handle.sessionId,
+								error: String(err),
+							}),
+						)
+
 					// Link the object to the active session
 					if (event.entity_id) {
 						await this.db
 							.update(objects)
-							.set({ activeSessionId: session.id, updatedAt: new Date() })
+							.set({ activeSessionId: handle.sessionId, updatedAt: new Date() })
 							.where(eq(objects.id, event.entity_id))
 							.catch((err) =>
 								logger.debug('Could not link object to active session', {
-									sessionId: session.id,
+									sessionId: handle.sessionId,
 									entityId: event.entity_id,
 									error: String(err),
 								}),
 							)
 					}
 				})
-				.catch((err) => this.handleSessionCreateFailure(event.workspace_id, err, trigger.name))
+				.catch((err) =>
+					this.handleSessionCreateFailure(event.workspace_id, err, trigger.name).catch(
+						(persistErr) =>
+							logger.error('handleSessionCreateFailure persistence failed', {
+								workspaceId: event.workspace_id,
+								trigger: trigger.name,
+								error: String(persistErr),
+							}),
+					),
+				)
 		}
 	}
 
 	private async handleTriggerChange(event: PgEvent) {
+		if (!TRIGGER_CRUD_ACTIONS.has(event.action)) return
+
 		const triggerId = event.entity_id
 
 		if (event.action === 'deleted') {
+			this.triggerFingerprints.delete(triggerId)
 			this.cronJobs.get(triggerId)?.stop()
 			this.cronJobs.delete(triggerId)
 			const timeout = this.reminderTimeouts.get(triggerId)
@@ -667,6 +1164,10 @@ export class TriggerRunner {
 				clearTimeout(timeout)
 				this.reminderTimeouts.delete(triggerId)
 			}
+			// The triggers row is already gone (deleted event fires post-delete),
+			// so the ON DELETE CASCADE on trigger_cooldowns.trigger_id has already
+			// removed the persisted row — no DB write needed here beyond clearing
+			// the in-memory Map.
 			this.triggerFailures.delete(triggerId)
 			logger.info(`Trigger '${triggerId}' removed (deleted)`)
 			return
@@ -681,8 +1182,13 @@ export class TriggerRunner {
 
 		if (!trigger) return
 
-		// Clear backoff state when a trigger is updated/re-enabled
-		this.resetTriggerBackoff(triggerId)
+		// Clear backoff state when a human edits or re-enables the trigger. An
+		// updated event that changed none of the editable fields (a Slack setup
+		// status write, a metadata touch) is not an edit and leaves it alone.
+		const fingerprint = triggerFingerprint(trigger)
+		const edited = this.triggerFingerprints.get(triggerId) !== fingerprint
+		this.triggerFingerprints.set(triggerId, fingerprint)
+		if (edited) await this.resetTriggerBackoff(triggerId)
 
 		// Stop any existing schedule first
 		this.cronJobs.get(triggerId)?.stop()
@@ -749,6 +1255,11 @@ export class TriggerRunner {
 			logger.info(
 				`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
 			)
+			void trackTriggerCronTickDropped({
+				workspaceId: trigger.workspaceId,
+				triggerId: trigger.id,
+				backoffUntil: cronBackoff.backoffUntil,
+			})
 			return
 		}
 
@@ -779,7 +1290,7 @@ export class TriggerRunner {
 		}
 		if (scopeMatches) eventData.scope_matches = scopeMatches
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId: trigger.workspaceId,
 			actorId: trigger.targetActorId,
 			action: 'trigger_fired',
@@ -792,14 +1303,29 @@ export class TriggerRunner {
 			? `${trigger.actionPrompt}\n\nScope matches: ${JSON.stringify(scopeMatches)}`
 			: trigger.actionPrompt
 
-		this.sessionManager
-			.createSession(trigger.workspaceId, {
-				actorId: trigger.targetActorId,
-				actionPrompt,
-				triggerId: trigger.id,
-				createdBy: trigger.createdBy,
-			})
-			.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
+		startSession({
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			callerKind: 'trigger',
+			actionPrompt,
+			triggerId: trigger.id,
+			triggerType: trigger.type,
+			createdBy: trigger.createdBy,
+			// Cron trigger: the scope may or may not match an object. NULL is the
+			// correct value when no single originating object exists (spec §3.3,
+			// cron/reminder rows).
+			initiatedFromObjectId: null,
+			initiatedFromObjectType: null,
+			await: 'none',
+		}).catch((err) =>
+			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
+				logger.error('handleSessionCreateFailure persistence failed', {
+					workspaceId: trigger.workspaceId,
+					trigger: trigger.name,
+					error: String(persistErr),
+				}),
+			),
+		)
 	}
 
 	private async queryScopeMatches(
@@ -820,10 +1346,242 @@ export class TriggerRunner {
 		}
 	}
 
+	/**
+	 * Hydrate `triggerFailures` from `trigger_cooldowns` at boot — reads every
+	 * row whose `backoff_until` is still in the future, joins to `triggers` to
+	 * find the owning workspace, and skips rows for workspaces that have not
+	 * opted into the v2 gate (§3.2, §7.1).
+	 *
+	 * A DB read failure THROWS: booting with empty Maps against a live DB is
+	 * exactly the deploy-wipe bug this table exists to prevent (§6.3).
+	 */
+	private async loadCooldowns(): Promise<void> {
+		const now = new Date()
+		let rows: {
+			triggerId: string
+			count: number
+			lastFailedAt: Date
+			backoffUntil: Date
+			reason: string | null
+			workspaceId: string
+		}[]
+		try {
+			rows = await this.db
+				.select({
+					triggerId: triggerCooldowns.triggerId,
+					count: triggerCooldowns.count,
+					lastFailedAt: triggerCooldowns.lastFailedAt,
+					backoffUntil: triggerCooldowns.backoffUntil,
+					reason: triggerCooldowns.reason,
+					workspaceId: triggers.workspaceId,
+				})
+				.from(triggerCooldowns)
+				.innerJoin(triggers, eq(triggers.id, triggerCooldowns.triggerId))
+				.where(gt(triggerCooldowns.backoffUntil, now))
+		} catch (err) {
+			logger.error('Failed to load trigger cooldowns from DB', { error: String(err) })
+			throw err
+		}
+
+		let loaded = 0
+		let skipped = 0
+		for (const row of rows) {
+			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
+				skipped++
+				continue
+			}
+			this.triggerFailures.set(row.triggerId, {
+				count: row.count,
+				lastFailedAt: row.lastFailedAt,
+				backoffUntil: row.backoffUntil,
+				reason: row.reason ?? undefined,
+			})
+			loaded++
+		}
+		logger.info(`Trigger cooldowns loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+	}
+
+	/**
+	 * Same as loadCooldowns, but for `workspace_suppressions`. Read failures
+	 * throw for the same fail-fast reason.
+	 */
+	private async loadSuppressions(): Promise<void> {
+		const now = new Date()
+		let rows: {
+			workspaceId: string
+			suppressedUntil: Date
+			reason: string
+		}[]
+		try {
+			rows = await this.db
+				.select({
+					workspaceId: workspaceSuppressions.workspaceId,
+					suppressedUntil: workspaceSuppressions.suppressedUntil,
+					reason: workspaceSuppressions.reason,
+				})
+				.from(workspaceSuppressions)
+				.where(gt(workspaceSuppressions.suppressedUntil, now))
+		} catch (err) {
+			logger.error('Failed to load workspace suppressions from DB', { error: String(err) })
+			throw err
+		}
+
+		let loaded = 0
+		let skipped = 0
+		for (const row of rows) {
+			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
+				skipped++
+				continue
+			}
+			this.workspaceSuppressions.set(row.workspaceId, {
+				until: row.suppressedUntil,
+				reason: row.reason,
+			})
+			loaded++
+		}
+		logger.info(`Workspace suppressions loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+	}
+
+	/**
+	 * Sweep expired cooldown / suppression rows more than 1h past their
+	 * expiry timestamp, and idempotency-claim rows older than 30 days.
+	 * Keeps all three tables bounded (§3.2 + §3.4). Failures here log but
+	 * do not throw — sweep is a cleanup, not a correctness gate.
+	 */
+	private async sweepExpiredCooldowns(): Promise<void> {
+		const cutoff = new Date(Date.now() - COOLDOWN_SWEEP_GRACE_MS)
+		try {
+			await this.db.delete(triggerCooldowns).where(lt(triggerCooldowns.backoffUntil, cutoff))
+		} catch (err) {
+			logger.warn('Trigger cooldown sweep failed', { error: String(err) })
+		}
+		try {
+			await this.db
+				.delete(workspaceSuppressions)
+				.where(lt(workspaceSuppressions.suppressedUntil, cutoff))
+		} catch (err) {
+			logger.warn('Workspace suppression sweep failed', { error: String(err) })
+		}
+		const dispatchCutoff = new Date(Date.now() - DISPATCH_SWEEP_RETENTION_MS)
+		try {
+			await this.db
+				.delete(triggerDispatches)
+				.where(lt(triggerDispatches.dispatchedAt, dispatchCutoff))
+		} catch (err) {
+			logger.warn('Trigger dispatch sweep failed', { error: String(err) })
+		}
+		try {
+			await sweepQueueRetention(this.db, new Date())
+		} catch (err) {
+			logger.warn('Trigger event queue retention sweep failed', { error: String(err) })
+		}
+	}
+
+	/**
+	 * Parks an event that is about to be dropped so it replays when the window
+	 * lifts (tech spec §4.2). Behind trigger_engine_v2: with the flag off the
+	 * drop is exactly today's, and nothing touches the queue. The queue's own
+	 * audit events are never parked — see QUEUE_EVENT_ENTITY_TYPE.
+	 */
+	private async holdDroppedEvent(
+		event: PgEvent,
+		opts: Parameters<typeof enqueueDroppedEvent>[2],
+	): Promise<void> {
+		if (event.entity_type === QUEUE_EVENT_ENTITY_TYPE) return
+		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return
+		await enqueueDroppedEvent(this.db, event, opts)
+	}
+
+	/**
+	 * Replays one trigger's held events in event_id order (§4.3). Skipped while
+	 * the trigger is back inside a window or its workspace is suppressed — the
+	 * rows stay pending for the next lift or sweep.
+	 */
+	private async drainTriggerQueue(
+		triggerId: string,
+		source: TriggerQueueDrainSource,
+	): Promise<void> {
+		await this.runDrain(
+			`trigger:${triggerId}`,
+			{ triggerId },
+			source,
+			(workspaceId) => {
+				const backoff = this.triggerFailures.get(triggerId)
+				return (
+					(backoff !== undefined && backoff.backoffUntil > new Date()) ||
+					this.isWorkspaceSuppressed(workspaceId)
+				)
+			},
+			(event) => this.handleEvent(event, { onlyTriggerId: triggerId }),
+		)
+	}
+
+	/**
+	 * Replays a workspace's suppression-held events through the full matcher
+	 * (§4.3): it re-checks the trigger list and each trigger's cooldown, so an
+	 * event whose trigger is cooling moves on to that trigger's own queue.
+	 */
+	private async drainWorkspaceQueue(
+		workspaceId: string,
+		source: TriggerQueueDrainSource,
+	): Promise<void> {
+		await this.runDrain(
+			`workspace:${workspaceId}`,
+			{ workspaceId },
+			source,
+			(ws) => this.isWorkspaceSuppressed(ws),
+			(event) => this.handleEvent(event),
+		)
+	}
+
+	private async runDrain(
+		scopeKey: string,
+		scope: Parameters<typeof drainQueue>[1],
+		source: TriggerQueueDrainSource,
+		isHeld: (workspaceId: string) => boolean,
+		replay: (event: PgEvent) => Promise<void>,
+	): Promise<void> {
+		if (this.drainingScopes.has(scopeKey)) return
+		this.drainingScopes.add(scopeKey)
+		try {
+			const replayed = await drainQueue(this.db, scope, {
+				source,
+				canReplay: (workspaceId) => isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2),
+				isHeld,
+				replay,
+			})
+			if (replayed > 0)
+				logger.info(`Trigger event queue drained — ${replayed} replayed`, { scopeKey, source })
+		} finally {
+			this.drainingScopes.delete(scopeKey)
+		}
+	}
+
+	/**
+	 * 30s safety net (§4.4): drains any trigger or workspace whose held events
+	 * have reached their replay_after, which is how a backoff or retry_at_x
+	 * window that simply EXPIRED — no success event, no settings change to lift
+	 * it — gets its events back.
+	 */
+	private async sweepEventQueue(): Promise<void> {
+		const now = new Date()
+		for (const triggerId of await findDueTriggerIds(this.db, now)) {
+			await this.drainTriggerQueue(triggerId, 'sweep')
+		}
+		for (const workspaceId of await findDueWorkspaceIds(this.db, now)) {
+			await this.drainWorkspaceQueue(workspaceId, 'sweep')
+		}
+	}
+
 	private scheduleReminder(trigger: typeof triggers.$inferSelect) {
 		const config = trigger.config as Record<string, unknown>
 		const scheduledAt = new Date(config.scheduled_at as string)
-		const delay = Math.max(0, scheduledAt.getTime() - Date.now())
+		const remaining = Math.max(0, scheduledAt.getTime() - Date.now())
+		// setTimeout treats a delay above 2^31-1 ms (~24.8 days) as 1 ms, which
+		// would fire a far-future reminder at once. Arm at most MAX_TIMEOUT_MS and
+		// re-arm from the timer callback until the real time is in range.
+		const delay = Math.min(remaining, MAX_TIMEOUT_MS)
+		const clamped = remaining > MAX_TIMEOUT_MS
 
 		// Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot,
 		// so skipping it here would consume its timeout and drop it permanently
@@ -832,9 +1590,14 @@ export class TriggerRunner {
 		// failure through handleSessionCreateFailure so an over-cap reminder is
 		// classified (and can open a pause) rather than paging.
 		const timeout = setTimeout(async () => {
+			if (clamped) {
+				this.scheduleReminder(trigger)
+				return
+			}
+
 			logger.info(`Reminder trigger '${trigger.name}' firing`)
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: trigger.workspaceId,
 				actorId: trigger.targetActorId,
 				action: 'trigger_fired',
@@ -848,14 +1611,28 @@ export class TriggerRunner {
 				},
 			})
 
-			this.sessionManager
-				.createSession(trigger.workspaceId, {
-					actorId: trigger.targetActorId,
-					actionPrompt: trigger.actionPrompt,
-					triggerId: trigger.id,
-					createdBy: trigger.createdBy,
-				})
-				.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
+			startSession({
+				workspaceId: trigger.workspaceId,
+				actorId: trigger.targetActorId,
+				callerKind: 'trigger',
+				actionPrompt: trigger.actionPrompt,
+				triggerId: trigger.id,
+				triggerType: trigger.type,
+				createdBy: trigger.createdBy,
+				// Reminder trigger: one-shot, no originating object.
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
+				await: 'none',
+			}).catch((err) =>
+				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
+					(persistErr) =>
+						logger.error('handleSessionCreateFailure persistence failed', {
+							workspaceId: trigger.workspaceId,
+							trigger: trigger.name,
+							error: String(persistErr),
+						}),
+				),
+			)
 
 			// Auto-disable after firing
 			await this.db
@@ -990,6 +1767,62 @@ export function resolvePath(
 }
 
 /**
+ * Result of running the matcher v2 filter body against one event. On a miss,
+ * `missShape` is the short label carried into `trigger_match_failed` so the
+ * bet #8 dashboard can separate array-value dead triggers from scalar
+ * mismatches on healthy triggers from missing hydration paths (§Observability
+ * in the product spec).
+ */
+export type FilterMatchResult =
+	| { matches: true }
+	| {
+			matches: false
+			missShape: 'array_value_mismatch' | 'scalar_mismatch' | 'path_missing' | 'array_empty'
+			failedKey: string
+	  }
+
+/**
+ * Matcher v2 (tech spec §2.1). Semantics per filter entry:
+ *  - Scalar value  → strict equality against `resolvePath(root, key)`.
+ *  - Array value   → any-of: matches when the resolved actual is `===` any
+ *    element of the array.
+ *  - Empty array   → matches nothing (a filter that says "one of []" cannot
+ *    fire; classify separately from `array_value_mismatch` so ops can spot
+ *    the config bug).
+ *  - Missing path  → `resolvePath` returned undefined; kept distinct from a
+ *    value mismatch so a hydration slip does not read as a bad config.
+ *
+ * Short-circuits on first miss so a long filter map does not pay for every
+ * entry when the first already disqualifies the event. Exported (over
+ * inlined) so the matcher can be pinned as a contract-style spec table
+ * separately from the trigger-runner boot dance.
+ */
+export function evaluateFilterV2(
+	filter: Record<string, unknown>,
+	root: Record<string, unknown>,
+): FilterMatchResult {
+	for (const [key, value] of Object.entries(filter)) {
+		const actual = resolvePath(root, key)
+		if (Array.isArray(value)) {
+			if (value.length === 0) return { matches: false, missShape: 'array_empty', failedKey: key }
+			if (value.includes(actual)) continue
+			return {
+				matches: false,
+				missShape: actual === undefined ? 'path_missing' : 'array_value_mismatch',
+				failedKey: key,
+			}
+		}
+		if (actual === value) continue
+		return {
+			matches: false,
+			missShape: actual === undefined ? 'path_missing' : 'scalar_mismatch',
+			failedKey: key,
+		}
+	}
+	return { matches: true }
+}
+
+/**
  * Resolve a condition field against the data root. Tries the literal/dotted path first;
  * if it doesn't resolve, falls back to `root.metadata[field]` so existing internal-object
  * triggers (which assumed an implicit metadata lookup) keep working.
@@ -1088,6 +1921,13 @@ export function evaluateCondition(
 //   • case 1a mention — agent-actor mention → needs_input notification + agent
 //     session; human-actor mention → needs_input notification only. Suppressed
 //     when the mentioned actor authored the parent comment (`noop_self_authored`).
+//   • case 0 self-authored — the object's own driver authored the comment.
+//     Runs FIRST, before case 2 and case 3: there is nobody to ping, because
+//     the driver wrote the comment itself. `noop_self_authored` with no
+//     dispatch. Without this guard the comment falls past case 2 (whose shared
+//     eligibility predicate excludes `driver === commenter`) into case 3, which
+//     only checks the CoS for self-authorship — so a driven object would get a
+//     CoS session for a comment its own driver wrote.
 //   • case 2 driver fallback — no mentions AND joined `objects.driver` on
 //     `event.entity_id` is non-null AND ≠ author AND ≠ parent-comment author.
 //     Silent dispatch via `sessionManager.createSession(...)` with
@@ -1096,7 +1936,11 @@ export function evaluateCondition(
 //     Chief of Staff (spec-fixed actor id) with a wrapped routing prompt
 //     (object title + id — not the raw comment) so CoS routes rather than
 //     answers. Suppressed when CoS authored the comment or its parent
-//     (`noop_self_authored`).
+//     (`noop_self_authored`). Two shapes reach it once case 0 and case 2 have
+//     claimed theirs: a genuinely driver-less object, and one whose driver
+//     authored the parent comment (loop-safety option (a) below). The routing
+//     prompt opens differently for those two, so it never claims "no driver"
+//     for an object that has one.
 //
 // Structured as a class in the same shape as `OrphanThreadDetector` in
 // `orphan-thread-detector.ts` — one entry method (`handleEvent`) with focused
@@ -1120,13 +1964,38 @@ interface CommentEventData {
 	} | null
 }
 
+/**
+ * The single source of truth for "case 2 will dispatch the object's driver for
+ * this comment". Both the ladder below and the thread-reply spawn in
+ * `routes/events.ts` consult it, so the two can't drift into disagreeing about
+ * whether a given comment has already been handled — a disagreement there is
+ * exactly what queues two sessions for one comment.
+ *
+ * `mentionCount` is a parameter rather than an assumption because the two
+ * callers sit on opposite sides of the mention early-return: the ladder only
+ * ever reaches `handleFallback` for a mention-free comment (so it passes 0),
+ * while the route has to answer the question before that branch is taken.
+ */
+export function isCommentFallbackDriverEligible(ctx: {
+	driverId: string | null
+	commenterId: string
+	parentAuthorId: string | null
+	mentionCount: number
+}): boolean {
+	if (ctx.mentionCount > 0) return false
+	if (!ctx.driverId) return false
+	if (ctx.driverId === ctx.commenterId) return false
+	if (ctx.driverId === ctx.parentAuthorId) return false
+	return true
+}
+
 export class CommentDispatcher {
 	private handler: ((event: PgEvent) => void) | null = null
 
 	constructor(
 		private db: Database,
 		private bridge: PgNotifyBridge,
-		private sessionManager: SessionManager,
+		_sessionManager: SessionManager,
 	) {}
 
 	start(): void {
@@ -1206,6 +2075,7 @@ export class CommentDispatcher {
 				objectId: event.entity_id,
 				mentions,
 				parentAuthorId,
+				parentEventId,
 				suppressedActorIds,
 				content: typeof data.content === 'string' ? data.content : '',
 			})
@@ -1227,6 +2097,7 @@ export class CommentDispatcher {
 			entityId: event.entity_id,
 			content: typeof data.content === 'string' ? data.content : '',
 			parentAuthorId,
+			parentEventId,
 		})
 	}
 
@@ -1238,6 +2109,7 @@ export class CommentDispatcher {
 		objectId: string
 		mentions: string[]
 		parentAuthorId: string | null
+		parentEventId: number | null
 		suppressedActorIds: Set<string>
 		content: string
 	}): Promise<void> {
@@ -1282,6 +2154,7 @@ export class CommentDispatcher {
 				objectId: ctx.objectId,
 				actor,
 				content: ctx.content,
+				parentEventId: ctx.parentEventId,
 			})
 			anyDispatched = true
 		}
@@ -1305,6 +2178,7 @@ export class CommentDispatcher {
 		entityId: string
 		content: string
 		parentAuthorId: string | null
+		parentEventId: number | null
 	}): Promise<void> {
 		const [obj] = await this.db
 			.select({ driver: objects.driver })
@@ -1313,10 +2187,38 @@ export class CommentDispatcher {
 			.limit(1)
 		const driverId = obj?.driver ?? null
 
+		// Case 0 — the driver authored the comment itself. Guard-first: resolved
+		// BEFORE case 2 and case 3 so nothing downstream can claim a comment the
+		// object's own driver already wrote. Case 2 would decline this shape
+		// anyway (`isCommentFallbackDriverEligible` excludes driver === commenter)
+		// and case 3 only checks the CoS for self-authorship, so without this the
+		// ladder would dispatch a CoS session for a self-authored comment on a
+		// driven object. `noop_self_authored` is exactly the tag that intended.
+		if (driverId && driverId === ctx.commenterId) {
+			await this.emitResolved(
+				ctx.event,
+				ctx.eventIdNum,
+				ctx.commenterId,
+				'noop_self_authored',
+				null,
+			)
+			return
+		}
+
 		// Case 2 — driver fallback. Loop-safety option (a): also blocked when
 		// the driver authored the PARENT comment we're replying to — otherwise
 		// an agent that drives its own bet would ping itself on every reply.
-		if (driverId && driverId !== ctx.commenterId && driverId !== ctx.parentAuthorId) {
+		if (
+			driverId &&
+			isCommentFallbackDriverEligible({
+				driverId,
+				commenterId: ctx.commenterId,
+				parentAuthorId: ctx.parentAuthorId,
+				// `handleEvent` returns to the mention branch for any comment that
+				// carries mentions, so the ladder is only ever reached mention-free.
+				mentionCount: 0,
+			})
+		) {
 			const dispatched = await this.dispatchCommentFallback({
 				workspaceId: ctx.workspaceId,
 				actorId: driverId,
@@ -1326,6 +2228,7 @@ export class CommentDispatcher {
 					entityId: ctx.entityId,
 					commenterActorId: ctx.commenterId,
 					content: ctx.content,
+					parentEventId: ctx.parentEventId,
 				}),
 			})
 			// Only claim the case when a session actually exists — otherwise the
@@ -1381,6 +2284,8 @@ export class CommentDispatcher {
 				entityId: ctx.entityId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
+				driverId,
+				parentEventId: ctx.parentEventId,
 			}),
 		})
 		await this.emitResolved(
@@ -1423,8 +2328,11 @@ export class CommentDispatcher {
 		actionPrompt: string
 	}): Promise<boolean> {
 		try {
-			await this.sessionManager.createSession(ctx.workspaceId, {
+			const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.entityId)
+			await startSession({
+				workspaceId: ctx.workspaceId,
 				actorId: ctx.actorId,
+				callerKind: 'trigger',
 				actionPrompt: ctx.actionPrompt,
 				createdBy: ctx.actorId,
 				triggerSource: 'comment_fallback',
@@ -1435,6 +2343,8 @@ export class CommentDispatcher {
 						source_comment_event_id: ctx.sourceCommentEventId,
 					},
 				},
+				...initiatedFrom,
+				await: 'none',
 			})
 			return true
 		} catch (err) {
@@ -1452,6 +2362,8 @@ export class CommentDispatcher {
 		entityId: string
 		commenterActorId: string
 		content: string
+		driverId: string | null
+		parentEventId: number | null
 	}): Promise<string> {
 		const [row] = await this.db
 			.select({ title: objects.title })
@@ -1459,12 +2371,21 @@ export class CommentDispatcher {
 			.where(eq(objects.id, ctx.entityId))
 			.limit(1)
 		const title = row?.title ?? '(untitled object)'
+		// Two shapes reach case 3 once case 0 and case 2 have claimed theirs, and
+		// the opening line is branched so neither is told a falsehood: a genuinely
+		// driver-less object, and one whose driver authored the parent comment
+		// (loop-safety option (a) — case 2 declines it by design). Only the first
+		// gets the "no driver" line; claiming it for an object that has a driver
+		// would send CoS hunting for an owner to assign when one already exists.
+		const opening = ctx.driverId
+			? 'A comment was posted on an object whose driver wrote the comment it replies to — you are being pinged as the responder of last resort. Decide: forward to a specialist, or answer directly.'
+			: 'A comment was posted on an object that has no driver — you are being pinged as the responder of last resort. Decide: assign a driver, forward to a specialist, or answer directly.'
 		// Every id is on its own labelled line rather than inlined in prose —
 		// a bare uuid inside a sentence reads ambiguously (object? comment?
 		// actor?), so the agent has to guess what to pass to get_objects. Same
 		// labelled shape as `buildCommentFallbackPrompt` for the driver case.
 		return [
-			'A comment was posted on an object that has no driver — you are being pinged as the responder of last resort. Decide: assign a driver, forward to a specialist, or answer directly.',
+			opening,
 			'',
 			`Object ID: ${ctx.entityId}`,
 			`Object title: ${title}`,
@@ -1473,6 +2394,7 @@ export class CommentDispatcher {
 			'"""',
 			ctx.content,
 			'"""',
+			...threadReplyLines(ctx.parentEventId),
 		].join('\n')
 	}
 
@@ -1522,6 +2444,7 @@ export class CommentDispatcher {
 		objectId: string
 		actor: { id: string; type: string }
 		content: string
+		parentEventId: number | null
 	}): Promise<void> {
 		const [notification] = await this.db.transaction((tx) =>
 			insertNotificationsWithEvents(tx, {
@@ -1554,35 +2477,39 @@ export class CommentDispatcher {
 
 		if (ctx.actor.type !== 'agent') return
 
-		this.sessionManager
-			.createSession(ctx.workspaceId, {
-				actorId: ctx.actor.id,
-				actionPrompt: buildMentionPrompt({
-					objectId: ctx.objectId,
-					commenterActorId: ctx.commenterId,
-					content: ctx.content,
-					notificationId: notification.id,
-				}),
-				config: {
-					mention: {
-						object_id: ctx.objectId,
-						commenter_actor_id: ctx.commenterId,
-						notification_id: notification.id,
-						comment_event_id: ctx.eventId,
-					},
+		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
+		startSession({
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actor.id,
+			callerKind: 'trigger',
+			actionPrompt: buildMentionPrompt({
+				objectId: ctx.objectId,
+				commenterActorId: ctx.commenterId,
+				content: ctx.content,
+				notificationId: notification.id,
+				parentEventId: ctx.parentEventId,
+			}),
+			config: {
+				mention: {
+					object_id: ctx.objectId,
+					commenter_actor_id: ctx.commenterId,
+					notification_id: notification.id,
+					comment_event_id: ctx.eventId,
 				},
-				triggerSource: 'comment_fallback',
-				sourceCommentEventId: ctx.eventId,
-				createdBy: ctx.commenterId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create session for @mentioned agent', {
-					agentId: ctx.actor.id,
-					objectId: ctx.objectId,
-					notificationId: notification.id,
-					error: String(err),
-				}),
-			)
+			},
+			triggerSource: 'comment_fallback',
+			sourceCommentEventId: ctx.eventId,
+			createdBy: ctx.commenterId,
+			...initiatedFrom,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to create session for @mentioned agent', {
+				agentId: ctx.actor.id,
+				objectId: ctx.objectId,
+				notificationId: notification.id,
+				error: String(err),
+			}),
+		)
 	}
 
 	private log(event: PgEvent, kind: CommentDispatchCase, resolvedActorId: string): void {
@@ -1606,6 +2533,7 @@ export function buildMentionPrompt(ctx: {
 	commenterActorId: string
 	content: string
 	notificationId: string
+	parentEventId: number | null
 }): string {
 	return [
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
@@ -1623,6 +2551,7 @@ export function buildMentionPrompt(ctx: {
 		'"""',
 		'',
 		`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
+		...threadReplyLines(ctx.parentEventId),
 	].join('\n')
 }
 
@@ -1648,6 +2577,27 @@ export function normalizeParentEventId(raw: unknown): number | null {
 }
 
 /**
+ * Prompt lines telling a dispatched agent that the comment it is answering
+ * sits inside an existing thread, and how to reply into that thread instead of
+ * starting a new top-level comment.
+ *
+ * Returns an empty array when the triggering comment was itself top-level —
+ * there the new comment IS the thread, so there is nothing to say. The lines
+ * begin with a blank separator so call sites can spread the result
+ * unconditionally. The id is the thread root: the route collapses a reply to
+ * its root before storing, so passing it back as `parent_event_id` is
+ * idempotent and can never nest a thread deeper.
+ */
+export function threadReplyLines(parentEventId: number | null): string[] {
+	if (parentEventId === null) return []
+	return [
+		'',
+		`Thread parent event ID: ${parentEventId}`,
+		`The comment you are responding to is a reply inside an existing thread. Reply in that thread — pass parent_event_id: ${parentEventId} to create_comment — instead of starting a new top-level comment.`,
+	]
+}
+
+/**
  * Prompt handed to the driver on case-2 dispatch. Deliberately terse — the
  * driver knows their own object; the important part is the comment itself.
  */
@@ -1655,6 +2605,7 @@ export function buildCommentFallbackPrompt(ctx: {
 	entityId: string
 	commenterActorId: string
 	content: string
+	parentEventId: number | null
 }): string {
 	return [
 		'A comment was posted on an object you drive that was NOT @mentioning anyone — you are being pinged as the driver of last resort. Read the comment and decide what the right response is: reply in the thread, take an action, or nothing (silence is a valid outcome).',
@@ -1665,5 +2616,6 @@ export function buildCommentFallbackPrompt(ctx: {
 		'"""',
 		ctx.content,
 		'"""',
+		...threadReplyLines(ctx.parentEventId),
 	].join('\n')
 }

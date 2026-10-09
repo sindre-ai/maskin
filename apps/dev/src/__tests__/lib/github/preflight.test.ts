@@ -270,14 +270,121 @@ describe('runGitHubPreflight', () => {
 		expect(calledUrls).toEqual(['https://api.github.com/installation/repositories?per_page=1'])
 	})
 
-	it('returns network-error when fetch throws', async () => {
-		const fetchImpl = vi.fn(async () => {
-			throw new Error('ECONNRESET')
+	describe('upstream failures on the blob probe', () => {
+		const blobUrl = 'https://api.github.com/repos/sindre-ai/maskin/git/blobs'
+		const identity = {
+			name: 'github-sindre-ai',
+			token: 'ghs_real',
+			writeProbeRepo: 'sindre-ai/maskin',
+		}
+		const mcp = { 'github-sindre-ai': { type: 'http' }, slack: {} }
+
+		it('retries a 500 and stays healthy when a later attempt succeeds (identity kept, no alert)', async () => {
+			const fetchImpl = vi
+				.fn()
+				.mockResolvedValueOnce(textResponse('', { status: 500 }))
+				.mockResolvedValueOnce(jsonResponse({ sha: 'abc123' }, { status: 201 }))
+			const verdicts = await runGitHubPreflight([identity], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			expect(verdicts).toEqual([{ name: 'github-sindre-ai', healthy: true }])
+			expect(fetchImpl).toHaveBeenCalledTimes(2)
+			expect(stripFailedIdentities(mcp, verdicts)).toBe(mcp)
+
+			const slackFetch = vi.fn()
+			await postGitHubPreflightSlackAlert({
+				botToken: 'xoxb-test',
+				channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+				verdicts,
+				context: { sessionId: 's1', workspaceId: 'w1' },
+				options: { fetchImpl: slackFetch as unknown as typeof fetch },
+			})
+			expect(slackFetch).not.toHaveBeenCalled()
 		})
-		const [verdict] = await runGitHubPreflight([{ name: 'github', token: 'ghp_x' }], {
-			fetchImpl: fetchImpl as unknown as typeof fetch,
+
+		it('reports upstream-error with the request id and keeps the identity when every attempt returns 500', async () => {
+			const fetchImpl = vi.fn(
+				async () =>
+					new Response('', { status: 500, headers: { 'x-github-request-id': 'ABCD:1234:5678' } }),
+			)
+			const verdicts = await runGitHubPreflight([{ ...identity, installationId: '141870781' }], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			const [verdict] = verdicts
+			expect(fetchImpl).toHaveBeenCalledTimes(3)
+			expect(fetchImpl).toHaveBeenCalledWith(blobUrl, expect.objectContaining({ method: 'POST' }))
+			expect(verdict.healthy).toBe(false)
+			expect(verdict.failureClass).toBe('upstream-error')
+			expect(verdict.statusSnippet).toContain('HTTP 500')
+			expect(verdict.statusSnippet).toContain('x-github-request-id: ABCD:1234:5678')
+			expect(verdict.installationId).toBe('141870781')
+			expect(stripFailedIdentities(mcp, verdicts)).toBe(mcp)
 		})
-		expect(verdict.failureClass).toBe('network-error')
+
+		it('omits the request id from the snippet when GitHub sent none', async () => {
+			const fetchImpl = vi.fn(async () => textResponse('oops', { status: 503 }))
+			const [verdict] = await runGitHubPreflight([identity], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			expect(verdict.failureClass).toBe('upstream-error')
+			expect(verdict.statusSnippet).toBe('HTTP 503 /repos/sindre-ai/maskin/git/blobs: oops')
+		})
+
+		it('reports upstream-error and keeps the identity when fetch throws on every attempt', async () => {
+			const fetchImpl = vi.fn(async () => {
+				throw new Error('ECONNRESET')
+			})
+			const verdicts = await runGitHubPreflight([identity], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			expect(fetchImpl).toHaveBeenCalledTimes(3)
+			expect(verdicts[0]?.failureClass).toBe('upstream-error')
+			expect(verdicts[0]?.statusSnippet).toContain('ECONNRESET')
+			expect(stripFailedIdentities(mcp, verdicts)).toBe(mcp)
+		})
+
+		it('retries a network error and stays healthy when a later attempt succeeds', async () => {
+			const fetchImpl = vi
+				.fn()
+				.mockRejectedValueOnce(new Error('ECONNRESET'))
+				.mockResolvedValueOnce(jsonResponse({ sha: 'abc123' }, { status: 201 }))
+			const verdicts = await runGitHubPreflight([identity], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			expect(verdicts).toEqual([{ name: 'github-sindre-ai', healthy: true }])
+		})
+
+		it('also covers a 5xx on the installation repo-resolution probe', async () => {
+			const fetchImpl = vi.fn(async () => textResponse('', { status: 502 }))
+			const verdicts = await runGitHubPreflight([{ name: 'github-sindre-ai', token: 'ghs_real' }], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			expect(fetchImpl).toHaveBeenCalledTimes(3)
+			expect(verdicts[0]?.failureClass).toBe('upstream-error')
+			expect(stripFailedIdentities(mcp, verdicts)).toBe(mcp)
+		})
+
+		it.each([
+			[401, '401-unauth'],
+			[403, 'write-scope-denied'],
+			[404, 'write-scope-denied'],
+		])('does not retry a %i and strips the identity (%s)', async (status, failureClass) => {
+			const fetchImpl = vi.fn(async () => textResponse('nope', { status }))
+			const verdicts = await runGitHubPreflight([identity], {
+				fetchImpl: fetchImpl as unknown as typeof fetch,
+				retryDelaysMs: [0, 0],
+			})
+			expect(fetchImpl).toHaveBeenCalledTimes(1)
+			expect(verdicts[0]?.healthy).toBe(false)
+			expect(verdicts[0]?.failureClass).toBe(failureClass)
+			expect(stripFailedIdentities(mcp, verdicts)).toEqual({ slack: {} })
+		})
 	})
 
 	it('carries installationId from the identity through to the verdict, healthy or not', async () => {

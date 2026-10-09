@@ -6,6 +6,7 @@ import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -60,6 +61,8 @@ function createObjectsApp(sessionManager: SessionManager) {
 			return undefined
 		},
 	})
+
+	configureSessionLifecycle({ db, sessionManager })
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)

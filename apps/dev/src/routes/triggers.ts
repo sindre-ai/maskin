@@ -1,11 +1,16 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, triggers } from '@maskin/db/schema'
+import { objects, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
-import { and, asc, count, desc, eq } from 'drizzle-orm'
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
+import {
+	detectSuspiciousFilterEntries,
+	trackTriggerConfigSuspicious,
+} from '../lib/analytics/trigger-matcher-events'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
@@ -43,6 +48,34 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
  * behaviour (no join, no confirmation, no metadata write).
  */
+/**
+ * Write-time warning for filters whose values the matcher will never resolve
+ * (a non-array object, or `null`). Emits one `trigger_config_suspicious`
+ * PostHog row per suspicious entry so bet #8's dashboard catches bad configs
+ * at save time instead of after they sit dead in the runtime. Non-blocking on
+ * purpose — `triggers.config` is `jsonb` and hard-rejecting on save could
+ * strand triggers whose author already relied on the config being writable
+ * (tech spec §2.3, last paragraph). Fire-and-forget: the PostHog helper
+ * swallows its own errors, so a rejected promise here would be a code bug.
+ */
+function warnOnSuspiciousFilter(
+	actorId: string,
+	row: { id: string; workspaceId: string; config: unknown },
+): void {
+	const config = row.config as { filter?: Record<string, unknown> } | null
+	const filter = config?.filter
+	if (!filter) return
+	for (const entry of detectSuspiciousFilterEntries(filter)) {
+		void trackTriggerConfigSuspicious({
+			workspaceId: row.workspaceId,
+			triggerId: row.id,
+			actorId,
+			filterKey: entry.key,
+			filterShape: entry.shape,
+		})
+	}
+}
+
 function kickOffSlackSetup(
 	db: Database,
 	actorId: string,
@@ -139,7 +172,7 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		if (!row) throw new Error('Failed to create trigger')
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -155,6 +188,9 @@ app.openapi(createTriggerRoute, async (c) => {
 	// Slack setup service (join channels + post confirmations) if the trigger
 	// is Slack-shaped. Never blocks the response.
 	kickOffSlackSetup(db, actorId, created)
+	// Emit `trigger_config_suspicious` for any filter entry whose value is a
+	// non-array object or `null` — matcher will never resolve those.
+	warnOnSuspiciousFilter(actorId, created)
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -349,7 +385,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 		if (!row) return null
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: trigger.workspaceId,
 			actorId,
 			action: 'updated',
@@ -368,6 +404,10 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	// uses the trigger name). Body.enabled toggles don't need a re-run, but
 	// we skip via the empty-channel-list short-circuit anyway.
 	kickOffSlackSetup(db, actorId, updated)
+	// Re-check for suspicious filter shapes only when the config actually
+	// changed — otherwise a plain enable/disable would spam PostHog with the
+	// same suspicious entry every toggle.
+	if (body.config) warnOnSuspiciousFilter(actorId, updated)
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
@@ -406,7 +446,40 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	await db.transaction(async (tx) => {
 		await tx.delete(triggers).where(eq(triggers.id, id))
 
-		await tx.insert(events).values({
+		// Cascade-prune the deleted trigger's id from every loop's
+		// metadata.trigger_ids in the same workspace, in the same transaction.
+		// Without this, `get_loop` keeps rendering an orphaned step slot per
+		// deleted id (triggerName/agent all null) and the setup check reads
+		// "no agent assigned" for a trigger that no longer exists. Single
+		// atomic UPDATE — jsonb_agg over the array minus this id, coalesced
+		// to '[]' so an array of one becomes an empty array (not null).
+		const prunedLoops = await tx
+			.update(objects)
+			.set({
+				metadata: sql`jsonb_set(
+					${objects.metadata},
+					'{trigger_ids}',
+					COALESCE(
+						(
+							SELECT jsonb_agg(elem)
+							FROM jsonb_array_elements(${objects.metadata} -> 'trigger_ids') AS elem
+							WHERE elem <> to_jsonb(${id}::text)
+						),
+						'[]'::jsonb
+					)
+				)`,
+				updatedAt: new Date(),
+			})
+			.where(
+				and(
+					eq(objects.workspaceId, existing.workspaceId),
+					eq(objects.type, 'loop'),
+					sql`${objects.metadata} -> 'trigger_ids' ? ${id}`,
+				),
+			)
+			.returning({ id: objects.id })
+
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
@@ -414,6 +487,23 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 			entityId: id,
 			data: { trigger_name: existing.name, type: existing.type },
 		})
+
+		// Emit an `updated` event per affected loop so the SSE feed invalidates
+		// the loop rows the cascade just changed (matches the every-mutation-
+		// gets-an-event convention in .claude/rules/known-pitfalls.md).
+		if (prunedLoops.length > 0) {
+			await recordEvents(
+				tx,
+				prunedLoops.map((loop) => ({
+					workspaceId: existing.workspaceId,
+					actorId,
+					action: 'updated' as const,
+					entityType: 'object' as const,
+					entityId: loop.id,
+					data: { cascade: 'trigger_deleted', trigger_id: id },
+				})),
+			)
+		}
 	})
 
 	return c.json({ deleted: true })

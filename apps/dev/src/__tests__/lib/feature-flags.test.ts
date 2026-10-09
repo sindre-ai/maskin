@@ -63,6 +63,15 @@ describe('resolveFlags', () => {
 		}
 	})
 
+	it('resolves the loops-v4-polish.step_flow sub-flag from the live registry when enabled for a tester', () => {
+		const c = config({
+			FF_TESTER_FEATURES: 'loops-v4-polish.step_flow',
+			FF_TESTER_ACTOR_IDS: TESTER,
+		})
+		expect(resolveFlags(TESTER, c)['loops-v4-polish.step_flow']).toBe(true)
+		expect(resolveFlags(NON_TESTER, c)['loops-v4-polish.step_flow']).toBe(false)
+	})
+
 	it('is false for every flag when the env is empty', () => {
 		expect(resolveFlags(TESTER, config({}), REGISTRY)).toEqual({ [FLAG]: false })
 	})

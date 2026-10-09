@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { buildEvent } from '../factories'
+import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import type { SessionManager } from '../../services/session-manager'
+import { buildEvent, buildSession } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createSessionTestApp, createTestApp } from '../setup'
+import {
+	createMockSessionManager,
+	createSessionTestApp,
+	createTestApp,
+	createTestContext,
+} from '../setup'
 
 const { default: eventsRoutes } = await import('../../routes/events')
 
@@ -115,6 +124,140 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(200)
 			expect(res.headers.get('content-type')).toContain('text/event-stream')
 			controller.abort()
+		})
+	})
+
+	describe('GET /api/events (session.state_changed emission)', () => {
+		const sessionId = randomUUID()
+		const conversationId = randomUUID()
+		const participantId = randomUUID()
+		const outsiderId = randomUUID()
+
+		type SseTestEnv = {
+			Variables: {
+				db: Database
+				actorId: string
+				actorType: string
+				notifyBridge: PgNotifyBridge
+				sessionManager: SessionManager
+			}
+		}
+
+		// The shared createTestApp injects notifyBridge as a bare {}, so the
+		// route's bridge.on('event', handler) throws once the replay loop has
+		// finished and the stream errors out before its frames can be read. This
+		// local app injects a no-op bridge so the replay path runs to completion
+		// (writeFrame -> loadSessionStateChangeFrame) and the stream stays open.
+		function createSseTestApp(actorId: string) {
+			const app = new OpenAPIHono<SseTestEnv>()
+			const { db, mockResults } = createTestContext()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				c.set('notifyBridge', {
+					on: vi.fn(),
+					off: vi.fn(),
+					emit: vi.fn(),
+				} as unknown as PgNotifyBridge)
+				c.set('sessionManager', createMockSessionManager())
+				await next()
+			})
+			app.route('/api/events', eventsRoutes)
+			return { app, mockResults }
+		}
+
+		// The SSE route holds the connection open with a 15s heartbeat, so
+		// await res.text() never resolves. Read chunks until the stream goes quiet
+		// for idleMs, then cancel. Draining to idle (rather than stopping at the
+		// first frame) is what makes the negative assertion sound: it proves no
+		// session.state_changed frame arrived after the generic one.
+		async function readSseUntilIdle(
+			body: ReadableStream<Uint8Array>,
+			idleMs = 750,
+		): Promise<string> {
+			const reader = body.getReader()
+			const decoder = new TextDecoder()
+			let text = ''
+			try {
+				for (;;) {
+					let timer: ReturnType<typeof setTimeout> | undefined
+					const idle = new Promise<null>((resolve) => {
+						timer = setTimeout(() => resolve(null), idleMs)
+					})
+					const chunk = await Promise.race([reader.read(), idle])
+					if (timer) clearTimeout(timer)
+					if (chunk === null || chunk.done) break
+					text += decoder.decode(chunk.value, { stream: true })
+				}
+			} finally {
+				await reader.cancel().catch(() => {})
+			}
+			return text
+		}
+
+		function buildSessionEvent() {
+			return buildEvent({
+				workspaceId: wsId,
+				id: 5,
+				action: 'updated',
+				entityType: 'session',
+				entityId: sessionId,
+			})
+		}
+
+		// A sub-session carries both spawnedByMessageId and conversationId, which
+		// is what makes loadSessionStateChangeFrame consider it at all (neither is
+		// on the buildSession default).
+		function buildSubSessionRow() {
+			return buildSession({
+				id: sessionId,
+				workspaceId: wsId,
+				spawnedByMessageId: 4242,
+				conversationId,
+				status: 'running',
+				currentActivity: 'Writing the report',
+			})
+		}
+
+		it('emits a session.state_changed frame for a conversation participant', async () => {
+			const { app, mockResults } = createSseTestApp(participantId)
+			mockResults.selectQueue = [
+				[buildSessionEvent()], // replay loop: events since Last-Event-ID
+				[buildSubSessionRow()], // loadSessionStateChangeFrame: sessions row
+				[{ conversationId }], // isConversationParticipant: participant row
+			]
+
+			const res = await app.request(
+				jsonGet('/api/events', { 'X-Workspace-Id': wsId, 'Last-Event-ID': '4' }),
+			)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(res.status).toBe(200)
+			expect(text).toContain('event: updated')
+			expect(text).toContain('event: session.state_changed')
+			expect(text).toContain(sessionId)
+		})
+
+		it('emits no session.state_changed frame for a non-participant', async () => {
+			const { app, mockResults } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [
+				[buildSessionEvent()],
+				[buildSubSessionRow()],
+				[], // isConversationParticipant: no row -> not entitled
+			]
+
+			const res = await app.request(
+				jsonGet('/api/events', { 'X-Workspace-Id': wsId, 'Last-Event-ID': '4' }),
+			)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(res.status).toBe(200)
+			// The generic frame landing proves the emission path ran for this event,
+			// so the absent frame is a gate decision, not a no-op.
+			expect(text).toContain('event: updated')
+			expect(text).toContain(sessionId)
+			expect(text).not.toContain('session.state_changed')
 		})
 	})
 
@@ -806,6 +949,9 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Driver lookup for the fallback exclusion — no driver on this object,
+					// so the thread-reply spawn is unaffected.
+					[{ driver: null }],
 					// Thread comments query (desc by id): new comment + agent reply + root
 					[
 						{
@@ -864,6 +1010,80 @@ describe('Events Routes', () => {
 				)
 			})
 
+			it('does NOT spawn a thread-reply session for the driver the fallback ladder will dispatch', async () => {
+				// Regression: one mention-free reply must queue exactly one session.
+				// The driver is also a thread participant, so before the fix both the
+				// `comment_fallback` ladder (case 2) and the thread-reply auto-spawn
+				// dispatched them — doubling queue depth (the 8515a7d8 insight's
+				// 9 comments → 18 sessions).
+				const objectId = randomUUID()
+				const driverAgentId = randomUUID()
+				const rootCommentId = 720100
+				const driverReplyId = 720101
+				const newCommentId = 720200
+
+				const newComment = buildEvent({
+					id: newCommentId,
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'Follow up', parentEventId: rootCommentId },
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					eventsRoutes,
+					'/api/events',
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // object lookup
+					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Driver lookup — the object has a driver, and they are a thread
+					// participant, so the fallback ladder (case 2) will handle them.
+					[{ driver: driverAgentId }],
+					// Thread comments query (desc by id): new comment + driver reply + root
+					[
+						{
+							id: newCommentId,
+							actorId: 'test-actor-id',
+							actorType: 'human',
+							data: { content: 'Follow up', parentEventId: rootCommentId },
+						},
+						{
+							id: driverReplyId,
+							actorId: driverAgentId,
+							actorType: 'agent',
+							data: { content: 'driver reply', parentEventId: rootCommentId },
+						},
+						{
+							id: rootCommentId,
+							actorId: randomUUID(),
+							actorType: 'human',
+							data: { content: 'Root' },
+						},
+					],
+				]
+				mockResults.insert = [newComment]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'Follow up',
+							parent_event_id: rootCommentId,
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
 			it('spawns a thread-reply session for an agent only @mentioned earlier in the thread', async () => {
 				const objectId = randomUUID()
 				const agentAId = randomUUID()
@@ -888,6 +1108,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					// Driver lookup for the fallback exclusion — no driver on this object.
+					[{ driver: null }],
 					// Thread comments query: only humans authored, but root @mentions agent A
 					[
 						{
@@ -964,6 +1186,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					// Driver lookup for the fallback exclusion — no driver on this object.
+					[{ driver: null }],
 					// Thread comments: new + prior agent A reply + root. Both agent rows
 					// are by the current commenter so neither should be spawned.
 					[
@@ -1041,6 +1265,10 @@ describe('Events Routes', () => {
 					[{ id: agentAId }],
 					// resolveMentionedAgentIds — the excludedAgentIds source
 					[{ id: agentAId }],
+					// Driver lookup for the fallback exclusion. The comment carries a
+					// mention, so the ladder never reaches case 2 and this result is
+					// unused — the exclusion here is still the mention one.
+					[{ driver: null }],
 					// Thread comments query
 					[
 						{
@@ -1166,6 +1394,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[{ driver: null }],
 					threadRows,
 				]
 				mockResults.insert = [newComment]
@@ -1209,6 +1438,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[{ driver: null }],
 					// Both prior thread participants are humans → no agent spawn
 					[
 						{

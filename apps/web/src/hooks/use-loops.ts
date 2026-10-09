@@ -30,3 +30,22 @@ export function useLoopActivity(
 		select: (data) => data.events,
 	})
 }
+
+// The vertical-story renderer's data feed — one row per trigger in the
+// loop's `metadata.trigger_ids`, with the Loops v4 (D6a) hands-off +
+// escalates fields, resolved actor names and per-viewer waiting-on-viewer
+// counts pre-computed on the server. `enabled` lets a caller mount the
+// hook conditionally on the `loops-v4-polish.step_flow` flag, so a
+// flag-off session pays no extra request.
+export function useLoopSteps(
+	loopId: string,
+	workspaceId: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useQuery({
+		queryKey: queryKeys.loops.steps(workspaceId, loopId),
+		queryFn: () => api.loops.steps(loopId, workspaceId),
+		enabled: enabled && !!loopId,
+		select: (data) => data.steps,
+	})
+}

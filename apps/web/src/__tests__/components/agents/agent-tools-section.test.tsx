@@ -13,6 +13,8 @@ vi.mock('@/hooks/use-actors', () => ({
 
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: [] }),
+	useProviders: () => ({ data: [] }),
+	useLinkedInIdentities: () => ({ data: [] }),
 }))
 
 describe('AgentToolsSection', () => {

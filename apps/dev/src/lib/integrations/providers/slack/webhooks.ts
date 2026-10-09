@@ -213,7 +213,10 @@ interface UnlinkedView {
 	blocks: Array<Record<string, unknown>>
 }
 
-/** Cold-state view: a single Connect button. T2 wires the linking flow. */
+/**
+ * Cold-state view: a single Connect button. It opens the Maskin app root (sign in with the
+ * same email as Slack); the web app has no /integrations/slack route, so linking there 404s.
+ */
 function buildUnlinkedView(): UnlinkedView {
 	return {
 		blocks: [
@@ -230,7 +233,7 @@ function buildUnlinkedView(): UnlinkedView {
 				accessory: {
 					type: 'button',
 					text: { type: 'plain_text', text: 'Connect Maskin', emoji: false },
-					url: `${frontendBaseUrl()}/integrations/slack`,
+					url: frontendBaseUrl(),
 					action_id: 'maskin_slack_connect',
 				},
 			},
@@ -479,8 +482,9 @@ export const _internal = {
 // are stable, and repeated invocations short-circuit once the stamp is fresh.
 //
 // Gated behind the `SLACK_AUTO_PAUSE_ON_KICK` env var (backend kill switch —
-// the repo's `FLAGS` registry is visual-layer only per `.claude/rules/feature-
-// flags.md`, so this uses the plain env-var mechanism instead). Flag OFF =
+// the repo's `FLAGS` registry gates per-actor behaviour and resolves against a
+// caller actor id, never a shared-state change, so a process-wide ops toggle
+// belongs on the plain env-var mechanism instead). Flag OFF =
 // event is normalized and dispatched, handler no-ops and returns immediately.
 
 export interface SlackMemberLeftEvent {

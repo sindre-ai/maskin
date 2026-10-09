@@ -19,19 +19,45 @@ export function useProviders() {
 
 export function useConnectIntegration(workspaceId: string) {
 	return useMutation({
-		mutationFn: (input: { provider: string; apiKey?: string }) =>
-			api.integrations.connect(
-				workspaceId,
-				input.provider,
-				input.apiKey ? { api_key: input.apiKey } : undefined,
-			),
+		mutationFn: (input: {
+			provider: string
+			apiKey?: string
+			// Resend two-call handshake: both fields travel with the first POST so
+			// the backend can hit Resend's `POST /domains` in the same round-trip.
+			receiveSubdomain?: string
+			// GitHub only: send the user to the App's install page for an org that
+			// does not have the App yet, instead of the authorize step that only
+			// lists orgs that already do.
+			installNewOrg?: boolean
+		}) => {
+			const body =
+				input.apiKey || input.receiveSubdomain || input.installNewOrg
+					? {
+							...(input.apiKey ? { api_key: input.apiKey } : {}),
+							...(input.receiveSubdomain ? { receive_subdomain: input.receiveSubdomain } : {}),
+							...(input.installNewOrg ? { install_new_org: true } : {}),
+						}
+					: undefined
+			return api.integrations.connect(workspaceId, input.provider, body)
+		},
 		onSuccess: (data) => {
-			// Manual-auth providers (e.g. Skjald) return a webhook_url to display
-			// instead of an OAuth install_url to redirect to — the caller handles
-			// showing it via a per-call onSuccess.
+			// Manual-auth providers (e.g. Skjald, Resend) return a webhook_url to
+			// display instead of an OAuth install_url to redirect to — the caller
+			// handles showing it via a per-call onSuccess.
 			if (data.webhook_url) return
 			if (data.install_url) window.location.href = data.install_url
 		},
+	})
+}
+
+/** Server-side DNS pre-check the Resend connect flow fires on leaving Step 2.
+ *  The backend runs `node:dns.resolveMx()` on the entered domain and returns
+ *  the existing MX list plus a `warn` flag — set when the user typed a bare
+ *  domain that already routes human mail somewhere else, which is the root-MX
+ *  gotcha the design spec surfaces as the `s3-root-mx` scene. */
+export function useResendDnsPrecheck(workspaceId: string) {
+	return useMutation({
+		mutationFn: (domain: string) => api.integrations.resendDnsPrecheck(workspaceId, domain),
 	})
 }
 
@@ -136,6 +162,20 @@ export function useSlackUsers(integrationId: string | undefined, workspaceId: st
 		queryKey: queryKeys.integrations.slackUsers(integrationId ?? ''),
 		queryFn: () => api.integrations.slackUsers(integrationId as string, workspaceId),
 		enabled: Boolean(integrationId),
+		staleTime: FIVE_MINUTES,
+	})
+}
+
+/**
+ * P3-K · Enumerate LinkedIn identities for a workspace. Every connected
+ * identity — the human profile plus each admined page — is one Quick Add
+ * button in the agent MCP panel. Returns [] when linkedin-unipile is not
+ * connected.
+ */
+export function useLinkedInIdentities(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.linkedinIdentities(workspaceId),
+		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
 		staleTime: FIVE_MINUTES,
 	})
 }

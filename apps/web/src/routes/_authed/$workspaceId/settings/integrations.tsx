@@ -1,3 +1,7 @@
+import {
+	ResendConnectDialog,
+	type ResendConnectPrefill,
+} from '@/components/integrations/resend/resend-connect-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -14,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { useActors } from '@/hooks/use-actors'
 import { useAuth } from '@/hooks/use-auth'
 import { useBillingUsage } from '@/hooks/use-billing'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -25,7 +30,7 @@ import {
 	useProviders,
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
-import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import type { IntegrationResponse, ProviderInfo, ResendDnsRecord } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, Copy, Link2, Plus } from 'lucide-react'
@@ -60,6 +65,24 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
+	// Gate the google-meet provider card behind `google-meet-integration-ui` —
+	// the backend registers the provider unconditionally so its OAuth callback
+	// and MCP routes stay reachable for anyone the tester rollout allows in,
+	// but the connect entry point stays hidden from everyone else until the flag
+	// flips on. Per-actor behaviour gate, never a shared-state change.
+	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
+	// Slice 2 of bet cf2bcc85 — off by default, tester-actor-only until the
+	// second workspace has connected cleanly. Same shape as `googleMeetVisible`:
+	// backend registers the provider unconditionally so its endpoints stay
+	// reachable for Slice 1 operators (curl the connect handshake by hand), but
+	// the connect entry point + resume affordance stay hidden from everyone
+	// else until the flag flips on.
+	const resendVisible = useFeatureFlag('resend-integration-ui')
+	const visibleProviders = (providers ?? []).filter((p) => {
+		if (p.name === 'google-meet' && !googleMeetVisible) return false
+		if (p.name === 'resend' && !resendVisible) return false
+		return true
+	})
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere can't go through the install flow — it
@@ -78,35 +101,53 @@ function IntegrationsPage() {
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
 	const [apiKey, setApiKey] = useState('')
-	const [manualConnect, setManualConnect] = useState<{
-		provider: ProviderInfo
-		webhookUrl: string
-		integrationId: string
-	} | null>(null)
+	const [skjaldDialogOpen, setSkjaldDialogOpen] = useState(false)
+	// Slice 2 resend dialog state. `open` alone opens fresh at Step 1; `prefill`
+	// (populated by the Resume affordance) opens straight into Step 3 with the
+	// row's config.resend rehydrated.
+	const [resendDialog, setResendDialog] = useState<{
+		open: boolean
+		prefill: ResendConnectPrefill | null
+	}>({ open: false, prefill: null })
 
 	// Group active integrations by provider — GitHub can have multiple
 	// installations (one per org) and LinkedIn multiple accounts (one per
 	// workspace member); other providers currently have one.
 	const activeByProvider = new Map<string, IntegrationResponse[]>()
+	// Rows that finished /connect but haven't posted the webhook signing secret
+	// yet. Skjald reaches this state on Cancel-at-secret today; Slice 2 adds a
+	// Resume affordance for the resend rows in this bucket. Only rendered when
+	// the flag is on — see `resendVisible` above.
+	const awaitingSecretByProvider = new Map<string, IntegrationResponse[]>()
 	for (const integration of integrations ?? []) {
-		if (integration.status !== 'active') continue
-		const existing = activeByProvider.get(integration.provider) ?? []
-		existing.push(integration)
-		activeByProvider.set(integration.provider, existing)
+		if (integration.status === 'active') {
+			const existing = activeByProvider.get(integration.provider) ?? []
+			existing.push(integration)
+			activeByProvider.set(integration.provider, existing)
+			continue
+		}
+		if (integration.status === 'awaiting_secret') {
+			// Gate hiding behind the flag lives at the render call site — surfacing
+			// every row here keeps the bucket tests honest.
+			const existing = awaitingSecretByProvider.get(integration.provider) ?? []
+			existing.push(integration)
+			awaitingSecretByProvider.set(integration.provider, existing)
+		}
 	}
+	const resendAwaitingSecret = resendVisible ? (awaitingSecretByProvider.get('resend') ?? []) : []
 
 	return (
 		<div>
 			{isLoading ? (
 				<ListSkeleton />
-			) : !providers?.length ? (
+			) : !visibleProviders.length ? (
 				<EmptyState
 					title="No providers available"
 					description="No integration providers are configured on the server"
 				/>
 			) : (
 				<div className="space-y-2">
-					{providers.map((provider) => {
+					{visibleProviders.map((provider) => {
 						const installations = activeByProvider.get(provider.name) ?? []
 						if (MULTI_INSTALL_PROVIDERS.has(provider.name) && installations.length > 0) {
 							return (
@@ -130,14 +171,25 @@ function IntegrationsPage() {
 									setApiKeyProvider(provider)
 									setApiKey('')
 								}}
-								onManualConnected={(webhookUrl, integrationId) =>
-									setManualConnect({ provider, webhookUrl, integrationId })
+								onRequestSkjaldConnect={
+									provider.name === 'skjald' ? () => setSkjaldDialogOpen(true) : undefined
+								}
+								onRequestResendConnect={
+									provider.name === 'resend'
+										? () => setResendDialog({ open: true, prefill: null })
+										: undefined
 								}
 								linkableCount={provider.name === 'github' ? linkableCount : 0}
 								onRequestLink={() => setLinkGithubOpen(true)}
 							/>
 						)
 					})}
+					{resendAwaitingSecret.length > 0 && (
+						<ResendResumeSection
+							rows={resendAwaitingSecret}
+							onResume={(prefill) => setResendDialog({ open: true, prefill })}
+						/>
+					)}
 				</div>
 			)}
 			<ApiKeyDialog
@@ -152,8 +204,8 @@ function IntegrationsPage() {
 			/>
 			<SkjaldConnectDialog
 				workspaceId={workspaceId}
-				state={manualConnect}
-				onClose={() => setManualConnect(null)}
+				open={skjaldDialogOpen}
+				onClose={() => setSkjaldDialogOpen(false)}
 			/>
 			<LinkGithubDialog
 				workspaceId={workspaceId}
@@ -165,8 +217,93 @@ function IntegrationsPage() {
 				integrationId={selectGithubId ?? null}
 				onClose={closeGithubSelect}
 			/>
+			{resendVisible && (
+				<ResendConnectDialog
+					workspaceId={workspaceId}
+					open={resendDialog.open}
+					prefill={resendDialog.prefill}
+					onClose={() => setResendDialog({ open: false, prefill: null })}
+				/>
+			)}
 		</div>
 	)
+}
+
+/** Renders the row(s) whose resend row is stuck at `awaiting_secret` — usually
+ *  one, because a workspace has one resend row. Each carries a Resume connect
+ *  affordance that reopens the dialog directly at Step 3 with the row's
+ *  `config.resend` blob rehydrated. */
+function ResendResumeSection({
+	rows,
+	onResume,
+}: {
+	rows: IntegrationResponse[]
+	onResume: (prefill: ResendConnectPrefill) => void
+}) {
+	return (
+		<div className="space-y-2">
+			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
+				CONNECTIONS AWAITING A SECRET
+			</p>
+			{rows.map((row) => {
+				const prefill = extractResendPrefill(row)
+				if (!prefill) return null
+				return (
+					<div
+						key={row.id}
+						className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
+					>
+						<div className="h-3 w-3 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+						<div className="flex-1 min-w-0">
+							<p className="text-sm font-medium text-foreground truncate">
+								Resend — {prefill.receiveSubdomain}
+							</p>
+							<p className="text-xs text-muted-foreground truncate">
+								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
+							</p>
+						</div>
+						<Button size="sm" onClick={() => onResume(prefill)}>
+							Resume connect
+						</Button>
+					</div>
+				)
+			})}
+		</div>
+	)
+}
+
+/** Read the `config.resend` blob off an integration row and reshape it into
+ *  the prefill the dialog consumes. Returns null when the row is missing the
+ *  shape Task 2's connect handler writes — a defensive guard against a
+ *  half-migrated row from Slice 1 hand-connects. */
+function extractResendPrefill(row: IntegrationResponse): ResendConnectPrefill | null {
+	const resend = (row.config as { resend?: Record<string, unknown> } | undefined)?.resend
+	if (!resend) return null
+	const receiveSubdomain =
+		typeof resend.receive_subdomain === 'string' ? resend.receive_subdomain : ''
+	const webhookUrl = typeof resend.webhook_url === 'string' ? resend.webhook_url : ''
+	const dnsRecordsRaw = Array.isArray(resend.dns_records) ? resend.dns_records : []
+	const dnsRecords = dnsRecordsRaw.filter(
+		(r): r is ResendDnsRecord =>
+			typeof r === 'object' && r !== null && 'record' in r && 'status' in r,
+	)
+	const verificationStatus =
+		resend.verification_status === 'verified' || resend.verification_status === 'failed'
+			? resend.verification_status
+			: 'pending'
+	const capabilities =
+		typeof resend.capabilities === 'object' && resend.capabilities !== null
+			? (resend.capabilities as { sending?: string; receiving?: string })
+			: undefined
+	if (!webhookUrl || !receiveSubdomain) return null
+	return {
+		integrationId: row.id,
+		webhookUrl,
+		dnsRecords,
+		verificationStatus,
+		receiveSubdomain,
+		capabilities,
+	}
 }
 
 function ProviderRow({
@@ -174,7 +311,8 @@ function ProviderRow({
 	integration,
 	workspaceId,
 	onRequestApiKey,
-	onManualConnected,
+	onRequestSkjaldConnect,
+	onRequestResendConnect,
 	linkableCount,
 	onRequestLink,
 }: {
@@ -182,7 +320,13 @@ function ProviderRow({
 	integration?: IntegrationResponse
 	workspaceId: string
 	onRequestApiKey: () => void
-	onManualConnected: (webhookUrl: string, integrationId: string) => void
+	/** Skjald connects from the Skjald app, so Connect opens a dialog that says where to
+	 *  tap rather than calling /connect. Undefined for every other provider. */
+	onRequestSkjaldConnect?: () => void
+	/** Resend needs its own multi-step dialog — bypass the manual-branch /connect
+	 *  round-trip and hand off to the caller's ResendConnectDialog state.
+	 *  Undefined for every other provider. */
+	onRequestResendConnect?: () => void
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -195,17 +339,12 @@ function ProviderRow({
 			onRequestApiKey()
 			return
 		}
-		if (provider.authType === 'manual') {
-			connect.mutate(
-				{ provider: provider.name },
-				{
-					onSuccess: (data) => {
-						if (data.webhook_url && data.integration_id) {
-							onManualConnected(data.webhook_url, data.integration_id)
-						}
-					},
-				},
-			)
+		if (provider.name === 'resend' && onRequestResendConnect) {
+			onRequestResendConnect()
+			return
+		}
+		if (provider.name === 'skjald' && onRequestSkjaldConnect) {
+			onRequestSkjaldConnect()
 			return
 		}
 		connect.mutate({ provider: provider.name })
@@ -440,6 +579,7 @@ function GroupedProviderRow({
 								Add existing
 							</Button>
 						)}
+						{provider.name === 'github' && <InstallGithubOrgButton workspaceId={workspaceId} />}
 					</div>
 				</div>
 			)}
@@ -507,6 +647,16 @@ function ApiKeyDialog({
 	)
 }
 
+// Skjald connects from the Skjald app: its "Connect with Maskin" opens the page that picks a
+// workspace (routes/connect.skjald.tsx) and hands the app its webhook URL and secret. Maskin cannot
+// start that flow itself (the app holds the PKCE verifier), so the dialog says where to tap. The
+// URL-and-secret steps stay behind "Set up manually" for anything that is not the app.
+const SKJALD_APP_STEPS = [
+	'Open Skjald and go to Settings → Send to.',
+	'Tap Connect with Maskin.',
+	'Sign in if asked, pick this workspace and press Connect. There is nothing to copy or paste.',
+]
+
 const SKJALD_SETUP_STEPS = [
 	'In Skjald, go to Settings → Webhooks → Add Webhook and paste the URL below.',
 	'Subscribe to the transcription.completed event.',
@@ -516,38 +666,54 @@ const SKJALD_SETUP_STEPS = [
 
 function SkjaldConnectDialog({
 	workspaceId,
-	state,
+	open,
 	onClose,
 }: {
 	workspaceId: string
-	state: { provider: ProviderInfo; webhookUrl: string; integrationId: string } | null
+	open: boolean
 	onClose: () => void
 }) {
+	const connect = useConnectIntegration(workspaceId)
 	const complete = useCompleteIntegration(workspaceId)
-	const [step, setStep] = useState<1 | 2>(1)
+	const [step, setStep] = useState<'app' | 1 | 2>('app')
+	const [manual, setManual] = useState<{ webhookUrl: string; integrationId: string } | null>(null)
 	const [secret, setSecret] = useState('')
 	const [copied, setCopied] = useState(false)
 
-	const open = !!state
-
 	const handleClose = () => {
 		onClose()
-		setStep(1)
+		setStep('app')
+		setManual(null)
 		setSecret('')
 		setCopied(false)
 	}
 
+	// The manual path is the only one that creates a row up front, so it is only started on request.
+	const handleManual = () => {
+		connect.mutate(
+			{ provider: 'skjald' },
+			{
+				onSuccess: (data) => {
+					if (data.webhook_url && data.integration_id) {
+						setManual({ webhookUrl: data.webhook_url, integrationId: data.integration_id })
+						setStep(1)
+					}
+				},
+			},
+		)
+	}
+
 	const handleCopy = () => {
-		if (!state) return
-		navigator.clipboard.writeText(state.webhookUrl)
+		if (!manual) return
+		navigator.clipboard.writeText(manual.webhookUrl)
 		setCopied(true)
 		setTimeout(() => setCopied(false), 2000)
 	}
 
 	const handleComplete = () => {
-		if (!state) return
+		if (!manual) return
 		complete.mutate(
-			{ id: state.integrationId, secret },
+			{ id: manual.integrationId, secret },
 			{
 				onSuccess: handleClose,
 			},
@@ -558,20 +724,36 @@ function SkjaldConnectDialog({
 		<Dialog open={open} onOpenChange={(next) => !next && handleClose()}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Connect {state?.provider.displayName}</DialogTitle>
+					<DialogTitle>Connect Skjald</DialogTitle>
 					<DialogDescription>
-						{step === 1
-							? 'Set up a webhook in Skjald pointing at this URL.'
-							: 'Paste the secret Skjald generated to finish connecting.'}
+						{step === 'app'
+							? 'Skjald connects from its own app.'
+							: step === 1
+								? 'Set up a webhook in Skjald pointing at this URL.'
+								: 'Paste the secret Skjald generated to finish connecting.'}
 					</DialogDescription>
 				</DialogHeader>
-				{step === 1 ? (
+				{step === 'app' ? (
+					<div className="space-y-3">
+						<ol className="list-decimal list-inside space-y-1.5 text-sm text-muted-foreground">
+							{SKJALD_APP_STEPS.map((instruction) => (
+								<li key={instruction}>{instruction}</li>
+							))}
+						</ol>
+						<div className="flex justify-end gap-2">
+							<Button variant="ghost" onClick={handleManual} disabled={connect.isPending}>
+								Set up manually
+							</Button>
+							<Button onClick={handleClose}>Done</Button>
+						</div>
+					</div>
+				) : step === 1 ? (
 					<div className="space-y-3">
 						<div className="space-y-2">
 							<Label>Webhook URL</Label>
 							<div className="flex gap-2">
 								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
-									{state?.webhookUrl}
+									{manual?.webhookUrl}
 								</div>
 								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
 									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -614,6 +796,37 @@ function SkjaldConnectDialog({
 				)}
 			</DialogContent>
 		</Dialog>
+	)
+}
+
+/** GitHub only lists orgs that already have the Maskin App, so an org without it
+ *  can never show up in either picker. This sends the user to the App's install
+ *  page; the callback then binds the new installation to this workspace. */
+function InstallGithubOrgButton({ workspaceId }: { workspaceId: string }) {
+	const connect = useConnectIntegration(workspaceId)
+	return (
+		<Button
+			variant="outline"
+			size="sm"
+			className="w-full md:flex-1"
+			onClick={() => connect.mutate({ provider: 'github', installNewOrg: true })}
+			disabled={connect.isPending}
+		>
+			<Plus className="h-3.5 w-3.5 mr-1" />
+			Install on another organization
+		</Button>
+	)
+}
+
+function InstallGithubOrgSection({ workspaceId }: { workspaceId: string }) {
+	return (
+		<div className="space-y-2 border-t border-border pt-3">
+			<p className="text-xs text-muted-foreground">
+				Don&apos;t see your organization? Install the Maskin GitHub App on it first. You&apos;ll
+				come back here with it connected.
+			</p>
+			<InstallGithubOrgButton workspaceId={workspaceId} />
+		</div>
 	)
 }
 
@@ -687,6 +900,7 @@ function SelectGithubInstallationDialog({
 						))}
 					</div>
 				)}
+				<InstallGithubOrgSection workspaceId={workspaceId} />
 				<div className="flex justify-end">
 					<Button variant="ghost" onClick={onClose}>
 						Cancel
@@ -760,6 +974,7 @@ function LinkGithubDialog({
 						))}
 					</div>
 				)}
+				<InstallGithubOrgSection workspaceId={workspaceId} />
 				<div className="flex justify-end">
 					<Button variant="ghost" onClick={onClose}>
 						Done

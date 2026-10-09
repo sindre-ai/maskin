@@ -12,11 +12,13 @@ import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
+import { trackForyouCardMarkedRead } from '@/lib/analytics'
 import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
@@ -59,6 +61,7 @@ export function feedModeToForyouViewMode(
  * open one. Nothing leaves the column until it is answered or dismissed.
  */
 function ForYouFeed() {
+	useDocumentTitle('For You')
 	const { workspaceId } = useWorkspace()
 	const queryClient = useQueryClient()
 	const { data, isLoading, isError, error, refetch } = useUnread(workspaceId, undefined, true)
@@ -81,6 +84,11 @@ function ForYouFeed() {
 		() => new Map(),
 	)
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
+	// Cards hidden because the reader typed an answer, keyed to the
+	// `latest_event_id` they answered. Unlike `pendingKeys`, this hide ends on
+	// its own: a newer mention on the same thread (the agent answering) is
+	// activity the reader hasn't seen, so the card has to come back.
+	const [answeredAt, setAnsweredAt] = useState<Map<string, number>>(() => new Map())
 
 	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
 	// sentinel display-settings row — the same store the object-detail sidebar
@@ -151,9 +159,14 @@ function ForYouFeed() {
 	}, [items, sort])
 
 	const visibleRegular = useMemo(() => {
-		if (pendingKeys.size === 0) return sortedRegular
-		return sortedRegular.filter((item) => !pendingKeys.has(feedItemKey(item)))
-	}, [sortedRegular, pendingKeys])
+		if (pendingKeys.size === 0 && answeredAt.size === 0) return sortedRegular
+		return sortedRegular.filter((item) => {
+			const key = feedItemKey(item)
+			if (pendingKeys.has(key)) return false
+			const answered = answeredAt.get(key)
+			return answered === undefined || (item.latest_event_id ?? 0) > answered
+		})
+	}, [sortedRegular, pendingKeys, answeredAt])
 
 	const unreadRegular = useMemo(
 		() => visibleRegular.filter((item) => item.unread_count > 0),
@@ -327,24 +340,42 @@ function ForYouFeed() {
 	)
 
 	// Typing an answer settles the thread exactly as taking an option does, so
-	// it leaves the feed the same way: the card shows "Waiting on <agent>" until
-	// the next fetch drops it. The composer has already posted the comment by
-	// the time this fires — all that is left is the high-water mark, which is
-	// what the card was missing.
+	// the card has to leave the column the same way. The composer has already
+	// posted the comment by the time this fires, so the card is hidden
+	// optimistically — but only until the thread has a newer mention than the
+	// one answered (`answeredAt`), so the agent's answer to this reply still
+	// shows up live.
 	const handleReplied = useCallback(
 		(item: UnreadItem) => {
 			const key = feedItemKey(item)
 			setRepliedKeys((prev) => new Set(prev).add(key))
-			const forget = () =>
+			// A typed reply implies a read — emit here, next to the gesture, so
+			// the funnel counts it even if the mark-read call fails.
+			trackForyouCardMarkedRead({
+				card_kind: classifyCardKind(item),
+				card_id: item.entity_id,
+			})
+			const forget = () => {
 				setRepliedKeys((prev) => {
 					const next = new Set(prev)
 					next.delete(key)
 					return next
 				})
+				setAnsweredAt((prev) => {
+					if (!prev.has(key)) return prev
+					const next = new Map(prev)
+					next.delete(key)
+					return next
+				})
+			}
 			// Same honesty as a taken option: an unmarkable thread comes back on
 			// the next fetch carrying the reader's own answer, so say so rather
-			// than implying it is settled.
-			if (!markItemRead(item, forget)) {
+			// than implying it is settled. Only hide the card when the mark-read
+			// was actually dispatched — otherwise `forget` on failure has
+			// nothing meaningful to un-hide.
+			if (markItemRead(item, forget)) {
+				setAnsweredAt((prev) => new Map(prev).set(key, item.latest_event_id ?? 0))
+			} else {
 				forget()
 				toast.warning('Reply sent, but the thread stayed unread.')
 			}
@@ -370,14 +401,25 @@ function ForYouFeed() {
 			// — so if the mark-read then fails, nothing else would bring it back.
 			// Restore its receipt alongside the un-hide.
 			const decidedBefore = decided
-			const dismissed = targets.filter((item) =>
-				markItemRead(item, () => {
+			const dismissed = targets.filter((item) => {
+				const marked = markItemRead(item, () => {
 					const key = feedItemKey(item)
 					const decision = decidedBefore.get(key)
 					if (!decision) return
 					setDecided((prev) => (prev.has(key) ? prev : new Map(prev).set(key, decision)))
-				}),
-			)
+				})
+				// One `foryou_card_marked_read` per successfully-marked item —
+				// bulk dismiss is the reader saying "read" for every card that
+				// actually leaves the column. Skips items that couldn't be marked
+				// so the analytics volume matches what the reader actually cleared.
+				if (marked) {
+					trackForyouCardMarkedRead({
+						card_kind: classifyCardKind(item),
+						card_id: item.entity_id,
+					})
+				}
+				return marked
+			})
 			if (dismissed.length === 0) {
 				toast.error("Couldn't dismiss those — they're still in your feed.")
 				return
@@ -535,7 +577,7 @@ function ForYouFeed() {
 				bulkActions={bulkActions}
 			/>
 
-			<div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 pb-14">
+			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="mx-auto flex w-full max-w-[700px] flex-col">
 					<BriefCard workspaceId={workspaceId} />
 					<ReleaseCard />

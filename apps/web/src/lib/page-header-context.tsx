@@ -1,3 +1,4 @@
+import type { NewMenuPrimaryOverride } from '@/components/shared/new-menu'
 import { type ReactNode, createContext, useCallback, useContext, useState } from 'react'
 
 /**
@@ -36,6 +37,15 @@ interface PageHeaderState {
 	// For You card queue's thread) and wants the shared page scroll container
 	// to stop scrolling itself, so only that inner region scrolls.
 	scrollLocked?: boolean
+	// A page can swap the label/action on the primary half of the shared New
+	// split-button while it is mounted (mockup D4 verb swap on object detail
+	// when a pending ask is addressed to the reader). The chevron menu is left
+	// alone — the shared new-menu still opens from it in both states.
+	newMenuPrimaryOverride?: NewMenuPrimaryOverride
+	// A page can dim both halves of the shared New split-button at 60% opacity
+	// (D4 read-only rule). Independent from `newMenuPrimaryOverride` so a
+	// read-only object with no pending ask still disables its default button.
+	newMenuDisabled?: boolean
 }
 
 interface PageHeaderContextValue extends PageHeaderState {
@@ -47,6 +57,8 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setCrumb: (crumb: PageHeaderCrumb | undefined) => void
 	setContentPush: (contentPush: string | undefined) => void
 	setScrollLocked: (scrollLocked: boolean) => void
+	setNewMenuPrimaryOverride: (override: NewMenuPrimaryOverride | undefined) => void
+	setNewMenuDisabled: (disabled: boolean | undefined) => void
 }
 
 const PageHeaderContext = createContext<PageHeaderContextValue>({
@@ -58,6 +70,8 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setCrumb: () => {},
 	setContentPush: () => {},
 	setScrollLocked: () => {},
+	setNewMenuPrimaryOverride: () => {},
+	setNewMenuDisabled: () => {},
 })
 
 export function PageHeaderProvider({ children }: { children: ReactNode }) {
@@ -95,6 +109,14 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 		setState((prev) => ({ ...prev, scrollLocked }))
 	}, [])
 
+	const setNewMenuPrimaryOverride = useCallback((override: NewMenuPrimaryOverride | undefined) => {
+		setState((prev) => ({ ...prev, newMenuPrimaryOverride: override }))
+	}, [])
+
+	const setNewMenuDisabled = useCallback((newMenuDisabled: boolean | undefined) => {
+		setState((prev) => ({ ...prev, newMenuDisabled }))
+	}, [])
+
 	return (
 		<PageHeaderContext.Provider
 			value={{
@@ -107,6 +129,8 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setCrumb,
 				setContentPush,
 				setScrollLocked,
+				setNewMenuPrimaryOverride,
+				setNewMenuDisabled,
 			}}
 		>
 			{children}

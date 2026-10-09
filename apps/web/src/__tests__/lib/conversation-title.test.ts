@@ -1,4 +1,4 @@
-import { deriveConversationTitle } from '@/lib/conversation-title'
+import { deriveConversationTitle } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 describe('deriveConversationTitle', () => {

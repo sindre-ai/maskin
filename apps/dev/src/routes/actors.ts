@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -32,8 +32,11 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -45,10 +48,15 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	actorsShareWorkspace,
+	isAdminOfSharedWorkspace,
+	isWorkspaceMember,
+} from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
@@ -66,6 +74,16 @@ type Env = {
 const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
+
+/**
+ * Event data for an actor mutation. Events are readable by every workspace
+ * member (history and SSE return the row unfiltered), so this carries identity
+ * only. Never pass an actor row here: it holds tools, llm_config and
+ * credentials.
+ */
+function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
+	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
+}
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -264,10 +282,26 @@ app.openapi(createActorRoute, async (c) => {
 		else if (!atOwnershipCap) workspaceProvisioningFailed = true
 	}
 
+	// Baseline for the invite conversion metric: a human who signs up and lands
+	// in their own workspace is a workspace_member_joined with from_invite:false.
+	if (workspaceId && actor.type === 'human') {
+		void capturePosthogEvent('workspace_member_joined', actor.id, {
+			from_invite: false,
+			workspace_id: workspaceId,
+		})
+	}
+
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
 	// Field names must be snake_case to match actorResponseSchema so MCP read→update
 	// round trips don't get keys stripped.
-	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
+	const {
+		apiKey: _,
+		passwordHash: __,
+		systemPrompt,
+		llmProvider,
+		llmConfig,
+		...actorWithoutKey
+	} = actor
 	return c.json(
 		{
 			...serialize(actorWithoutKey),
@@ -643,8 +677,13 @@ const getActorRoute = createRoute({
 
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
 
 	const [[actor], skills, [membership]] = await Promise.all([
 		db
@@ -690,7 +729,8 @@ app.openapi(getActorRoute, (async (c) => {
 	}
 
 	const role = workspaceId ? (membership?.role ?? null) : undefined
-	return c.json(serialize({ ...actor, skills, role }) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
+	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
@@ -717,6 +757,14 @@ const updateActorRoute = createRoute({
 			content: { 'application/json': { schema: actorResponseSchema } },
 			description: 'Actor updated',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Masked tool config value with no stored value to keep',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller may not update this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -732,12 +780,16 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type })
+		.select({ type: actors.type, tools: actors.tools })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
 
 	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type === 'agent' && !(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -763,6 +815,43 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	// tools and llm_config decide what runs in the agent's sessions and with
+	// which credentials, so changing another actor's needs owner/admin.
+	// Prompt, description, name and memory stay open to workspace members.
+	if (
+		(body.tools !== undefined || body.llm_config !== undefined) &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				"Only workspace admins can change another actor's tools or llm_config",
+			),
+			403,
+		)
+	}
+
+	// A config read back masked must not overwrite the stored secrets with the mask.
+	let tools = body.tools
+	if (tools !== undefined) {
+		const restored = restoreMaskedToolValues(tools, existing.tools)
+		if (restored.unresolved.length > 0) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Masked tool config values have no stored value to keep; send the real value or leave the entry unchanged',
+					restored.unresolved.map((field) => ({
+						field: `tools.mcpServers.${field}`,
+						message: 'Masked value cannot be saved',
+					})),
+				),
+				400,
+			)
+		}
+		tools = restored.tools as typeof tools
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -770,7 +859,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.email && { email: body.email }),
 			...(body.description !== undefined && { description: body.description }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
-			...(body.tools !== undefined && { tools: body.tools }),
+			...(tools !== undefined && { tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
 			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
@@ -798,6 +887,7 @@ app.openapi(updateActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
@@ -815,6 +905,10 @@ const regenerateApiKeyRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ api_key: z.string() }) } },
 			description: 'API key regenerated',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -824,7 +918,12 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+
+	if (id !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Not allowed'), 403)
+	}
 
 	const { key } = generateApiKey()
 
@@ -837,6 +936,9 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
+
+	// The old key must stop authenticating now, not when its cached lookup expires.
+	evictActor(id)
 
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
@@ -925,13 +1027,13 @@ app.openapi(resetActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'reset',
 		entityType: 'actor',
 		entityId: id,
-		data: updated,
+		data: actorEventData(updated),
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -990,8 +1092,6 @@ app.openapi(deleteActorRoute, (async (c) => {
 	if (existing.type !== 'agent') {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
-
-	const existingData = { ...existing }
 
 	// Stop before delete. The cascade below removes this actor's session rows,
 	// but a sandbox already running on an agent-server keeps executing as an
@@ -1075,14 +1175,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
+	evictActor(id)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'deleted',
 		entityType: 'agent',
 		entityId: id,
-		data: existingData,
+		data: actorEventData(existing),
 	})
 
 	return c.json({ deleted: true })
@@ -1207,7 +1308,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'agent_paused',
@@ -1219,7 +1320,8 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		},
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof pauseAgentRoute, Env>)
 
 // POST /:id/run - Resume a paused agent OR start a fresh session
@@ -1322,10 +1424,16 @@ app.openapi(runAgentRoute, (async (c) => {
 			if (pausedSession) {
 				await sessionManager.resumeSession(pausedSession.id)
 			} else {
-				await sessionManager.createSession(workspaceId, {
+				await startSession({
+					workspaceId,
 					actorId: id,
+					callerKind: 'rest',
 					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
 					createdBy: actorId,
+					// Ad-hoc actor run: no originating object.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
+					await: 'none',
 				})
 			}
 		} catch (err) {
@@ -1354,7 +1462,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'agent_run',
@@ -1363,7 +1471,8 @@ app.openapi(runAgentRoute, (async (c) => {
 		data: {},
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app

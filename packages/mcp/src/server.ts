@@ -26,8 +26,13 @@ import {
 	paginateClientSide,
 	toSnapshotAt,
 } from './cursor.js'
-import { READ_TOOL_NAMES, buildReadErrorBody, toolErrorResponse } from './read-error.js'
-import { applyResponseTokenCap } from './response-cap.js'
+import {
+	READ_TOOL_NAMES,
+	buildReadErrorBody,
+	parseApiErrorStatus,
+	toolErrorResponse,
+} from './read-error.js'
+import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
 import {
 	type ApiCaller as SetupApiCaller,
 	buildActorSetupBlockFromApi,
@@ -83,6 +88,20 @@ interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * `events.id` of the comment that dispatched this agent session, when the
+	 * session was triggered by a comment. `create_comment` uses it as the
+	 * default `parent_event_id` unless the caller explicitly opts out via
+	 * `no_thread: true` — the tool-level guarantee that agents reply inside
+	 * their triggering thread without depending on a prompt rule each system
+	 * prompt has to remember (follow-up to PR #1709's rule-level fallback).
+	 *
+	 * Set by `routes/mcp.ts` from the `X-Maskin-Triggering-Event-Id` header
+	 * that session-manager stamps onto Maskin MCP entries when a session
+	 * carries `source_comment_event_id`. Absent otherwise, and always absent
+	 * on stdio and on external callers.
+	 */
+	triggeringEventId?: number
 }
 
 /**
@@ -187,6 +206,10 @@ function resolveListPagination(args: {
 	 *  tools that expose their own sort-direction param (e.g. `list_objects`'
 	 *  `sort=updated_at_asc`) need to pass this. */
 	order?: 'asc' | 'desc'
+	/** Largest page the tool can serve. Defaults to `MAX - 1` (room for the
+	 *  `+ 1` sentinel); a tool that confirms "has more" some other way can pass
+	 *  `LIST_ENDPOINT_MAX_LIMIT` to honour the full documented limit. */
+	maxLimit?: number
 }): ResolvedPagination {
 	const cursor = decodeCursor(args.cursor)
 	const requested =
@@ -196,7 +219,7 @@ function resolveListPagination(args: {
 	// We fetch `requested + 1` to detect "has more"; the API's list endpoints
 	// reject any `limit > LIST_ENDPOINT_MAX_LIMIT`, so cap the effective page
 	// at `MAX - 1` to keep the sentinel within bounds.
-	const limit = Math.min(requested, LIST_ENDPOINT_MAX_LIMIT - 1)
+	const limit = Math.min(requested, args.maxLimit ?? LIST_ENDPOINT_MAX_LIMIT - 1)
 	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
 	const order = cursor?.o ?? args.order ?? 'desc'
 	return { limit, cursor, snapshotAt, order }
@@ -337,6 +360,20 @@ async function apiFetch(
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
+	}
+	// S2 writer hook: attribute every MCP-tool-originated mutation to the
+	// container session it ran inside, so the backend's `produced_by` writer
+	// can persist a `session → object|file` edge. `SESSION_ID` is injected by
+	// the host session-manager on container launch; running the MCP server
+	// outside an agent session (local dev) leaves it unset and no header is
+	// sent. Read-only calls carry the header too — cheap and harmless, and
+	// keeps the header contract uniform per request rather than per method.
+	const sessionId = process.env.SESSION_ID
+	if (
+		sessionId &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+	) {
+		headers['X-Maskin-Session-Id'] = sessionId
 	}
 	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
 	if (idempotencyKey) {
@@ -1780,6 +1817,7 @@ async function buildCollectionHeroCard(
 	workspaceId: string | undefined,
 	totalCount = rows.length,
 	offset = 0,
+	hasMore?: boolean,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
 	const driverIds = rows.map((o) => o.driver).filter((v): v is string => typeof v === 'string')
@@ -1787,7 +1825,9 @@ async function buildCollectionHeroCard(
 	const heroObjects = rows.map((o) =>
 		buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 	)
-	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	if (heroObjects.length === 1 && totalCount === 1) {
+		return { kind: 'single', tool, object: heroObjects[0] }
+	}
 	const uiObjects = heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE)
 	return {
 		kind: 'list',
@@ -1797,7 +1837,7 @@ async function buildCollectionHeroCard(
 		page: {
 			limit: uiObjects.length,
 			offset,
-			hasMore: offset + uiObjects.length < totalCount,
+			hasMore: hasMore ?? offset + uiObjects.length < totalCount,
 		},
 	}
 }
@@ -2840,7 +2880,12 @@ export function createMcpServer(config: McpConfig) {
 			// way. `order` must be pinned from the first call so an `asc` request
 			// isn't silently dropped to the pagination default of `desc`.
 			const order = args.sort === 'updated_at_asc' ? 'asc' : 'desc'
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor, order })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				order,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
@@ -2849,7 +2894,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.updated_after) params.set('updated_after', args.updated_after)
 			params.set('sort', args.sort ? 'updatedAt' : 'createdAt')
 			params.set('order', pagination.order)
-			params.set('limit', String(pagination.limit + 1))
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
 			params.set('snapshot_at', pagination.snapshotAt)
 			if (pagination.cursor) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
@@ -2859,18 +2906,48 @@ export function createMcpServer(config: McpConfig) {
 				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
 			}
 			if (args.include_archived) params.set('include_archived', 'true')
-			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})) as RawObject[]
-			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw, (row) =>
-				args.sort ? row.updatedAt : row.createdAt,
+			const apiOptions = { workspaceId: args.workspace_id }
+			const sortValueOf = (row: RawObject) => (args.sort ? row.updatedAt : row.createdAt)
+			const { data, response } = await apiCallWithResponse(
+				config,
+				'GET',
+				`/api/objects?${params}`,
+				undefined,
+				apiOptions,
 			)
+			let raw = data as RawObject[]
+			const lastRaw = raw[raw.length - 1]
+			const lastSortValue = lastRaw && sortValueOf(lastRaw)
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastRaw &&
+				lastSortValue &&
+				raw.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastSortValue)
+				probeParams.set('cursor_id', lastRaw.id)
+				const probe = (await apiCall(
+					config,
+					'GET',
+					`/api/objects?${probeParams}`,
+					undefined,
+					apiOptions,
+				)) as RawObject[]
+				raw = [...raw, ...probe]
+			}
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw, sortValueOf)
 			const result = trimmed as RawObject[]
+			const totalCount = parseTotalCountHeader(response, result.length)
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'list_objects',
 				result,
 				args.workspace_id,
+				totalCount,
+				0,
+				nextCursor !== null,
 			)
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched = wsId
@@ -2898,11 +2975,24 @@ export function createMcpServer(config: McpConfig) {
 					heroCard,
 					objects: enriched,
 					page: {
-						limit: result.length,
+						limit: pagination.limit,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships instead of after the whole pre-trim page.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as RawObject
+					const sortValue = sortValueOf(row)
+					return sortValue
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue, id: row.id },
+							})
+						: null
 				},
 			}
 		},
@@ -2989,6 +3079,93 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Relationships ────────────────────────────────────────
+	registerAppTool(
+		server,
+		'create_relationship',
+		{
+			description: tools.create_relationship.description,
+			inputSchema: tools.create_relationship.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
+		},
+		async (args) => {
+			const workspaceId = args.workspace_id
+			// Preflight: resolve each endpoint to `file`, `object`, or `null`
+			// (unknown). Any unknown side must 404 — a caller writing an edge to
+			// a nonexistent node was almost certainly working from a stale id
+			// or hallucinated one, and the read paths can only be tolerant of
+			// dangling endpoints because legacy writers exist. New writes go
+			// through this strict gate. Files first: mirrors the derive helper's
+			// files > objects precedence.
+			const resolveKind = async (id: string): Promise<'file' | 'object' | null> => {
+				try {
+					await apiCall(config, 'GET', `/api/files/${id}`, undefined, { workspaceId })
+					return 'file'
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 404) throw err
+				}
+				try {
+					await apiCall(config, 'GET', `/api/objects/${id}`, undefined, { workspaceId })
+					return 'object'
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 404) throw err
+				}
+				return null
+			}
+			const [sourceKind, targetKind] = await Promise.all([
+				resolveKind(args.source_id),
+				resolveKind(args.target_id),
+			])
+			const unknownIds: string[] = []
+			if (!sourceKind) unknownIds.push(args.source_id)
+			if (!targetKind) unknownIds.push(args.target_id)
+			if (unknownIds.length > 0) {
+				throw new Error(
+					`API error 404: Unknown endpoint id(s) in this workspace: ${unknownIds.join(
+						', ',
+					)}. Both source_id and target_id must resolve to an existing object or file — find them via list_objects, search_objects, or list_files first.`,
+				)
+			}
+			// Server derives sourceType/targetType from the ids via T1's helper;
+			// the labels we pass here are placeholders satisfying the wire
+			// schema and are ignored by the endpoint. Caller-supplied labels
+			// were removed from the MCP contract for exactly this reason —
+			// there's one authority for endpoint kind, and it is the id.
+			const created = (await apiCall(
+				config,
+				'POST',
+				'/api/relationships',
+				{
+					source_type: sourceKind,
+					source_id: args.source_id,
+					target_type: targetKind,
+					target_id: args.target_id,
+					type: args.type,
+				},
+				{ workspaceId },
+			)) as {
+				id: string
+				sourceId: string
+				sourceType: string
+				targetId: string
+				targetType: string
+				type: string
+				createdAt?: string | null
+				sourceTitle?: string | null
+				targetTitle?: string | null
+			}
+			return {
+				_meta: meta('create_relationship', config, workspaceId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(created),
+					},
+				],
+				structuredContent: { relationship: created },
+			}
+		},
+	)
+
 	registerAppTool(
 		server,
 		'list_relationships',
@@ -3288,10 +3465,12 @@ export function createMcpServer(config: McpConfig) {
 			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
 			// Trim the sentinel + seed next_cursor from the last-visible row's
 			// (createdAt, id) tuple. The cross-workspace branch never gets a
-			// cursor and sees the raw response.
+			// cursor; still cap at `pagination.limit` client-side so the shipped
+			// count matches what the caller asked for even if the API ignored
+			// `limit` (belt-and-suspenders — the API respects it in production).
 			const { nextCursor, trimmed } = workspaceScoped
 				? encodeNextCursor(pagination, rawRows as Array<{ id: string; createdAt?: string | null }>)
-				: { nextCursor: null, trimmed: rawRows }
+				: { nextCursor: null, trimmed: rawRows.slice(0, pagination.limit) }
 			const rows = trimmed as RawActor[]
 			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
 			// URLs aren't part of buildActorHeroCardObject's output — they come
@@ -3327,6 +3506,11 @@ export function createMcpServer(config: McpConfig) {
 				return obj
 			})
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			// heroCard.objects carries every row the API returned on this page —
+			// `structuredContent` has no separate rich row array for this tool, so
+			// trimming here would silently drop rows the caller can't recover
+			// (the hero-card widget already caps display client-side, so a
+			// larger array only means more data on the wire, not a wider render).
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_actors' }
@@ -3335,13 +3519,12 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_actors',
-								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								objects: heroObjects,
 								totalCount,
 								page: {
-									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									limit: heroObjects.length,
 									offset,
-									hasMore:
-										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+									hasMore: offset + heroObjects.length < totalCount,
 								},
 							}
 			return {
@@ -4447,7 +4630,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
+			const { workspace_id, no_thread, ...body } = args as {
+				workspace_id?: string
+				no_thread?: boolean
+				parent_event_id?: number
+				[key: string]: unknown
+			}
+			// Thread defaulting: when the session was dispatched from a comment
+			// (config.triggeringEventId set by routes/mcp.ts) and the caller
+			// didn't already pick a parent, reply inside the triggering thread
+			// by default. `no_thread: true` is the explicit opt-out for cases
+			// where a fresh top-level comment is actually intended (a status
+			// update on a bet, opening a new topic, etc.). This turns the
+			// "reply in-thread" guarantee from a per-agent prompt rule (PR
+			// #1709) into a tool-level default covering every agent and
+			// dispatch path.
+			if (
+				body.parent_event_id === undefined &&
+				no_thread !== true &&
+				typeof config.triggeringEventId === 'number'
+			) {
+				body.parent_event_id = config.triggeringEventId
+			}
 			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
 			})
@@ -4627,6 +4831,11 @@ export function createMcpServer(config: McpConfig) {
 				),
 			)
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			// heroCard.objects carries every row the API returned on this page —
+			// `structuredContent` has no separate rich row array for this tool, so
+			// trimming here would silently drop rows the caller can't recover
+			// (the hero-card widget already caps display client-side, so a
+			// larger array only means more data on the wire, not a wider render).
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_triggers' }
@@ -4635,13 +4844,12 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_triggers',
-								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								objects: heroObjects,
 								totalCount,
 								page: {
-									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									limit: heroObjects.length,
 									offset,
-									hasMore:
-										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+									hasMore: offset + heroObjects.length < totalCount,
 								},
 							}
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -5586,8 +5794,11 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.actor_id) params.set('actor_id', args.actor_id)
+			if (args.trigger_id) params.set('trigger_id', args.trigger_id)
 			if (args.updated_before) params.set('updated_before', args.updated_before)
 			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.before) params.set('before', args.before)
+			if (args.verbose) params.set('verbose', 'true')
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -5631,14 +5842,18 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const session = (await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${args.id}`,
-				undefined,
-				wsOpts,
-			)) as SessionRow
-			const enriched = await enrichSessionActorName(config, wsId, session)
+			const params = new URLSearchParams()
+			if (args.include_logs) {
+				params.set('include_logs', 'true')
+				if (args.log_limit) params.set('log_limit', String(args.log_limit))
+			}
+			const query = params.toString()
+			const path = `/api/sessions/${args.id}${query ? `?${query}` : ''}`
+			const raw = (await apiCall(config, 'GET', path, undefined, wsOpts)) as SessionRow & {
+				logs?: unknown[]
+			}
+			const { logs, ...session } = raw
+			const enriched = await enrichSessionActorName(config, wsId, session as SessionRow)
 			const sessionWithUrl = wsId
 				? addUrl(enriched as Record<string, unknown>, config, wsId, {
 						kind: 'session',
@@ -5648,21 +5863,12 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 
 			if (args.include_logs) {
-				const params = new URLSearchParams()
-				if (args.log_limit) params.set('limit', String(args.log_limit))
-				const logs = await apiCall(
-					config,
-					'GET',
-					`/api/sessions/${args.id}/logs?${params}`,
-					undefined,
-					wsOpts,
-				)
 				return {
 					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ session: sessionWithUrl, logs }),
+							text: JSON.stringify({ session: sessionWithUrl, logs: logs ?? [] }),
 						},
 					],
 				}
@@ -5671,6 +5877,35 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(sessionWithUrl) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_session_logs',
+		{
+			description: tools.get_session_logs.description,
+			inputSchema: tools.get_session_logs.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			params.set('direction', args.direction)
+			params.set('limit', String(args.limit))
+			if (args.before_id !== undefined) params.set('before_id', String(args.before_id))
+			if (args.after_id !== undefined) params.set('after_id', String(args.after_id))
+			if (args.stream) params.set('stream', args.stream)
+			const logs = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}/logs/deep?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('get_session_logs', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(logs) }],
 			}
 		},
 	)
@@ -5781,18 +6016,28 @@ export function createMcpServer(config: McpConfig) {
 					action_prompt: args.action_prompt,
 					config: args.config,
 					auto_start: true,
+					spawned_by_message_id: args.spawned_by_message_id,
+					depends_on_session_ids: args.depends_on_session_ids,
 				},
 				wsOpts,
 			)) as { id: string; status: string }
 
-			const sessionId = session.id
+			let sessionId = session.id
 			const pollMs = (args.poll_interval_seconds ?? 5) * 1000
 			const timeoutMs = (args.timeout_seconds ?? 660) * 1000
 			const deadline = Date.now() + timeoutMs
 			const terminalStatuses = ['completed', 'failed', 'timeout']
+			// §17.6: when a session hits a subscription limit its terminal report
+			// carries retried_session_id — the id of the retry the scheduler
+			// enqueued. Follow the redirect so a caller waiting on run_agent
+			// sees the retry's outcome instead of an intermediate "failed",
+			// with the same cap (5) the scheduler enforces so a broken chain
+			// can't hold the polling loop for the full timeout.
+			const MAX_RETRY_FOLLOWS = 5
+			let retryFollows = 0
 
-			// 2. Poll until terminal
-			let current = session
+			// 2. Poll until terminal, following retried_session_id redirects
+			let current = session as typeof session & { retriedSessionId?: string | null }
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
 				current = (await apiCall(
@@ -5801,8 +6046,16 @@ export function createMcpServer(config: McpConfig) {
 					`/api/sessions/${sessionId}`,
 					undefined,
 					wsOpts,
-				)) as typeof session
-				if (terminalStatuses.includes(current.status)) break
+				)) as typeof current
+				if (terminalStatuses.includes(current.status)) {
+					const retryId = current.retriedSessionId
+					if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
+						retryFollows += 1
+						sessionId = retryId
+						continue
+					}
+					break
+				}
 			}
 
 			// 3. Fetch logs
@@ -5822,13 +6075,20 @@ export function createMcpServer(config: McpConfig) {
 						actorId: (current as { actorId?: string }).actorId,
 					})
 				: current
+			// Surface how many retry redirects the poll followed so callers can
+			// distinguish a straight-through completion from one that rode the
+			// subscription-limit retry chain.
+			const currentWithRetryMeta =
+				retryFollows > 0
+					? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
+					: currentWithUrl
 
 			return {
 				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithUrl, logs }),
+						text: JSON.stringify({ session: currentWithRetryMeta, logs }),
 					},
 				],
 			}

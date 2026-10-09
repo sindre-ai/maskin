@@ -1,4 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,7 +10,6 @@ import { createGzip } from 'node:zlib'
 const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentServers,
 	conversationPendingTurns,
@@ -22,8 +22,10 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	AGENT_PUSH_DIRECTORIES,
 	type SessionResult,
 	type SessionResultFailureReason,
+	buildSetModelRequest,
 	githubOwnerLoginToEnvKey,
 	splitLines,
 } from '@maskin/shared'
@@ -35,6 +37,7 @@ import {
 	count as countFn,
 	desc,
 	eq,
+	gte,
 	inArray,
 	isNotNull,
 	isNull,
@@ -44,10 +47,16 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
-import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
+import {
+	trackAgentSessionCompletedWithSkills,
+	trackAgentSessionStartedWithPrompt,
+	trackSessionSkillLoadFailed,
+} from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
+	SESSION_OAUTH_EXPIRES_AT_KEY,
+	isAuthErrorAtAccessTokenExpiry,
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
@@ -55,7 +64,9 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
+import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -67,8 +78,10 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
+import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -80,7 +93,6 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
-	FALLBACK_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -110,9 +122,25 @@ import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import {
+	BOOT_STALL_MS,
+	TERMINAL_STATUSES,
+	_driveToRunning,
+	startSession,
+} from './session-lifecycle'
+import {
+	type PushedAgentFilesOutcome,
+	type SessionSettleRow,
+	type SettleDependencies,
+	type SettleOutcome,
+	type StoppedSandboxOutcome,
+	settleSession,
+} from './session-lifecycle'
+import {
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
+	readSessionStdoutChunks,
+	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
@@ -124,6 +152,11 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/** Failure reasons for a session whose container is gone / was never assigned. */
+const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+const NO_CONTAINER_ASSIGNED_MESSAGE =
+	'No container was ever assigned to this session — it was marked running but never started'
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -186,10 +219,26 @@ export interface CreateSessionParams {
 	 */
 	config?: Record<string, unknown>
 	triggerId?: string
+	/**
+	 * The `triggers.type` of the trigger dispatching this session (`'cron'`,
+	 * `'event'`, or `'reminder'`). Folded into `config.trigger_type` and read
+	 * back at launch, then emitted on `agent_session_started_with_prompt` as
+	 * `trigger_type` — the cron-vs-event split the G2 measurement reads.
+	 * Supplied by `trigger-runner.ts`'s dispatch sites; absent everywhere else.
+	 */
+	triggerType?: string
 	createdBy: string
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
+	/**
+	 * Handed-off strip anchors. `spawnedByMessageId` is the assistant message id
+	 * that triggered this sub-agent spawn; `dependsOnSessionIds` names the
+	 * sessions this one is blocked behind. Both optional — a spawn without them
+	 * persists NULL and simply renders no strip.
+	 */
+	spawnedByMessageId?: number
+	dependsOnSessionIds?: string[]
 	/**
 	 * Attribution for `agent_session_started_with_prompt` — names the dispatch
 	 * path (e.g. `'comment_fallback'` for the comment-posted subscriber in
@@ -203,6 +252,18 @@ export interface CreateSessionParams {
 	 * for existing consumers; also emitted as a PostHog prop.
 	 */
 	sourceCommentEventId?: number
+	/**
+	 * The object this session was started for (bet, task, insight, or any
+	 * first-class object). Required-optional shape: every call site MUST pass
+	 * both `initiatedFromObjectId` and `initiatedFromObjectType`, either as
+	 * real values or as explicit `null`. tsc catches a missed site; NULL is
+	 * still an acceptable value (direct API creates, onboarding, cron
+	 * triggers, conversation-only spawns). Read back at session_failed emit
+	 * time and at every terminal PostHog `runtime_session_ended` emit; see
+	 * spec §3.3 / §3.5 of the sessions-inspectable bet.
+	 */
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
 }
 
 /**
@@ -225,6 +286,12 @@ function claudeRuntimeFailoverReason(
 ): string | null {
 	if (!failureReason || failureReason.provider !== 'anthropic') return null
 	if (failureReason.reason_code === 'not_logged_in') return 'auth_failed'
+	// A revoked credential is a distinct failure mode from a spent one — the
+	// slot's token itself is bad, not the subscription's quota — but the
+	// remediation is the same: fail this session over to the next slot in the
+	// chain. The retry's session-start refresh recovers expired-but-not-revoked
+	// tokens in place; a fully-dead slot walks further via unusableFromRefresh.
+	if (failureReason.reason_code === 'oauth_revoked') return 'oauth_revoked'
 
 	const usageCodes = new Set([
 		'session_limit',
@@ -246,33 +313,83 @@ function claudeRuntimeFailoverReason(
 }
 
 /**
+ * Only names matching this pattern may be copied from the API process env into
+ * a session via an actor's tools.envFrom. The prefix keeps envFrom from becoming
+ * a way to read DATABASE_URL and friends; the full-match shape keeps the name
+ * safe to use as an env key (see known-pitfalls: shell injection).
+ */
+const ACTOR_SECRET_ENV_NAME_RE = /^AGENT_SECRET_[A-Za-z0-9_]+$/
+
+/**
+ * Resolves an actor's tools.envFrom into env entries for the session. Pure so
+ * the allowlist and unset handling are unit-testable. The skipped cases are
+ * returned as names only, so callers can log them without ever touching a value.
+ */
+export function resolveActorSecretEnv(
+	envFrom: unknown,
+	processEnv: NodeJS.ProcessEnv,
+): { env: Record<string, string>; ignored: string[]; unset: string[] } {
+	const result = {
+		env: {} as Record<string, string>,
+		ignored: [] as string[],
+		unset: [] as string[],
+	}
+	if (!Array.isArray(envFrom)) return result
+	for (const name of envFrom) {
+		if (typeof name !== 'string' || !ACTOR_SECRET_ENV_NAME_RE.test(name)) {
+			result.ignored.push(String(name))
+			continue
+		}
+		const value = processEnv[name]
+		if (value === undefined || value === '') {
+			result.unset.push(name)
+			continue
+		}
+		result.env[name] = value
+	}
+	return result
+}
+
+/**
  * Decides whether `buildLaunchSpec`'s resolved LLM route needs persisting on
  * `sessions.config`, and if so, returns the merged config. Returns `null`
  * when nothing changed.
  *
  * Clears `claude_oauth_runtime_failover_retry_of` whenever the slot resolves
- * back to `primary`. That marker only means anything while the session is
- * still actually running on the backup a prior runtime failover put it on —
- * leaving it stamped after a lazy recovery flips the slot back to primary
- * would make `maybeRetryClaudeOAuthOnBackup`'s gate (which treats a
- * `retry_of` string alone as sufficient, regardless of the current
- * `llm_oauth_slot`) misclassify a later, unrelated primary failure as
- * "backup already exhausted".
+ * back to `primary` — the head of the failover chain. That marker records
+ * that this session exists because an earlier one was pushed off its
+ * subscription; once a lazy recovery has routed the session back to the head,
+ * it describes nothing that is still true. It stays a marker only, never a
+ * gate: whether a failing session has anywhere left to fall over to is
+ * decided by its slot's position in the chain (see
+ * `maybeRetryClaudeOAuthOnNextSlot`), not by its presence.
+ *
+ * `nextOauthExpiresAt` is the access-token expiry of a launch whose container
+ * got no refresh token. It is stamped when given and cleared when not, so a
+ * retry that inherits the previous config never carries a stale expiry onto a
+ * launch that can refresh itself.
  */
 export function mergeLaunchRouteConfig(
 	existingConfig: Record<string, unknown>,
 	routeTaken: LlmRoute,
 	nextOauthSlot: string | undefined,
+	nextOauthExpiresAt?: number,
 ): Record<string, unknown> | null {
 	const needsUpdate =
 		existingConfig.llm_route !== routeTaken ||
-		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
+		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot) ||
+		existingConfig[SESSION_OAUTH_EXPIRES_AT_KEY] !== nextOauthExpiresAt
 	if (!needsUpdate) return null
 
 	const updatedConfig: Record<string, unknown> = {
 		...existingConfig,
 		llm_route: routeTaken,
 		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+	}
+	if (nextOauthExpiresAt === undefined) {
+		delete updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY]
+	} else {
+		updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY] = nextOauthExpiresAt
 	}
 	if (nextOauthSlot === 'primary') {
 		updatedConfig.claude_oauth_runtime_failover_retry_of = undefined
@@ -285,15 +402,52 @@ export interface SessionLogEvent extends LogChunk {
 	logId: number
 }
 
+/**
+ * §17.5 companion parser at the two completion paths: convert the classifier's
+ * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
+ * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
+ * and markRemoteSessionComplete apply the same logic — no divergence class from
+ * .claude/rules/known-pitfalls.md "The Remote Completion Path Skipped ...".
+ *
+ * Returns null when the reason isn't credit-exhaustion-shaped (won't retry via
+ * scheduler, no reset_at to persist) or when reset_at parsing didn't produce a
+ * value in the [now+60s, now+24h] clamp band (§17.3, §17.7).
+ */
+function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | null {
+	if (!failureReason) return null
+	if (failureReason.provider !== 'anthropic') return null
+	if (!failureReason.reset_at) return null
+	const parsed = Date.parse(failureReason.reset_at)
+	if (Number.isNaN(parsed)) return null
+	return new Date(parsed)
+}
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
+	/** Start time of the watchdog pass in flight, null when idle. See runWatchdog(). */
+	private watchdogStartedAt: number | null = null
+	/** A pass older than this no longer blocks the next tick, so one hung await cannot stop the reaper. */
+	private static readonly WATCHDOG_STALE_MS = 5 * 60 * 1000
+	/** Set once the terminal-row heal (reaper step 0) has drained its backlog. */
+	private terminalHealDrained = false
+	/** Rows the terminal-row heal fixes per pass. */
+	private static readonly TERMINAL_HEAL_BATCH = 500
 	/** Log pruning runs hourly, not on every 60s watchdog tick. */
 	private lastLogPruneAt = 0
 	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 	private static readonly LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000
 	private static readonly LOG_PRUNE_SESSIONS_PER_RUN = 200
+	// Once the backlog is drained, how far past the retention cutoff the sweep
+	// looks for sessions that still hold old logs. Steady state only finds
+	// sessions that crossed the cutoff since the last run, so this also covers a
+	// multi-week outage.
+	private static readonly LOG_PRUNE_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000
+	// False until a sweep finds less than a full batch. Until then the scan is
+	// unbounded so any backlog older than the window still drains; afterwards it
+	// is windowed so it stops walking every already-pruned session.
+	private logPruneBacklogDrained = false
 	private activeSessions: Map<
 		string,
 		{
@@ -408,6 +562,26 @@ export class SessionManager extends EventEmitter {
 			// will produce a chat message, which it never will.
 			retryTurn: (sessionId, payload) =>
 				this.writeInput(sessionId, payload, undefined, undefined, { maskin_retry: true }),
+			// An interactive session never exits on a spent subscription, so the
+			// session-exit failover below never sees one. This is the same move,
+			// reached from the per-turn path.
+			onSubscriptionLimit: (sessionId, reason) =>
+				this.failOverInteractiveSession(sessionId, reason),
+			// Stop the still-running container after the pointer has moved. The
+			// current session launched with the now-spent (or revoked) credential
+			// and can't be resumed in place; stopping it means the human's next
+			// message in the same chat spawns a fresh session that picks up the
+			// workspace's new active_slot. Best-effort — the finalizer already
+			// swallowed the stop error and logged it, so no throw handling here.
+			// `reason` is currently unused by stopSession; kept in the callback
+			// signature so a future stop-reason column can pick it up without
+			// re-plumbing the finalizer.
+			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// An empty completion that survives the retries is tried once on
+			// another model. Both are optional: with no env var set the finalizer
+			// still retries and still tells the human.
+			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
+			fallbackModel: readEmptyTurnFallbackModel(),
 		})
 	}
 
@@ -474,9 +648,9 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
-		// Fold `triggerSource` / `sourceCommentEventId` into `config` so
-		// `launchContainer` can read them off the session row later — the two
-		// props are threaded through to `agent_session_started_with_prompt`
+		// Fold `triggerSource` / `sourceCommentEventId` / `triggerType` into
+		// `config` so `launchContainer` can read them off the session row later
+		// — the props are threaded through to `agent_session_started_with_prompt`
 		// from there, meaning every dispatch route benefits without each call
 		// site having to remember to fire the analytics event itself.
 		const baseConfig = params.config ?? {}
@@ -487,9 +661,24 @@ export class SessionManager extends EventEmitter {
 		if (params.sourceCommentEventId !== undefined) {
 			config.source_comment_event_id = params.sourceCommentEventId
 		}
+		if (params.triggerType !== undefined) {
+			config.trigger_type = params.triggerType
+		}
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
+		// S2 writer hook · the spawning message id, when the session is
+		// spawned inside an existing chat. Persisted on the
+		// `conversation → session` `spawned` edge's `metadata.messageId` so
+		// Task 4's deep-link (`/chats/<id>?msg=<messageId>`) can scroll to
+		// exactly that message. Null for sessions spawned outside a chat
+		// (triggers, cron, workspace-bootstrap) — the `spawned` edge is only
+		// written when `conversationId` is truthy, so a null messageId is
+		// only ever recorded when the spawn is truly conversation-anchored
+		// but the caller didn't have a message id to name (e.g. the future
+		// "resume conversation from scratch" flow).
+		const conversationMessageId =
+			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -534,6 +723,10 @@ export class SessionManager extends EventEmitter {
 				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
+				initiatedFromObjectId: params.initiatedFromObjectId,
+				initiatedFromObjectType: params.initiatedFromObjectType,
+				spawnedByMessageId: params.spawnedByMessageId ?? null,
+				dependsOnSessionIds: params.dependsOnSessionIds ?? null,
 			})
 			.returning()
 
@@ -541,7 +734,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error('Failed to create session')
 		}
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId,
 			actorId: params.actorId,
 			action: 'session_created',
@@ -549,6 +742,21 @@ export class SessionManager extends EventEmitter {
 			entityId: session.id,
 			data: {},
 		})
+
+		// S2 writer hook · upsert a `conversation → session` `spawned` edge
+		// with the spawning message id on metadata. Guarded on `conversationId`
+		// (no chat context = no lineage row, per spec §Rabbit holes) and
+		// flag-gated on the session's actor inside the helper. Idempotent on
+		// the unique index; a session_created re-run never double-writes.
+		if (conversationId) {
+			await writeSpawnedEdge(this.db, {
+				workspaceId,
+				conversationId,
+				sessionId: session.id,
+				sessionActorId: params.actorId,
+				messageId: conversationMessageId,
+			})
+		}
 
 		logger.info(`Session created: ${session.id}`, { workspaceId })
 
@@ -706,6 +914,18 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
+		// Unconditional dispatch-entry marker, emitted before any capacity check,
+		// queue handoff or lock. A session stuck in `starting` with this row
+		// present was entered but not dispatched; without it, dispatch never ran.
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'dispatch_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
 		// Chat sessions (conversationId set) are exempt from the workspace concurrency
 		// limit — a live human is waiting on the other end, which is more urgent than
 		// queuing behind background/trigger sessions. They also don't count against
@@ -747,22 +967,43 @@ export class SessionManager extends EventEmitter {
 				})
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err)
-				await this.db
-					.update(sessions)
-					.set({
-						status: 'failed',
-						result: { error: `Enqueue failed: ${message}` },
-						completedAt: new Date(),
-						updatedAt: new Date(),
+				// settleSession is the only writer of terminal sessions.status. Enqueue
+				// failed before the session ever reached an agent-server, so there's
+				// nothing to stop and no /agent workspace to push — skip both. Classify
+				// as dispatch_failure so the settle-side event row lines up with the
+				// dispatch-queue's own permanent-failure path. Guarded so a settle
+				// failure does not mask the original enqueue error rethrown below.
+				try {
+					await settleSession(
+						sessionId,
+						{
+							kind: 'fail',
+							classification: 'dispatch_failure',
+							source: 'dispatch-queue',
+							reason: `Enqueue failed: ${message}`,
+							exitCode: 0,
+						},
+						this.buildSettleDeps({ skipStop: true, skipPush: true }),
+					)
+				} catch (settleErr) {
+					logger.warn('settleSession failed while surfacing enqueue failure', {
+						sessionId,
+						error: String(settleErr),
+						enqueueError: message,
 					})
-					.where(eq(sessions.id, sessionId))
-				await this.db.insert(events).values({
-					workspaceId: session.workspaceId,
-					actorId: session.actorId,
-					action: 'session_failed',
-					entityType: 'session',
-					entityId: sessionId,
-					data: { error: `Enqueue failed: ${message}` },
+				}
+				// New recordSessionEnded site: this branch never called it, so the
+				// remote-dispatch enqueue-failure class of failures was invisible on
+				// PostHog. Closes the Criterion 3 numerator hole for this path.
+				// startedAt is null here (session never launched), so durationMs is
+				// measured from createdAt.
+				this.telemetry.recordSessionEnded({
+					sessionId,
+					endReason: 'failed',
+					durationMs: elapsedMs(null, session.createdAt),
+					agentServerUrl: LOCAL_RUNTIME_BUCKET,
+					contextObjectId: session.initiatedFromObjectId,
+					contextObjectType: session.initiatedFromObjectType,
 				})
 				throw err
 			}
@@ -854,6 +1095,8 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status: 'running',
+					sessionState: 'running',
+					stateEnteredAt: startedAt,
 					containerId,
 					startedAt,
 					timeoutAt: this.computeTimeout(session),
@@ -866,7 +1109,7 @@ export class SessionManager extends EventEmitter {
 			// working" surfaces) never refetch past their last 'pending'-status
 			// snapshot from session_created, so the chat typing indicator never
 			// appears even though the agent is live.
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_started',
@@ -920,30 +1163,33 @@ export class SessionManager extends EventEmitter {
 			// internal message. Everything else keeps today's shape.
 			const launchFailureReason =
 				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'failed',
-					result: {
-						error: launchFailureReason?.human_message ?? message,
-						...(launchFailureReason ? { failure_reason: launchFailureReason } : {}),
+			// settleSession is the only writer of terminal sessions.status. The
+			// container never came up, so there's nothing to stop and no /agent
+			// workspace to push — startup_stalled is the classification the
+			// settle-side spec pairs with a launch that never reached running.
+			// Wrapped in its own try/catch so a settle failure (e.g. session
+			// row raced away by another writer) does not mask the underlying
+			// launch error the caller expects to see rethrown below.
+			try {
+				await settleSession(
+					sessionId,
+					{
+						kind: 'fail',
+						classification: 'startup_stalled',
+						source: 'sandbox-exit',
+						reason: launchFailureReason?.human_message ?? message,
+						exitCode: 0,
+						...(launchFailureReason ? { failureReason: launchFailureReason } : {}),
 					},
-					completedAt: new Date(),
-					updatedAt: new Date(),
+					this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				)
+			} catch (settleErr) {
+				logger.warn('settleSession failed while surfacing launch failure', {
+					sessionId,
+					error: String(settleErr),
+					launchError: message,
 				})
-				.where(eq(sessions.id, sessionId))
-
-			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: sessionId,
-				data: {
-					error: message,
-					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
-				},
-			})
+			}
 
 			if (launchFailureReason) {
 				await this.insertSystemLog(sessionId, launchFailureReason.human_message).catch((logErr) =>
@@ -959,6 +1205,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: session.initiatedFromObjectId,
+				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1052,6 +1300,34 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Switch a live interactive session's CLI onto another model for its next
+	 * turns, keeping the conversation so far. Routes like writeInput (remote
+	 * agent-server or local container), but nothing is persisted to session_logs:
+	 * it is a control message, not a turn, and the transcript has no use for it.
+	 */
+	async setSessionModel(sessionId: string, model: string): Promise<void> {
+		const [session] = await this.db
+			.select({ agentServerId: sessions.agentServerId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
+		if (session?.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			await new AgentServerClient({ server: serverRow }).setModel(sessionId, model)
+			return
+		}
+		await this.containers.write(sessionId, buildSetModelRequest(model, randomUUID()))
+	}
+
 	async stopSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1074,7 +1350,10 @@ export class SessionManager extends EventEmitter {
 			}
 			const client = new AgentServerClient({ server: serverRow })
 			try {
-				await client.stopSession(sessionId)
+				// User-initiated stop from `SessionManager.stopSession` — settle
+				// runs later via `markRemoteSessionComplete`, so this call just
+				// tears the sandbox down and reports the outcome (unused here).
+				await client.stopSession(sessionId, { reason: 'stop', source: 'user-stop' })
 			} catch (err) {
 				// Sanitize before rethrowing — the route handler surfaces this
 				// message verbatim to the API caller (apps/dev/src/routes/sessions.ts),
@@ -1167,6 +1446,146 @@ export class SessionManager extends EventEmitter {
 		logger.info('Workspace snapshot saved', { sessionId })
 	}
 
+	/**
+	 * Build the SettleDependencies wired to this manager's local Docker path
+	 * and the agent-server RPC path — settleSession's post-commit side-effects
+	 * flow through these callbacks. Callers pass `skipStop` / `skipPush` when
+	 * they already handled the sandbox lifecycle themselves (e.g. pauseSession
+	 * stopped and removed the container as part of the snapshot flow, so a
+	 * redundant stop-callback would 404 on a container that's already gone).
+	 */
+	private buildSettleDeps(
+		opts: { skipStop?: boolean; skipPush?: boolean } = {},
+	): SettleDependencies {
+		return {
+			db: this.db,
+			stopSandbox: opts.skipStop
+				? async () => 'skipped-none-live'
+				: (row, outcome) => this.settleStopSandbox(row, outcome),
+			pushAgentFiles: opts.skipPush
+				? async () => 'skipped-no-workspace'
+				: (row, outcome) => this.settlePushAgentFiles(row, outcome),
+		}
+	}
+
+	/**
+	 * settleSession's stopSandbox callback. Routes the terminal-side sandbox
+	 * teardown by host: remote sessions hit the agent-server /stop RPC (the
+	 * one whose body carries `{ reason, source }` and whose response returns
+	 * `{ stopped }`), local sessions call ContainerManager directly. Both
+	 * paths are idempotent and best-effort — the return value classifies
+	 * whether a live sandbox was actually stopped, was already gone, or the
+	 * stop attempt failed outright.
+	 */
+	private async settleStopSandbox(
+		row: SessionSettleRow,
+		outcome: SettleOutcome,
+	): Promise<StoppedSandboxOutcome> {
+		if (row.agentServerId) {
+			try {
+				const [serverRow] = await this.db
+					.select({
+						id: agentServers.id,
+						url: agentServers.url,
+						secret: agentServers.secret,
+					})
+					.from(agentServers)
+					.where(eq(agentServers.id, row.agentServerId))
+					.limit(1)
+				if (!serverRow) return 'skipped-none-live'
+				const client = new AgentServerClient({ server: serverRow })
+				const resp = await client.stopSession(row.id, {
+					reason: outcome.kind,
+					source: outcome.source,
+				})
+				if (resp.stopped === 'sandbox-not-found' || resp.stopped === 'sandbox-already-gone') {
+					return 'skipped-none-live'
+				}
+				return 'remote'
+			} catch (err) {
+				logger.warn('settleSession stopSandbox (remote) failed', {
+					sessionId: row.id,
+					source: outcome.source,
+					error: String(err),
+				})
+				return 'skipped-error'
+			}
+		}
+		if (row.containerId) {
+			try {
+				this.containers.detachStdin(row.id)
+				await this.containers.stop(row.containerId)
+				return 'local'
+			} catch (err) {
+				logger.warn('settleSession stopSandbox (local) failed', {
+					sessionId: row.id,
+					containerId: row.containerId,
+					error: String(err),
+				})
+				return 'skipped-error'
+			}
+		}
+		return 'skipped-none-live'
+	}
+
+	/**
+	 * settleSession's pushAgentFiles callback. Local sessions read
+	 * `learnings/` and `memory/` from the tempDir this manager staged at
+	 * session start; remote sessions call the agent-server /push-agent-files
+	 * RPC and hand it the workspace-scoped `keyPrefix` so the write lands at
+	 * the exact key the concurrent bet's boot-side memory staging pulls from.
+	 */
+	private async settlePushAgentFiles(
+		row: SessionSettleRow,
+		outcome: SettleOutcome,
+	): Promise<PushedAgentFilesOutcome> {
+		if (row.agentServerId) {
+			try {
+				const [serverRow] = await this.db
+					.select({
+						id: agentServers.id,
+						url: agentServers.url,
+						secret: agentServers.secret,
+					})
+					.from(agentServers)
+					.where(eq(agentServers.id, row.agentServerId))
+					.limit(1)
+				if (!serverRow) return 'skipped-no-workspace'
+				const client = new AgentServerClient({ server: serverRow })
+				const resp = await client.pushAgentFiles(row.id, {
+					directories: [...AGENT_PUSH_DIRECTORIES],
+					keyPrefix: `agents/${row.workspaceId}/${row.actorId}`,
+				})
+				return resp.errors.length > 0 ? 'failed' : 'ok'
+			} catch (err) {
+				logger.warn('settleSession pushAgentFiles (remote) failed', {
+					sessionId: row.id,
+					classification: outcome.classification,
+					error: String(err),
+				})
+				return 'failed'
+			}
+		}
+		const sessionData = this.activeSessions.get(row.id)
+		if (!sessionData) return 'skipped-no-workspace'
+		try {
+			await this.agentStorage.pushAgentFiles(
+				row.actorId,
+				row.workspaceId,
+				row.id,
+				sessionData.tempDir,
+			)
+			return 'ok'
+		} catch (err) {
+			logger.warn('settleSession pushAgentFiles (local) failed', {
+				sessionId: row.id,
+				classification: outcome.classification,
+				error: String(err),
+			})
+			return 'failed'
+		}
+	}
+
 	async pauseSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1213,16 +1632,20 @@ export class SessionManager extends EventEmitter {
 			await this.containers.stop(session.containerId)
 			await this.containers.remove(session.containerId)
 
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'paused',
-					snapshotPath: snapshotKey,
-					containerId: null,
-					currentActivity: null,
-					updatedAt: new Date(),
-				})
-				.where(eq(sessions.id, sessionId))
+			// settleSession is the only writer of terminal sessions.status. The
+			// container was already stopped and removed above, and a paused
+			// session's /agent files are captured by the snapshot tar rather than
+			// pushed to the per-agent prefix — skip both side-effects.
+			await settleSession(
+				sessionId,
+				{
+					kind: 'pause',
+					classification: 'idle_timeout',
+					source: 'idle-watcher',
+					snapshotKey,
+				},
+				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+			)
 
 			await this.insertSystemLog(sessionId, 'Session paused and snapshot saved')
 
@@ -1282,38 +1705,51 @@ export class SessionManager extends EventEmitter {
 	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
 	 * for a fresh session.
 	 */
-	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
+	async markSessionFailedAfterContainerLoss(
+		sessionId: string,
+		workspaceId: string,
+		reason = CONTAINER_LOST_MESSAGE,
+	): Promise<void> {
 		const [existing] = await this.db
-			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
+			.select({
+				startedAt: sessions.startedAt,
+				createdAt: sessions.createdAt,
+				// Extended for the runtime_session_ended telemetry site below
+				// (v2 §3.5) — this row has no session_failed emit that already
+				// carries the enrichment, so the telemetry payload is the only
+				// place Criterion 3 can see the context on this branch.
+				initiatedFromObjectId: sessions.initiatedFromObjectId,
+				initiatedFromObjectType: sessions.initiatedFromObjectType,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		// CAS on non-terminal status: a session that already completed (e.g. the
-		// watchdog's graceful idle-chat close racing a failed writeInput) must
-		// not be retroactively flipped to failed.
-		const [flipped] = await this.db
-			.update(sessions)
-			.set({
-				status: 'failed',
-				containerId: null,
-				completedAt: new Date(),
-				currentActivity: null,
-				updatedAt: new Date(),
-			})
-			.where(
-				and(
-					eq(sessions.id, sessionId),
-					notInArray(sessions.status, ['completed', 'failed', 'timeout']),
-				),
-			)
-			.returning({ id: sessions.id })
-		if (!flipped) return
-
-		await this.insertSystemLog(
+		// settleSession is the only writer of terminal sessions.status. The
+		// container is already gone by definition on this path (that's why we
+		// are here) — skip the stop callback; push is skipped too since a
+		// failed sandbox may have left the on-disk tempDir half-written.
+		const settled = await settleSession(
 			sessionId,
-			'Container disappeared before pause could complete — session marked failed',
-		).catch((err) =>
+			{
+				kind: 'fail',
+				classification: 'sandbox_crash',
+				source: 'reaper',
+				reason,
+				exitCode: 0,
+			},
+			this.buildSettleDeps({ skipStop: true, skipPush: true }),
+		)
+		if (settled.alreadySettled) return
+		// containerId was already null-eligible on failure, but settleSession
+		// doesn't touch it for kind='fail' — clear it explicitly so the row
+		// no longer points at a container Docker has already reaped.
+		await this.db
+			.update(sessions)
+			.set({ containerId: null, updatedAt: new Date() })
+			.where(eq(sessions.id, sessionId))
+
+		await this.insertSystemLog(sessionId, `${reason} — session marked failed`).catch((err) =>
 			logger.warn('Failed to insert system log for container-loss cleanup', {
 				sessionId,
 				error: String(err),
@@ -1326,6 +1762,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: existing.initiatedFromObjectId,
+				contextObjectType: existing.initiatedFromObjectType,
 			})
 		}
 
@@ -1352,6 +1790,19 @@ export class SessionManager extends EventEmitter {
 		if (!session || session.status !== 'paused' || !session.snapshotPath) {
 			throw new Error(`Session ${sessionId} not in paused state or no snapshot`)
 		}
+
+		// Unconditional resume-entry marker, emitted before the `starting`
+		// transition and before any lock. The `session_resumed` marker below is
+		// post-launch, so a resume that stalls mid-path writes nothing without
+		// this and reads as a dispatch-origin stall (no `dispatch_entered`).
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'resume_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
 
 		await this.db
 			.update(sessions)
@@ -1409,7 +1860,7 @@ export class SessionManager extends EventEmitter {
 
 			// Same rationale as the fresh-start path above — without this the
 			// frontend never learns the resumed session is running again.
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_resumed',
@@ -1426,30 +1877,39 @@ export class SessionManager extends EventEmitter {
 			logger.info(`Session resumed: ${sessionId}`, { containerId })
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'failed',
-					result: { error: message },
-					completedAt: new Date(),
-					updatedAt: new Date(),
+			// settleSession is the only writer of terminal sessions.status. Resume
+			// never got the container running, so there is nothing to stop and
+			// the /agent workspace was already snapshotted at pause time — skip
+			// both callbacks. startup_stalled matches the settle-side spec's
+			// name for a launch that never reached running. Guarded so a settle
+			// failure does not mask the original resume error rethrown below.
+			try {
+				await settleSession(
+					sessionId,
+					{
+						kind: 'fail',
+						classification: 'startup_stalled',
+						source: 'sandbox-exit',
+						reason: message,
+						exitCode: 0,
+					},
+					this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				)
+			} catch (settleErr) {
+				logger.warn('settleSession failed while surfacing resume failure', {
+					sessionId,
+					error: String(settleErr),
+					resumeError: message,
 				})
-				.where(eq(sessions.id, sessionId))
-
-			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: sessionId,
-				data: { error: message },
-			})
+			}
 
 			this.telemetry.recordSessionEnded({
 				sessionId,
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: session.initiatedFromObjectId,
+				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1468,7 +1928,7 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 
 		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
-		const maxConcurrent = settings.max_concurrent_sessions ?? 3
+		const maxConcurrent = settings.max_concurrent_sessions ?? 10
 
 		const [result] = await this.db
 			.select({ count: countFn() })
@@ -1598,6 +2058,25 @@ export class SessionManager extends EventEmitter {
 		cpuShares: number
 		browserRequired: boolean
 		previewGuestPorts: number[]
+		/**
+		 * Workspace-skill manifest for the agent's attached skills. Passed
+		 * through to `StartSessionRequest.skills` for the remote-dispatch path;
+		 * ignored on the local-Docker path (that path stages skills directly via
+		 * `pullWorkspaceSkillsForAgent`). Empty array when the agent has no
+		 * attached skills — treated identically to omission at the receiver.
+		 */
+		skillsManifest: {
+			name: string
+			files: { relativePath: string; storageKey: string }[]
+		}[]
+		/**
+		 * Number of workspace skills resolved from the join at dispatch time —
+		 * the ground-truth "should be present" count for the G1 signal.
+		 * Emitted on `agent_session_started_with_prompt` so a query for a
+		 * dispatch-created session with attached skills but a low
+		 * `skills_staged` catches the Layer 1 regression automatically.
+		 */
+		skillsAttached: number
 	}> {
 		const [agent] = await this.db
 			.select()
@@ -1648,6 +2127,36 @@ export class SessionManager extends EventEmitter {
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
 		}
 
+		// Resolve the workspace-skill manifest here so both the emitted
+		// `agent_session_started_with_prompt` signal AND the dispatch payload
+		// see the exact same set. On the local-Docker path the manifest is
+		// unused (staging happens up-stack via pullWorkspaceSkillsForAgent);
+		// on the remote-dispatch path apps/agent-server materialises it into
+		// `<sessionDir>/skills/<name>/` before `spawnSession`.
+		let skillsManifest: {
+			name: string
+			files: { relativePath: string; storageKey: string }[]
+		}[] = []
+		try {
+			skillsManifest = await this.agentStorage.resolveWorkspaceSkillManifest(
+				session.actorId,
+				session.workspaceId,
+			)
+		} catch (err) {
+			// Degraded-start: a manifest resolution failure (S3 listing or DB
+			// blip) must not fail session build. The session boots with an
+			// empty `/agent/skills/` — the same observable state as today's
+			// bug — and the failure is loud in Sentry/logs so a chronic issue
+			// is diagnosable rather than repeating this defect invisibly.
+			logger.error('Failed to resolve workspace-skill manifest for session', {
+				sessionId: session.id,
+				actorId: session.actorId,
+				workspaceId: session.workspaceId,
+				error: String(err),
+			})
+		}
+		const skillsAttached = skillsManifest.length
+
 		// Fire-and-forget prompt-size emit — the parent bet's second ship metric
 		// (per-agent preamble token reduction) needs per-launch systemPrompt size
 		// samples in PostHog. Runs on every launch (start + resume) since both
@@ -1659,14 +2168,30 @@ export class SessionManager extends EventEmitter {
 		const sourceCommentEventIdRaw = sessionCfg.source_comment_event_id
 		const sourceCommentEventId =
 			typeof sourceCommentEventIdRaw === 'number' ? sourceCommentEventIdRaw : undefined
+		const triggerType =
+			typeof sessionCfg.trigger_type === 'string' ? sessionCfg.trigger_type : undefined
+		// `skillsStaged` at start defaults to 0 for the remote-dispatch path —
+		// staging happens on the agent-server AFTER this event fires. The count
+		// is updated when agent-server reports back over `recordSkillStagingResult`.
+		// The local-Docker path stages before this call and could pass its own
+		// pullResult through — but the ground-truth failure signal
+		// `session_skill_load_failed` fires separately either way, so keeping
+		// the start-event's `skills_staged` at 0 for both paths keeps queries
+		// simple: `skills_attached > 0 AND session_skill_load_failed absent`
+		// is a passing session on either path.
 		void trackAgentSessionStartedWithPrompt({
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
 			agentName: agent.name,
 			systemPrompt: resolvedSystemPrompt,
+			sourceSessionId: session.sourceSessionId ?? null,
 			triggerSource,
 			sourceCommentEventId,
+			skillsAttached,
+			skillsStaged: 0,
+			triggerType,
+			triggerId: session.triggerId ?? undefined,
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -1705,6 +2230,8 @@ export class SessionManager extends EventEmitter {
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
+		let oauthExpiresAtTaken: number | undefined
+		let routeModelName: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -1721,6 +2248,8 @@ export class SessionManager extends EventEmitter {
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
+				oauthExpiresAtTaken = resolved.oauthExpiresAt
+				routeModelName = resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -1781,16 +2310,38 @@ export class SessionManager extends EventEmitter {
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
+		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
+		// OpenRouter model that will actually run: the follow-on local cost
+		// resolver keys OpenRouter's pricing table on that value, and without
+		// it every non-Anthropic session reads as an Opus-priced number.
+		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
-			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
-			if (updatedConfig) {
-				await this.db
-					.update(sessions)
-					.set({ config: updatedConfig })
-					.where(eq(sessions.id, session.id))
-				;(session as { config: Record<string, unknown> }).config = updatedConfig
+			const updatedConfig = mergeLaunchRouteConfig(
+				existingConfig,
+				routeTaken,
+				nextOauthSlot,
+				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
+			)
+			const modelNameToPersist =
+				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				routeModelName &&
+				routeModelName !== session.modelName
+					? routeModelName
+					: undefined
+			if (updatedConfig || modelNameToPersist !== undefined) {
+				const patch: Partial<typeof sessions.$inferInsert> = {}
+				if (updatedConfig) patch.config = updatedConfig
+				if (modelNameToPersist !== undefined) patch.modelName = modelNameToPersist
+				await this.db.update(sessions).set(patch).where(eq(sessions.id, session.id))
+				if (updatedConfig) {
+					;(session as { config: Record<string, unknown> }).config = updatedConfig
+				}
+				if (modelNameToPersist !== undefined) {
+					;(session as { modelName: string | null }).modelName = modelNameToPersist
+				}
 			}
 		}
 
@@ -1852,68 +2403,49 @@ export class SessionManager extends EventEmitter {
 			tokenMetadata: TokenMetadata
 		}> = []
 		for (const integration of activeIntegrations) {
+			let resolved: ReturnType<typeof getProvider>
 			try {
-				const resolved = getProvider(integration.provider)
-				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
+				resolved = getProvider(integration.provider)
+			} catch (err) {
+				logger.warn(`Unknown integration provider ${integration.provider}; skipping`, {
+					integrationId: integration.id,
+					error: String(err),
+				})
+				continue
+			}
+			// Defensive: some test fixtures stub getProvider to return null. Never
+			// happens in production (registry throws on unknown).
+			if (!resolved) continue
+			// Per-integration switch: the credential stays usable server-side, but
+			// agent sessions get neither the token env var nor the MCP server.
+			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				logger.info('Integration not exposed to agent sessions; skipping injection', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					integrationId: integration.id,
+					provider: integration.provider,
+				})
+				continue
+			}
+			const mcp = resolved.config.mcp
+			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
+			// True when the provider's declared MCP server template references its
+			// own envKey via `${ENV_KEY}` — e.g. PostHog's
+			// `Authorization: Bearer ${POSTHOG_TOKEN}`. Such a server can't
+			// authenticate without a per-integration token, so a token failure IS
+			// a user-visible outage (either the auto-injected server or any
+			// hand-added variant of it will break at request time). Providers
+			// whose server authenticates on `${MASKIN_API_KEY}` instead (Slack,
+			// linkedin-unipile) do not need the token. Predicate is on the
+			// DECLARED server (not `autoInjectServer`) so it also protects a
+			// hand-added user config for a provider whose auto-inject is off —
+			// linkedin-unipile after P3-K is the canonical case.
+			const serverNeedsToken =
+				mcp?.server && mcp?.envKey ? serverSpecReferencesEnvKey(mcp.server, mcp.envKey) : false
 
-				if (integration.provider === 'github') {
-					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
-					if (!ownerLogin) continue
-
-					const installationId = integration.externalId
-					if (!installationId) {
-						logger.warn(
-							'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
-							{
-								integrationId: integration.id,
-								sessionId: session.id,
-							},
-						)
-						continue
-					}
-
-					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
-					resolvedGithubInstalls.push({
-						ownerLogin,
-						token: accessToken,
-						integrationId: integration.id,
-						installationId,
-						tokenMetadata: stampTokenMetadata(accessToken, installationId),
-					})
-				} else {
-					// Slack: only inject the bot token. A user token (xoxp-) here means
-					// the install granted user scopes instead of bot scopes — posting
-					// with it would attribute every message to the human installer
-					// (the mesh-firm bug). Skip injection so the agent gets a clean
-					// "Slack not configured" error from its tools rather than silently
-					// posting as a person.
-					if (integration.provider === 'slack' && !isSlackBotToken(accessToken)) {
-						logger.warn(
-							'Skipping Slack token injection — stored access token is not a bot (xoxb-) token',
-							{
-								sessionId: session.id,
-								workspaceId: session.workspaceId,
-								integrationId: integration.id,
-								tokenPrefix: accessToken.slice(0, 5),
-							},
-						)
-						continue
-					}
-
-					const envVarName =
-						resolved.config.mcp?.envKey ??
-						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
-					envVars[envVarName] = accessToken
-					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
-						autoInjectedMcpServers[`integration-${integration.provider}`] =
-							resolved.config.mcp.server
-						logger.info('Auto-injected MCP server for active integration', {
-							sessionId: session.id,
-							workspaceId: session.workspaceId,
-							provider: integration.provider,
-						})
-					}
-				}
+			let accessToken: string | null = null
+			try {
+				accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 			} catch (err) {
 				if (isAuthRevokedError(err)) {
 					logger.warn(
@@ -1923,12 +2455,97 @@ export class SessionManager extends EventEmitter {
 							provider: integration.provider,
 						},
 					)
-				} else {
+					continue
+				}
+				// If the declared server actually consumes the token, or the
+				// provider is GitHub (which resolves an owner login and per-org env
+				// var below), a missing/broken token blocks the whole integration
+				// — log and skip.
+				if (serverNeedsToken || integration.provider === 'github') {
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
 						error: String(err),
 					})
+					continue
 				}
+				// Otherwise: the server authenticates on Maskin credentials and the
+				// envKey is decorative. Fall through with accessToken=null. This
+				// is the linkedin-unipile shape (credential blob is
+				// `{ account_id }` with no accessToken — token-manager throws by
+				// design). Downgraded to debug so a workspace with LinkedIn
+				// connected does not spam Sentry on every session boot.
+				logger.debug(
+					`No per-provider token for ${integration.provider}; envKey-independent server does not need one`,
+					{ integrationId: integration.id, sessionId: session.id },
+				)
+			}
+
+			if (integration.provider === 'github') {
+				// Unreachable when accessToken is null: the catch above continues on
+				// getValidToken failure for github. Guard for the type checker.
+				if (accessToken === null) continue
+
+				const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+				if (!ownerLogin) continue
+
+				const installationId = integration.externalId
+				if (!installationId) {
+					logger.warn(
+						'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
+						{
+							integrationId: integration.id,
+							sessionId: session.id,
+						},
+					)
+					continue
+				}
+
+				envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
+				resolvedGithubInstalls.push({
+					ownerLogin,
+					token: accessToken,
+					integrationId: integration.id,
+					installationId,
+					tokenMetadata: stampTokenMetadata(accessToken, installationId),
+				})
+				continue
+			}
+
+			// Slack: only inject the bot token. A user token (xoxp-) here means
+			// the install granted user scopes instead of bot scopes — posting
+			// with it would attribute every message to the human installer
+			// (the mesh-firm bug). Skip injection so the agent gets a clean
+			// "Slack not configured" error from its tools rather than silently
+			// posting as a person.
+			if (
+				integration.provider === 'slack' &&
+				accessToken !== null &&
+				!isSlackBotToken(accessToken)
+			) {
+				logger.warn(
+					'Skipping Slack token injection — stored access token is not a bot (xoxb-) token',
+					{
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						integrationId: integration.id,
+						tokenPrefix: accessToken.slice(0, 5),
+					},
+				)
+				continue
+			}
+
+			if (accessToken !== null) {
+				const envVarName =
+					mcp?.envKey ?? `${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
+				envVars[envVarName] = accessToken
+			}
+			if (autoInjectServer) {
+				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
+				logger.info('Auto-injected MCP server for active integration', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					provider: integration.provider,
+				})
 			}
 		}
 
@@ -1940,8 +2557,8 @@ export class SessionManager extends EventEmitter {
 		for (const { ownerLogin, token } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
-				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-github'],
+				command: GITHUB_MCP_SERVER_SPEC.command,
+				args: GITHUB_MCP_SERVER_SPEC.args,
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
@@ -1997,11 +2614,13 @@ export class SessionManager extends EventEmitter {
 			'INTERACTIVE',
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
+			'MASKIN_TRIGGERING_EVENT_ID',
 			'ANTHROPIC_API_KEY',
 			'ANTHROPIC_AUTH_TOKEN',
 			'ANTHROPIC_BASE_URL',
 			'ANTHROPIC_MODEL',
 			'ANTHROPIC_SMALL_FAST_MODEL',
+			'MASKIN_CLAUDE_EFFORT',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -2034,6 +2653,25 @@ export class SessionManager extends EventEmitter {
 					sessionId: session.id,
 				})
 			}
+		}
+
+		// Actor-level secrets: copy the AGENT_SECRET_* names listed in tools.envFrom
+		// from the API process env, so headers can use ${AGENT_SECRET_X} (expanded by
+		// envsubst in agent-run.sh). Values go into the launch env only: never into
+		// the session row or config, never into a log line.
+		const actorSecrets = resolveActorSecretEnv(agentTools?.envFrom, process.env)
+		Object.assign(envVars, actorSecrets.env)
+		if (actorSecrets.ignored.length > 0) {
+			logger.warn('Ignoring envFrom names without the AGENT_SECRET_ prefix', {
+				sessionId: session.id,
+				names: actorSecrets.ignored,
+			})
+		}
+		if (actorSecrets.unset.length > 0) {
+			logger.warn('envFrom names are unset on the API service; skipped', {
+				sessionId: session.id,
+				names: actorSecrets.unset,
+			})
 		}
 
 		// Session-level MCP config (convert array → { mcpServers: { ... } } format), merged
@@ -2134,8 +2772,23 @@ export class SessionManager extends EventEmitter {
 		// 0014_backfill_maskin_mcp_on_agents.sql — no data migration needed. The
 		// `${SESSION_ID}` placeholder is expanded by the same `envsubst` pass in
 		// agent-run.sh's setup_mcps() that already expands ${MASKIN_API_KEY}.
-		const stampedAgentToolsMcpServers = stampMaskinSessionHeader(gatedAgentToolsMcpServers)
-		const stampedSessionMcpServers = stampMaskinSessionHeader(gatedSessionMcpServers) ?? {}
+		//
+		// When the session was dispatched from a comment we also inject
+		// MASKIN_TRIGGERING_EVENT_ID into the container env and ask the stamper
+		// to add the matching header, so create_comment defaults reply-in-thread
+		// on the /mcp route without any per-agent prompt rule (task-tool level
+		// fix for the "agents post standalone comments" defect).
+		const hasTriggeringEventId = sourceCommentEventId !== undefined
+		if (hasTriggeringEventId) {
+			envVars.MASKIN_TRIGGERING_EVENT_ID = String(sourceCommentEventId)
+		}
+		const stampedAgentToolsMcpServers = stampMaskinSessionHeader(gatedAgentToolsMcpServers, {
+			includeTriggeringEventId: hasTriggeringEventId,
+		})
+		const stampedSessionMcpServers =
+			stampMaskinSessionHeader(gatedSessionMcpServers, {
+				includeTriggeringEventId: hasTriggeringEventId,
+			}) ?? {}
 
 		if (agentTools && Object.keys(agentTools).length > 0) {
 			const gatedAgentTools = stampedAgentToolsMcpServers
@@ -2170,7 +2823,17 @@ export class SessionManager extends EventEmitter {
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
-		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired, previewGuestPorts }
+		return {
+			image,
+			env: envVars,
+			memoryMib,
+			cpus,
+			cpuShares,
+			browserRequired,
+			previewGuestPorts,
+			skillsManifest,
+			skillsAttached,
+		}
 	}
 
 	/**
@@ -2629,7 +3292,64 @@ export class SessionManager extends EventEmitter {
 		return Boolean(other)
 	}
 
-	private async maybeRetryClaudeOAuthOnBackup(params: {
+	/**
+	 * Move a live interactive session's workspace onto its next Claude
+	 * subscription and return the slot moved to (or `null` if nothing moved).
+	 * Deliberately does NOT relaunch the container — the running session keeps
+	 * its old credentials, only the pointer moves so the NEXT session lands on
+	 * the new subscription. The human is told exactly that.
+	 */
+	private async failOverInteractiveSession(
+		sessionId: string,
+		reason: string,
+	): Promise<string | null> {
+		if (!isClaudeFailoverEnabled()) return null
+
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session) return null
+
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_OAUTH) return null
+		const failedSlot = config.llm_oauth_slot
+		if (typeof failedSlot !== 'string') return null
+
+		if (isAuthErrorAtAccessTokenExpiry(config, reason)) {
+			logger.info('Session ended at access-token expiry, leaving the Claude slot as it is', {
+				sessionId,
+				slot: failedSlot,
+				reason,
+			})
+			return null
+		}
+
+		const failover = await recordRuntimeClaudeOAuthFailover({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			reason,
+			fromSlot: failedSlot,
+			sourceSessionId: session.id,
+		})
+		if (failover.moved) return failover.slot
+
+		if (failover.reason === 'exhausted') {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+		}
+		return null
+	}
+
+	private async maybeRetryClaudeOAuthOnNextSlot(params: {
 		session: typeof sessions.$inferSelect
 		failureReason: { provider: string; reason_code: string } | null
 		stdoutTail: string
@@ -2647,26 +3367,28 @@ export class SessionManager extends EventEmitter {
 		const reason = claudeRuntimeFailoverReason(failureReason, stdoutTail)
 		if (!reason) return
 
-		if (
-			config.llm_oauth_slot === 'backup' ||
-			typeof config.claude_oauth_runtime_failover_retry_of === 'string'
-		) {
-			await recordRuntimeClaudeOAuthBackupExhausted({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
+		// Which subscription this session was actually running on. Whether
+		// there is another one to fall over to is decided by that slot's
+		// position in the workspace's chain (under a row lock, in
+		// recordRuntimeClaudeOAuthFailover) rather than by the slot's name —
+		// a workspace can hold more than two.
+		const failedSlot = config.llm_oauth_slot
+		if (typeof failedSlot !== 'string') return
+
+		// A session whose container got no refresh token ends at its access
+		// token's expiry with an auth error. The slot is healthy, so it is not
+		// stamped auth_failed and the workspace stays on it.
+		if (isAuthErrorAtAccessTokenExpiry(config, reason)) {
+			logger.info('Session ended at access-token expiry, leaving the Claude slot as it is', {
+				sessionId: session.id,
+				slot: failedSlot,
 				reason,
-				sourceSessionId: session.id,
 			})
-			await this.insertSystemLog(
-				session.id,
-				'Claude backup subscription also hit a usage limit; no further Claude OAuth fallback is available',
-			)
 			return
 		}
 
-		if (config.llm_oauth_slot !== 'primary') return
-
+		// One retry per failing session, however long the chain is: the retry
+		// itself fails over again from its own slot if it has to.
 		const [existingRetry] = await this.db
 			.select({ id: sessions.id })
 			.from(sessions)
@@ -2679,31 +3401,63 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		if (existingRetry) return
 
-		const didFailover = await recordRuntimeClaudeOAuthFailover({
+		const failover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			reason,
+			fromSlot: failedSlot,
 			sourceSessionId: session.id,
 		})
-		if (!didFailover) return
+
+		if (!failover.moved) {
+			// `superseded` means another session already moved the workspace on
+			// — nothing to say. Only a genuinely exhausted chain is reported.
+			if (failover.reason !== 'exhausted') return
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				reason === 'oauth_revoked'
+					? 'The last connected Claude subscription is also unavailable (token revoked); no further Claude OAuth fallback is available'
+					: 'The last connected Claude subscription also hit a usage limit; no further Claude OAuth fallback is available',
+			)
+			return
+		}
 
 		await this.insertSystemLog(
 			session.id,
-			'Claude primary subscription hit a usage limit; retrying this session on the backup subscription',
+			reason === 'oauth_revoked'
+				? 'The Claude subscription in use had its OAuth token revoked; retrying this session on the next connected subscription'
+				: 'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
 		)
-		await this.createSession(session.workspaceId, {
+		await startSession({
+			workspaceId: session.workspaceId,
 			actorId: session.actorId,
+			callerKind: 'internal',
 			actionPrompt: session.actionPrompt,
 			config: {
 				...config,
-				llm_oauth_slot: 'backup',
+				llm_oauth_slot: failover.slot,
 				claude_oauth_runtime_failover_retry_of: session.id,
 			},
 			triggerId: session.triggerId ?? undefined,
 			createdBy: session.createdBy,
 			autoStart: true,
-			sourceSessionId: session.id,
+			parentSessionId: session.id,
+			// Carry the originating object forward onto the retry so its
+			// terminal telemetry keeps the Criterion 3 context, otherwise a
+			// session that fails over onto a fresh id would drop out of the
+			// numerator.
+			initiatedFromObjectId: session.initiatedFromObjectId,
+			initiatedFromObjectType: session.initiatedFromObjectType,
+			await: 'none',
 		})
 	}
 
@@ -2768,6 +3522,16 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// §17.5: when credit exhaustion is classified AND the tail's reset banner
+		// parses (source 3 in §17.2), persist the reset moment on sessions.retry_at
+		// so session-retry-scheduler.ts can auto-retry. The parser reads the same
+		// tail the classifier saw (companion-parser pattern, CTO note 4). Best-effort
+		// —  a parse miss leaves retry_at NULL, which the scheduler treats as "no
+		// retry" per §17.7. Skipped when the reaper turns retry_scheduler off via
+		// FEATURE_RETRY_SCHEDULER=0 — the write is inert without the scheduler tick,
+		// but we still gate here so the row's shape matches operator intent.
+		const scheduledRetryAt = pickRetryAt(classifiedFailureReason)
+
 		// A budget-stopped session's exit code (143, from the SIGTERM in
 		// stopSession) carries no stdout signal for classifyCreditExhaustion to
 		// find, so it would otherwise surface as a bare "exit code 143" — build
@@ -2813,6 +3577,7 @@ export class SessionManager extends EventEmitter {
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					currentActivity: null,
+					...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
@@ -2846,7 +3611,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: `session_${status}`,
@@ -2862,8 +3627,17 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// G1: emit `agent_session_completed` dev-side with the workspace-skill
+		// provisioning counts recorded at session start (+ any staging report).
+		// See `trackAgentSessionCompletedWithSkills` for why this rides alongside
+		// the frontend emission rather than replacing it. Fire-and-forget; a
+		// PostHog outage must not block the terminal path.
+		if (status === 'completed' || status === 'failed' || status === 'timeout') {
+			void this.emitCompletedWithSkills(session, status)
+		}
+
 		if (status === 'failed') {
-			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
+			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
 						sessionId,
@@ -2936,6 +3710,8 @@ export class SessionManager extends EventEmitter {
 			endReason,
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Clear active session link on object
@@ -3045,6 +3821,29 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Loads the two inputs the cost resolver needs off the session row: the
+	 * route the session was dispatched under (`config.llm_route`) and the
+	 * model name recorded for it. Both are written at dispatch time. One
+	 * query, shared by the sessionId-only callsites —
+	 * `enforceRunningSessionBudget` already holds the session row and reads
+	 * the fields directly instead.
+	 */
+	private async loadSessionRouteAndModel(
+		sessionId: string,
+	): Promise<{ route: string; modelName: string | null }> {
+		const [row] = await this.db
+			.select({ config: sessions.config, modelName: sessions.modelName })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		const config = ((row?.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		return {
+			route: typeof config.llm_route === 'string' ? config.llm_route : '',
+			modelName: row?.modelName ?? null,
+		}
+	}
+
+	/**
 	 * Parses usage from the session's log tail (same source `handleCompletion`
 	 * uses) and adds it onto the session's cumulative usage columns. Additive,
 	 * not overwriting: a paused-then-resumed session launches a fresh CLI
@@ -3055,6 +3854,10 @@ export class SessionManager extends EventEmitter {
 	 * for cap/billing display) reflects cost incurred even when a session
 	 * never reaches a terminal 'completed' status — pausing is the common
 	 * case for interactive sessions sitting idle between turns.
+	 *
+	 * The USD figure written is the resolver's (`resolveSessionCostUsd`), not
+	 * the CLI's `total_cost_usd` — a maskin_plan session's CLI cost is priced
+	 * against Anthropic's rate card even though it runs through OpenRouter.
 	 *
 	 * Returns the parsed segment (not the new cumulative total, and not
 	 * necessarily persisted if the DB write failed) so callers can log it;
@@ -3083,13 +3886,29 @@ export class SessionManager extends EventEmitter {
 		}
 		if (!usage) return null
 
+		// Resolve the true USD cost for this segment before it is added to the
+		// cumulative column: for a maskin_plan session the CLI's own
+		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
+		// lookup failure falls back to the CLI figure rather than losing the
+		// segment's cost entirely.
+		let resolvedCostUsd = usage.totalCostUsd
+		try {
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+		} catch (err) {
+			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db
 				.update(sessions)
 				.set({
 					totalCostUsd:
-						usage.totalCostUsd != null
-							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${usage.totalCostUsd}`
+						resolvedCostUsd != null
+							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
 							: undefined,
 					inputTokens:
 						usage.inputTokens != null
@@ -3113,7 +3932,10 @@ export class SessionManager extends EventEmitter {
 							: undefined,
 					updatedAt: new Date(),
 				})
-				.where(eq(sessions.id, sessionId))
+				// Terminal rows are final: every caller writes before it settles the
+				// row (or, for pause, on a non-terminal 'paused' row), so a write that
+				// finds a terminal status is a late straggler and must not add cost.
+				.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
 		} catch (err) {
 			logger.error('Failed to persist accumulated session usage', { sessionId, error: String(err) })
 		}
@@ -3171,15 +3993,20 @@ export class SessionManager extends EventEmitter {
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
 			sumRunningSessionUsage(this.db, session.id),
 		])
-		// Same preference order as getWorkspacePlanUsdCentsUsage: the live
-		// scan's own reported totalCostUsd first, a flat token-rate estimate
-		// only when that's unavailable (e.g. no `result` event parsed yet).
-		const liveCents = liveUsage
-			? liveUsage.totalCostUsd && liveUsage.totalCostUsd > 0
-				? liveUsage.totalCostUsd * 100
-				: ((liveUsage.inputTokens ?? 0) + (liveUsage.outputTokens ?? 0)) /
-					FALLBACK_TOKENS_PER_USD_CENT
-			: 0
+		// Route-aware cost, not the live scan's own reported figure: only
+		// maskin_plan sessions reach this check (the watchdog query filters on
+		// the route), and their CLI-reported `total_cost_usd` is priced against
+		// Anthropic's rate card. The resolver also owns the never-silent-zero
+		// fallback to the legacy token rate, so a session with usage but no
+		// published price still bills.
+		const liveCostUsd = liveUsage
+			? await resolveSessionCostUsd({
+					route: ((session.config as Record<string, unknown>)?.llm_route as string) ?? '',
+					modelName: session.modelName,
+					usage: liveUsage,
+				})
+			: null
+		const liveCents = liveCostUsd && liveCostUsd > 0 ? liveCostUsd * 100 : 0
 		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
 		if (totalUsedCents < capCents) return
 
@@ -3211,22 +4038,19 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
-		await this.db
-			.insert(events)
-			.values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_budget_stopped',
-				entityType: 'session',
-				entityId: session.id,
-				data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
-			})
-			.catch((err) =>
-				logger.warn('Failed to insert session_budget_stopped event', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_budget_stopped',
+			entityType: 'session',
+			entityId: session.id,
+			data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
+		}).catch((err) =>
+			logger.warn('Failed to insert session_budget_stopped event', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
 		this.budgetStopped.set(session.id, stopReason)
 		await this.stopSession(session.id).catch((err) =>
 			logger.error('Failed to stop over-budget session', {
@@ -3272,63 +4096,31 @@ export class SessionManager extends EventEmitter {
 		// closes it as `timeout` so the chat UI surfaces the interruption.
 		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
-		const [updated] = await this.db
-			.update(sessions)
-			.set({
-				status: 'completed',
-				result: { summary: 'Conversation went idle — session closed' },
-				completedAt: now,
-				currentActivity: null,
-				updatedAt: now,
-			})
-			.where(and(eq(sessions.id, session.id), eq(sessions.status, 'running')))
-			.returning()
-		if (!updated) return
+		// settleSession is the only writer of terminal sessions.status. Route
+		// the flip through it AND fold the previously-inline pushAgentFiles /
+		// stopSandbox into its post-commit callbacks per §3.1 (folded from
+		// what used to be a mid-function inline `pushAgentFiles` at :3552 and
+		// a per-host `client.stopSession` / `containers.stop` branch below).
+		const settled = await settleSession(
+			session.id,
+			{
+				kind: 'complete',
+				classification: 'agent_completed',
+				source: 'idle-watcher',
+				resultText: 'Conversation went idle — session closed',
+			},
+			this.buildSettleDeps(),
+		)
+		if (settled.alreadySettled) return
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
 		})
 
-		// Push learnings before destroying the container (local path only — a
-		// remote session's workspace is pushed from the agent-server side).
-		const sessionData = this.activeSessions.get(session.id)
-		if (sessionData) {
-			await this.agentStorage
-				.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
-					actionPrompt: session.actionPrompt,
-				})
-				.catch((err) =>
-					logger.warn('Failed to push learnings on idle chat close', {
-						sessionId: session.id,
-						error: String(err),
-					}),
-				)
-		}
-
-		if (session.agentServerId) {
-			const [serverRow] = await this.db
-				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
-				.from(agentServers)
-				.where(eq(agentServers.id, session.agentServerId))
-				.limit(1)
-			if (serverRow) {
-				const client = new AgentServerClient({ server: serverRow })
-				await client.stopSession(session.id).catch((err) =>
-					logger.warn('Failed to stop remote sandbox for idle chat session', {
-						sessionId: session.id,
-						error: String(err),
-					}),
-				)
-			}
-		} else if (session.containerId) {
-			this.containers.detachStdin(session.id)
-			await this.containers.stop(session.containerId).catch((err) =>
-				logger.warn('Failed to stop idle chat container', {
-					sessionId: session.id,
-					containerId: session.containerId,
-					error: String(err),
-				}),
-			)
+		// Local container-remove is not covered by settleSession's stopSandbox
+		// callback (which only stops the sandbox — remove is a docker-specific
+		// finalisation step). Keep it here so the container row does not linger.
+		if (!session.agentServerId && session.containerId) {
 			await this.containers.remove(session.containerId).catch((err) =>
 				logger.warn('Failed to remove idle chat container', {
 					sessionId: session.id,
@@ -3352,20 +4144,17 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		await this.db.insert(events).values({
-			workspaceId: session.workspaceId,
-			actorId: session.actorId,
-			action: 'session_completed',
-			entityType: 'session',
-			entityId: session.id,
-			data: { reason: 'idle_conversation' },
-		})
+		// session_completed audit event is emitted by settleSession above
+		// (buildEventData records `classification` + `source`), so no extra
+		// recordEvent call here.
 
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
 			endReason: 'completed',
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
@@ -3387,493 +4176,679 @@ export class SessionManager extends EventEmitter {
 		)
 	}
 
+	/**
+	 * One watchdog tick. Skips when the previous pass is still running: the
+	 * passes work through rows serially, so an overlapping tick would re-select
+	 * the same rows and process them twice.
+	 */
 	private async runWatchdog(): Promise<void> {
+		if (
+			this.watchdogStartedAt !== null &&
+			Date.now() - this.watchdogStartedAt < SessionManager.WATCHDOG_STALE_MS
+		) {
+			logger.warn('Session watchdog: previous pass still running, skipping tick', {
+				runningForMs: Date.now() - this.watchdogStartedAt,
+			})
+			return
+		}
+		// A pass older than WATCHDOG_STALE_MS stops blocking: an await that never
+		// settles must not silence the reaper for good (known-pitfalls.md, "A
+		// Re-Entrancy Flag With No Timeout"). That pass is left to finish detached.
+		const startedAt = Date.now()
+		this.watchdogStartedAt = startedAt
+		try {
+			await this.runWatchdogPass()
+		} finally {
+			// A stale pass that finishes late must not clear the flag of the pass that replaced it.
+			if (this.watchdogStartedAt === startedAt) this.watchdogStartedAt = null
+		}
+	}
+
+	private async runWatchdogPass(): Promise<void> {
 		const now = new Date()
-		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
+		// Reaper cutoff constants (§16.2). BOOT_STALL_MS is colocated with
+		// _driveToRunning() in session-lifecycle.ts because that module is the
+		// writer whose deadline it names; the rest are reaper-only.
+		const WALL_TIMEOUT_MS = 2 * 60 * 60 * 1000
+		const IDLE_PAUSE_MS = 10 * 60 * 1000
+		const WAITING_BOUND_MS = 24 * 60 * 60 * 1000
+		const QUEUED_RESCUE_MS = 2 * 60 * 1000
+		const HEARTBEAT_STALE_MS = 60 * 1000
+		const wallTimeoutCutoff = new Date(Date.now() - WALL_TIMEOUT_MS)
+		const idlePauseCutoff = new Date(Date.now() - IDLE_PAUSE_MS)
+		const waitingBoundCutoff = new Date(Date.now() - WAITING_BOUND_MS)
+		const queuedRescueCutoff = new Date(Date.now() - QUEUED_RESCUE_MS)
+		const heartbeatStaleCutoff = new Date(Date.now() - HEARTBEAT_STALE_MS)
+		const bootStallCutoff = new Date(Date.now() - BOOT_STALL_MS)
 
-		// 1. Find sessions past timeout — push learnings before cleanup
-		const timedOut = await this.db
-			.select()
-			.from(sessions)
-			.where(and(eq(sessions.status, 'running'), lt(sessions.timeoutAt, now)))
-
-		for (const session of timedOut) {
-			// An interactive chat session reaching its timeout is the natural end
-			// of an idle conversation, not a failure — the user simply stopped
-			// writing. Give it the same graceful close-out as the idle-close
-			// scanner below; the responder spawns a fresh session on the next
-			// message. A session with an unanswered trailing message is excluded:
-			// it died mid-turn, and only the `timeout` status lets the chat UI
-			// surface that (see hasUnansweredConversationTurn).
-			if (
-				session.interactive &&
-				session.conversationId !== null &&
-				!(await this.hasUnansweredConversationTurn(session))
-			) {
-				logger.info(`Idle chat session reached timeout, completing: ${session.id}`)
-				await this.completeIdleChatSession(session).catch((err) =>
-					logger.error('Failed to complete idle chat session on timeout', {
-						sessionId: session.id,
-						error: String(err),
-					}),
-				)
-				continue
+		// Each step runs in its own try/catch so one throw does not skip the steps
+		// after it, and its duration is logged once per pass.
+		const passStartedAt = Date.now()
+		const stepDurationsMs: Record<string, number> = {}
+		const runStep = async (name: string, step: () => Promise<void>): Promise<void> => {
+			const stepStartedAt = Date.now()
+			try {
+				await step()
+			} catch (err) {
+				logger.error('Session watchdog step failed', { step: name, error: String(err) })
 			}
-			logger.warn(`Session timed out: ${session.id}`)
+			stepDurationsMs[name] = Date.now() - stepStartedAt
+		}
 
-			// Push learnings before destroying container
-			const sessionData = this.activeSessions.get(session.id)
-			if (sessionData) {
-				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
-						actionPrompt: session.actionPrompt,
-					})
-					.catch((err) =>
-						logger.warn('Failed to push learnings on timeout', {
-							sessionId: session.id,
-							error: String(err),
-						}),
-					)
-			}
-
-			if (session.containerId) {
-				this.containers.detachStdin(session.id)
-				await this.containers.stop(session.containerId).catch((err) =>
-					logger.warn('Failed to stop timed-out container', {
-						sessionId: session.id,
-						containerId: session.containerId,
-						error: String(err),
-					}),
-				)
-				await this.containers.remove(session.containerId).catch((err) =>
-					logger.warn('Failed to remove timed-out container', {
-						sessionId: session.id,
-						containerId: session.containerId,
-						error: String(err),
-					}),
-				)
-			}
-
-			await this.db
+		await runStep('heal-terminal', async () => {
+			// 0. Heal rows that reached a terminal status but never had session_state
+			// stamped done. Runs first so every step below sees them as finished.
+			// Without it, steps 1, 7 and 9 select these rows by session_state alone
+			// and redo them every pass, re-emitting runtime_session_ended each time.
+			//
+			// Bounded: at most TERMINAL_HEAL_BATCH rows per pass, and it stops for
+			// good once a batch comes back short (settle now stamps done itself, so
+			// nothing new should land here). The predicate has no index, so it must
+			// not scan the table on every 60s tick.
+			if (this.terminalHealDrained) return
+			const batch = SessionManager.TERMINAL_HEAL_BATCH
+			const healed = await this.db
 				.update(sessions)
 				.set({
-					status: 'timeout',
-					result: { error: 'Session timed out' },
-					completedAt: now,
-					currentActivity: null,
-					updatedAt: now,
+					sessionState: 'done',
+					stateEnteredAt: sql`coalesce(${sessions.completedAt}, now())`,
 				})
-				.where(eq(sessions.id, session.id))
-
-			// Only sync the agent to idle if this was its last active session.
-			if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
-				await this.db
-					.update(actors)
-					.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
-					.where(eq(actors.id, session.actorId))
-					.catch((err) =>
-						logger.warn('Failed to sync agentState after session timeout', {
-							sessionId: session.id,
-							error: String(err),
-						}),
-					)
-			}
-
-			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_timeout',
-				entityType: 'session',
-				entityId: session.id,
-				data: {},
-			})
-
-			this.telemetry.recordSessionEnded({
-				sessionId: session.id,
-				endReason: 'irrecoverable',
-				durationMs: elapsedMs(session.startedAt, session.createdAt),
-				agentServerUrl: LOCAL_RUNTIME_BUCKET,
-			})
-
-			// Prefix must stay 'Session timed out' — the SSE /logs/stream endpoint
-			// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
-			// routes/sessions.ts).
-			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
-				logger.warn('Failed to write timeout system log', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
-
-			await this.clearActiveSession(session.id)
-			await this.cleanupBrowserSidecar(session.id)
-			await this.cleanupSession(session.id)
-
-			// Start next queued session if capacity is available
-			await this.drainQueue(session.workspaceId).catch((err) =>
-				logger.error('Failed to drain queue after timeout', { error: String(err) }),
-			)
-		}
-
-		// 2. Reap agent-server sessions that exceeded the default 2-hour timeout but
-		// never had timeoutAt set (dispatcher bug in earlier versions). The normal
-		// timeout reaper above requires timeoutAt to be non-null, so without this
-		// fallback these sessions accumulate as permanent zombies consuming workspace
-		// capacity indefinitely.
-		const defaultTimeoutMs = 7200 * 1000
-		const defaultTimeoutAgo = new Date(now.getTime() - defaultTimeoutMs)
-		const stuckAgentSessions = await this.db
-			.select()
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.status, 'running'),
-					isNotNull(sessions.agentServerId),
-					isNull(sessions.timeoutAt),
-					lt(sessions.startedAt, defaultTimeoutAgo),
-				),
-			)
-		for (const session of stuckAgentSessions) {
-			logger.warn('Reaping stuck agent-server session (no timeoutAt, past default 2h limit)', {
-				sessionId: session.id,
-			})
-			// Same graceful close-out for idle chat sessions as the primary reaper
-			// above — a conversation going quiet for 2h is not a failure. Same
-			// mid-turn exclusion, too: a wedged session falls through to `timeout`
-			// (never a silent skip — this reaper is these sessions' only backstop).
-			if (
-				session.interactive &&
-				session.conversationId !== null &&
-				!(await this.hasUnansweredConversationTurn(session))
-			) {
-				await this.completeIdleChatSession(session).catch((err) =>
-					logger.error('Failed to complete stuck idle chat session', {
-						sessionId: session.id,
-						error: String(err),
-					}),
+				// Literal SQL, not drizzle columns: unqualified columns inside a subquery
+				// bind to the wrong table (known-pitfalls.md).
+				.where(
+					sql`sessions.id IN (
+						SELECT s.id FROM sessions s
+						WHERE s.status IN (${sql.join(
+							TERMINAL_STATUSES.map((status) => sql`${status}`),
+							sql`, `,
+						)}) AND s.session_state <> 'done'
+						LIMIT ${batch}
+					)`,
 				)
-				continue
-			}
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'timeout',
-					result: { error: 'Session timed out' },
-					completedAt: now,
-					currentActivity: null,
-					updatedAt: now,
+				.returning({ id: sessions.id })
+			if (healed.length < batch) this.terminalHealDrained = true
+			if (healed.length > 0) {
+				logger.warn('Session watchdog: healed terminal rows left with session_state not done', {
+					count: healed.length,
 				})
-				.where(eq(sessions.id, session.id))
-			await this.drainQueue(session.workspaceId).catch((err) =>
-				logger.error('Failed to drain queue after stuck agent-server session reap', {
-					error: String(err),
-				}),
-			)
-		}
+			}
+		})
 
-		// 2.5 Gracefully complete idle interactive conversation sessions well
-		// before the 2h hard timeout. Idle is measured from the last
-		// session_logs row — a user turn (persisted by writeInput) or any agent
-		// output resets the clock, so a session mid-work is never touched. The
-		// close is a success, not a failure: the conversation responder spawns
-		// a fresh session (seeded with history) on the next message.
-		const chatIdleCutoff = new Date(Date.now() - SessionManager.CHAT_IDLE_CLOSE_MS)
-		const idleChatCandidates = await this.db
-			.select()
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.status, 'running'),
-					eq(sessions.interactive, true),
-					isNotNull(sessions.conversationId),
-					// Sessions younger than the idle window can't be idle-closed yet.
-					lt(sessions.startedAt, chatIdleCutoff),
-				),
-			)
-		for (const session of idleChatCandidates) {
-			const [lastLog] = await this.db
-				.select({ createdAt: sessionLogs.createdAt })
-				.from(sessionLogs)
-				.where(eq(sessionLogs.sessionId, session.id))
-				.orderBy(desc(sessionLogs.createdAt))
-				.limit(1)
-			const lastActivity = lastLog?.createdAt ?? session.startedAt
-			if (!lastActivity || lastActivity >= chatIdleCutoff) continue
-			await this.completeIdleChatSession(session).catch((err) =>
-				logger.error('Failed to complete idle chat session', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
-		}
-
-		// 3. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
-		// Interactive sessions (chat) are long-lived by design and naturally
-		// idle between user turns — pausing them silently breaks the next /input call.
-		const runningSessions = await this.db
-			.select()
-			.from(sessions)
-			.where(and(eq(sessions.status, 'running'), eq(sessions.interactive, false)))
-
-		for (const session of runningSessions) {
-			const [lastLog] = await this.db
+		await runStep('wall-timeout', async () => {
+			// 1. Wall-timeout — reap running sessions past the 2h ceiling (§16.2).
+			// Reads session_state, not the ambiguous status column, and folds in the
+			// old "agent-server fallback" branch that only fired when timeoutAt was
+			// null: state_entered_at is populated for every running session, so the
+			// two branches collapse into one query.
+			const timedOut = await this.db
 				.select()
-				.from(sessionLogs)
-				.where(eq(sessionLogs.sessionId, session.id))
-				.orderBy(desc(sessionLogs.createdAt))
-				.limit(1)
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.sessionState, 'running'),
+						notInArray(sessions.status, [...TERMINAL_STATUSES]),
+						or(
+							lt(sessions.stateEnteredAt, wallTimeoutCutoff),
+							and(isNotNull(sessions.timeoutAt), lt(sessions.timeoutAt, now)),
+						),
+					),
+				)
 
-			const lastActivity = lastLog?.createdAt ?? session.startedAt
-			if (!lastActivity || lastActivity >= tenMinutesAgo) continue
-
-			// The "no logs in 10 min" heuristic gives a false positive whenever
-			// dockerode's log stream drops mid-session — the session_logs table
-			// stops growing even though the container is happily working. Before
-			// pausing, confirm the container is actually gone *or* genuinely
-			// idle; if it's still running, leave the reattach loop in
-			// streamContainerLogs to recover and try again next tick.
-			if (!session.containerId) {
-				// A `running` row with no containerId is unrecoverable — pauseSession
-				// would reject on the same guard and the watchdog would log-spam
-				// every minute forever. Route to terminal-failed instead.
-				logger.warn('Marking session failed: running with no containerId', {
-					sessionId: session.id,
-				})
-				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
-					(err) =>
-						logger.error('Failed to mark session failed after container loss', {
+			for (const session of timedOut) {
+				// An interactive chat session reaching its timeout is the natural end
+				// of an idle conversation, not a failure — the user simply stopped
+				// writing. Give it the same graceful close-out as the idle-close
+				// scanner below; the responder spawns a fresh session on the next
+				// message. A session with an unanswered trailing message is excluded:
+				// it died mid-turn, and only the `timeout` status lets the chat UI
+				// surface that (see hasUnansweredConversationTurn).
+				if (
+					session.interactive &&
+					session.conversationId !== null &&
+					!(await this.hasUnansweredConversationTurn(session))
+				) {
+					logger.info(`Idle chat session reached timeout, completing: ${session.id}`)
+					await this.completeIdleChatSession(session).catch((err) =>
+						logger.error('Failed to complete idle chat session on timeout', {
 							sessionId: session.id,
 							error: String(err),
 						}),
-				)
-				continue
-			}
-
-			if (!(await this.isContainerAlive(session.containerId))) {
-				if (session.agentServerId) {
-					// Agent-server session — containerId is an msb sandbox name on a
-					// remote host; local Docker inspect is meaningless here. The
-					// agent-server reports completion via its exit callback.
+					)
 					continue
 				}
-				// Local Docker session — container is gone. watchContainerExit is not
-				// re-registered after a server restart, so it will never fire for
-				// these sessions. Mark as failed to free workspace capacity.
-				logger.warn('Marking session failed: local container no longer running', {
-					sessionId: session.id,
-				})
-				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
-					(err) =>
-						logger.error('Failed to mark session failed after container loss', {
+				logger.warn(`Session timed out: ${session.id}`)
+
+				// A timeout that ran real work still spent real tokens — persist
+				// whatever this segment accrued before the terminal row lands, so
+				// the session record can be triaged. Without this the totalCostUsd
+				// / inputTokens / outputTokens columns stay NULL forever and a
+				// timeout that produced output is indistinguishable from one that
+				// produced nothing. Additive so a prior pause's segment survives.
+				// (Same fix PR #1722 landed on this line — kept here because it
+				// reads the in-memory stdout tail that settleSession's own scope
+				// can't see; settleSession's additive-overlay handles the delta
+				// once accumulateSessionUsage has written it.)
+				await this.accumulateSessionUsage(session.id)
+
+				// settleSession is the only writer of terminal sessions.status. Its
+				// stopSandbox / pushAgentFiles callbacks fold what used to be the
+				// inline `containers.stop` and `agentStorage.pushAgentFiles` calls
+				// (§3.1 fold-in for :3552 and :3683). Local container `.remove()`
+				// runs after the settle so the container row does not linger —
+				// settleSession's stopSandbox callback only stops, doesn't remove.
+				const containerIdToRemove =
+					!session.agentServerId && session.containerId ? session.containerId : null
+				const settled = await settleSession(
+					session.id,
+					{
+						kind: 'timeout',
+						classification: 'wall_timeout',
+						source: 'timeout-watchdog',
+						reason: 'Session timed out',
+						exitCode: 0,
+					},
+					this.buildSettleDeps(),
+				)
+				if (containerIdToRemove) {
+					await this.containers.remove(containerIdToRemove).catch((err) =>
+						logger.warn('Failed to remove timed-out container', {
 							sessionId: session.id,
+							containerId: containerIdToRemove,
 							error: String(err),
 						}),
-				)
-				continue
-			}
+					)
+				}
 
-			logger.info(`Auto-pausing idle session: ${session.id}`)
-			this.pauseSession(session.id)
-				.then(async () => {
-					// Only reflect paused at the agent level if no other session is active.
-					if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
+				// Only sync the agent to idle if this was its last active session.
+				if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
 					await this.db
 						.update(actors)
-						.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
+						.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
 						.where(eq(actors.id, session.actorId))
 						.catch((err) =>
-							logger.warn('Failed to sync agentState after auto-pause', {
+							logger.warn('Failed to sync agentState after session timeout', {
 								sessionId: session.id,
 								error: String(err),
 							}),
 						)
-				})
-				.catch((err) =>
-					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
-				)
-		}
+				}
 
-		// 4. Mid-session budget check for maskin_plan sessions — including
-		// interactive ones exempt from the idle auto-pause above, which can run
-		// for the full 2h timeout otherwise unchecked. See
-		// enforceRunningSessionBudget for the full rationale.
-		const maskinPlanRunning = await this.db
-			.select()
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.status, 'running'),
-					sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
-				),
-			)
-		for (const session of maskinPlanRunning) {
-			await this.enforceRunningSessionBudget(session).catch((err) =>
-				logger.error('Failed to enforce running-session budget', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
-		}
-
-		// 5. Archive old paused sessions (7 days)
-		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-		const expiredPaused = await this.db
-			.select()
-			.from(sessions)
-			.where(and(eq(sessions.status, 'paused'), lt(sessions.updatedAt, sevenDaysAgo)))
-
-		for (const session of expiredPaused) {
-			if (session.snapshotPath) {
-				await this.storage.delete(session.snapshotPath).catch((err) =>
-					logger.warn('Failed to delete snapshot', {
+				// Only the pass that wins the terminal transition reports the end; a
+				// row another writer already settled must not re-emit.
+				if (!settled.alreadySettled) {
+					this.telemetry.recordSessionEnded({
 						sessionId: session.id,
-						snapshotPath: session.snapshotPath,
-						error: String(err),
-					}),
-				)
-			}
-			await this.db
-				.update(sessions)
-				.set({ status: 'completed', snapshotPath: null, updatedAt: now })
-				.where(eq(sessions.id, session.id))
+						endReason: 'irrecoverable',
+						durationMs: elapsedMs(session.startedAt, session.createdAt),
+						agentServerUrl: LOCAL_RUNTIME_BUCKET,
+						contextObjectId: session.initiatedFromObjectId,
+						contextObjectType: session.initiatedFromObjectType,
+					})
+				}
 
-			await this.clearActiveSession(session.id)
-			logger.info(`Archived expired paused session: ${session.id}`)
-		}
-
-		// 6. Prune old session logs
-		await this.pruneSessionLogs()
-
-		// 7. Recover stuck pending sessions — sessions stuck in 'pending' for >2 minutes
-		// without being started (e.g., startSession promise was lost or never called)
-		const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
-		const stuckPending = await this.db
-			.select()
-			.from(sessions)
-			.where(and(eq(sessions.status, 'pending'), lt(sessions.updatedAt, twoMinutesAgo)))
-
-		for (const session of stuckPending) {
-			logger.warn(`Recovering stuck pending session: ${session.id}`, {
-				workspaceId: session.workspaceId,
-			})
-			// Move to queued so drainQueue picks them up in order
-			await this.db
-				.update(sessions)
-				.set({ status: 'queued', updatedAt: new Date() })
-				.where(and(eq(sessions.id, session.id), eq(sessions.status, 'pending')))
-				.catch((err) =>
-					logger.error('Failed to recover stuck pending session', {
+				// Prefix must stay 'Session timed out' — the SSE /logs/stream endpoint
+				// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
+				// routes/sessions.ts).
+				await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
+					logger.warn('Failed to write timeout system log', {
 						sessionId: session.id,
 						error: String(err),
 					}),
 				)
-		}
 
-		// 8. Fail sessions stuck in 'starting' for >10 minutes (zombie session cleanup)
-		const stuckStarting = await this.db
-			.select()
-			.from(sessions)
-			.where(and(eq(sessions.status, 'starting'), lt(sessions.updatedAt, tenMinutesAgo)))
+				await this.clearActiveSession(session.id)
+				await this.cleanupBrowserSidecar(session.id)
+				await this.cleanupSession(session.id)
 
-		for (const session of stuckStarting) {
-			// Everything this pass knows about WHY the launch stalled is on the
-			// row itself: whether a route was ever resolved (`config.llm_route`
-			// is absent when resolution never returned), whether a container or
-			// sandbox was ever created, and how long it sat. Recording that as a
-			// structured `failure_reason` is the difference between a session an
-			// agent can triage from `get_session` and the bare "stuck in starting
-			// state" that sent the last incident chasing the container pool.
-			const stalledConfig = (session.config as Record<string, unknown>) ?? {}
-			const stalledRoute = stalledConfig.llm_route
-			const stalledSince = session.updatedAt ?? session.createdAt
-			const stalledForMs = stalledSince ? Date.now() - stalledSince.getTime() : 0
-			const reachedRuntime = Boolean(session.containerId || session.agentServerId)
-			const diagnosis = reachedRuntime
-				? `Launch stalled after the runtime was assigned (container=${session.containerId ?? 'none'}, agent_server=${session.agentServerId ?? 'none'}).`
-				: typeof stalledRoute === 'string'
-					? `Launch stalled after resolving the ${stalledRoute} LLM route but before any container or sandbox was created.`
-					: 'Launch stalled before an LLM route was resolved — no container or sandbox was ever created. Most often a credential lookup that never returned.'
-			const verbatim = `${diagnosis} Sat in 'starting' for ${Math.round(stalledForMs / 1000)}s before the cleanup pass closed it out.`
-
-			logger.warn(`Failing zombie session stuck in starting: ${session.id}`, {
-				workspaceId: session.workspaceId,
-				llmRoute: stalledRoute ?? null,
-				reachedRuntime,
-				stalledForMs,
-			})
-
-			const stalledFailureReason: SessionResultFailureReason = {
-				provider: 'maskin',
-				reason_code: 'startup_stalled',
-				human_message:
-					'This session never started — the launch stalled before anything ran, and it was closed out automatically. Nothing was executed. Start a new session to try again.',
-				http_status: null,
-				reset_at: null,
-				verbatim_output: verbatim,
+				// Start next queued session if capacity is available
+				await this.drainQueue(session.workspaceId).catch((err) =>
+					logger.error('Failed to drain queue after timeout', { error: String(err) }),
+				)
 			}
+		})
 
+		await runStep('idle-chat-close', async () => {
+			// 2. Idle chat close — gracefully complete idle interactive conversation
+			// sessions well before the 2h hard timeout. Idle is measured from the
+			// last session_logs row; a user turn (persisted by writeInput) or any
+			// agent output resets the clock. Reads session_state so it's disjoint
+			// from any 'queued' / 'waiting_for_machine' row that happens to carry a
+			// stale legacy status='running'. The prior agent-server-fallback reap
+			// (kept its own 2h loop against `status='running' AND timeoutAt IS
+			// NULL`) is intentionally gone — every terminal writer now stamps
+			// session_state='done' via settleSession, and §16.2 collapses to five
+			// sections; the primary wall-timeout above catches every stuck row.
+			const chatIdleCutoff = new Date(Date.now() - SessionManager.CHAT_IDLE_CLOSE_MS)
+			const idleChatCandidates = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.sessionState, 'running'),
+						eq(sessions.interactive, true),
+						isNotNull(sessions.conversationId),
+						// Sessions younger than the idle window can't be idle-closed yet.
+						lt(sessions.startedAt, chatIdleCutoff),
+					),
+				)
+			for (const session of idleChatCandidates) {
+				const [lastLog] = await this.db
+					.select({ createdAt: sessionLogs.createdAt })
+					.from(sessionLogs)
+					.where(eq(sessionLogs.sessionId, session.id))
+					.orderBy(desc(sessionLogs.createdAt))
+					.limit(1)
+				const lastActivity = lastLog?.createdAt ?? session.startedAt
+				if (!lastActivity || lastActivity >= chatIdleCutoff) continue
+				await this.completeIdleChatSession(session).catch((err) =>
+					logger.error('Failed to complete idle chat session', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+			}
+		})
+
+		await runStep('idle-pause', async () => {
+			// 3. Idle-pause — auto-pause idle non-interactive sessions with no log
+			// output for >IDLE_PAUSE_MS. Interactive sessions (chat) are long-lived
+			// by design and naturally idle between user turns; pausing them silently
+			// breaks the next /input call.
+			const runningSessions = await this.db
+				.select()
+				.from(sessions)
+				.where(and(eq(sessions.sessionState, 'running'), eq(sessions.interactive, false)))
+
+			for (const session of runningSessions) {
+				const [lastLog] = await this.db
+					.select()
+					.from(sessionLogs)
+					.where(eq(sessionLogs.sessionId, session.id))
+					.orderBy(desc(sessionLogs.createdAt))
+					.limit(1)
+
+				const lastActivity = lastLog?.createdAt ?? session.startedAt
+				if (!lastActivity || lastActivity >= idlePauseCutoff) continue
+
+				// The "no logs in 10 min" heuristic gives a false positive whenever
+				// dockerode's log stream drops mid-session — the session_logs table
+				// stops growing even though the container is happily working. Before
+				// pausing, confirm the container is actually gone *or* genuinely
+				// idle; if it's still running, leave the reattach loop in
+				// streamContainerLogs to recover and try again next tick.
+				if (!session.containerId) {
+					// A `running` row with no containerId is unrecoverable — pauseSession
+					// would reject on the same guard and the watchdog would log-spam
+					// every minute forever. Route to terminal-failed instead.
+					logger.warn('Marking session failed: running with no containerId', {
+						sessionId: session.id,
+					})
+					await this.markSessionFailedAfterContainerLoss(
+						session.id,
+						session.workspaceId,
+						NO_CONTAINER_ASSIGNED_MESSAGE,
+					).catch((err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+					)
+					continue
+				}
+
+				if (!(await this.isContainerAlive(session.containerId))) {
+					if (session.agentServerId) {
+						// Agent-server session — containerId is an msb sandbox name on a
+						// remote host; local Docker inspect is meaningless here. The
+						// agent-server reports completion via its exit callback.
+						continue
+					}
+					// Local Docker session — container is gone. watchContainerExit is not
+					// re-registered after a server restart, so it will never fire for
+					// these sessions. Mark as failed to free workspace capacity.
+					logger.warn('Marking session failed: local container no longer running', {
+						sessionId: session.id,
+					})
+					await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
+						(err) =>
+							logger.error('Failed to mark session failed after container loss', {
+								sessionId: session.id,
+								error: String(err),
+							}),
+					)
+					continue
+				}
+
+				logger.info(`Auto-pausing idle session: ${session.id}`)
+				this.pauseSession(session.id)
+					.then(async () => {
+						// Only reflect paused at the agent level if no other session is active.
+						if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
+						await this.db
+							.update(actors)
+							.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
+							.where(eq(actors.id, session.actorId))
+							.catch((err) =>
+								logger.warn('Failed to sync agentState after auto-pause', {
+									sessionId: session.id,
+									error: String(err),
+								}),
+							)
+					})
+					.catch((err) =>
+						logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+					)
+			}
+		})
+
+		await runStep('budget-check', async () => {
+			// 4. Mid-session budget check for maskin_plan sessions — including
+			// interactive ones exempt from the idle auto-pause above, which can run
+			// for the full 2h timeout otherwise unchecked. See
+			// enforceRunningSessionBudget for the full rationale.
+			const maskinPlanRunning = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.sessionState, 'running'),
+						sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
+					),
+				)
+			for (const session of maskinPlanRunning) {
+				await this.enforceRunningSessionBudget(session).catch((err) =>
+					logger.error('Failed to enforce running-session budget', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+			}
+		})
+
+		await runStep('archive-paused', async () => {
+			// 5. Archive old paused sessions (7 days). Reads sessions.status because
+			// 'paused' isn't a session_state value (paused sessions are session_state
+			// = 'done' with a paused terminal status); this is a terminal
+			// housekeeping sweep, not an at-risk cutoff.
+			const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+			const expiredPaused = await this.db
+				.select()
+				.from(sessions)
+				.where(and(eq(sessions.status, 'paused'), lt(sessions.updatedAt, sevenDaysAgo)))
+
+			for (const session of expiredPaused) {
+				if (session.snapshotPath) {
+					await this.storage.delete(session.snapshotPath).catch((err) =>
+						logger.warn('Failed to delete snapshot', {
+							sessionId: session.id,
+							snapshotPath: session.snapshotPath,
+							error: String(err),
+						}),
+					)
+				}
+				// settleSession is the only writer of terminal sessions.status. The
+				// row is already 'paused' — settleSession's `wasAlreadyTerminal`
+				// gate (only 4 truly-terminal statuses) lets a paused row flip
+				// here. No stopSandbox / pushAgentFiles: the container was gone
+				// at pause time and /agent lives in the snapshot we just deleted.
+				await settleSession(
+					session.id,
+					{
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'reaper',
+						reason: 'Paused session archived after retention window',
+						exitCode: 0,
+					},
+					this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				)
+				// settleSession doesn't touch snapshotPath on kind='complete', so
+				// clear it explicitly to match the previous archival semantics —
+				// the S3 object is already gone by the delete() above.
+				await this.db
+					.update(sessions)
+					.set({ snapshotPath: null, updatedAt: now })
+					.where(eq(sessions.id, session.id))
+
+				await this.clearActiveSession(session.id)
+				logger.info(`Archived expired paused session: ${session.id}`)
+			}
+		})
+
+		await runStep('prune-logs', async () => {
+			// 6. Prune old session logs
+			await this.pruneSessionLogs()
+		})
+
+		await runStep('heal-running', async () => {
+			// 6b. Heal rows already running at the status level whose session_state
+			// never advanced (rows dispatched before the writers set both, or a
+			// lost write). Without this, queued-rescue below re-fires the driver on
+			// a live session, startSession() throws on its running status, the row
+			// is left in 'starting', and boot-stall (9) fails it as startup_stalled
+			// while it is still working.
 			await this.db
 				.update(sessions)
 				.set({
-					status: 'failed',
-					result: {
-						error: 'Session stuck in starting state',
-						failure_reason: stalledFailureReason,
-					},
-					completedAt: new Date(),
-					updatedAt: new Date(),
+					sessionState: 'running',
+					stateEnteredAt: sql`coalesce(${sessions.startedAt}, now())`,
 				})
-				.where(eq(sessions.id, session.id))
+				.where(
+					and(
+						eq(sessions.status, 'running'),
+						inArray(sessions.sessionState, ['queued', 'starting']),
+					),
+				)
+		})
 
-			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: session.id,
-				data: {
-					error: 'Session stuck in starting state',
+		await runStep('queued-rescue', async () => {
+			// 7. Queued-rescue — re-fire _driveToRunning() on rows whose previous
+			// driver died mid-drive. A row still in session_state='queued' past 2min
+			// with a stale (or absent) driver_heartbeat_at is one nobody is actively
+			// driving anymore. Re-fire is safe because _driveToRunning enters
+			// 'starting' before dispatch, so a healthy in-flight drive keeps its
+			// heartbeat fresh and never matches this cutoff.
+			const queuedRescueCandidates = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.sessionState, 'queued'),
+						notInArray(sessions.status, [...TERMINAL_STATUSES]),
+						lt(sessions.stateEnteredAt, queuedRescueCutoff),
+						or(
+							isNull(sessions.driverHeartbeatAt),
+							lt(sessions.driverHeartbeatAt, heartbeatStaleCutoff),
+						),
+					),
+				)
+			for (const session of queuedRescueCandidates) {
+				logger.warn(`Queued rescue: re-firing driver for session ${session.id}`, {
+					workspaceId: session.workspaceId,
+					stateEnteredAt: session.stateEnteredAt,
+					driverHeartbeatAt: session.driverHeartbeatAt,
+				})
+				// Fire and forget — the driver either transitions to 'starting'
+				// (boot-stall now owns the row's timeline) or fails and the row stays
+				// eligible for another rescue on the next tick.
+				void _driveToRunning(session.id).catch((err) =>
+					logger.error('Queued rescue: _driveToRunning failed', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+			}
+		})
+
+		await runStep('waiting-bound', async () => {
+			// 8. Waiting-bound — rows sitting in session_state='waiting_for_machine'
+			// for >24h are stuck behind a permanent capacity shortfall. This section
+			// does NOT settle them (a waiting row is not a failure — the retry
+			// scheduler in Commit 7 owns re-triggering); it emits a PostHog signal
+			// so on-call sees the accumulation.
+			const waitingStuck = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.sessionState, 'waiting_for_machine'),
+						lt(sessions.stateEnteredAt, waitingBoundCutoff),
+					),
+				)
+			for (const session of waitingStuck) {
+				logger.warn(`Session waiting for machine >24h: ${session.id}`, {
+					workspaceId: session.workspaceId,
+					stateEnteredAt: session.stateEnteredAt,
+				})
+				await capturePosthogEvent('session_waiting_stuck', session.id, {
+					workspace_id: session.workspaceId,
+					actor_id: session.actorId,
+					state_entered_at: session.stateEnteredAt?.toISOString() ?? null,
+					waited_hours: session.stateEnteredAt
+						? Math.round((Date.now() - session.stateEnteredAt.getTime()) / (60 * 60 * 1000))
+						: null,
+				}).catch((err) =>
+					logger.warn('Failed to emit session_waiting_stuck PostHog event', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+			}
+		})
+
+		await runStep('boot-stall', async () => {
+			// 9. Boot-stall — rows sitting in session_state='starting' past
+			// BOOT_STALL_MS (5 min) whose driver never reached 'running'. Replaces
+			// the old zombie-starting sweep at 10 min; the tighter budget catches
+			// stalls before they occupy workspace capacity for a full extra
+			// dispatcher-retry window.
+			const stuckStarting = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.sessionState, 'starting'),
+						// Excludes running as well as the terminal statuses: a row that
+						// turned running after the heal above is live, never stopped.
+						notInArray(sessions.status, [...TERMINAL_STATUSES, 'running']),
+						lt(sessions.stateEnteredAt, bootStallCutoff),
+					),
+				)
+
+			for (const session of stuckStarting) {
+				// Everything this pass knows about WHY the launch stalled is on the
+				// row itself: whether a route was ever resolved (`config.llm_route`
+				// is absent when resolution never returned), whether a container or
+				// sandbox was ever created, and how long it sat. Recording that as a
+				// structured `failure_reason` is the difference between a session an
+				// agent can triage from `get_session` and the bare "stuck in starting
+				// state" that sent the last incident chasing the container pool.
+				const stalledConfig = (session.config as Record<string, unknown>) ?? {}
+				const stalledRoute = stalledConfig.llm_route
+				const stalledSince = session.stateEnteredAt ?? session.updatedAt ?? session.createdAt
+				const stalledForMs = stalledSince ? Date.now() - stalledSince.getTime() : 0
+				const reachedRuntime = Boolean(session.containerId || session.agentServerId)
+				const diagnosis = reachedRuntime
+					? `Launch stalled after the runtime was assigned (container=${session.containerId ?? 'none'}, agent_server=${session.agentServerId ?? 'none'}).`
+					: typeof stalledRoute === 'string'
+						? `Launch stalled after resolving the ${stalledRoute} LLM route but before any container or sandbox was created.`
+						: 'Launch stalled before an LLM route was resolved — no container or sandbox was ever created. Most often a credential lookup that never returned.'
+				const verbatim = `${diagnosis} Sat in 'starting' for ${Math.round(stalledForMs / 1000)}s before the cleanup pass closed it out.`
+
+				logger.warn(`Failing boot-stalled session: ${session.id}`, {
+					workspaceId: session.workspaceId,
+					llmRoute: stalledRoute ?? null,
+					reachedRuntime,
+					stalledForMs,
+				})
+
+				const stalledFailureReason: SessionResultFailureReason = {
+					provider: 'maskin',
 					reason_code: 'startup_stalled',
-					diagnosis: verbatim,
-				},
-			})
+					human_message:
+						'This session never started — the launch stalled before anything ran, and it was closed out automatically. Nothing was executed. Start a new session to try again.',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: verbatim,
+				}
 
-			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
-				logger.warn('Failed to append stalled-launch log line', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
+				// settleSession is the only writer of terminal sessions.status.
+				// classification='startup_stalled' — settleSession's push guard
+				// already skips pushAgentFiles for this classification (nothing
+				// was ever written to /agent). The stop is NOT skipped: the slot
+				// claim sets agent_server_id before any sandbox exists, and
+				// container_id is only written after startSession returns, so a
+				// sandbox can be live while the row has no container_id. The stop
+				// is by session id and idempotent (sandbox-not-found maps to
+				// skipped-none-live), so a stall that never made a sandbox is a
+				// no-op. Live rows never get here: step 6b heals status='running'
+				// rows first and the select above excludes them.
+				const settled = await settleSession(
+					session.id,
+					{
+						kind: 'fail',
+						classification: 'startup_stalled',
+						source: 'reaper',
+						reason: 'Session stuck in starting state',
+						exitCode: 0,
+						failureReason: stalledFailureReason,
+					},
+					this.buildSettleDeps({ skipPush: true }),
+				)
 
-			this.telemetry.recordSessionEnded({
-				sessionId: session.id,
-				endReason: 'failed',
-				durationMs: elapsedMs(session.startedAt, session.createdAt),
-				agentServerUrl: LOCAL_RUNTIME_BUCKET,
-			})
+				await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
+					logger.warn('Failed to append stalled-launch log line', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
 
-			await this.cleanupBrowserSidecar(session.id).catch(() => {})
-			await this.clearActiveSession(session.id)
-			await this.cleanupSession(session.id)
+				// Same rule as the timeout step: emit only when this pass settled the row.
+				if (!settled.alreadySettled) {
+					this.telemetry.recordSessionEnded({
+						sessionId: session.id,
+						endReason: 'failed',
+						durationMs: elapsedMs(session.startedAt, session.createdAt),
+						agentServerUrl: LOCAL_RUNTIME_BUCKET,
+						contextObjectId: session.initiatedFromObjectId,
+						contextObjectType: session.initiatedFromObjectType,
+					})
+				}
 
-			// Free capacity for the workspace so queued sessions can start
-			await this.drainQueue(session.workspaceId).catch((err) =>
-				logger.error('Failed to drain queue after zombie cleanup', { error: String(err) }),
-			)
-		}
+				await this.cleanupBrowserSidecar(session.id).catch(() => {})
+				await this.clearActiveSession(session.id)
+				await this.cleanupSession(session.id)
 
-		// 9. Drain queued sessions for workspaces that have capacity
-		const queuedSessions = await this.db
-			.select({ workspaceId: sessions.workspaceId })
-			.from(sessions)
-			.where(or(eq(sessions.status, 'queued'), eq(sessions.status, 'pending')))
-			.groupBy(sessions.workspaceId)
+				// Free capacity for the workspace so queued sessions can start
+				await this.drainQueue(session.workspaceId).catch((err) =>
+					logger.error('Failed to drain queue after boot-stall cleanup', { error: String(err) }),
+				)
+			}
+		})
 
-		for (const { workspaceId } of queuedSessions) {
-			await this.drainQueue(workspaceId).catch((err) =>
-				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
-			)
-		}
+		await runStep('drain-queue', async () => {
+			// 10. Drain queued sessions for workspaces that have capacity. Still
+			// reads sessions.status here because drainQueue itself is a legacy
+			// queue-mechanics pass, not an at-risk cutoff — it needs to catch pre-
+			// and post-Commit-5 rows equivalently (session_state defaults to
+			// 'queued' on new rows regardless of status).
+			const queuedSessions = await this.db
+				.select({ workspaceId: sessions.workspaceId })
+				.from(sessions)
+				.where(or(eq(sessions.status, 'queued'), eq(sessions.status, 'pending')))
+				.groupBy(sessions.workspaceId)
+
+			for (const { workspaceId } of queuedSessions) {
+				await this.drainQueue(workspaceId).catch((err) =>
+					logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
+				)
+			}
+		})
+
+		logger.info('Session watchdog pass complete', {
+			totalMs: Date.now() - passStartedAt,
+			stepDurationsMs,
+		})
 	}
 
 	private async reportSkillPullFailures(
@@ -3898,6 +4873,147 @@ export class SessionManager extends EventEmitter {
 	 * `result.failure_reason` alone only renders once the session detail panel is
 	 * open; the log line is what appears in the live stream.
 	 */
+	/**
+	 * Ingest the outcome of host-side skill staging reported by apps/agent-
+	 * server over `POST /api/internal/agent-servers/sessions/:id/skill-staging`.
+	 * Stores the counts on `sessions.config` so downstream events (the terminal
+	 * `agent_session_completed` emit below, the system log, any future debug
+	 * inspection) see a single ground truth for what actually landed in
+	 * `/agent/skills/`, and fires `session_skill_load_failed` when the manifest
+	 * reported any per-skill errors (the loud G1 signal from tech spec §7).
+	 *
+	 * Never throws: analytics failure and a DB-write blip must not fail the
+	 * inbound HTTP call (the sandbox is already up and running by the time
+	 * this fires; a failed record has no useful retry on the caller side).
+	 */
+	async recordSkillStagingResult(
+		sessionId: string,
+		result: {
+			manifestSkills: number
+			staged: number
+			failures: { name: string; error: string }[]
+		},
+	): Promise<void> {
+		let session: typeof sessions.$inferSelect | undefined
+		try {
+			const rows = await this.db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			session = rows[0]
+		} catch (err) {
+			logger.error('Failed to load session for skill-staging record', {
+				sessionId,
+				error: String(err),
+			})
+			return
+		}
+		if (!session) {
+			logger.warn('Skill-staging report for unknown session — dropping', { sessionId })
+			return
+		}
+
+		const [agent] = await this.db
+			.select({ id: actors.id })
+			.from(actors)
+			.where(eq(actors.id, session.actorId))
+			.limit(1)
+
+		const priorConfig = (session.config as Record<string, unknown>) ?? {}
+		const nextConfig = {
+			...priorConfig,
+			skill_staging: {
+				manifest_skills: result.manifestSkills,
+				staged: result.staged,
+				failure_count: result.failures.length,
+				failure_names: result.failures.slice(0, 20).map((f) => f.name),
+			},
+		}
+		try {
+			await this.db
+				.update(sessions)
+				.set({ config: nextConfig as typeof sessions.$inferInsert.config, updatedAt: new Date() })
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.warn('Failed to persist skill-staging outcome onto session config', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		logger.info('Recorded session skill-staging outcome', {
+			sessionId,
+			manifestSkills: result.manifestSkills,
+			staged: result.staged,
+			failureCount: result.failures.length,
+		})
+
+		if (result.failures.length > 0 && agent) {
+			void trackSessionSkillLoadFailed({
+				workspaceId: session.workspaceId,
+				sessionId,
+				agentId: agent.id,
+				failureCount: result.failures.length,
+				failureNames: result.failures.slice(0, 20).map((f) => f.name),
+			})
+			// Surface into the session's own transcript so an operator diagnosing
+			// a live "Unknown skill" report sees the staging failure inline
+			// rather than having to correlate to PostHog. Prefix stays terse —
+			// this fires inside the session's log stream.
+			try {
+				await this.insertSystemLog(
+					sessionId,
+					`Skill staging: ${result.staged}/${result.manifestSkills} skills landed, ${result.failures.length} failed (${result.failures
+						.slice(0, 5)
+						.map((f) => f.name)
+						.join(', ')})`,
+				)
+			} catch (err) {
+				logger.warn('Failed to insert skill-staging system log line', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+	}
+
+	/**
+	 * Fire the dev-side `agent_session_completed` PostHog event carrying the
+	 * G1 skill-provisioning counts recorded at start + updated on staging.
+	 * Reads directly from `session.config.skill_staging` so a session that
+	 * predates this bet (no `skill_staging` written) emits `undefined`
+	 * for both counts, which PostHog surfaces as "property absent" — the
+	 * correct semantics for "we don't know".
+	 *
+	 * Best-effort — a PostHog outage must not block the terminal path that
+	 * SSE clients + downstream watchdogs depend on.
+	 */
+	private async emitCompletedWithSkills(
+		session: typeof sessions.$inferSelect,
+		outcome: 'completed' | 'failed' | 'timeout',
+	): Promise<void> {
+		try {
+			const config = (session.config as Record<string, unknown>) ?? {}
+			const staging = config.skill_staging as
+				| { manifest_skills?: number; staged?: number }
+				| undefined
+			const skillsAttached =
+				typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : undefined
+			const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : undefined
+			await trackAgentSessionCompletedWithSkills({
+				workspaceId: session.workspaceId,
+				sessionId: session.id,
+				agentId: session.actorId,
+				outcome,
+				skillsAttached,
+				skillsStaged,
+			})
+		} catch (err) {
+			// Never propagate — completion path must not be blocked by analytics.
+			logger.warn('Failed to emit dev-side agent_session_completed', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+	}
+
 	async insertSystemLog(sessionId: string, content: string): Promise<void> {
 		const [log] = await this.db
 			.insert(sessionLogs)
@@ -4348,7 +5464,6 @@ export class SessionManager extends EventEmitter {
 		opts: { stoppedByUser?: boolean } = {},
 	): Promise<boolean> {
 		const stoppedByUser = opts.stoppedByUser ?? false
-		const status = exitCode === 0 ? 'completed' : 'failed'
 
 		// Extract token / cost usage from the remote session's stdout tail.
 		// Unlike the local Docker path, there is no in-memory tail buffer for a
@@ -4358,19 +5473,67 @@ export class SessionManager extends EventEmitter {
 		// source available here. Parser/DB failures must never block the status
 		// update, so this is wrapped in its own try/catch — same pattern as the
 		// local completion path in handleCompletion().
+		// One read serves both the usage parse and (below) the failure
+		// classification: they used to issue the identical 50-row query back to
+		// back, doubling the bytes pulled from Postgres on every completion.
 		let usage: SessionUsage | null = null
+		let stdoutChunks: string[] = []
 		try {
-			usage = await extractSessionUsage(this.db, sessionId)
+			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
+			usage = parseUsageFromLogChunks(stdoutChunks)
 		} catch (err) {
-			logger.warn('Failed to parse usage from remote session logs', {
+			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
 				error: String(err),
 			})
 		}
 
+		// Resolve the route-aware cost before the CAS loop so both writes below
+		// use the same figure. Best-effort for the same reason as the tail read:
+		// stopSession() calls this after the sandbox is already dead, so a throw
+		// here would surface as a spurious "stop failed" 400. On failure the
+		// CLI-reported cost is used, which is the pre-existing behaviour.
+		let resolvedCostUsd: number | null = usage?.totalCostUsd ?? null
+		if (usage) {
+			try {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			} catch (err) {
+				logger.warn('Failed to resolve remote session cost, using CLI-reported cost', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
+		// Mirror handleCompletion's classification + failover on this path — the
+		// remote completion path is what production uses, and until this existed
+		// it wrote `{ exit_code }` and returned, so failover never ran (see
+		// known-pitfalls.md "The Remote Completion Path Skipped Classification").
+		// Tail read is best-effort: stopSession() calls this after the sandbox is
+		// already dead, so a throw would surface as a spurious "stop failed" 400.
+		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
+		const failureReason: SessionResultFailureReason | null =
+			!stoppedByUser && exitCode !== null
+				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
+				: null
+		if (failureReason) {
+			logger.info('Remote session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+				exitCode,
+			})
+		}
+		// §17.5 remote path (source 3 + 4 in §17.2). retry_after_seconds from the
+		// agent-server /complete callback is a follow-on producer bet — for now
+		// only the CLI-banner tail is available on this side, same as handleCompletion.
+		const scheduledRetryAt = pickRetryAt(failureReason)
+		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+
 		const result: SessionResult = stoppedByUser
 			? { exit_code: exitCode, stopped_by_user: true }
-			: { exit_code: exitCode }
+			: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) }
 
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
 		// permanently strand the session: giving up immediately would skip the
@@ -4403,9 +5566,10 @@ export class SessionManager extends EventEmitter {
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
+						...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
 						...(usage
 							? {
-									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									totalCostUsd: resolvedCostUsd?.toString() ?? null,
 									inputTokens: usage.inputTokens,
 									outputTokens: usage.outputTokens,
 									cacheCreationInputTokens: usage.cacheCreationInputTokens,
@@ -4517,7 +5681,7 @@ export class SessionManager extends EventEmitter {
 						currentActivity: null,
 						...(usage
 							? {
-									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									totalCostUsd: resolvedCostUsd?.toString() ?? null,
 									inputTokens: usage.inputTokens,
 									outputTokens: usage.outputTokens,
 									cacheCreationInputTokens: usage.cacheCreationInputTokens,
@@ -4584,19 +5748,44 @@ export class SessionManager extends EventEmitter {
 		}
 
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: updated.workspaceId,
 				actorId: updated.actorId,
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode, stopped_by_user: stoppedByUser },
+				data: {
+					exit_code: exitCode,
+					stopped_by_user: stoppedByUser,
+					...(failureReason ? { failure_reason: failureReason } : {}),
+				},
 			})
 		} catch (err) {
 			logger.error('Failed to insert remote session completion event', {
 				sessionId,
 				error: String(err),
 			})
+		}
+
+		// G1: mirror the terminal `agent_session_completed` emission from the
+		// local-Docker path (handleCompletion). This runs on every remote
+		// session's terminal transition — the production path for every
+		// dispatch-created session — so the skill-provisioning counts recorded
+		// at start (and updated by `recordSkillStagingResult`) reach PostHog
+		// on both the started and completed events. Best-effort.
+		void this.emitCompletedWithSkills(updated, status)
+
+		if (status === 'failed') {
+			await this.maybeRetryClaudeOAuthOnNextSlot({
+				session: updated,
+				failureReason,
+				stdoutTail,
+			}).catch((err) =>
+				logger.warn('Failed to retry remote Claude OAuth session on the next subscription', {
+					sessionId,
+					error: String(err),
+				}),
+			)
 		}
 
 		const remoteLlmRoute = (updated.config as Record<string, unknown>)?.llm_route
@@ -4620,6 +5809,36 @@ export class SessionManager extends EventEmitter {
 				data: terminalLogMessage,
 			})
 		})
+
+		// Mirror handleCompletion (line 3340) — record the terminal
+		// runtime_session_ended payload on the successful CAS / fallback
+		// transition. Without this the production remote-dispatch path is
+		// invisible on PostHog and the bet's Criterion 3 numerator undercounts.
+		// Best-effort: recordSessionEnded is fail-open internally, but keep the
+		// call inside a try/catch so any future signature change can't surface
+		// as a spurious "stop failed" 400 to stopSession()'s caller.
+		try {
+			const endReason: RuntimeEndReason = stoppedByUser
+				? 'user_stopped'
+				: status === 'completed'
+					? 'completed'
+					: failureReason
+						? 'irrecoverable'
+						: 'failed'
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason,
+				durationMs: elapsedMs(updated.startedAt, updated.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: updated.initiatedFromObjectId,
+				contextObjectType: updated.initiatedFromObjectType,
+			})
+		} catch (err) {
+			logger.warn('Failed to record runtime_session_ended for remote session', {
+				sessionId,
+				error: String(err),
+			})
+		}
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
@@ -4656,9 +5875,16 @@ export class SessionManager extends EventEmitter {
 		this.lastLogPruneAt = now
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
-		// The EXISTS probe keeps already-pruned sessions from being selected
-		// again forever — without it the same oldest sessions would be re-picked
-		// every hour and the sweep would never reach newer ones.
+		// Once the backlog is drained, only look at sessions that completed inside
+		// [cutoff - lookback, cutoff). Without a lower bound the scan starts at the
+		// oldest completed session and walks every already-pruned one (an EXISTS
+		// probe each) before it reaches any work — the whole table, every hour. The
+		// window keeps the range scan on sessions_prune_candidates_idx to the few
+		// days that can still hold logs. The first sweep after boot is unbounded so
+		// a backlog older than the window is never stranded.
+		const floor = new Date(cutoff.getTime() - SessionManager.LOG_PRUNE_LOOKBACK_MS)
+		// The EXISTS probe keeps already-pruned sessions inside the window from
+		// being selected again.
 		const candidates = await this.db
 			.select({ id: sessions.id })
 			.from(sessions)
@@ -4667,6 +5893,7 @@ export class SessionManager extends EventEmitter {
 					eq(sessions.interactive, false),
 					isNotNull(sessions.completedAt),
 					lt(sessions.completedAt, cutoff),
+					this.logPruneBacklogDrained ? gte(sessions.completedAt, floor) : undefined,
 					// Interpolate the ISO string, not the Date: inside a raw `sql`
 					// template there is no column to infer the type mapping from,
 					// so a Date object reaches the driver unmapped and throws.
@@ -4675,6 +5902,9 @@ export class SessionManager extends EventEmitter {
 			)
 			.limit(SessionManager.LOG_PRUNE_SESSIONS_PER_RUN)
 
+		if (candidates.length < SessionManager.LOG_PRUNE_SESSIONS_PER_RUN) {
+			this.logPruneBacklogDrained = true
+		}
 		if (candidates.length === 0) return
 
 		let deleted = 0

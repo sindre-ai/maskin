@@ -1,3 +1,10 @@
+import type {
+	PushAgentFilesRequest,
+	PushAgentFilesResponse,
+	StopSessionRequest,
+	StopSessionResponse,
+} from '@maskin/shared'
+
 // The shape of a row from the `agent_servers` table (T5). Kept inline so this
 // client doesn't depend on the schema export landing on `bet/session-infra-scale`
 // in any particular order — any caller can satisfy it with a Drizzle row, a
@@ -7,6 +14,15 @@ export type AgentServerRow = {
 	url: string
 	secret: string
 }
+
+// Client-side budget for the stop RPC. Must stay above the agent-server's own
+// worst case for /sessions/:id/stop: listSandboxNames (10s) then `msb stop`
+// (20s) in apps/agent-server/src/services/microsandbox.ts, so a slow but
+// healthy stop is never cut short. The reaper runs its steps in series every
+// 60s, so without a bound a hung agent-server would stall the whole pass.
+// Applies to the stop call only; dispatch (startSession) can legitimately
+// take about 70s and stays unbounded.
+export const STOP_SESSION_TIMEOUT_MS = 45_000
 
 export class AgentServerAuthError extends Error {
 	readonly kind = 'unauthorized' as const
@@ -27,6 +43,25 @@ export class AgentServerHttpError extends Error {
 	}
 }
 
+/**
+ * One skill in the dispatch-payload manifest. Every attached workspace skill
+ * lands as one of these; agent-server iterates the array, fetches each
+ * `files[*].storageKey` from S3, and writes it to
+ * `<sessionDir>/skills/<name>/<files[*].relativePath>` — reconstructing the
+ * same on-disk shape `pullWorkspaceSkillsForAgent` builds on the dev-fallback
+ * path, but on the host that actually mounts `<sessionDir>` as `/agent`
+ * inside the guest.
+ *
+ * Kept structurally identical to
+ * `WorkspaceSkillManifestEntry` in `agent-storage.ts`; treating them as
+ * type-compatible lets `buildStartRequest` pass the resolver's output
+ * straight through to `StartSessionRequest.skills` with no re-shaping.
+ */
+export type StartSessionSkillManifestEntry = {
+	name: string
+	files: { relativePath: string; storageKey: string }[]
+}
+
 export type StartSessionRequest = {
 	sessionId: string
 	image: string
@@ -36,6 +71,14 @@ export type StartSessionRequest = {
 	browserRequired?: boolean
 	sourceSessionId?: string
 	previewGuestPorts?: number[]
+	/**
+	 * Workspace skills to stage into `<sessionDir>/skills/` host-side, before
+	 * `spawnSession` mounts the dir as `/agent` in the guest. Optional and
+	 * omitted-when-empty so an agent-server image predating the field ignores
+	 * it and boots identically to today (see agent-server SESSION_REQUEST_SCHEMA
+	 * — the field passes through Zod's default-empty semantics).
+	 */
+	skills?: StartSessionSkillManifestEntry[]
 }
 
 export type StartSessionResponse = {
@@ -77,13 +120,46 @@ export class AgentServerClient {
 		})
 	}
 
-	async stopSession(sessionId: string): Promise<void> {
-		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/stop`, {})
+	/**
+	 * Switch the session's CLI onto another model for its next turns. The
+	 * agent-server writes the control request in order with the user turns
+	 * around it, so a switch followed by a turn applies to that turn.
+	 */
+	async setModel(sessionId: string, model: string): Promise<void> {
+		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, { model })
+	}
+
+	/**
+	 * Stop the remote sandbox for a session. Request carries the settle-side
+	 * `{ reason, source }` so the agent-server can log a legible provenance
+	 * on the forced-stop marker path. Response reports whether a sandbox was
+	 * actually stopped, already gone, or never found — a non-error outcome
+	 * for both `agent-completed` and `sandbox-exit` sources.
+	 */
+	async stopSession(sessionId: string, req: StopSessionRequest): Promise<StopSessionResponse> {
+		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req, {
+			timeoutMs: STOP_SESSION_TIMEOUT_MS,
+		})
+	}
+
+	/**
+	 * Push the guest-side `learnings/` and `memory/` directories back to S3.
+	 * Reads from the agent-server host's `<sessionDir>/{learnings,memory}/`
+	 * (bind-mounted as `/agent/` inside the guest) and uploads to the S3
+	 * prefixes documented in §6.4 of the settle-session spec. Missing
+	 * directories are tolerated — the response reports zero-file entries
+	 * with no error.
+	 */
+	async pushAgentFiles(
+		sessionId: string,
+		req: PushAgentFilesRequest,
+	): Promise<PushAgentFilesResponse> {
+		return this.postJson<PushAgentFilesResponse>(`/sessions/${sessionId}/push-agent-files`, req)
 	}
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the
 	// bearer + content-type plumbing without re-implementing it.
-	async postJson<T>(path: string, body: unknown): Promise<T> {
+	async postJson<T>(path: string, body: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
 		const url = joinUrl(this.deps.server.url, path)
 		const res = await this.fetchImpl(url, {
 			method: 'POST',
@@ -92,6 +168,7 @@ export class AgentServerClient {
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(body),
+			...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
 		})
 		if (res.status === 401) {
 			throw new AgentServerAuthError({ id: this.deps.server.id, url: this.deps.server.url })

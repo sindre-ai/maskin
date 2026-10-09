@@ -175,7 +175,10 @@ test.describe('Object detail — properties drawer', () => {
 				'aria-selected',
 				'true',
 			)
-			await expect(page.getByText('No related objects yet')).toBeVisible()
+			// D11: with nothing linked the tab renders its per-type CTA groups,
+			// the actionable empty state that replaced the single sentence, so the
+			// add affordance is what proves the tab rendered.
+			await expect(page.getByRole('button', { name: /^Link an object as / }).first()).toBeVisible()
 
 			await timeline.click()
 			await expect(timeline).toHaveAttribute('aria-selected', 'true')

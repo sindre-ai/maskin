@@ -49,6 +49,13 @@ export const objectResponseSchema = z.object({
 	driver: z.string().uuid().nullable(),
 	activeSessionId: z.string().uuid().nullable(),
 	activeSessionCurrentActivity: z.string().nullable().optional(),
+	// Per-row lifecycle state of the session pointed at by activeSessionId,
+	// hydrated by a batch lookup on list/detail so the client can gate the
+	// working-ring on 'running' only — activeSessionId itself stays non-null
+	// through pending/starting/paused/waiting_for_input, which would flicker
+	// the ring on states where the agent isn't actively working. Null when
+	// there is no active session, or when the session row has been deleted.
+	active_session_state: z.string().nullable().optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -58,6 +65,13 @@ export const objectResponseSchema = z.object({
 	is_subscribed: z.boolean().optional(),
 	unread_count: z.number().optional(),
 	subscriber_count: z.number().optional(),
+	// Per-viewer starred state. Populated on the list handler + detail + graph
+	// via a single secondary query keyed on the returned page ids (see
+	// getStarredObjectIds in services/star-state.ts). Optional so create /
+	// update / verify / undo-write endpoints — which return a single object the
+	// caller just mutated — can omit it without lying about the schema; the
+	// star toggle endpoints carry their own scalar in the response body.
+	is_starred_by_me: z.boolean().optional(),
 })
 
 export const actorSkillSchema = z.object({
@@ -132,6 +146,12 @@ export const relationshipResponseSchema = z.object({
 	targetId: z.string().uuid(),
 	targetTitle: z.string().nullable().optional(),
 	type: z.string(),
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// Currently the spawning `messageId` (as a string, since Postgres
+	// bigint round-trips to a JS number would silently lose precision
+	// past 2^53) on a `conversation → session` `spawned` edge — powers
+	// the object-detail Origin deep-link into a chat at the exact message.
+	metadata: jsonbField,
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 })
@@ -326,6 +346,33 @@ export const messageResponseSchema = z.object({
 	editedAt: z.string().nullable(),
 })
 
+/**
+ * Sub-session delegation strip (bet/444b-handed-off-strip). Shape served on the
+ * `spawned_sessions` embed of `GET /conversations/:id/messages`. Casing matches
+ * the delegation strip contract: camelCase except `depends_on_session_ids`.
+ */
+export const spawnedSessionResponseSchema = z.object({
+	id: z.string().uuid(),
+	status: z.string(),
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actionPrompt: z.string(),
+	startedAt: z.string().nullable(),
+	completedAt: z.string().nullable(),
+	durationMs: z.number().nullable(),
+	result: jsonbField.nullable(),
+	currentActivity: z.string().nullable(),
+	depends_on_session_ids: z.array(z.string().uuid()),
+})
+
+/**
+ * List response only — the POST 201 path keeps `messageResponseSchema` so the
+ * two surfaces can evolve independently.
+ */
+export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
+	spawned_sessions: z.array(spawnedSessionResponseSchema),
+})
+
 export const sessionLogResponseSchema = z.object({
 	id: z.number(),
 	sessionId: z.string().uuid(),
@@ -343,6 +390,8 @@ export const importResponseSchema = z.object({
 	totalRows: z.number().nullable(),
 	processedRows: z.number(),
 	successCount: z.number(),
+	skippedCount: z.number(),
+	updatedCount: z.number(),
 	errorCount: z.number(),
 	mapping: jsonbField,
 	preview: jsonbField,

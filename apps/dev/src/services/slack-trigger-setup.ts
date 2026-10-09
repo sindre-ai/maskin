@@ -1,10 +1,11 @@
 import type { Database } from '@maskin/db'
-import { events, integrations, triggers } from '@maskin/db/schema'
+import { integrations, triggers } from '@maskin/db/schema'
 import type { SlackSetupJoinAttempt, SlackSetupMetadata } from '@maskin/shared'
 import { buildWebAppHref, resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { decrypt } from '../lib/crypto'
+import { recordEvent } from '../lib/events/record-event'
 import {
 	type SlackJoinResult,
 	joinSlackChannel,
@@ -488,7 +489,7 @@ async function persistSetupResult(
 	// `entityType: 'trigger'`. Without it a failed join sits in the column
 	// unread until the user navigates away and back.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'updated',

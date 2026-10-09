@@ -7,12 +7,15 @@ import {
 	useConversationMessages,
 } from '@/hooks/use-conversation'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
+import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
 import { ResumeBanner } from './resume-banner'
+import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -29,9 +32,35 @@ interface ThreadMessagesProps {
 	workspaceId: string
 	conversationId: string
 	className?: string
+	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Threaded from the route
+	 *  boundary — the umbrella flag AND the `.banner` sub-flag — into the
+	 *  resume banner. */
+	v4PolishBanner?: boolean
+	/** Chats v4 polish — umbrella flag AND the `.bubbles` sub-flag — into each
+	 *  message bubble. */
+	v4PolishBubbles?: boolean
+	/** S2 · bet 34706e2f, task 5. When on, messages that spawned a session get
+	 *  a persistent vertical --brand bar to their right and a spawn chip below
+	 *  the bubble ("Session started · <duration> · <status>"). Gated at the
+	 *  route boundary on `graph-provenance-writes` so the sessions query fires
+	 *  only for tester actors. */
+	producedEnabled?: boolean
+	/** Chat thread `HANDED OFF` sub-agent delegation strip
+	 *  (bet/444b-handed-off-strip). Threaded from the route boundary as a
+	 *  plain boolean; the bubble decides per-message whether to render the
+	 *  strip based on this flag AND the message's own `spawned_sessions`. */
+	handedOffStripEnabled?: boolean
 }
 
-export function ThreadMessages({ workspaceId, conversationId, className }: ThreadMessagesProps) {
+export function ThreadMessages({
+	workspaceId,
+	conversationId,
+	className,
+	v4PolishBanner = false,
+	v4PolishBubbles = false,
+	producedEnabled = false,
+	handedOffStripEnabled = false,
+}: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
@@ -40,6 +69,20 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 		workspaceId,
 		conversationId,
 		messages,
+	)
+	// Every session `useActiveSessionsForConversation` returns already carries
+	// `config.conversation.message_id` — the message that triggered its spawn.
+	// Building the map here keeps MessageBubble stateless about sessions and
+	// the query cache-shared with useConversationActivity above (same key).
+	// Only fires when the S2 pane is enabled for the actor.
+	const { data: sessionList } = useActiveSessionsForConversation(
+		workspaceId,
+		producedEnabled ? conversationId : null,
+	)
+	const spawnByMessageId = useMemo<Map<number, MessageSpawnInfo>>(
+		() =>
+			producedEnabled ? deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]) : new Map(),
+		[sessionList, producedEnabled],
 	)
 
 	// Which agent questions already have a human answer, so an answered set of
@@ -126,7 +169,10 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			onScroll={handleScroll}
 			data-testid="thread-messages"
 			className={cn(
-				'flex flex-1 flex-col gap-[18px] overflow-y-auto px-[var(--chat-gut)] pt-[18px] pb-1.5',
+				// `min-w-0` caps min-content on the cross axis, so a wide descendant
+				// (markdown table, long unbroken URL) can't push the flex column past
+				// its container and up into the page's `overflow-auto` shell.
+				'flex min-w-0 flex-1 flex-col gap-[18px] overflow-y-auto px-[var(--chat-gut)] pt-[18px] pb-1.5',
 				className,
 			)}
 		>
@@ -139,6 +185,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 				conversationId={conversationId}
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
+				v4Polish={v4PolishBanner}
 			/>
 			{hasNextPage ? (
 				<div className="flex flex-col items-center gap-1">
@@ -173,7 +220,11 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
-						<div key={message.id} className="flex flex-col gap-1">
+						<div
+							key={message.id}
+							data-message-id={message.id}
+							className="flex flex-col gap-1 scroll-mt-[60px]"
+						>
 							{/* A divider separates two days; there is nothing above the
 							    first message to separate it from, so the thread doesn't
 							    open with a "Today" rule floating over its own first line. */}
@@ -190,6 +241,9 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 								workspaceId={workspaceId}
 								message={message}
 								questionAnswered={answeredQuestionIds.has(message.id)}
+								v4Polish={v4PolishBubbles}
+								spawnInfo={spawnByMessageId.get(message.id)}
+								handedOffStripEnabled={handedOffStripEnabled}
 								// Keyed by index as well as session: one session can put two
 								// turns under the same message (a result segment plus the
 								// live turn that follows it), so `sessionId` alone is not

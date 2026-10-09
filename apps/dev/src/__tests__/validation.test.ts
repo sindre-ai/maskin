@@ -77,7 +77,7 @@ describe('Actor validation', () => {
 			name: 'Clustering Agent',
 			system_prompt: 'You cluster insights into bets.',
 			llm_provider: 'anthropic',
-			llm_config: { model: 'claude-sonnet-4-20250514', api_key: 'test' },
+			llm_config: { model: 'claude-sonnet-5-5', api_key: 'test' },
 		})
 		expect(result.success).toBe(true)
 	})
@@ -193,7 +193,7 @@ describe('LLM config validation', () => {
 	it('accepts valid config with api_key and model', () => {
 		const result = llmConfigSchema.safeParse({
 			api_key: 'sk-test',
-			model: 'claude-sonnet-4-20250514',
+			model: 'claude-sonnet-5-5',
 		})
 		expect(result.success).toBe(true)
 	})

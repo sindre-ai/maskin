@@ -221,6 +221,11 @@ vi.mock('drizzle-orm', async () => {
 			(r[col.__name] as Date).getTime() <= v.getTime(),
 	})
 	const asc = (_col: unknown) => ({})
+	// settleSession uses notInArray for its CAS on non-terminal statuses —
+	// mirror the same predicate shape so the fake DB can honour it.
+	const notInArray = (col: { __name: string }, values: unknown[]) => ({
+		__pred: (r: Record<string, unknown>) => !values.includes(r[col.__name]),
+	})
 	// The queue has exactly one raw-SQL predicate: the
 	// `status NOT IN ('completed','failed')` guard that stops markSessionFailed
 	// from overwriting a session the dispatcher already finished. Modelling it
@@ -236,7 +241,7 @@ vi.mock('drizzle-orm', async () => {
 		}
 		return { __pred: () => true }
 	}
-	return { eq, and, lte, asc, sql }
+	return { eq, and, lte, asc, notInArray, sql }
 })
 
 /**
@@ -261,7 +266,21 @@ vi.mock('@maskin/db/schema', () => {
 		sessions: {
 			_: { name: 'sessions' },
 			id: col('id'),
+			workspaceId: col('workspaceId'),
+			actorId: col('actorId'),
 			status: col('status'),
+			containerId: col('containerId'),
+			agentServerId: col('agentServerId'),
+			result: col('result'),
+			// Columns settleSession's usage overlay names via `sql\`\`` — the
+			// fake DB never applies the SQL delta, but the column stubs still
+			// need to exist so the template interpolation doesn't reference
+			// `undefined`.
+			inputTokens: col('inputTokens'),
+			outputTokens: col('outputTokens'),
+			cacheReadInputTokens: col('cacheReadInputTokens'),
+			cacheCreationInputTokens: col('cacheCreationInputTokens'),
+			totalCostUsd: col('totalCostUsd'),
 		},
 		events: {
 			_: { name: 'events' },
@@ -450,7 +469,7 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 
 		expect(events).toHaveLength(1)
 		expect(events[0]?.action).toBe('session_failed')
-		expect((events[0]?.data as { source: string }).source).toBe('dispatch_queue')
+		expect((events[0]?.data as { source: string }).source).toBe('dispatch-queue')
 	})
 
 	it('writes a user-facing failure_reason and log line when dispatch is exhausted', async () => {
@@ -572,6 +591,50 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		await queue.tick()
 
 		expect(onPermanentFailure).not.toHaveBeenCalled()
+	})
+
+	// Regression: a worker that lost claimSlot to a slow first dispatch returned
+	// permanent_failure, and the queue overwrote the now-running session to
+	// failed. settleSession only refuses four terminal statuses, so the queue
+	// has to refuse every status that is not pending, queued or starting.
+	it.each(['running', 'paused', 'timeout', 'snapshotting', 'waiting_for_input'])(
+		'leaves a %s session alone when dispatch reports a permanent failure',
+		async (status) => {
+			const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+			const session = aSessionRow({ status })
+			const { db, dispatchRows, events } = makeFakeDb({
+				dispatchRows: [row],
+				sessionRows: [session],
+			})
+			const onPermanentFailure = vi.fn()
+			const queue = makeQueue(
+				db,
+				async () => ({
+					kind: 'permanent_failure',
+					error: 'Session s-1 not in dispatchable state',
+				}),
+				{ onPermanentFailure },
+			)
+
+			await queue.tick()
+
+			expect(session.status).toBe(status)
+			expect(session.result).toBeNull()
+			expect(events).toHaveLength(0)
+			expect(onPermanentFailure).not.toHaveBeenCalled()
+			expect(dispatchRows[0]?.status).toBe('failed')
+		},
+	)
+
+	it('leaves a running session alone when dispatch exhausts its retries', async () => {
+		const row = aDispatchRow({ attempt: 2, maxAttempts: 3 })
+		const session = aSessionRow({ status: 'running' })
+		const { db } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const queue = makeQueue(db, async () => ({ kind: 'transient_failure', error: 'boom' }))
+
+		await queue.tick()
+
+		expect(session.status).toBe('running')
 	})
 
 	// Regression: the UPDATE and the `session_failed` insert used to share one
@@ -706,6 +769,56 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 
 		release?.()
 		await first
+	})
+})
+
+describe('SessionDispatchQueue.tick — timeout', () => {
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('abandons a dispatch that never settles so the next tick can run', async () => {
+		const stuck = aDispatchRow({
+			id: 'r-stuck',
+			sessionId: 's-stuck',
+			idempotencyKey: dispatchIdempotencyKey('s-stuck'),
+		})
+		const { db, dispatchRows } = makeFakeDb({ dispatchRows: [stuck] })
+		const dispatchFn = vi.fn(
+			(sessionId: string): Promise<DispatchResult> =>
+				sessionId === 's-stuck' ? new Promise(() => {}) : Promise.resolve({ kind: 'dispatched' }),
+		)
+		const queue = makeQueue(db, dispatchFn, { tickTimeoutMs: 20, batchSize: 1 })
+
+		await queue.tick()
+
+		dispatchRows.push(
+			aDispatchRow({
+				id: 'r-next',
+				sessionId: 's-next',
+				idempotencyKey: dispatchIdempotencyKey('s-next'),
+			}),
+		)
+		await queue.tick()
+		expect(dispatchFn).toHaveBeenCalledWith('s-next', dispatchIdempotencyKey('s-next'))
+		expect(dispatchRows.find((r) => r.id === 'r-next')).toBeUndefined()
+	})
+
+	it('abandons a claim whose DB call never settles so the next tick can run', async () => {
+		const { db } = makeFakeDb({ dispatchRows: [aDispatchRow()] })
+		const realTransaction = db.transaction.bind(db)
+		let hang = true
+		vi.spyOn(db, 'transaction').mockImplementation(((fn: never) =>
+			hang ? new Promise(() => {}) : realTransaction(fn)) as never)
+		const dispatchFn = vi.fn(async (): Promise<DispatchResult> => ({ kind: 'dispatched' }))
+		const queue = makeQueue(db, dispatchFn, { tickTimeoutMs: 20 })
+
+		await queue.tick()
+		expect(dispatchFn).not.toHaveBeenCalled()
+
+		hang = false
+		await queue.tick()
+		expect(dispatchFn).toHaveBeenCalledTimes(1)
 	})
 })
 

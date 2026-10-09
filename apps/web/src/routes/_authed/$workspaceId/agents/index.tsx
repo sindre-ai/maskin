@@ -6,6 +6,7 @@ import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -18,6 +19,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 })
 
 function AgentsRoute() {
+	useDocumentTitle('Agents')
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: true })

@@ -55,13 +55,39 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		})
 	}
 
-	it('hard-blocks trial even with a balance (no credit spending without a paid plan)', async () => {
+	it('lets trial through when it has a balance — it was allowed to buy one', async () => {
+		// Inverted deliberately. Trial used to be hard-blocked from spending,
+		// while `routes/stripe-webhook.ts` credits a completed top-up
+		// unconditionally — so a trial that paid held a balance it could never
+		// draw down. The buy gate in `routes/billing.ts` now lets any
+		// maskin-plan tier top up, and this is the matching spend side.
 		await seedOverCapUsage()
 		const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 5_000 })
+		expect(canUseCreditBalance('trial', wsSettings.billing)).toBe(true)
+		await expect(
+			checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
+		).resolves.toBeUndefined()
+	})
+
+	it('hard-blocks trial when it has no balance', async () => {
+		await seedOverCapUsage()
+		const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 0 })
 		expect(canUseCreditBalance('trial', wsSettings.billing)).toBe(false)
 		await expect(checkPlanCap({ db, workspaceId, wsSettings, enterprise: false })).rejects.toThrow(
 			PlanCapExceededError,
 		)
+	})
+
+	it('lets a first-time buyer spend before any stripe_customer_id is on file', async () => {
+		// The top-up webhook never wrote `stripe_customer_id`, so requiring it
+		// excluded exactly the workspaces that had just paid.
+		await seedOverCapUsage()
+		const wsSettings = billingSettings({
+			plan: 'trial',
+			credit_balance_cents: 5_000,
+			stripe_customer_id: undefined,
+		})
+		expect(canUseCreditBalance('trial', wsSettings.billing)).toBe(true)
 	})
 
 	it('hard-blocks pro when the balance is zero (unchanged behavior)', async () => {

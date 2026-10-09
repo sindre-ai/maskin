@@ -20,3 +20,21 @@ export function buildChiefOfStaffKickoffPrompt(owner: {
 	const ownerEmail = owner.email ? ` (${owner.email})` : ''
 	return `A human owner just joined this brand-new workspace: ${ownerName}${ownerEmail}. Run your \`continuous-onboarding\` skill now — it covers the welcome, the first-pass research kickoff, and the rest of the onboarding checklist.`
 }
+
+/**
+ * True in an E2E stack — the same `MASKIN_TEST_GRANT_TOKEN` seam
+ * `probeClaudeSubscription` (`lib/claude-failover.ts`) already uses to detect
+ * one. E2E specs provision a brand-new workspace per test, and every one of
+ * those workspaces has no real Claude/LLM credentials — the kickoff session
+ * this module's prompt is used for is fated to fail with
+ * `LlmCredentialsUnavailableError` after still paying for a real session-row
+ * insert and container/sandbox launch attempt. Across a shard's ~150
+ * per-test workspaces that churn was enough contention (DB connections, CPU,
+ * Docker) to slow down unrelated API calls on the same runner and blow the
+ * shard's time budget — not just the Claude-subscription specs the probe
+ * bypass targeted. Skip the kickoff outright in this environment rather than
+ * let it fail loudly and slowly; production never sets this var.
+ */
+export function shouldSkipOnboardingKickoff(): boolean {
+	return Boolean(process.env.MASKIN_TEST_GRANT_TOKEN)
+}

@@ -2,6 +2,8 @@ import type { Database } from '@maskin/db'
 import { sessionLogs } from '@maskin/db/schema'
 import { parseResultLine } from '@maskin/shared'
 import { and, desc, eq, sql } from 'drizzle-orm'
+import { LEGACY_TOKENS_PER_USD_CENT, LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import { getModelPricing } from '../lib/openrouter-pricing'
 
 export type SessionUsage = {
 	totalCostUsd: number | null
@@ -54,6 +56,20 @@ export async function extractSessionUsage(
 	db: Database,
 	sessionId: string,
 ): Promise<SessionUsage | null> {
+	return parseUsageFromLogChunks(await readSessionStdoutChunks(db, sessionId))
+}
+
+/**
+ * The newest stdout chunks of a session, oldest first — the one read that both
+ * the usage parser and the failure classifier work from at completion. Callers
+ * that need both should read once and share the result: each read pulls up to
+ * `MAX_LOG_ROWS_FETCHED` rows (~4.6 KB each in production), and doing it twice
+ * per completion was ~40% of database egress.
+ *
+ * Ordered by `id` (bigserial, monotonic) rather than `createdAt`, which can
+ * tie at millisecond granularity and shuffle chunks within a tie.
+ */
+export async function readSessionStdoutChunks(db: Database, sessionId: string): Promise<string[]> {
 	const rows = await db
 		.select({ content: sessionLogs.content })
 		.from(sessionLogs)
@@ -61,12 +77,8 @@ export async function extractSessionUsage(
 		.orderBy(desc(sessionLogs.id))
 		.limit(MAX_LOG_ROWS_FETCHED)
 
-	if (rows.length === 0) return null
 	// Rows came back newest-first; flip so chunks are in arrival order.
-	// Order by `id` (bigserial, monotonic) rather than `createdAt`, which can
-	// tie at millisecond granularity and shuffle chunks within a tie.
-	const chunks = rows.map((r) => r.content).reverse()
-	return parseUsageFromLogChunks(chunks)
+	return rows.map((r) => r.content).reverse()
 }
 
 /**
@@ -151,4 +163,74 @@ export async function sumRunningSessionUsage(
 		cacheReadInputTokens: totalCacheRead,
 		durationMs: totalDuration,
 	}
+}
+
+export interface SessionCostInput {
+	/** The session's `config.llm_route` value. */
+	route: string
+	/** The session's `model_name`, when the route records one. */
+	modelName: string | null
+	usage: SessionUsage
+}
+
+/**
+ * Resolves a session's true USD cost from its route and observed usage.
+ *
+ * The CLI prices every turn against Anthropic's rate card, which is correct
+ * for the routes that actually reach Anthropic (`claude_oauth`, workspace API
+ * keys) and wrong for `maskin_plan`, whose sessions are routed through
+ * OpenRouter to a non-Anthropic model. For `maskin_plan` the reported
+ * `total_cost_usd` is therefore discarded and the cost is computed locally
+ * from token counts and OpenRouter's published per-token prices.
+ *
+ * Never returns a silent zero for real usage: when the model has no published
+ * price (or no model name was recorded), it bills the tokens at the legacy
+ * blended rate instead — conservative, and never Anthropic-scale for a
+ * DeepSeek-priced session.
+ */
+export async function resolveSessionCostUsd({
+	route,
+	modelName,
+	usage,
+}: SessionCostInput): Promise<number | null> {
+	if (route !== LLM_ROUTE_MASKIN_PLAN) return usage.totalCostUsd
+
+	const inputTokens = usage.inputTokens ?? 0
+	const outputTokens = usage.outputTokens ?? 0
+	const cacheReadTokens = usage.cacheReadInputTokens ?? 0
+	const cacheWriteTokens = usage.cacheCreationInputTokens ?? 0
+
+	if (modelName) {
+		const pricing = await getModelPricing(modelName)
+		if (pricing) {
+			return (
+				inputTokens * pricing.prompt +
+				outputTokens * pricing.completion +
+				cacheReadTokens * pricing.cacheRead +
+				cacheWriteTokens * pricing.cacheWrite
+			)
+		}
+	}
+
+	// No priced model to bill against — fall back to the legacy blended rate.
+	// Input + output tokens only, mirroring `getWorkspacePlanUsdCentsUsage`'s
+	// estimate; cache reads are near-free and billing them at the blended rate
+	// would over-charge. Cache-only usage still bills rather than reading as
+	// $0, which would be the silent-zero this path exists to prevent.
+	const tokens = inputTokens + outputTokens
+	if (tokens > 0) return tokens / LEGACY_TOKENS_PER_USD_CENT / 100
+	const cacheOnly = cacheReadTokens + cacheWriteTokens
+	if (cacheOnly > 0) return cacheOnly / LEGACY_TOKENS_PER_USD_CENT / 100
+	return null
+}
+
+/**
+ * DB-backed equivalent of the in-memory `stdoutTail` for the remote path — a
+ * microsandbox session's stdout only lands in `session_logs`. Stdout-only so
+ * both completion paths classify from the same material. Ordered by `id`
+ * (bigserial, monotonic) rather than `createdAt` — the latter ties within a
+ * millisecond and shuffles chunks.
+ */
+export async function readSessionStdoutTail(db: Database, sessionId: string): Promise<string> {
+	return (await readSessionStdoutChunks(db, sessionId)).join('')
 }

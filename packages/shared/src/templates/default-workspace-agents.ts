@@ -17,10 +17,16 @@
 
 import type { SeedAgent, SeedSkill, SeedTrigger } from './development-agents'
 
+/**
+ * Exa MCP server. The key is never stored in the actor row: the header is an
+ * envsubst placeholder, filled from the AGENT_SECRET_EXA_API_KEY process env on
+ * the API service via the actor's tools.envFrom (see resolveActorSecretEnv).
+ * Unset on the API service, the session still starts and the header is empty.
+ */
 export const EXA_MCP_PRESET = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http' as const,
-	headers: { 'x-api-key': 'dfe759f6-25fd-4d45-aff5-3feead16d585' },
+	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 } as const
 
 export const PLATFORM_MCP_PRESET = {
@@ -881,7 +887,10 @@ Falsified if: [specific observable result].
 
 **Bet D — "Redesign the onboarding checklist widget."** Classification: design / product / possibly some coding. Checklist: (design) breadboards, sketches, empty/error/loading states, interaction; (product) which onboarding milestones map to which checklist items; (coding) whether the existing widget component supports the new interaction or needs a rewrite. If no agent in this workspace owns design and the gap is real, escalate to the user with a capability-gap note rather than shipping without design. If the design direction is already clear from Signal Analyst's cluster on drop-off, note the gap as a rabbit hole and shape solo — and say so honestly in the lock-down.
 `,
-		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET } },
+		tools: {
+			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
+			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
+		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL, FOR_YOU_FORMAT_SKILL, SHAPED_BET_FORMAT_SKILL],
 	},
 	{
@@ -1085,7 +1094,10 @@ Skimmable wins. The requester should get the answer from the TL;DR alone and div
 **Person brief.** Request: "Background on Jane Doe, VP Eng at Acme." Check Maskin first (already a contact?), then Exa for public profile, published talks/posts. Cover: current role, prior roles (LinkedIn), published views (talks/blogs) indicating priorities. Confidence Medium — public sources only. Don't speculate on comp, personal life, or unpublished opinions.
 
 **Ambiguous request.** Request: "Research Notion." Ambiguous — the company? product features? competitive positioning? AI roadmap? Don't ping back. Pick the most likely interpretation from context (who asked, what object it's attached to), state it in the Interpretation line, research that. If the requester wanted a different angle, they'll say so and you'll rerun — cheaper than a round-trip.`,
-		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET } },
+		tools: {
+			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
+			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
+		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL],
 	},
 	{
@@ -1186,7 +1198,8 @@ Otherwise, exit silently.
 If firing:
 1. Post ONE comment on this knowledge object (create_comment, attention 3) addressed to the user. 2–3 sentences, warm: "Here's a first pass on who you are and where you work — take a skim and let me know. If it's on the money, I'll set the Researcher loose on a proper deep dive (your org, competitors, the market you're in)."
 2. On that same comment, attach a \`decision\`: the deep dive does not start until they answer, so it is a real call. Options are "Looks right" / "Needs correction" / "Wrong entirely", each with 2-3 one-clause consequences and exactly one recommended, plus a title, a summary carrying a real number, and a first-person ask. See the \`decision\` param docs on \`create_comment\` for the rules the API enforces.
-3. Do NOT change the knowledge status yourself. The user's answer is what confirms the brief; you'll act on their reply per the onboarding arc in your system prompt (Beat 2).`,
+3. Do NOT change the knowledge status yourself. The user's answer is what confirms the brief; you'll act on their reply per the onboarding arc in your system prompt (Beat 2).
+4. As the FINAL step, once the confirmation comment + decision have been posted, call \`update_trigger\` with \`id: {{trigger_id}}\` and \`enabled: false\`. This trigger is onboarding-only and one-shot per workspace — self-disabling prevents every subsequent \`knowledge.created\` event from spawning a redundant Chief of Staff session just to run the "is this the first Researcher brief?" gate.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
@@ -1223,7 +1236,8 @@ If firing:
    - Competitive landscape — top 3–5 competitors and how they position vs the user's organization.
    - Market & category — segment size, trends, key dynamics the user's org sits inside.
 3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace.
-4. Beat 6 hand-off (Signal Analyst) is chained separately — do NOT dispatch Signal Analyst from this session. The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger fires only after deep-research validates — specifically, after each deep-research brief reaches \`status = validated\` — and never concurrently with this dispatch (Magnus 2026-09-06 guardrail: clustering an unvalidated brief clusters an empty knowledge set). Trust the chain.`,
+4. Beat 6 hand-off (Signal Analyst) is chained separately — do NOT dispatch Signal Analyst from this session. The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger fires only after deep-research validates — specifically, after each deep-research brief reaches \`status = validated\` — and never concurrently with this dispatch (Magnus 2026-09-06 guardrail: clustering an unvalidated brief clusters an empty knowledge set). Trust the chain.
+5. As the FINAL step, once all three deep-research briefs have been filed via \`run_agent\`, call \`update_trigger\` with \`id: {{trigger_id}}\` and \`enabled: false\`. This trigger is onboarding-only and one-shot per workspace — self-disabling prevents every subsequent \`knowledge.status_changed → validated\` event from spawning a redundant Chief of Staff session just to run the "is this the first validated first-pass brief?" gate.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
