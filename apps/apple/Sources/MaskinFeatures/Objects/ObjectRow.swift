@@ -25,11 +25,9 @@ struct ObjectTypeTag: View {
 		HStack(spacing: MaskinSpace.s3) {
 			RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
 				.fill(MaskinObjectType.dotColor(for: type))
-				.frame(width: MaskinSpace.s4 - MaskinSpace.s1, height: MaskinSpace.s4 - MaskinSpace.s1)
+				.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 				.accessibilityHidden(true)
-			Text(name.uppercased())
-				.maskinText(.microLabel)
-				.foregroundStyle(MaskinColor.ink2)
+			MonoLabel(name, color: MaskinColor.ink2, size: .chip)
 				.padding(.horizontal, MaskinSpace.s3)
 				.padding(.vertical, MaskinSpace.s1)
 				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.inputSm, style: .continuous))
@@ -154,15 +152,16 @@ struct ObjectGroupHeader: View {
 					.fill(MaskinObjectType.dotColor(for: group.id))
 					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 					.accessibilityHidden(true)
-				Text((group.title ?? group.id).uppercased())
-					.maskinText(.microLabel)
-					.foregroundStyle(MaskinColor.ink4)
+				MonoLabel(group.title ?? group.id, size: .section)
+			} else if group.isAttention {
+				Circle().fill(MaskinColor.sigInk)
+					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+					.accessibilityHidden(true)
+				MonoLabel(group.title ?? group.id, size: .section)
 			} else if !group.id.isEmpty {
-				Text(MaskinStatus.label(for: group.id).uppercased())
-					.maskinText(.microLabel)
-					.foregroundStyle(MaskinColor.ink4)
+				MonoLabel(MaskinStatus.label(for: group.id), size: .section)
 			}
-			Text("\(group.objects.count)").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
+			MonoLabel("\(group.objects.count)", color: MaskinColor.ink5, size: .section)
 			Spacer()
 		}
 		.textCase(nil)

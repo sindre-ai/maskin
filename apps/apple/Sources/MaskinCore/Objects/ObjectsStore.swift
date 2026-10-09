@@ -36,7 +36,7 @@ public final class ObjectsStore {
 	/// loaded; while it is on the list keeps paging until the starred ones surface.
 	public var starredOnly = false
 	public private(set) var searchText = ""
-	public var grouping: ObjectsGrouping = .type
+	public var grouping: ObjectsGrouping = .attention
 	/// Sort, "Needs you only", shown properties and list/board: remembered across launches.
 	public private(set) var display = ObjectsDisplay() {
 		didSet { if display != oldValue { displayStorage?.save(display) } }

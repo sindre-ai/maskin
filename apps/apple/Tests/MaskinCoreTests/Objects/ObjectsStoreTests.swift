@@ -31,14 +31,25 @@ struct ObjectsStoreTests {
 		#expect(store.groups[0].objects.map(\.id) == ["t1", "b1", "t2", "t3", "i1"])
 	}
 
-	@Test("groups by type by default, in schema order, with a title and the type flag")
+	@Test("groups by type in schema order, with a title and the type flag")
 	func groupsByType() async {
 		let (store, _) = makeStore()
 		await store.load()
-		#expect(store.grouping == .type)
+		store.grouping = .type
 		#expect(store.groups.map(\.id) == ["insight", "bet", "task"])
 		#expect(store.groups.map(\.title) == ["Insight", "Bet", "Task"])
 		#expect(store.groups.allSatisfy { $0.isType })
+	}
+
+	@Test("groups by attention by default: processing, then needs you, never empty buckets")
+	func groupsByAttention() async {
+		let (store, _) = makeStore()
+		await store.load()
+		#expect(store.grouping == .attention)
+		let ids = store.groups.map(\.id)
+		#expect(ids == ids.filter { ["processing", "needs_you", "other"].contains($0) })
+		#expect(ids == ["processing", "needs_you", "other"].filter(ids.contains))
+		#expect(store.groups.flatMap(\.objects).count == store.objects.count)
 	}
 
 	@Test("within a type: needs-you first, then blocked, then active, then done")
