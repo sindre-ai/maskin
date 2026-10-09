@@ -45,7 +45,7 @@ struct TVForYou: View {
 		.task(id: entries.first?.id) {
 			// MASKIN_DEMO_SCREEN=decision | briefing opens that screen once the data is in.
 			let demo = ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"]
-			if demo == "decision", let id = entries.first?.id, path.isEmpty { path = [id] }
+			if demo == "decision" || demo == "thread", let id = entries.first?.id, path.isEmpty { path = [id] }
 		}
 		.task(id: stories?.cards.first?.id) {
 			if ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"] == "briefing", let stories,

@@ -7,12 +7,14 @@ import SwiftUI
 struct TVFlows: View {
 	let environment: AppEnvironment
 	let loops: LoopsStore?
+	@Binding var chromeHidden: Bool
+	@State private var path: [String] = []
 
 	private var flows: [LoopSummary] { (loops?.loops ?? []).filter { $0.status != .draft } }
 	private let columns = [GridItem(.flexible(), spacing: 40), GridItem(.flexible(), spacing: 40)]
 
 	var body: some View {
-		NavigationStack {
+		NavigationStack(path: $path) {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 40) {
 					Text("Flows").font(.system(size: 64, weight: .bold))
@@ -31,13 +33,22 @@ struct TVFlows: View {
 					}
 				}
 				.padding(.horizontal, 96)
-				.padding(.top, 56)
+				.padding(.top, 24)
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
+			.ignoresSafeArea(edges: .horizontal)
 			.navigationDestination(for: String.self) { id in
 				if let loops, let flow = loops.loop(id: id) { TVFlowDetail(environment: environment, flow: flow, directory: loops.directory) }
 			}
 		}
+		.onChange(of: path) { _, path in chromeHidden = !path.isEmpty }
+		#if DEBUG
+		.task(id: flows.first?.id) {
+			if ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"] == "flow", let id = flows.first?.id, path.isEmpty {
+				path = [id]
+			}
+		}
+		#endif
 	}
 }
 
@@ -49,9 +60,9 @@ struct TVRing: View {
 
 	var body: some View {
 		ZStack {
-			Circle().stroke(MaskinSurface.fillStrong, lineWidth: lineWidth)
+			Circle().stroke(MaskinSurface.fill, lineWidth: lineWidth)
 			Circle().trim(from: 0, to: progress)
-				.stroke(paused ? MaskinColor.ink5 : MaskinColor.ink,
+				.stroke(paused ? MaskinColor.ink5 : MaskinColor.sigHi,
 					style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 				.rotationEffect(.degrees(-90))
 		}
@@ -91,6 +102,7 @@ private struct TVFlowCard: View {
 struct TVFlowDetail: View {
 	@State private var store: LoopDetailStore
 	@State private var tab: Tab = .outcome
+	@Environment(\.dismiss) private var dismiss
 
 	enum Tab: String, CaseIterable, Identifiable {
 		case outcome = "Outcome", actions = "Actions", activity = "Activity"
@@ -127,6 +139,7 @@ struct TVFlowDetail: View {
 			.padding(.bottom, 56)
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
+		.ignoresSafeArea()
 		.task { await store.start() }
 		.onDisappear { store.stop() }
 	}
@@ -134,11 +147,16 @@ struct TVFlowDetail: View {
 	private var header: some View {
 		HStack(spacing: 40) {
 			TVRing(progress: flow.ringProgress, paused: flow.isPaused, size: 170, lineWidth: 14)
-			VStack(alignment: .leading, spacing: 12) {
+			VStack(alignment: .leading, spacing: 8) {
 				Text(flow.displayName).font(.system(size: 64, weight: .bold)).lineLimit(2)
-				Text("\(Int(flow.ringProgress * 100))% · \(store.verdict)")
-					.font(.system(size: 32)).foregroundStyle(MaskinColor.ink4)
+				Text(store.verdict).font(.system(size: 34)).foregroundStyle(MaskinColor.ink4)
 			}
+			Spacer(minLength: 0)
+			Button { dismiss() } label: {
+				Label("Back", systemImage: "chevron.left").font(.system(size: 34, weight: .semibold))
+					.foregroundStyle(MaskinColor.ink3).padding(.horizontal, 28).frame(minHeight: 80)
+			}
+			.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 40))
 		}
 	}
 
@@ -159,10 +177,11 @@ struct TVFlowDetail: View {
 	// MARK: Outcome
 
 	@ViewBuilder private var outcome: some View {
-		HStack(spacing: 32) {
-			stat("\(flow.inProgressCount)", "in motion")
-			stat("\(flow.closedCount)", "closed")
-			stat("\(flow.waitingCount)", "need you")
+		HStack(alignment: .top, spacing: 32) {
+			if let target = flow.targets?.first { targetCard(target) }
+			stat("\(flow.inProgressCount)", "In motion")
+			stat("\(flow.closedCount)", "Closed")
+			stat("\(flow.waitingCount)", "Needs you")
 		}
 		if let content = flow.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
 			Text(content).font(.system(size: 30)).foregroundStyle(MaskinColor.ink3)
@@ -240,11 +259,31 @@ struct TVFlowDetail: View {
 
 	private func stat(_ value: String, _ label: String) -> some View {
 		VStack(alignment: .leading, spacing: 8) {
-			Text(value).font(.system(size: 48, weight: .bold))
-			Text(label).font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
+			Text(value).font(.system(size: 56, weight: .bold))
+			Text(label).font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
+			Spacer(minLength: 0)
 		}
 		.padding(32)
-		.frame(width: 280, alignment: .leading)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+		.frame(width: 240, height: 340, alignment: .topLeading)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: 40, style: .continuous))
+	}
+
+	/// The flow's first measurable target: where it stands, what it counts, and progress to the goal.
+	private func targetCard(_ target: LoopTarget) -> some View {
+		VStack(alignment: .leading, spacing: 18) {
+			label("TARGET")
+			Text("\(Int(target.actual)) / \(Int(target.target))").font(.system(size: 88, weight: .bold))
+			Text(target.label).font(.system(size: 32)).foregroundStyle(MaskinColor.ink2)
+			Capsule().fill(MaskinSurface.fill).frame(height: 14)
+				.overlay(alignment: .leading) {
+					GeometryReader { proxy in
+						Capsule().fill(MaskinColor.sigHi).frame(width: proxy.size.width * target.fraction)
+					}
+				}
+			Spacer(minLength: 0)
+		}
+		.padding(42)
+		.frame(maxWidth: .infinity, minHeight: 340, alignment: .topLeading)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: 40, style: .continuous))
 	}
 }

@@ -267,6 +267,18 @@ const participant = (id) => {
 	return { id, name: a.name, type: a.type, kind: a.type }
 }
 
+// The create and detail responses list participants as full rows rather than the list's summaries.
+const participantRow = (id) => {
+	const a = actors.find((x) => x.id === id)
+	return {
+		actorId: id,
+		actorName: a.name,
+		actorType: a.type,
+		joinedAt: ago(5 * DAY),
+		addedBy: ME.id,
+	}
+}
+
 export function overrides({ method, path, params, query, base, item }) {
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'get' && path === '/api/workspaces') {
@@ -417,6 +429,28 @@ export function overrides({ method, path, params, query, base, item }) {
 			},
 		}
 	}
+	if (method === 'post' && path === '/api/conversations') {
+		// "Ask Chief of Staff" about a card: answer with the standing Chief of Staff room.
+		const r = rooms[0]
+		return {
+			status: 201,
+			body: {
+				...base,
+				id: uuid(r.n),
+				workspaceId: WORKSPACE_ID,
+				title: r.title,
+				createdBy: ME.id,
+				lastMessageAt: ago(r.at),
+				createdAt: ago(5 * DAY),
+				updatedAt: ago(r.at),
+				pinned: false,
+				archived: false,
+				unread_count: 0,
+				participants: [...r.with.map(participantRow), participantRow(ME.id)],
+				last_read_message_id: 0,
+			},
+		}
+	}
 	const convoMatch = path.match(/^\/api\/conversations\/([^/]+)$/)
 	if (method === 'get' && convoMatch) {
 		const r = rooms.find((x) => uuid(x.n) === convoMatch[1])
@@ -434,7 +468,7 @@ export function overrides({ method, path, params, query, base, item }) {
 					pinned: false,
 					archived: false,
 					unread_count: r.unread,
-					participants: [...r.with.map(participant), participant(ME.id)],
+					participants: [...r.with.map(participantRow), participantRow(ME.id)],
 					last_read_message_id: 0,
 				},
 			}
@@ -451,7 +485,7 @@ export function overrides({ method, path, params, query, base, item }) {
 			conversationId: uuid(r.n),
 			actorId: actor.id,
 			actorName: actor.name,
-			actorType: actor.type,
+			actorType: actor.type ?? 'human',
 			kind: 'message',
 			content: text,
 			metadata: null,
@@ -461,6 +495,18 @@ export function overrides({ method, path, params, query, base, item }) {
 			spawned_sessions: [],
 		})
 		const first = actors.find((a) => a.id === r.with[0])
+		if (r.n === 300) {
+			return {
+				body: {
+					messages: [
+						m(1, first, 'Seven follow-ups to Northwind are ready.', 30),
+						m(2, ME, 'Why not all 47 contacts?', 20),
+						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
+					],
+					has_more: false,
+				},
+			}
+		}
 		return {
 			body: {
 				messages: [

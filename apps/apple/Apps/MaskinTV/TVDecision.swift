@@ -36,6 +36,13 @@ struct TVDecision: View {
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 		.ignoresSafeArea()
+		#if DEBUG
+		.task(id: chief != nil) {
+			if ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"] == "thread", let entry {
+				await openThread(about: entry.card)
+			}
+		}
+		#endif
 		.navigationDestination(item: $thread) { TVThread(environment: environment, conversationID: $0.id) }
 		.alert("Can't open the thread", isPresented: $askFailed) {
 			Button("OK", role: .cancel) {}
@@ -123,22 +130,23 @@ struct TVDecision: View {
 	@ViewBuilder private func askButton(_ card: ForYouCard) -> some View {
 		if let chief {
 			Button {
-				guard !opening else { return }
-				opening = true
-				Task {
-					defer { opening = false }
-					do {
-						let outcome = try await ChiefOfStaffThreads.open(
-							about: card, conversations: chief.conversations)
-						thread = TVThreadRoute(id: outcome.conversation.id)
-					} catch {
-						askFailed = true
-					}
-				}
+				Task { await openThread(about: card) }
 			} label: {
 				TVCapsuleLabel(title: opening ? "Opening…" : "Ask Chief of Staff", symbol: "mic.fill")
 			}
 			.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+		}
+	}
+
+	private func openThread(about card: ForYouCard) async {
+		guard let chief, !opening else { return }
+		opening = true
+		defer { opening = false }
+		do {
+			let outcome = try await ChiefOfStaffThreads.open(about: card, conversations: chief.conversations)
+			thread = TVThreadRoute(id: outcome.conversation.id)
+		} catch {
+			askFailed = true
 		}
 	}
 
