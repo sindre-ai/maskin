@@ -1120,12 +1120,14 @@ export function Composer({
 						<DropdownMenuTrigger asChild>
 							{/* No 44 px `::before` here: Attach next to it already carries one,
 							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design. */}
+							    taps from each other. The v2 control row is 28 px by design.
+							    Attach's hit area is anchored to its right edge, so it reaches 8 px
+							    over this button; `z-[1]` keeps this one's full box on top. */}
 							<Button
 								type="button"
 								size="icon"
 								variant="outline"
-								className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
 								disabled={disabled}
 								aria-label="Add an object, file, or mention"
 							>
