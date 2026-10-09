@@ -16,6 +16,7 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
+import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
@@ -86,6 +87,11 @@ const PrototypesAboveTitleHeaderRoute =
     path: '/prototypes/above-title-header',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ConnectSkjaldRoute = ConnectSkjaldRouteImport.update({
+  id: '/connect/skjald',
+  path: '/connect/skjald',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthedWorkspacesRoute = AuthedWorkspacesRouteImport.update({
   id: '/workspaces',
   path: '/workspaces',
@@ -293,6 +299,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
+  '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
@@ -333,6 +340,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof AuthedWorkspacesRoute
+  '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/': typeof AuthedIndexRoute
@@ -375,6 +383,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
+  '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -420,6 +429,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/$workspaceId'
     | '/workspaces'
+    | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/$workspaceId/briefing'
@@ -460,6 +470,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/workspaces'
+    | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/'
@@ -501,6 +512,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
+    | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/_authed/'
@@ -543,6 +555,7 @@ export interface RootRouteChildren {
   InviteRoute: typeof InviteRoute
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  ConnectSkjaldRoute: typeof ConnectSkjaldRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
 }
@@ -596,6 +609,13 @@ declare module '@tanstack/react-router' {
       path: '/prototypes/above-title-header'
       fullPath: '/prototypes/above-title-header'
       preLoaderRoute: typeof PrototypesAboveTitleHeaderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connect/skjald': {
+      id: '/connect/skjald'
+      path: '/connect/skjald'
+      fullPath: '/connect/skjald'
+      preLoaderRoute: typeof ConnectSkjaldRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/workspaces': {
@@ -967,6 +987,7 @@ const rootRouteChildren: RootRouteChildren = {
   InviteRoute: InviteRoute,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  ConnectSkjaldRoute: ConnectSkjaldRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,
 }
