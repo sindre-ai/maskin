@@ -311,7 +311,7 @@ app.openapi(statusRoute, (async (c) => {
 	let subscriptionType: string | undefined
 	let expiresAt: number | undefined
 	try {
-		const result = await getValidOAuthToken(db, workspaceId, 0)
+		const result = await getValidOAuthToken(db, workspaceId, 0, 'keys_status')
 		if (result) {
 			valid = true
 			subscriptionType = result.tokens.subscriptionType
