@@ -428,7 +428,6 @@ targets:
       - path: Apps/MaskinWidgets/Provider.swift
       - path: Apps/MaskinWidgets/Views/WidgetEntry.swift
       - path: Apps/MaskinWidgets/Views/LockScreenViews.swift
-      - path: Apps/MaskinWidgets/Views/BrandGlyph.swift
     dependencies:
       - package: MaskinKit
         product: MaskinCore
@@ -436,6 +435,8 @@ targets:
         product: MaskinAPI
       - package: MaskinKit
         product: MaskinDesign
+      - package: MaskinKit
+        product: MaskinUI
     postCompileScripts:
       - name: Strip dev-only ATS exception
         basedOnDependencyAnalysis: false
