@@ -24,7 +24,7 @@ struct DynamicTypeScalingTests {
 	@Test("only the mono label roles are capped")
 	func roleCeilings() {
 		for role in MaskinTextRole.allCases {
-			let capped = role == .microLabel || role == .microLabelLarge
+			let capped = role == .microLabel || role == .microLabelLarge || role == .microLabelMicro
 			#expect((role.dynamicTypeCeiling == MaskinScaling.monoLabelCeiling) == capped, "\(role)")
 		}
 	}

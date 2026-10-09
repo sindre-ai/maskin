@@ -60,6 +60,7 @@ import Testing
 		#expect(MaskinTextRole.microLabel.trackingEm == 0.08)
 		#expect(MaskinTextRole.microLabelLarge.trackingEm == 0.07)
 		#expect(MaskinTextRole.microLabel.isUppercase && MaskinTextRole.microLabelLarge.isUppercase)
+		#expect(MaskinTextRole.microLabelMicro.referenceSize == 9 && MaskinTextRole.microLabelMicro.isUppercase)
 	}
 
 	@Test func weightScaleMapsOntoPlatformWeights() {

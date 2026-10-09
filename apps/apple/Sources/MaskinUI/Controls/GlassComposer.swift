@@ -1,11 +1,16 @@
 import MaskinDesign
 import SwiftUI
 
-/// The composer's shape, shared by every thread, in the iOS Messages idiom: attach as a glass circle,
-/// then a glass capsule holding the field with one trailing control that is the mic while there is
-/// nothing to send and the send arrow once there is. Callers supply the controls; this owns layout.
+private let composerControlSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s3
+
+/// The composer's shape, shared by every thread: ONE glass pill (corner 26) holding, left to right,
+/// the attach circle, the field, and a trailing control that is the mic while there is nothing to
+/// send and the send arrow once there is. Every control is a 38pt filled circle. Callers supply the
+/// controls; this owns layout.
 public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
-	public static var control: CGFloat { MaskinSpace.touchMin - MaskinSpace.s2 }
+	public static var control: CGFloat { composerControlSize }
+	/// The pill's corner: a single line reads as a capsule, a tall field stays a rounded card.
+	public static var corner: CGFloat { MaskinRadius.hero + MaskinSpace.s4 }
 
 	private let leading: Leading
 	private let field: Field
@@ -28,19 +33,17 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 	}
 
 	public var body: some View {
-		HStack(alignment: .bottom, spacing: MaskinSpace.s3) {
-			leading.maskinGlass(in: Circle())
-			HStack(alignment: .bottom, spacing: MaskinSpace.s2) {
-				field
-					.maskinText(.body)
-					.foregroundStyle(MaskinColor.ink)
-					.frame(minHeight: Self.control)
-					.padding(.leading, MaskinSpace.s5)
-				trailing
-			}
-			.padding(MaskinSpace.s2)
-			.maskinGlass(in: RoundedRectangle(cornerRadius: Self.control, style: .continuous))
+		HStack(alignment: .bottom, spacing: MaskinSpace.s2) {
+			leading
+			field
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink)
+				.frame(minHeight: Self.control)
+				.padding(.horizontal, MaskinSpace.s3)
+			trailing
 		}
+		.padding(MaskinSpace.s4)
+		.maskinGlass(in: RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
 		.animation(MaskinMotion.quick, value: showsMic)
 	}
 
@@ -81,7 +84,9 @@ public struct ComposerCircleLabel: View {
 		Image(systemName: symbol)
 			.font(.system(size: MaskinFontSize.t15, weight: .semibold))
 			.foregroundStyle(MaskinColor.ink3)
-			.frame(width: MaskinSpace.touchMin - MaskinSpace.s2, height: MaskinSpace.touchMin - MaskinSpace.s2)
+			.frame(width: composerControlSize, height: composerControlSize)
+			.background(MaskinSurface.fill, in: Circle())
+			.contentShape(Circle())
 	}
 }
 
@@ -94,8 +99,8 @@ public struct ComposerMicLabel: View {
 			.font(.system(size: MaskinFontSize.t15, weight: .semibold))
 			.symbolEffect(.pulse, isActive: listening)
 			.foregroundStyle(listening ? Color.white : MaskinColor.ink3)
-			.frame(width: MaskinSpace.touchMin - MaskinSpace.s2, height: MaskinSpace.touchMin - MaskinSpace.s2)
-			.background(listening ? MaskinColor.dangerMic : Color.clear, in: Circle())
+			.frame(width: composerControlSize, height: composerControlSize)
+			.background(listening ? MaskinColor.dangerMic : MaskinSurface.fill, in: Circle())
 	}
 }
 

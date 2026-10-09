@@ -75,6 +75,8 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	/// alone in a header (the story player's unit, a thread's context link); chips, row type labels and
 	/// section labels use `.microLabel`. 9pt exists only inside briefing cards.
 	case microLabelLarge
+	/// The smallest uppercase mono micro-label (9 / semibold, +0.08em), inside briefing cards.
+	case microLabelMicro
 	/// Machine-shaped text: ids, counts, cron.
 	case mono
 
@@ -89,6 +91,7 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		case .caption: MaskinTypeface.sans(MaskinFontSize.t12, weight: .medium, relativeTo: .caption)
 		case .microLabel: MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold, relativeTo: .caption2)
 		case .microLabelLarge: MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold, relativeTo: .caption)
+		case .microLabelMicro: MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold, relativeTo: .caption2)
 		case .mono: MaskinTypeface.mono(MaskinFontSize.t13, relativeTo: .footnote)
 		}
 	}
@@ -102,6 +105,7 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		case .headline: -0.008
 		case .microLabel: 0.08
 		case .microLabelLarge: 0.07
+		case .microLabelMicro: 0.08
 		default: 0
 		}
 	}
@@ -118,6 +122,7 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		case .caption: MaskinFontSize.t12
 		case .microLabel: MaskinFontSize.t10
 		case .microLabelLarge: MaskinFontSize.t12
+		case .microLabelMicro: MaskinFontSize.t9
 		case .mono: MaskinFontSize.t13
 		}
 	}
@@ -135,12 +140,12 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	/// else scales all the way through the accessibility sizes.
 	public var dynamicTypeCeiling: DynamicTypeSize {
 		switch self {
-		case .microLabel, .microLabelLarge: MaskinScaling.monoLabelCeiling
+		case .microLabel, .microLabelLarge, .microLabelMicro: MaskinScaling.monoLabelCeiling
 		default: .accessibility5
 		}
 	}
 
-	public var isUppercase: Bool { self == .microLabel || self == .microLabelLarge }
+	public var isUppercase: Bool { self == .microLabel || self == .microLabelLarge || self == .microLabelMicro }
 }
 
 extension View {
