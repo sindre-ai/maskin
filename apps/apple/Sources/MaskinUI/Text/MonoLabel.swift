@@ -3,17 +3,32 @@ import SwiftUI
 
 /// The uppercase mono micro-label ("DECISION", "3 OPEN").
 public struct MonoLabel: View {
+	/// `.chip` 10pt (chips, row type labels), `.section` 12pt (group headers), `.micro` 9pt (inside briefing cards).
+	public enum Size: Sendable {
+		case chip, section, micro
+
+		var role: MaskinTextRole {
+			switch self {
+			case .chip: .microLabel
+			case .section: .microLabelLarge
+			case .micro: .microLabelMicro
+			}
+		}
+	}
+
 	private let text: String
 	private let color: Color
+	private let size: Size
 
-	public init(_ text: String, color: Color = MaskinColor.ink4) {
+	public init(_ text: String, color: Color = MaskinColor.ink4, size: Size = .chip) {
 		self.text = text
 		self.color = color
+		self.size = size
 	}
 
 	public var body: some View {
 		Text(text.uppercased())
-			.maskinText(.microLabel)
+			.maskinText(size.role)
 			.foregroundStyle(color)
 			.lineLimit(1)
 			.accessibilityLabel(text)

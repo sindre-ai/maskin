@@ -78,7 +78,7 @@ struct ChatComposer: View {
 		nonmutating set { voiceChoice = newValue }
 	}
 
-	/// 26pt, the pill's corner: a single line reads as a capsule, a tall field stays a rounded card.
+	/// 26pt, the pill's corner (shared with `ComposerSurface`).
 	private let shape = RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous)
 	private let buttonSize = MaskinSpace.s14 + MaskinSpace.s3
 
@@ -177,9 +177,7 @@ struct ChatComposer: View {
 				field
 				trailing
 			}
-			.padding(.leading, MaskinSpace.s4)
-			.padding(.trailing, MaskinSpace.s4)
-			.padding(.vertical, MaskinSpace.s4)
+			.padding(MaskinSpace.s4)
 			if showsFormatting && voice != .dictating {
 				ComposerFormatRow(apply: model.applyFormat)
 					.padding(.bottom, MaskinSpace.s3)
@@ -262,7 +260,7 @@ struct ChatComposer: View {
 			DictationDoneButton(size: buttonSize) { finishDictation() }
 			.transition(.opacity)
 		} else {
-			HStack(spacing: MaskinSpace.s1) {
+			HStack(spacing: MaskinSpace.s5) {
 				if showsVoiceControls {
 					Button {
 						MaskinHaptics.play(.selection)
@@ -272,6 +270,7 @@ struct ChatComposer: View {
 							.font(.system(size: MaskinFontSize.t16, weight: .medium))
 							.foregroundStyle(MaskinColor.ink3)
 							.frame(width: buttonSize, height: buttonSize)
+							.background(MaskinSurface.fill, in: Circle())
 							.contentShape(Circle())
 					}
 					.buttonStyle(.maskinPressed)
@@ -490,11 +489,9 @@ struct ComposerToolLabel: View {
 		Image(systemName: symbol)
 			.font(.system(size: MaskinFontSize.t16, weight: .medium))
 			.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink3)
-			.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
-			.background(active ? MaskinSurface.fillStrong : Color.clear, in: Circle())
-			.overlay { if outlined { Circle().strokeBorder(MaskinSurface.line, lineWidth: 1) } }
-			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin - MaskinSpace.s2)
-			.contentShape(Rectangle())
+			.frame(width: MaskinSpace.s14 + MaskinSpace.s3, height: MaskinSpace.s14 + MaskinSpace.s3)
+			.background(active ? MaskinSurface.fillStrong : (outlined ? MaskinSurface.fill : Color.clear), in: Circle())
+			.contentShape(Circle())
 	}
 }
 
