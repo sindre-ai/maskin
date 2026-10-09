@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { events, sessions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MENTION_GUARD_LIMITS, normalizeMentionText } from '../../services/mention-guards'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -13,6 +13,10 @@ import { db, getTestActorId } from './global-setup'
 // Loop guards on agent-authored @mentions, against real Postgres: the cap counts
 // the sessions table (jsonb path + join on actors) and the duplicate check reads
 // the author's recent comment events, so a mocked db would not exercise either.
+
+// Sessions the mention dispatcher started. Tests also insert fixture sessions (a sender's own
+// session, for example) for the same actors, and those must not be counted as woken sessions.
+const FROM_DISPATCHER = sql`${sessions.config}->>'trigger_source' = 'comment_fallback'`
 
 const capturePosthogEvent = vi.fn().mockResolvedValue(undefined)
 vi.mock('../../lib/analytics/posthog', () => ({
@@ -284,7 +288,7 @@ describe('Agent-mention loop guards (integration)', () => {
 		const [row] = await db
 			.select({ config: sessions.config })
 			.from(sessions)
-			.where(eq(sessions.actorId, b.id))
+			.where(and(eq(sessions.actorId, b.id), FROM_DISPATCHER))
 		expect((row.config as { mention?: { helper_return?: boolean } }).mention?.helper_return).toBe(
 			true,
 		)
@@ -383,7 +387,7 @@ describe('Reused helper_return marker (integration)', () => {
 	}
 
 	const rowsFor = (actorId: string) =>
-		db.select().from(sessions).where(eq(sessions.actorId, actorId))
+		db.select().from(sessions).where(and(eq(sessions.actorId, actorId), FROM_DISPATCHER))
 	const isReturn = (row: { config: unknown }) =>
 		(row.config as { mention?: { helper_return?: boolean } }).mention?.helper_return === true
 
@@ -486,7 +490,7 @@ describe('Mention spawn link (integration)', () => {
 	}
 
 	const startedRows = (actorId: string) =>
-		db.select().from(sessions).where(eq(sessions.actorId, actorId))
+		db.select().from(sessions).where(and(eq(sessions.actorId, actorId), FROM_DISPATCHER))
 
 	it('links the mentioned agent’s session to the author’s own live session, depth 1', async () => {
 		const { ws, author, helper, object } = await setup()
