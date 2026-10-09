@@ -342,6 +342,13 @@ private func direct(_ id: String, with agent: String, archived: Bool = false) ->
 		#expect(none == .some(nil))
 	}
 
+	@Test func forYouLinkIsTheWorkspaceFeedAndNilSignedOut() async {
+		var rig = Rig()
+		#expect(rig.service().forYouLink()?.url.absoluteString == "maskin://ws1/notifications")
+		rig.session = nil
+		#expect(rig.service().forYouLink() == nil)
+	}
+
 	@Test func threadLinkSurfacesALookupFailureInsteadOfSayingThereIsNoThread() async {
 		let rig = Rig()
 		rig.memory.save(IntentsMemory(agents: [relay]), for: scope)

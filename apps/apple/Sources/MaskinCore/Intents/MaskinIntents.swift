@@ -131,6 +131,23 @@ import Foundation
 		}
 	}
 
+	/// "The overnight brief": opens For You, where the briefing stories are. It opens the app
+	/// rather than reading the brief aloud (there is no spoken-brief source yet).
+	public struct OvernightBriefIntent: AppIntent {
+		public static let title: LocalizedStringResource = "Overnight brief"
+		public static let description = IntentDescription(
+			"Opens your briefing: what your agents did overnight.", categoryName: "For you")
+		public static let openAppWhenRun = true
+
+		public init() {}
+
+		@MainActor
+		public func perform() async throws -> some IntentResult {
+			if let link = MaskinIntentsContext.current.forYouLink() { IntentDeepLinkRelay.open(link.url) }
+			return .result()
+		}
+	}
+
 	public struct AskAgentIntent: AppIntent {
 		public static let title: LocalizedStringResource = "Ask an agent"
 		public static let description = IntentDescription(

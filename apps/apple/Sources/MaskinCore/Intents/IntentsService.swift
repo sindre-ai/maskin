@@ -145,6 +145,13 @@ public struct IntentsService: Sendable {
 		NeedsMeSummary(state: await needs().resolved(at: Date()))
 	}
 
+	/// Where "the overnight brief" lands: the For You tab of the signed-in workspace, where the
+	/// briefing stories live. `nil` when signed out (the app then opens on whatever it shows).
+	public func forYouLink() -> DeepLink? {
+		guard let session = signedIn(), let workspace = session.workspaceId, !workspace.isEmpty else { return nil }
+		return .notifications(workspaceId: workspace)
+	}
+
 	/// Forget everything cached for any account: the agent list, thread links and the Spotlight
 	/// index. Called at sign-out, before the session is gone, so it never depends on one.
 	public func wipe() async {
