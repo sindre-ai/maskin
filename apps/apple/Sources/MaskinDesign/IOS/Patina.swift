@@ -63,8 +63,9 @@ public enum MaskinGradient {
 	/// A paused loop's ring: flat grey.
 	public static let ringPaused = Color(light: RGBA(0xC4C4CC), dark: RGBA(0xC4C4CC))
 
-	/// The recommended decision button: ink, top to bottom (white text in both modes).
-	public static let decisionInk = css(angle: 180, even(pair(0x2C2C31, 0x18181B, 0x2C2C31, 0x18181B)))
+	/// The recommended decision button. Light mode: ink, top to bottom. Dark mode: a light capsule
+	/// (#fafafa). Pair with `MaskinPatina.decisionInkText`.
+	public static let decisionInk = css(angle: 180, even(pair(0x2C2C31, 0x18181B, 0xFAFAFA, 0xFAFAFA)))
 
 	/// The Dynamic Island agent tile; white initial on top.
 	public static let islandTile = css(
@@ -96,6 +97,8 @@ public enum MaskinPatina {
 	/// A brief card's resting shadow (the card has no ring or border).
 	public static let cardShadow = Color(
 		light: RGBA(red: 18, green: 48, blue: 44, alpha: 0.06), dark: RGBA(red: 0, green: 0, blue: 0, alpha: 0.3))
+	/// Label colour on `MaskinGradient.decisionInk`: white on the light-mode ink, dark on the dark-mode light capsule.
+	public static let decisionInkText = Color(light: RGBA(0xFFFFFF), dark: RGBA(0x18181B))
 	/// The recommended decision button's shadow.
 	public static let decisionShadow = Color(
 		light: RGBA(red: 18, green: 48, blue: 44, alpha: 0.22), dark: RGBA(red: 0, green: 0, blue: 0, alpha: 0.4))

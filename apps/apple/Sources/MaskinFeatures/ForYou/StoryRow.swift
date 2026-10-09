@@ -40,6 +40,7 @@ struct StoryCardView: View {
 
 	private static let width: CGFloat = 124
 	private static let radius: CGFloat = 24
+	private static let padding: CGFloat = 14
 	@Environment(\.dynamicTypeSize) private var typeSize
 
 	var body: some View {
@@ -59,7 +60,7 @@ struct StoryCardView: View {
 						.overlay(Capsule().strokeBorder(MaskinColor.pillBd, lineWidth: 0.5))
 					Spacer(minLength: 0)
 					if !isSeen {
-						Circle().fill(MaskinColor.sig).frame(width: 7, height: 7)
+						Circle().fill(MaskinColor.stLab).frame(width: 7, height: 7)
 							.accessibilityHidden(true)
 					}
 				}
@@ -79,7 +80,7 @@ struct StoryCardView: View {
 					.lineLimit(1)
 					.padding(.top, MaskinSpace.s3)
 			}
-			.padding(MaskinSpace.s6)
+			.padding(Self.padding)
 			.frame(
 				width: Self.width, height: MaskinScaling.briefingCardHeight(for: typeSize))
 			.background(fill, in: shape)
