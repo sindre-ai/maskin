@@ -5,7 +5,10 @@ import type { Database } from '@maskin/db'
 import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
+import {
+	skjaldOutcomePayloadSchema,
+	skjaldTranscriptionCompletedPayloadSchema,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
@@ -55,7 +58,10 @@ import {
 	resendEmailReceivedSchema,
 } from '../lib/integrations/providers/resend/schemas'
 import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
-import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
+import {
+	upsertSkjaldMeeting,
+	upsertSkjaldOutcomeMeeting,
+} from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -2982,24 +2988,46 @@ webhookApp.post('/skjald/:token', async (c) => {
 		}
 	}
 
-	if (eventType !== 'transcription.completed') {
+	// `transcription.completed` is the desktop app's event; `outcome.created` / `outcome.updated` are what the iOS
+	// app and the v2 destinations send (the written-up outcome, with the transcript only when the person allows it).
+	// Both end in the same `meeting` object, matched on Skjald's meeting id.
+	const isOutcomeEvent = eventType === 'outcome.created' || eventType === 'outcome.updated'
+	if (eventType !== 'transcription.completed' && !isOutcomeEvent) {
 		// Unknown/future event type — ack without processing so Skjald doesn't retry.
 		await releaseClaim()
 		return c.json({ ok: true, skipped: 'unhandled_event' })
 	}
 
-	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
-	if (!parsedPayload.success) {
+	let upsertMeeting: (() => Promise<{ objectId: string; action: 'created' | 'updated' }>) | null =
+		null
+	if (isOutcomeEvent) {
+		const parsed = skjaldOutcomePayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldOutcomeMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	} else {
+		const parsed = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	}
+	if (!upsertMeeting) {
 		await releaseClaim()
-		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
+		return c.json(createApiError('BAD_REQUEST', `Invalid ${eventType} payload`), 400)
 	}
 
 	try {
-		const result = await upsertSkjaldMeeting(db, {
-			workspaceId: integration.workspaceId,
-			systemActorId,
-			payload: parsedPayload.data,
-		})
+		const result = await upsertMeeting()
 
 		await commitWebhookDelivery(db, {
 			eventRows: [
