@@ -92,6 +92,42 @@ export const skjaldTranscriptionCompletedPayloadSchema = z.object({
 	speaker_segments: z.array(skjaldDiarizedSegmentSchema).nullable().optional(),
 })
 
+/**
+ * Mirrors Skjald's outcome payload (`sharing/outcome.rs`), sent as `outcome.created` / `outcome.updated`.
+ * `session.id` is the meeting id. The transcript is only there when the destination allows it, and the
+ * recording never travels. `consent` is not read, so it is not described here.
+ */
+export const skjaldOutcomePayloadSchema = z.object({
+	session: z.object({
+		id: z.string().min(1),
+		title: z.string(),
+		startedAt: z.string(),
+		duration: z.number(),
+		languages: z.array(z.string()).default([]),
+		tag: z.string().nullable().optional(),
+	}),
+	outcome: z.object({
+		summary: z.string(),
+		decisions: z.array(z.string()).default([]),
+		actions: z.array(z.string()).default([]),
+		notes: z.array(z.string()).default([]),
+	}),
+	transcript: z
+		.array(
+			z.object({
+				t: z.number(),
+				speaker: z.string(),
+				text: z.string(),
+				edited: z.boolean().optional(),
+			}),
+		)
+		.nullable()
+		.optional(),
+	device: z.object({ model: z.string(), appVersion: z.string() }).partial().optional(),
+	sentAt: z.string().optional(),
+})
+
+export type SkjaldOutcomePayload = z.infer<typeof skjaldOutcomePayloadSchema>
 export type SkjaldDiarizedSegment = z.infer<typeof skjaldDiarizedSegmentSchema>
 export type SkjaldTranscriptionCompletedPayload = z.infer<
 	typeof skjaldTranscriptionCompletedPayloadSchema
