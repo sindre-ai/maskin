@@ -447,6 +447,16 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async listWorkspaceMembers(
+		workspaceId: string,
+	): Promise<Array<{ actorId: string; role: string; name: string; type: string }>> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${workspaceId}/members`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listWorkspaceMembers failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createTrigger(
 		workspaceId: string,
 		data: {

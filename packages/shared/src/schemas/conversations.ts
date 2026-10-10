@@ -79,6 +79,21 @@ export const messageFinalOutputSchema = z.object({
 			nudges: z.number().int().min(0).max(10),
 		})
 		.optional(),
+	/**
+	 * Set when the turn ended because the model returned an empty completion
+	 * (no reply, no tool call) and retrying did not produce one. A separate axis
+	 * from `error_kind` and `pseudo_tool_calls`: nothing was wrong with the API
+	 * call and nothing was written as text, the model simply said nothing.
+	 * `attempts` counts the extra asks after the CLI's own nudge; `model` is the
+	 * one the session runs on and `fallback_model` the one tried last, if any.
+	 */
+	empty_completion: z
+		.object({
+			attempts: z.number().int().min(0).max(10),
+			model: z.string().max(128).nullable(),
+			fallback_model: z.string().max(128).optional(),
+		})
+		.optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),

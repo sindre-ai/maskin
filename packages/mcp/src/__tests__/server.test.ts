@@ -3789,6 +3789,7 @@ describe('tool handlers', () => {
 				if (urlStr.includes('/api/objects?')) {
 					return {
 						ok: true,
+						headers: new Headers(),
 						json: () =>
 							Promise.resolve([
 								{ id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
@@ -3819,11 +3820,16 @@ describe('tool handlers', () => {
 				type: 'bet',
 				title: `Bet ${i + 1}`,
 				status: 'active',
+				createdAt: '2026-01-01T00:00:00.000Z',
 			}))
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects?')) {
-					return { ok: true, json: () => Promise.resolve(rows) } as Response
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '250' }),
+						json: () => Promise.resolve(rows),
+					} as Response
 				}
 				if (urlStr.endsWith('/api/actors')) {
 					return { ok: true, json: () => Promise.resolve([]) } as Response
@@ -3844,16 +3850,109 @@ describe('tool handlers', () => {
 			}
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
-			// The cursor walk fetches `limit + 1` as a "has more" sentinel and the
-			// requested limit is capped at LIST_ENDPOINT_MAX_LIMIT - 1 (99) so the
-			// sentinel stays within the API's hard cap of 100 — so a 100-row
-			// fixture yields 99 kept rows, not 100.
-			expect(result.structuredContent.heroCard.totalCount).toBe(99)
+			// limit=100 is honoured in full, and totalCount is the API's X-Total-Count
+			// rather than the number of rows on the page.
+			expect(result.structuredContent.heroCard.totalCount).toBe(250)
 			expect(result.structuredContent.heroCard.page).toMatchObject({
 				limit: 25,
 				hasMore: true,
 			})
-			expect(result.structuredContent.objects).toHaveLength(99)
+			expect(result.structuredContent.objects).toHaveLength(100)
+		})
+
+		describe('list_objects paging contract', () => {
+			const makeRows = (n: number, from = 0) =>
+				Array.from({ length: n }, (_, i) => ({
+					id: `obj-${from + i + 1}`,
+					type: 'task',
+					title: `Task ${from + i + 1}`,
+					status: 'todo',
+					createdAt: '2026-01-01T00:00:00.123Z',
+				}))
+
+			type PagedResult = {
+				structuredContent: {
+					heroCard: { kind: string; totalCount?: number; page?: { hasMore: boolean } }
+					objects: unknown[]
+					page: { limit: number; returned: number; next_cursor?: string }
+					next_cursor?: string
+				}
+			}
+
+			function mockObjects(pages: unknown[][], total: number) {
+				const urls: string[] = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const urlStr = url as string
+					if (urlStr.includes('/api/objects?')) {
+						urls.push(urlStr)
+						return {
+							ok: true,
+							headers: new Headers({ 'X-Total-Count': String(total) }),
+							json: () => Promise.resolve(pages.shift() ?? []),
+						} as Response
+					}
+					return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+				})
+				return urls
+			}
+
+			it('reports the real totalCount and the requested limit, with hasMore agreeing with next_cursor', async () => {
+				// limit=2: the API hands back the +1 sentinel row.
+				mockObjects([makeRows(3)], 120)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 2 })) as PagedResult
+				const { heroCard, objects, page, next_cursor } = result.structuredContent
+				expect(heroCard.totalCount).toBe(120)
+				expect(heroCard.page?.hasMore).toBe(true)
+				expect(next_cursor).toBeTruthy()
+				expect(page).toMatchObject({ limit: 2, returned: 2, next_cursor })
+				expect(objects).toHaveLength(2)
+			})
+
+			it('has no next_cursor and hasMore false on the last page', async () => {
+				mockObjects([makeRows(2)], 2)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 5 })) as PagedResult
+				const { heroCard, page, next_cursor } = result.structuredContent
+				expect(heroCard.totalCount).toBe(2)
+				expect(heroCard.page?.hasMore).toBe(false)
+				expect(next_cursor).toBeUndefined()
+				expect(page).toMatchObject({ limit: 5, returned: 2 })
+			})
+
+			it('keeps a one-row page a list when more rows match', async () => {
+				mockObjects([makeRows(2)], 40)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 1 })) as PagedResult
+				expect(result.structuredContent.heroCard.kind).toBe('list')
+				expect(result.structuredContent.heroCard.totalCount).toBe(40)
+			})
+
+			it('honours limit=100 and probes one row past a full page for has-more', async () => {
+				const urls = mockObjects([makeRows(100), makeRows(1, 100)], 101)
+				const result = (await getHandler('list_objects')({
+					type: 'task',
+					limit: 100,
+				})) as PagedResult
+				const { heroCard, objects, page, next_cursor } = result.structuredContent
+				expect(new URL(urls[0], 'http://x').searchParams.get('limit')).toBe('100')
+				const probe = new URL(urls[1], 'http://x').searchParams
+				expect(probe.get('limit')).toBe('1')
+				expect(probe.get('cursor_id')).toBe('obj-100')
+				expect(objects).toHaveLength(100)
+				expect(page).toMatchObject({ limit: 100, returned: 100 })
+				expect(next_cursor).toBeTruthy()
+				expect(heroCard.page?.hasMore).toBe(true)
+			})
+
+			it('ends the walk when the probe past a full limit=100 page finds nothing', async () => {
+				mockObjects([makeRows(100), []], 100)
+				const result = (await getHandler('list_objects')({
+					type: 'task',
+					limit: 100,
+				})) as PagedResult
+				const { heroCard, page, next_cursor } = result.structuredContent
+				expect(page).toMatchObject({ limit: 100, returned: 100 })
+				expect(next_cursor).toBeUndefined()
+				expect(heroCard.page?.hasMore).toBe(false)
+			})
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
@@ -5887,5 +5986,61 @@ describe('url field injection', () => {
 			}
 			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
 		})
+	})
+})
+
+// The caller's session id has to reach POST /api/sessions so a helper can be
+// linked to its sender. On stdio the container's SESSION_ID env is the caller's;
+// over HTTP the server runs inside apps/dev, so routes/mcp.ts hands the id in via
+// config.maskinSessionId and it must win over the host process env.
+describe('X-Maskin-Session-Id source', () => {
+	const callerSession = '2297f7f3-dd73-43cf-afbe-3aabd0711265'
+	const hostSession = '11111111-1111-4111-8111-111111111111'
+	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+	function build(extra: Record<string, unknown>) {
+		handlers = new Map()
+		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		createMcpServer({ ...config, ...extra })
+	}
+
+	async function createSessionHeaders(): Promise<Record<string, string>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-1', status: 'pending' }),
+		} as Response)
+		const handler = handlers.get('create_session')
+		if (!handler) throw new Error('create_session handler not registered')
+		await handler({ actor_id: '550e8400-e29b-41d4-a716-446655440000', action_prompt: 'help' })
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/api/sessions'))
+		return (call?.[1] as RequestInit).headers as Record<string, string>
+	}
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	it('sends config.maskinSessionId, ahead of the host process SESSION_ID', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
+	})
+
+	it('falls back to SESSION_ID on stdio, where no override is supplied', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({})
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBe(hostSession)
+	})
+
+	it('sends no header when neither is set', async () => {
+		vi.stubEnv('SESSION_ID', '')
+		build({})
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBeUndefined()
 	})
 })

@@ -120,7 +120,7 @@ maskin/
 │   └── dev.mjs                 # Dev startup script (Windows cmd/PowerShell)
 ├── packages/
 │   ├── db/                     # Drizzle ORM schema + migrations
-│   ├── auth/                   # API key auth (SHA-256 hashed)
+│   ├── auth/                   # API key auth (keys stored as issued; hashing planned)
 │   ├── shared/                 # Zod schemas for validation
 │   ├── realtime/               # PG NOTIFY -> SSE bridge
 │   ├── storage/                # Abstract StorageProvider with S3 implementation
@@ -146,7 +146,7 @@ maskin/
 | ORM | Drizzle ORM | Type-safe SQL, zero overhead |
 | Database | PostgreSQL 16 | JSONB for metadata, NOTIFY for real-time |
 | Validation | Zod | Shared schemas between API, frontend, and MCP |
-| Auth | API keys (SHA-256) | Simple, agent-friendly. No cookies or sessions |
+| Auth | API keys (stored as issued, hashing planned) | Simple, agent-friendly. No cookies or sessions |
 | Real-time | PG NOTIFY -> SSE | No extra infra (no Redis, no WebSocket server) |
 | Agent Protocol | MCP (Model Context Protocol) | Standard protocol for external AI agents |
 | Frontend | React 19 + TanStack Router + TanStack Query | File-based routing, server state caching |
@@ -164,7 +164,7 @@ All product work is represented as **unified objects** -- insights, bets, and ta
 
 | Table | Purpose |
 |-------|---------|
-| **actors** | Humans and AI agents. Both are first-class. Stores type, name, API key hash, system prompt, LLM config, and memory |
+| **actors** | Humans and AI agents. Both are first-class. Stores type, name, API key (stored as issued, hashing planned), system prompt, LLM config, and memory |
 | **workspaces** | Isolated environments. Each workspace has its own settings including valid statuses per object type |
 | **workspace_members** | Many-to-many join between actors and workspaces with roles (owner, member) |
 | **objects** | The core table. Every insight, bet, and task is an object with: type, title, content, status, metadata (JSONB), and owner |

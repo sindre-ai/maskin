@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { files, objects, relationships } from '@maskin/db/schema'
+import { conversations, files, objects, relationships, sessions } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
@@ -187,6 +187,7 @@ const listRelationshipsRoute = createRoute({
 	tags: ['relationships'],
 	summary: 'List relationships with filters',
 	request: {
+		headers: workspaceIdHeader,
 		query: relationshipQuerySchema,
 	},
 	responses: {
@@ -194,14 +195,48 @@ const listRelationshipsRoute = createRoute({
 			description: 'List of relationships',
 			content: { 'application/json': { schema: z.array(relationshipResponseSchema) } },
 		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(listRelationshipsRoute, async (c) => {
+app.openapi(listRelationshipsRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = []
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// Edges carry no workspace column, so scope them the way DELETE does: by the
+	// workspace that owns the source endpoint, whichever table it lives in.
+	const conditions = [
+		or(
+			inArray(
+				relationships.sourceId,
+				db.select({ id: objects.id }).from(objects).where(eq(objects.workspaceId, workspaceId)),
+			),
+			inArray(
+				relationships.sourceId,
+				db.select({ id: files.id }).from(files).where(eq(files.workspaceId, workspaceId)),
+			),
+			inArray(
+				relationships.sourceId,
+				db
+					.select({ id: conversations.id })
+					.from(conversations)
+					.where(eq(conversations.workspaceId, workspaceId)),
+			),
+			inArray(
+				relationships.sourceId,
+				db.select({ id: sessions.id }).from(sessions).where(eq(sessions.workspaceId, workspaceId)),
+			),
+		),
+	]
 	if (query.object_id) {
 		conditions.push(
 			or(eq(relationships.sourceId, query.object_id), eq(relationships.targetId, query.object_id)),
@@ -274,7 +309,7 @@ app.openapi(listRelationshipsRoute, async (c) => {
 			targetTitle: titleById.get(r.targetId) ?? null,
 		})) as z.infer<typeof relationshipResponseSchema>[],
 	)
-})
+}) as RouteHandler<typeof listRelationshipsRoute, Env>)
 
 function bucket(
 	kind: string,

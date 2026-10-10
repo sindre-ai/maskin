@@ -82,7 +82,7 @@ function ObjectsPage() {
 			<h2 className="eyebrow mb-3">Properties</h2>
 
 			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<div className="-mx-1 overflow-x-auto px-1">
+				<div className="-ml-1 overflow-x-auto px-1">
 					<div className="inline-flex rounded-lg border border-border">
 						{objectTypes.map((type) => (
 							<button

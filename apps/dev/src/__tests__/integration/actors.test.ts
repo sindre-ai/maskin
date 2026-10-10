@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import {
+	events,
 	actors,
 	agentFiles,
 	agentSkills,
@@ -32,6 +34,7 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
+const { default: eventsRoutes } = await import('../../routes/events')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
@@ -54,6 +57,9 @@ describe('Actors Integration — GET /:id', () => {
 			.values(buildWorkspaceSkill({ workspaceId: ws.id, createdBy: getTestActorId() }))
 			.returning()
 		await db.insert(agentSkills).values({ actorId: agent.id, workspaceSkillId: skill.id })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
 
 		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
 		expect(res.status).toBe(200)
@@ -63,7 +69,11 @@ describe('Actors Integration — GET /:id', () => {
 
 	it('returns an empty skills array when no skills are attached', async () => {
 		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
 		const agent = await insertActor(db, { type: 'agent', name: 'Skill-less Agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
 
 		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
 		expect(res.status).toBe(200)
@@ -106,6 +116,160 @@ Never ship on a Friday.`
 			}),
 		)
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('Actors Integration — by-id routes are scoped to the caller workspaces', () => {
+	const fakeTools = {
+		mcpServers: { fake: { type: 'http', url: 'https://example.invalid/mcp' } },
+	}
+
+	async function seedAgentInWorkspaceOf(ownerId: string, callerRole?: 'member' | 'admin') {
+		const ws = await insertWorkspace(db, ownerId)
+		const agent = await insertActor(db, {
+			type: 'agent',
+			name: 'Scoped Agent',
+			systemPrompt: 'original prompt',
+			tools: { mcpServers: {} },
+			llmConfig: { model: 'original-model' },
+		})
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+		if (callerRole) {
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: getTestActorId(), role: callerRole })
+		}
+		return { ws, agent }
+	}
+
+	async function readAgent(id: string) {
+		const [row] = await db.select().from(actors).where(eq(actors.id, id))
+		return row
+	}
+
+	it('GET returns 404 for an agent that only lives in a workspace the caller is not in', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+
+		expect(res.status).toBe(404)
+	})
+
+	it('GET returns 404 when the header names a workspace the caller is in but the agent is not', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+		const mine = await insertWorkspace(db, getTestActorId())
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': mine.id }))
+
+		expect(res.status).toBe(404)
+	})
+
+	it('GET returns 200 for an agent in a shared workspace, with and without the header', async () => {
+		const app = createApp()
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId())
+
+		const bare = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		const headed = await app.request(
+			jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }),
+		)
+
+		expect(bare.status).toBe(200)
+		expect(headed.status).toBe(200)
+	})
+
+	it('PATCH returns 404 and leaves the row unchanged for an agent in a workspace the caller is not in', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+				system_prompt: 'changed prompt',
+				tools: fakeTools,
+				llm_config: { model: 'changed-model' },
+			}),
+		)
+
+		expect(res.status).toBe(404)
+		const row = await readAgent(agent.id)
+		expect(row.systemPrompt).toBe('original prompt')
+		expect(row.tools).toEqual({ mcpServers: {} })
+		expect(row.llmConfig).toEqual({ model: 'original-model' })
+	})
+
+	it('PATCH returns 403 and leaves tools and llm_config unchanged for a plain member of the shared workspace', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+
+		const toolsRes = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { tools: fakeTools }),
+		)
+		const llmRes = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { llm_config: { model: 'changed-model' } }),
+		)
+
+		expect(toolsRes.status).toBe(403)
+		expect(llmRes.status).toBe(403)
+		const row = await readAgent(agent.id)
+		expect(row.tools).toEqual({ mcpServers: {} })
+		expect(row.llmConfig).toEqual({ model: 'original-model' })
+	})
+
+	it('PATCH lets a plain member change the system prompt and description of the shared agent', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+				system_prompt: 'retuned prompt',
+				description: 'retuned description',
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const row = await readAgent(agent.id)
+		expect(row.systemPrompt).toBe('retuned prompt')
+		expect(row.description).toBe('retuned description')
+	})
+
+	it('PATCH lets an admin of the shared workspace change tools and llm_config', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'admin')
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+				tools: fakeTools,
+				llm_config: { model: 'changed-model' },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const row = await readAgent(agent.id)
+		expect(row.tools).toMatchObject(fakeTools)
+		expect(row.llmConfig).toEqual({ model: 'changed-model' })
+	})
+
+	it('PATCH refuses when the caller is admin in one workspace and only a member in the one the agent is in', async () => {
+		const app = createApp()
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+		await insertWorkspace(db, getTestActorId()) // caller owns an unrelated workspace
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { tools: fakeTools }),
+		)
+
+		expect(res.status).toBe(403)
+		expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
 	})
 })
 
@@ -242,6 +406,78 @@ describe('Actors Integration — DELETE', () => {
 		expect(fileAfter.createdBy).toBe(humanId)
 		const [importAfter] = await db.select().from(imports).where(eq(imports.id, importRow.id))
 		expect(importAfter.createdBy).toBe(humanId)
+	})
+
+	it('stores only identity fields in the deleted event, no tools, llm_config or credentials', async () => {
+		const app = createApp()
+		await db
+			.update(actors)
+			.set({
+				apiKey: 'fake-api-key-for-test',
+				systemPrompt: 'fake system prompt for test',
+				tools: { mcpServers: { fake: { env: { FAKE_TOKEN: 'fake-env-secret-for-test' } } } },
+				llmConfig: { api_key: 'fake-llm-key-for-test' },
+				memory: { notes: 'fake memory for test' },
+			})
+			.where(eq(actors.id, agentId))
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		const rows = await db.select().from(events).where(eq(events.entityId, agentId))
+		const deleted = rows.filter((r) => r.action === 'deleted')
+		expect(deleted).toHaveLength(1)
+		expect(deleted[0].data).toEqual({
+			id: agentId,
+			type: 'agent',
+			name: 'Delete Me',
+			is_system: false,
+		})
+		expect(JSON.stringify(rows)).not.toMatch(/fake-/)
+
+		// The events read routes return the stored row as is, so check what
+		// they actually serve: history, and the SSE replay path.
+		const historyRes = await createIntegrationApp({
+			path: '/api/events',
+			module: eventsRoutes,
+		}).request(
+			jsonGet(`/api/events/history?entity_id=${agentId}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(historyRes.status).toBe(200)
+		const historyText = await historyRes.text()
+		expect(historyText).toContain('Delete Me')
+		expect(historyText).not.toMatch(/fake-/)
+
+		const sseApp = new OpenAPIHono()
+		sseApp.use('*', async (c, next) => {
+			c.set('db' as never, db as never)
+			c.set('actorId' as never, getTestActorId() as never)
+			c.set('notifyBridge' as never, { on() {}, off() {} } as never)
+			await next()
+		})
+		sseApp.route('/api/events', eventsRoutes as never)
+		const abort = new AbortController()
+		const sseRes = await sseApp.request('/api/events', {
+			headers: { 'x-workspace-id': workspaceId, 'last-event-id': '0' },
+			signal: abort.signal,
+		})
+		expect(sseRes.status).toBe(200)
+		const reader = (sseRes.body as ReadableStream<Uint8Array>).getReader()
+		const decoder = new TextDecoder()
+		let sseText = ''
+		while (!sseText.includes('Delete Me')) {
+			const { value, done } = await reader.read()
+			if (done) break
+			sseText += decoder.decode(value)
+		}
+		abort.abort()
+		await reader.cancel().catch(() => {})
+		expect(sseText).toContain('Delete Me')
+		expect(sseText).not.toMatch(/fake-/)
 	})
 })
 

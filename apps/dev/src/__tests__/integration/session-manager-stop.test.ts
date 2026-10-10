@@ -3,7 +3,8 @@ import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { logger } from '../../lib/logger'
-import { configureSessionLifecycle } from '../../services/session-lifecycle'
+import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
+import { _driveToRunning, configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
@@ -398,8 +399,20 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		workspaceId = ws.id
 	})
 
-	async function tickReaper(): Promise<SessionManager> {
-		const manager = new SessionManager(db, stubStorage())
+	// Telemetry that records every runtime_session_ended it is asked to send.
+	function captureSessionEnded(): { telemetry: RuntimeTelemetry; endedFor: string[] } {
+		const endedFor: string[] = []
+		const client: TelemetryClient = {
+			capture(payload) {
+				if (payload.event === 'runtime_session_ended') endedFor.push(payload.distinctId)
+			},
+			shutdown: async () => {},
+		}
+		return { telemetry: new RuntimeTelemetry({ client }), endedFor }
+	}
+
+	async function tickReaper(telemetry?: RuntimeTelemetry): Promise<SessionManager> {
+		const manager = new SessionManager(db, stubStorage(), telemetry)
 		configureSessionLifecycle({ db, sessionManager: manager })
 		// The last runWatchdog section drains every workspace with queued rows;
 		// that path invokes real container/dispatcher machinery which is far out
@@ -721,11 +734,11 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			manager as unknown as { drainQueue: (id: string) => Promise<void> },
 			'drainQueue',
 		).mockResolvedValue(undefined)
-		const driveSpy = vi
-			.spyOn(manager, 'startSession')
-			.mockImplementation(
-				async () => undefined as unknown as Awaited<ReturnType<SessionManager['startSession']>>,
-			)
+		// Stands in for a successful dispatch: the row leaves 'queued' the way the
+		// real startSession moves it to 'starting' once capacity is available.
+		const driveSpy = vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db.update(sessions).set({ status: 'starting' }).where(eq(sessions.id, id))
+		})
 
 		try {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -754,6 +767,115 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		// state is proof the driver actually re-fired (vs. the row being left
 		// stuck in 'queued', which would mean rescue silently no-op'd).
 		expect(['starting', 'running']).toContain(row?.sessionState)
+	})
+
+	// (d3) startSession returns normally when the workspace has no capacity: it
+	// only parks the row at status='queued'. _driveToRunning used to stamp
+	// session_state='running' on that return, so 10 min later idle-pause saw a
+	// containerless "running" row with a stale log line and failed it as
+	// "Container disappeared". The row must stay queued and survive the reaper.
+	it('a capacity-queued row stays queued past 10 min: the driver does not advance it and the reaper does not fail it', async () => {
+		const elevenMinAgo = new Date(Date.now() - 11 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'pending',
+			sessionState: 'queued',
+			stateEnteredAt: elevenMinAgo,
+			startedAt: null,
+			timeoutAt: null,
+			containerId: null,
+			interactive: false,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		// What the real startSession does with no capacity: mark queued, return.
+		vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db.update(sessions).set({ status: 'queued' }).where(eq(sessions.id, id))
+		})
+
+		try {
+			await _driveToRunning(session.id)
+			await insertSessionLog(db, session.id, {
+				stream: 'system',
+				content: 'Session queued — waiting for capacity',
+				createdAt: elevenMinAgo,
+			})
+
+			const [afterDrive] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(afterDrive?.status).toBe('queued')
+			expect(afterDrive?.sessionState).toBe('queued')
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('queued')
+		expect(row?.sessionState).toBe('queued')
+		expect(row?.completedAt).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (d4) The dispatch path still advances a row that startSession really
+	// started: the driver's running write is only skipped for a queued row.
+	it('a row that startSession dispatched is advanced to session_state=running', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'pending',
+			sessionState: 'queued',
+			startedAt: null,
+			timeoutAt: null,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db
+				.update(sessions)
+				.set({ status: 'running', containerId: 'sandbox-live', startedAt: new Date() })
+				.where(eq(sessions.id, id))
+		})
+
+		try {
+			await _driveToRunning(session.id)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('running')
+		expect(row?.sessionState).toBe('running')
+		expect(row?.containerId).toBe('sandbox-live')
+	})
+
+	// (d5) A running row that somehow has no containerId is still failed, but
+	// with a message that says no container was ever assigned instead of the
+	// misleading "Container disappeared".
+	it('a running row with no containerId is failed with a no-container-assigned message', async () => {
+		const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: twentyMinAgo,
+			startedAt: twentyMinAgo,
+			timeoutAt: null,
+			containerId: null,
+			interactive: false,
+		})
+
+		const manager = await tickReaper()
+		await manager.stop()
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		const error = (row?.result as { error?: string } | null)?.error ?? ''
+		expect(error).toMatch(/No container was ever assigned/)
+		expect(error).not.toMatch(/Container disappeared/)
 	})
 
 	// (d2) A failed row still stamped session_state='queued' with a stale
@@ -933,6 +1055,72 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		expect(row?.completedAt).toBeNull()
 		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
 		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (g2) A failed session reports runtime_session_ended once, however many
+	// reaper passes follow. Before the terminal-row filters and the heal, a
+	// failed row kept session_state starting and every 60s pass redid it.
+	it('a boot-stalled session emits runtime_session_ended once across repeated passes', async () => {
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+		const { telemetry, endedFor } = captureSessionEnded()
+
+		for (let pass = 0; pass < 3; pass++) {
+			const manager = await tickReaper(telemetry)
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		expect(endedFor.filter((id) => id === session.id)).toEqual([session.id])
+	})
+
+	// (g3) The emit is tied to winning the terminal transition. The race is
+	// forced deterministically: the usage write that precedes the timeout settle
+	// also fails the row, as a concurrent writer would. The watchdog's settle
+	// then reports alreadySettled and must not emit.
+	it('a timed-out row another writer already failed does not emit runtime_session_ended', async () => {
+		const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: threeHoursAgo,
+			startedAt: threeHoursAgo,
+			timeoutAt: null,
+		})
+		const { telemetry, endedFor } = captureSessionEnded()
+
+		let raced = 0
+		const usageSpy = vi
+			.spyOn(
+				SessionManager.prototype as unknown as {
+					accumulateSessionUsage: (id: string) => Promise<unknown>
+				},
+				'accumulateSessionUsage',
+			)
+			.mockImplementation(async (id: string) => {
+				raced++
+				await db.update(sessions).set({ status: 'failed' }).where(eq(sessions.id, id))
+				return null
+			})
+
+		let manager: SessionManager | undefined
+		try {
+			manager = await tickReaper(telemetry)
+		} finally {
+			usageSpy.mockRestore()
+			await manager?.stop()
+		}
+
+		// The hook fired, so the row really went terminal between select and settle.
+		expect(raced).toBe(1)
+		expect(endedFor.filter((id) => id === session.id)).toEqual([])
 	})
 
 	// (h) One step throwing must not skip the steps after it. Step 1 throws on
