@@ -19,10 +19,6 @@ function getMcpUrl() {
 	return `${window.location.origin}/mcp`
 }
 
-function getConnectorUrl(mcpUrl: string, apiKey: string, workspaceId: string) {
-	return `${mcpUrl}?key=${encodeURIComponent(apiKey)}&workspace=${encodeURIComponent(workspaceId)}`
-}
-
 function buildConfig(tab: Tab, mcpUrl: string, apiKey: string, workspaceId: string) {
 	if (tab === 'claude-code') {
 		return JSON.stringify(
@@ -109,11 +105,6 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 	const apiKey = getApiKey() ?? 'your-api-key'
 	const mcpUrl = getMcpUrl()
 
-	const connectorUrl = useMemo(
-		() => getConnectorUrl(mcpUrl, apiKey, workspaceId),
-		[mcpUrl, apiKey, workspaceId],
-	)
-
 	const configJson = useMemo(
 		() => buildConfig(activeTab, mcpUrl, apiKey, workspaceId),
 		[activeTab, mcpUrl, apiKey, workspaceId],
@@ -149,20 +140,10 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 			</Tabs>
 
 			{activeTab === 'claude-ai' ? (
-				<div className="space-y-3">
-					<div>
-						<Label>Custom connector URL</Label>
-						<p className="text-xs text-muted-foreground mb-2">
-							Go to Profile → Settings → Connectors → Add custom connector, then paste this URL.
-						</p>
-						<div className="relative">
-							<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre break-all">
-								{connectorUrl}
-							</pre>
-							<CopyButton text={connectorUrl} label className="absolute top-2 right-2" />
-						</div>
-					</div>
-				</div>
+				<p className="text-xs text-muted-foreground">
+					Claude.ai needs OAuth to connect, which isn't available yet. Use the Claude Code, Claude
+					Desktop, or Custom tab instead.
+				</p>
 			) : activeTab === 'custom' ? (
 				<div className="space-y-3">
 					<div>

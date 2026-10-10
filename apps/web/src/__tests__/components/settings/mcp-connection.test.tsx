@@ -20,10 +20,12 @@ describe('McpConnectionSection', () => {
 		expect(screen.getByText('Custom')).toBeInTheDocument()
 	})
 
-	it('shows connector URL for claude-ai tab by default', () => {
-		render(<McpConnectionSection workspaceId="ws-1" />)
-		expect(screen.getByText('Custom connector URL')).toBeInTheDocument()
-		expect(screen.getByText(/\/mcp\?key=/)).toBeInTheDocument()
+	it('shows an OAuth notice and no key-bearing URL on the claude-ai tab', () => {
+		const { container } = render(<McpConnectionSection workspaceId="ws-1" />)
+		expect(screen.getByText(/Claude.ai needs OAuth/)).toBeInTheDocument()
+		expect(screen.queryByText('Custom connector URL')).not.toBeInTheDocument()
+		expect(container.textContent).not.toContain('ank_test123')
+		expect(container.textContent).not.toContain('key=')
 	})
 
 	it('shows JSON config when switching to Claude Code tab', async () => {
