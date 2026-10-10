@@ -38,8 +38,21 @@ protected_paths:
   - "packages/auth/src/middleware.ts"
   - "packages/db/src/schema.ts"
 
+  # --- HTTP route handlers (workspace boundary, request validation) ---
+  - "apps/dev/src/routes/**"
+
+  # --- MCP tool-server wiring / GitHub-identity env keys ---
+  # See .claude/rules/known-pitfalls.md — the four files below are the exact
+  # seams where a `GITHUB_TOKEN` vs `GITHUB_PERSONAL_ACCESS_TOKEN` env-key
+  # regression silently broke every GitHub tool call. Any edit is two-human.
+  - "apps/dev/src/services/session-manager.ts"
+  - "packages/shared/src/templates/development-agents.ts"
+  - "apps/web/src/components/agents/mcp-servers.tsx"
+  - "packages/db/src/seed.ts"
+
   # --- DB migrations / DDL ---
   - "packages/db/drizzle/**"
+  - "**/*.sql"
 
   # --- infra-as-code ---
   - "docker-compose*.yml"

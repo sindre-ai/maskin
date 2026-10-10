@@ -29,6 +29,15 @@ regex_floors:
   - pattern: 'sk-[A-Za-z0-9]{32,}'
     description: OpenAI/Anthropic-style secret API key
 
+  - pattern: 'phx_[A-Za-z0-9]{20,}'
+    description: PostHog personal API key
+
+  - pattern: 'AIza[0-9A-Za-z_-]{35}'
+    description: Google API key
+
+  - pattern: '\d+\|[A-Za-z0-9]{20,}'
+    description: Coolify access-token shape (numeric-prefix|base62)
+
   - pattern: '(secret|password|api[_-]?key|access[_-]?token|private[_-]?key)\s*[:=]\s*["''][^"''\n]{12,}["'']'
     description: Generic hardcoded secret-like assignment
 
