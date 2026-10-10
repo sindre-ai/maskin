@@ -1,0 +1,39 @@
+name: Question
+description: Ask a question about Maskin
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? You can also ask in [GitHub Discussions](https://github.com/sindre-ai/maskin/discussions) for community help.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Maskin does your question relate to?
+      options:
+        - Getting Started / Installation
+        - Frontend (Web UI)
+        - Backend (API)
+        - Agents / Sessions
+        - MCP Server
+        - Integrations
+        - Self-hosting / Deployment
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any relevant context — what you've tried, your setup, error messages, etc.

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e293b;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg)" />
+
+  <!-- Decorative grid dots -->
+  <g fill="#334155" opacity="0.3">
+    <circle cx="80" cy="80" r="2" />
+    <circle cx="160" cy="80" r="2" />
+    <circle cx="240" cy="80" r="2" />
+    <circle cx="320" cy="80" r="2" />
+    <circle cx="80" cy="160" r="2" />
+    <circle cx="160" cy="160" r="2" />
+    <circle cx="240" cy="160" r="2" />
+    <circle cx="320" cy="160" r="2" />
+    <circle cx="960" cy="480" r="2" />
+    <circle cx="1040" cy="480" r="2" />
+    <circle cx="1120" cy="480" r="2" />
+    <circle cx="1200" cy="480" r="2" />
+    <circle cx="960" cy="560" r="2" />
+    <circle cx="1040" cy="560" r="2" />
+    <circle cx="1120" cy="560" r="2" />
+    <circle cx="1200" cy="560" r="2" />
+  </g>
+
+  <!-- Agent icon -->
+  <g transform="translate(640, 220)">
+    <!-- Hexagon shape -->
+    <polygon points="0,-60 52,-30 52,30 0,60 -52,30 -52,-30" fill="none" stroke="url(#accent)" stroke-width="3" />
+    <!-- Inner circuit lines -->
+    <circle cx="0" cy="0" r="20" fill="url(#accent)" opacity="0.9" />
+    <circle cx="0" cy="0" r="8" fill="#0f172a" />
+    <!-- Connection dots -->
+    <circle cx="0" cy="-60" r="5" fill="#6366f1" />
+    <circle cx="52" cy="-30" r="5" fill="#7c3aed" />
+    <circle cx="52" cy="30" r="5" fill="#8b5cf6" />
+    <circle cx="0" cy="60" r="5" fill="#8b5cf6" />
+    <circle cx="-52" cy="30" r="5" fill="#7c3aed" />
+    <circle cx="-52" cy="-30" r="5" fill="#6366f1" />
+  </g>
+
+  <!-- Title -->
+  <text x="640" y="340" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="700" fill="#f8fafc" text-anchor="middle" letter-spacing="-2">
+    Maskin
+  </text>
+
+  <!-- Tagline -->
+  <text x="640" y="390" font-family="system-ui, -apple-system, sans-serif" font-size="26" font-weight="400" fill="#94a3b8" text-anchor="middle">
+    The open-source platform for autonomous agent workspaces
+  </text>
+
+  <!-- Feature pills -->
+  <g transform="translate(640, 450)">
+    <!-- Pill 1 -->
+    <rect x="-340" y="-18" width="150" height="36" rx="18" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <text x="-265" y="6" font-family="system-ui, sans-serif" font-size="14" fill="#94a3b8" text-anchor="middle">Agent Sessions</text>
+
+    <!-- Pill 2 -->
+    <rect x="-160" y="-18" width="120" height="36" rx="18" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <text x="-100" y="6" font-family="system-ui, sans-serif" font-size="14" fill="#94a3b8" text-anchor="middle">MCP Tools</text>
+
+    <!-- Pill 3 -->
+    <rect x="-10" y="-18" width="120" height="36" rx="18" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <text x="50" y="6" font-family="system-ui, sans-serif" font-size="14" fill="#94a3b8" text-anchor="middle">Real-time</text>
+
+    <!-- Pill 4 -->
+    <rect x="140" y="-18" width="200" height="36" rx="18" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <text x="240" y="6" font-family="system-ui, sans-serif" font-size="14" fill="#94a3b8" text-anchor="middle">Docker Sandboxing</text>
+  </g>
+
+  <!-- Accent line at bottom -->
+  <rect x="540" y="520" width="200" height="3" rx="1.5" fill="url(#accent)" opacity="0.6" />
+</svg>
