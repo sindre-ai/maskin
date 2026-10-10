@@ -610,8 +610,47 @@ describe('BoardView', () => {
 
 		fireDragEnd(makeCardDragEvent(objA, objB, 'todo', 'after'))
 
-		expect(onManualOrderChange).toHaveBeenCalledTimes(1)
+		// Flipping the sort changes the board query key; doing it before the
+		// write lands races a first-ever fetch for the new key against the POST.
 		expect(bulkUpdateMutate).toHaveBeenCalledTimes(1)
+		expect(onManualOrderChange).not.toHaveBeenCalled()
+
+		const [, opts] = bulkUpdateMutate.mock.calls[0] as [
+			unknown,
+			{ onSuccess: (data: { results: Array<{ id: string; ok: boolean }> }) => void },
+		]
+		opts.onSuccess({ results: [{ id: 'a', ok: true }] })
+
+		expect(onManualOrderChange).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not switch to manual ordering when the bulk-update reports a failure', () => {
+		const onManualOrderChange = vi.fn()
+		const objA = buildObjectResponse({ id: 'a', type: 'task', status: 'todo', title: 'Alpha' })
+		const objB = buildObjectResponse({ id: 'b', type: 'task', status: 'todo', title: 'Bravo' })
+		bulkUpdateMutate.mockImplementation(
+			(
+				_input: unknown,
+				opts: { onSuccess?: (data: { results: Array<{ id: string; ok: boolean }> }) => void },
+			) => {
+				opts.onSuccess?.({ results: [{ id: 'a', ok: false }] })
+			},
+		)
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo'] }}
+				sort="title"
+				order="asc"
+				objects={[objA, objB]}
+				onManualOrderChange={onManualOrderChange}
+			/>,
+		)
+
+		fireDragEnd(makeCardDragEvent(objA, objB, 'todo', 'after'))
+
+		expect(onManualOrderChange).not.toHaveBeenCalled()
 	})
 
 	describe('drag-to-status', () => {

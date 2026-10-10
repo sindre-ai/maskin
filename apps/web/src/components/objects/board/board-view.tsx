@@ -538,8 +538,6 @@ export function BoardView({
 			},
 		}
 
-		if (shouldUseDisplaySort(sort, order)) onManualOrderChange?.()
-
 		setPendingPatches((current) => ({
 			...current,
 			[dragged.id]: pendingPatch,
@@ -566,7 +564,15 @@ export function BoardView({
 					if (!result?.ok) {
 						removePendingPatch()
 						toast.error(result?.error ?? 'Could not move card')
+						return
 					}
+					// Flip to manual ordering only once the write has landed. The sort is
+					// part of the board query key, so flipping it at drop time starts a
+					// first-ever fetch for the new key concurrently with the bulk-update
+					// POST. That fetch can read pre-commit rows, and the mutation's
+					// invalidate cannot supersede a fetch that has no data yet (TanStack
+					// dedupes into it), so the stale board would stick.
+					if (shouldUseDisplaySort(sort, order)) onManualOrderChange?.()
 				},
 				onError: (err) => {
 					removePendingPatch()
