@@ -46,8 +46,7 @@ interface JsonRpcMessage {
 
 app.post('/', async (c) => {
 	const url = new URL(c.req.url, 'http://localhost')
-	const apiKey =
-		c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? ''
+	const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
 	// Resolved before the server is built so it can be threaded into telemetry:
 	// the in-process MCP server would otherwise stamp its events with the app
