@@ -92,6 +92,19 @@ const actorLlmConfigSchema = z
 		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
 	)
 
+// Optional sentence on the close_condition field of create_loop / update_loop.
+// Runs woken on a loop are shown this text as their finish line, so it says
+// what a good one looks like. A suggestion only; nothing validates it.
+const CLOSE_CONDITION_GUIDANCE =
+	'Runs in this loop are shown this text, so say what done looks like. It can be a status reached, a summary written, a report posted, or a check that found nothing to do. Short is fine.'
+
+// Optional suggestion shown on every field an agent writes a trigger prompt
+// into (create_trigger, update_trigger, and the inline steps of create_loop /
+// update_loop). A suggestion only: nothing validates or rejects a prompt that
+// ignores it. One constant so the places can't drift apart.
+const TRIGGER_PROMPT_GUIDANCE =
+	'A good trigger prompt starts with what the run is for. You can say: the outcome (what is true when it is done), how anyone can see that it is true, what to leave alone, and when to stop and ask a person. Done can be a status that moves, but it can also be a summary written, a report posted, or a check that found nothing to do. Use whichever fits. Short is fine.'
+
 /**
  * Inline loop-step definition accepted by create_loop / update_loop. Each step
  * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
@@ -115,7 +128,7 @@ const loopStepSchema = z.object({
 		.string()
 		.min(1)
 		.describe(
-			'Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically.',
+			`Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically. ${TRIGGER_PROMPT_GUIDANCE}`,
 		),
 	when: z
 		.union([
@@ -1124,7 +1137,7 @@ export const tools = {
 				.describe(
 					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }',
 				),
-			action_prompt: z.string(),
+			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid(),
 			enabled: z.boolean().default(true),
 		}),
@@ -1137,7 +1150,7 @@ export const tools = {
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			config: z.record(z.unknown()).optional(),
-			action_prompt: z.string().min(1).optional(),
+			action_prompt: z.string().min(1).optional().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid().optional(),
 			enabled: z.boolean().optional(),
 		}),
@@ -1206,7 +1219,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded".',
+					`Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded". ${CLOSE_CONDITION_GUIDANCE}`,
 				),
 			steps: z
 				.array(loopStepSchema)
@@ -1256,7 +1269,9 @@ export const tools = {
 			close_condition: z
 				.string()
 				.optional()
-				.describe('New plain-language close condition. Pass an empty string to clear.'),
+				.describe(
+					`New plain-language close condition. Pass an empty string to clear. ${CLOSE_CONDITION_GUIDANCE}`,
+				),
 			closed_statuses: closedStatusesSchema,
 			add_steps: z
 				.array(loopStepSchema)
@@ -1525,7 +1540,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block or hold a container.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),

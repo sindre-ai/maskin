@@ -102,6 +102,15 @@ interface McpConfig {
 	 * on stdio and on external callers.
 	 */
 	triggeringEventId?: number
+	/**
+	 * The caller's own session id, as sent in X-Maskin-Session-Id by the agent
+	 * container. Over HTTP the MCP server runs inside apps/dev, so
+	 * process.env.SESSION_ID is that process's, not the caller's; routes/mcp.ts
+	 * passes the header through here and the API call prefers it. Unset on stdio
+	 * (the container's own env is right there) and for callers without a session.
+	 * Only a claim: the API checks it before acting on it.
+	 */
+	maskinSessionId?: string
 }
 
 /**
@@ -368,7 +377,7 @@ async function apiFetch(
 	// outside an agent session (local dev) leaves it unset and no header is
 	// sent. Read-only calls carry the header too — cheap and harmless, and
 	// keeps the header contract uniform per request rather than per method.
-	const sessionId = process.env.SESSION_ID
+	const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
 	if (
 		sessionId &&
 		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
