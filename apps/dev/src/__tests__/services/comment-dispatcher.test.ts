@@ -5,6 +5,7 @@ import { trackCommentResponderResolved } from '../../lib/analytics/comment-respo
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
+	buildMentionPrompt,
 	normalizeMentionsList,
 	normalizeParentEventId,
 	threadReplyLines,
@@ -658,5 +659,24 @@ describe('threadReplyLines()', () => {
 
 	it('opens with a blank separator so call sites can spread it unconditionally', () => {
 		expect(threadReplyLines(7)[0]).toBe('')
+	})
+})
+
+describe('buildMentionPrompt()', () => {
+	const base = {
+		objectId: 'obj-1',
+		commenterActorId: 'actor-1',
+		content: 'hello',
+		notificationId: 'n-1',
+		parentEventId: null,
+	}
+
+	it('puts the sender line first when one is given', () => {
+		const prompt = buildMentionPrompt({ ...base, senderLine: 'Sent by Planner, another agent.' })
+		expect(prompt.startsWith('Sent by Planner, another agent.\n\nYou were @mentioned')).toBe(true)
+	})
+
+	it('leaves the prompt unchanged when no sender line is given', () => {
+		expect(buildMentionPrompt(base).startsWith('You were @mentioned')).toBe(true)
 	})
 })

@@ -975,6 +975,41 @@ describe('create_trigger schema', () => {
 	})
 })
 
+describe('trigger prompt guidance', () => {
+	const guidance = 'A good trigger prompt starts with what the run is for.'
+	// create_loop wraps steps in a default, update_loop in an optional.
+	// biome-ignore lint/suspicious/noExplicitAny: unwrapping zod wrappers by shape
+	const stepPrompt = (steps: any): string =>
+		(steps.removeDefault?.() ?? steps.unwrap()).element.shape.prompt.description
+
+	it('is suggested on create_trigger and update_trigger action_prompt', () => {
+		expect(tools.create_trigger.inputSchema.shape.action_prompt.description).toContain(guidance)
+		expect(tools.update_trigger.inputSchema.shape.action_prompt.description).toContain(guidance)
+	})
+
+	it('is suggested on the inline step prompt of create_loop and update_loop', () => {
+		expect(stepPrompt(tools.create_loop.inputSchema.shape.steps)).toContain(guidance)
+		expect(stepPrompt(tools.update_loop.inputSchema.shape.add_steps)).toContain(guidance)
+	})
+
+	it('is suggested on the close_condition of create_loop and update_loop', () => {
+		const text = 'Runs in this loop are shown this text, so say what done looks like.'
+		expect(tools.create_loop.inputSchema.shape.close_condition.description).toContain(text)
+		expect(tools.update_loop.inputSchema.shape.close_condition.description).toContain(text)
+	})
+
+	it('does not reject a prompt that ignores it', () => {
+		const result = tools.create_trigger.inputSchema.parse({
+			name: 'Daily',
+			type: 'cron',
+			config: { expression: '0 0 * * *' },
+			action_prompt: 'Check',
+			target_actor_id: uuid,
+		})
+		expect(result.action_prompt).toBe('Check')
+	})
+})
+
 describe('create_loop schema', () => {
 	const schema = tools.create_loop.inputSchema
 

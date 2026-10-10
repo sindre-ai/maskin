@@ -118,7 +118,9 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { returnToSender } from './helper-return'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
+import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import {
@@ -143,7 +145,11 @@ import {
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
-import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
+import {
+	buildWorkspaceStartupBlock,
+	loadSenderLine,
+	renderWorkspaceBriefing,
+} from './workspace-briefing'
 
 /**
  * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
@@ -231,6 +237,11 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
+	/**
+	 * The authenticated session that started this one; persisted to
+	 * sessions.spawned_by_session_id. Not a snapshot source (that is sourceSessionId).
+	 */
+	spawnedBySessionId?: string
 	/**
 	 * Handed-off strip anchors. `spawnedByMessageId` is the assistant message id
 	 * that triggered this sub-agent spawn; `dependsOnSessionIds` names the
@@ -723,6 +734,7 @@ export class SessionManager extends EventEmitter {
 				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
+				spawnedBySessionId: params.spawnedBySessionId ?? null,
 				initiatedFromObjectId: params.initiatedFromObjectId,
 				initiatedFromObjectType: params.initiatedFromObjectType,
 				spawnedByMessageId: params.spawnedByMessageId ?? null,
@@ -2044,6 +2056,32 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "Your goal this run" block for a non-interactive launch. Built on the
+	 * first launch and saved on `sessions.config.run_goal` (a jsonb merge, so
+	 * other keys such as `llm_route` are untouched) so the later independent
+	 * check can see what the agent was shown. Launch runs again on resume: the
+	 * saved text is reused, never rebuilt or overwritten. A failure here only
+	 * costs the block, never the launch.
+	 */
+	private async resolveRunGoalBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.run_goal === 'string') return config.run_goal
+		try {
+			const block = await buildRunGoalBlock(this.db, session, frontendBaseUrl())
+			await saveRunGoal(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = { ...config, run_goal: block }
+			return block
+		} catch (err) {
+			logger.warn('Failed to build run goal block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
 	 * Build the launch spec for a session — env vars (including integration
 	 * credentials), image, and resource limits. The shape mirrors
 	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
@@ -2201,17 +2239,24 @@ export class SessionManager extends EventEmitter {
 		// the stdin-driven stream-json branch instead.
 		// session.actionPrompt is the user's original prompt and is never written back
 		// wrapped — safe to re-prepend on every launch, including resume.
+		// frontendBaseUrl falls back to the dev value outside production; it
+		// only throws on a missing FRONTEND_URL in prod, which is the same
+		// failure mode as fileViewerUrl and is intentional.
+		const startupBlock = buildWorkspaceStartupBlock({
+			workspaceId: session.workspaceId,
+			frontendUrl: frontendBaseUrl(),
+			interactive: session.interactive,
+		})
 		if (session.interactive) {
 			envVars.INTERACTIVE = '1'
+			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
+			// through the system prompt instead.
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
 		} else {
-			// frontendBaseUrl falls back to the dev value outside production; it
-			// only throws on a missing FRONTEND_URL in prod, which is the same
-			// failure mode as fileViewerUrl and is intentional.
-			const startupBlock = buildWorkspaceStartupBlock({
-				workspaceId: session.workspaceId,
-				frontendUrl: frontendBaseUrl(),
-			})
-			envVars.ACTION_PROMPT = `${startupBlock}${session.actionPrompt}`
+			const goalBlock = await this.resolveRunGoalBlock(session)
+			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
+			const senderLine = typeof sentBy === 'string' ? await loadSenderLine(this.db, sentBy) : ''
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:
@@ -3626,6 +3671,11 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		// Tell the session that started this one how it ended (no-op for an
+		// unlinked session). This path writes the terminal status itself and never
+		// goes through settleSession, so it has to call the return on its own.
+		void returnToSender(this.db, sessionId, { sessionManager: this })
 
 		// G1: emit `agent_session_completed` dev-side with the workspace-skill
 		// provisioning counts recorded at session start (+ any staging report).
@@ -5766,6 +5816,11 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		// Tell the session that started this one how it ended. Skipped for
+		// stopSession()'s provisional write: its exit code is not known yet, and the
+		// genuine report that follows is the one that returns, with the right wording.
+		if (!stoppedByUser) void returnToSender(this.db, sessionId, { sessionManager: this })
 
 		// G1: mirror the terminal `agent_session_completed` emission from the
 		// local-Docker path (handleCompletion). This runs on every remote

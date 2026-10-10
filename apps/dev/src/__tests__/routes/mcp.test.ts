@@ -304,6 +304,32 @@ describe('MCP Routes', () => {
 			)
 		})
 
+		it('threads a uuid X-Maskin-Session-Id into the MCP config as maskinSessionId', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			const sessionId = '2297f7f3-dd73-43cf-afbe-3aabd0711265'
+			await app.request(
+				jsonPostRequest('/mcp', body, { 'X-Maskin-Session-Id': sessionId }),
+				undefined,
+				env,
+			)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ maskinSessionId: sessionId }),
+			)
+		})
+
+		it('leaves maskinSessionId undefined when the header is missing or not a uuid', async () => {
+			for (const headers of [{}, { 'X-Maskin-Session-Id': 'not-a-uuid' }]) {
+				vi.clearAllMocks()
+				const app = await createApp()
+				const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+				await app.request(jsonPostRequest('/mcp', body, headers), undefined, env)
+				expect(mockCreateMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({ maskinSessionId: undefined }),
+				)
+			}
+		})
+
 		it('leaves triggeringEventId undefined when no header is set', async () => {
 			const app = await createApp()
 			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }

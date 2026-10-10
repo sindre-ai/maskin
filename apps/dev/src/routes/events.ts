@@ -21,6 +21,7 @@ import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
+import { loadSenderLine } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
@@ -29,6 +30,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
+		maskinSessionId?: string
 	}
 }
 
@@ -332,6 +334,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		metadata: body.metadata,
 		decision: body.decision,
 		attention: body.attention,
+		authorSessionId: c.get('maskinSessionId'),
 	})
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
@@ -673,12 +676,15 @@ async function spawnThreadReplySessions(ctx: {
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 	const initiatedFromObjectType = obj?.type ?? null
 
+	const senderLine = threadReplyAgentIds.length > 0 ? await loadSenderLine(ctx.db, ctx.actorId) : ''
+
 	for (const agentId of threadReplyAgentIds) {
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
 			callerKind: 'trigger',
 			actionPrompt: buildThreadReplyPrompt({
+				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.actorId,
 				content: ctx.newCommentContent,
@@ -708,12 +714,14 @@ async function spawnThreadReplySessions(ctx: {
 }
 
 function buildThreadReplyPrompt(ctx: {
+	senderLine: string
 	objectId: string
 	commenterActorId: string
 	content: string
 	threadRootEventId: number
 }): string {
 	return [
+		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
 		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
 		'',
 		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',
