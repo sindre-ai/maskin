@@ -26,6 +26,7 @@ import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -62,6 +63,11 @@ export interface StartSessionInput {
 	triggerType?: string
 	sourceCommentEventId?: number
 	parentSessionId?: string
+	/**
+	 * The session that started this one (sessions.spawned_by_session_id), already
+	 * authenticated by resolveSpawnLink(). Never pass a raw header value here.
+	 */
+	spawnedBySessionId?: string
 	/**
 	 * Handed-off strip anchors (bet/444b-handed-off-strip). Both optional; a
 	 * spawn without them persists NULL and renders no strip.
@@ -139,6 +145,11 @@ function getDeps(): LifecycleDeps {
 	return _deps
 }
 
+/** The configured session manager, or undefined where settleSession runs without lifecycle wiring (unit tests). */
+function configuredSessionManager(): SessionManager | undefined {
+	return _deps?.sessionManager
+}
+
 // ── startSession() (spec §14.2, §14.4, §14.5) ─────────────────────────────
 
 const AWAIT_DEFAULT_TIMEOUT_MS: Record<Exclude<AwaitMode, 'none'>, number> = {
@@ -210,6 +221,7 @@ export async function startSession(
 		createdBy,
 		autoStart: input.autoStart,
 		sourceSessionId: input.parentSessionId,
+		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
 		initiatedFromObjectType: input.initiatedFromObjectType,
 		spawnedByMessageId: input.spawnedByMessageId,
@@ -1025,6 +1037,14 @@ export async function settleSession(
 	// commits, so a usage read landing in between could re-cache the pre-settle
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
+
+	// Tell the session that started this one how it ended. Fire-and-forget:
+	// returnToSender never throws, and one-shot-claims the row so the other two
+	// terminal paths (handleCompletion, markRemoteSessionComplete) can call it too.
+	// A pause is not an ending.
+	if (flipped && outcome.kind !== 'pause') {
+		void returnToSender(deps.db, sessionId, { sessionManager: configuredSessionManager() })
+	}
 
 	// Step 4: (Post-commit) stopSandbox best-effort.
 	let stoppedSandbox: StoppedSandboxOutcome

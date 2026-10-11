@@ -9,7 +9,7 @@ import {
 	skjaldConnectExchangeBodySchema,
 	skjaldConnectExchangeResponseSchema,
 } from '@maskin/shared'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -82,8 +82,8 @@ app.openapi(authorizeRoute, async (c) => {
 
 	const systemActorId = await ensureSkjaldSystemActor(db, workspaceId, actorId)
 
-	// Connecting again from the same workspace reuses its Skjald integration (and gives it a new secret when the code
-	// is exchanged) instead of adding another row every time.
+	// A workspace can hold any number of Skjald connections (one per app install), so an approval adds a new one. The
+	// only row reused is this actor's own unfinished attempt (never exchanged), so abandoned approvals do not pile up.
 	const [existing] = await db
 		.select()
 		.from(integrations)
@@ -91,7 +91,9 @@ app.openapi(authorizeRoute, async (c) => {
 			and(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, PROVIDER),
-				inArray(integrations.status, ['active', 'awaiting_secret']),
+				eq(integrations.status, 'awaiting_secret'),
+				eq(integrations.createdBy, actorId),
+				sql`${integrations.config} -> 'skjald_connect' is not null`,
 			),
 		)
 		.orderBy(desc(integrations.createdAt))

@@ -171,7 +171,7 @@ describe('Skjald one-click connect', () => {
 		expect(res.status).toBe(400)
 	})
 
-	it('connecting again reuses the integration and gives it a new secret', async () => {
+	it('connecting again adds a second connection and leaves the first one working', async () => {
 		const workspace = await insertWorkspace(db, getTestActorId())
 		const first = await approved(workspace.id)
 		const a = (await (
@@ -187,8 +187,22 @@ describe('Skjald one-click connect', () => {
 			webhook_url: string
 			secret: string
 		}
-		expect(await rows(workspace.id)).toHaveLength(1)
-		expect(b.webhook_url).toBe(a.webhook_url)
+		const all = await rows(workspace.id)
+		expect(all).toHaveLength(2)
+		expect(all.every((r) => r.status === 'active')).toBe(true)
+		expect(b.webhook_url).not.toBe(a.webhook_url)
 		expect(b.secret).not.toBe(a.secret)
+		const firstRow = all.find((r) => a.webhook_url.endsWith(`/${r.externalId}`))
+		expect(decrypt(firstRow?.credentials ?? '')).toBe(a.secret)
+	})
+
+	it('approving twice before exchanging reuses the unfinished attempt', async () => {
+		const workspace = await insertWorkspace(db, getTestActorId())
+		await approved(workspace.id)
+		const second = await approved(workspace.id)
+		expect(await rows(workspace.id)).toHaveLength(1)
+		expect(
+			(await exchange(second.app, { code: second.code, code_verifier: second.verifier })).status,
+		).toBe(200)
 	})
 })
