@@ -118,6 +118,11 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `GET /api/health` — health check
 - `GET /api/openapi.json` — OpenAPI spec
 - `POST /api/actors` — signup, returns API key
+- `POST /api/device-auth/start`, `POST /api/device-auth/token` — device sign-in for a keyboard-less client (Apple TV): the device gets a short code, a signed-in person approves it at `/tv`, the device then receives the session once
+
+### Device sign-in approval (`/api/device-auth`, signed-in humans only)
+- `GET /api/device-auth/preview` — which device is asking, for a code
+- `POST /api/device-auth/approve` / `POST /api/device-auth/deny` — approve or refuse a code
 
 ### Actors (`/api/actors`)
 - `GET /api/actors` — list actors

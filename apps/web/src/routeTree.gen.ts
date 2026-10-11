@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TvRouteImport } from './routes/tv'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as InviteRouteImport } from './routes/invite'
@@ -52,6 +53,11 @@ import { Route as AuthedWorkspaceIdMarketplaceLoopIdIndexRouteImport } from './r
 import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/objects/$propertyName'
 import { Route as AuthedWorkspaceIdMarketplaceLoopIdItemIdRouteImport } from './routes/_authed/$workspaceId/marketplace/$loopId/$itemId'
 
+const TvRoute = TvRouteImport.update({
+  id: '/tv',
+  path: '/tv',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -297,6 +303,7 @@ export interface FileRoutesByFullPath {
   '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/tv': typeof TvRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
@@ -339,6 +346,7 @@ export interface FileRoutesByTo {
   '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/tv': typeof TvRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
@@ -381,6 +389,7 @@ export interface FileRoutesById {
   '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/tv': typeof TvRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
@@ -427,6 +436,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/login'
     | '/signup'
+    | '/tv'
     | '/$workspaceId'
     | '/workspaces'
     | '/connect/skjald'
@@ -469,6 +479,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/login'
     | '/signup'
+    | '/tv'
     | '/workspaces'
     | '/connect/skjald'
     | '/prototypes/above-title-header'
@@ -510,6 +521,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/login'
     | '/signup'
+    | '/tv'
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
     | '/connect/skjald'
@@ -555,6 +567,7 @@ export interface RootRouteChildren {
   InviteRoute: typeof InviteRoute
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  TvRoute: typeof TvRoute
   ConnectSkjaldRoute: typeof ConnectSkjaldRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
@@ -562,6 +575,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/tv': {
+      id: '/tv'
+      path: '/tv'
+      fullPath: '/tv'
+      preLoaderRoute: typeof TvRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -987,6 +1007,7 @@ const rootRouteChildren: RootRouteChildren = {
   InviteRoute: InviteRoute,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  TvRoute: TvRoute,
   ConnectSkjaldRoute: ConnectSkjaldRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,
