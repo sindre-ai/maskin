@@ -19,7 +19,15 @@ function createApp(actorId = 'actor-1', dbCtx = createTestContext()) {
 		return c.json({ count: callCount })
 	})
 
-	app.post('/key', (c) => c.json({ api_key: 'ank_fake_value' }))
+	app.post('/signup', (c) =>
+		c.json({ id: 'actor-2', name: 'Fake User', type: 'human', api_key: 'ank_fake_value' }, 201),
+	)
+	app.post('/login', (c) =>
+		c.json({ id: 'actor-2', name: 'Fake User', type: 'human', api_key: 'ank_fake_value' }),
+	)
+	app.post('/accept', (c) =>
+		c.json({ actor: { id: 'actor-2', api_key: 'ank_fake_value' }, workspace_id: 'ws-1' }, 201),
+	)
 	app.post('/api/actors/:id/api-keys', (c) => c.json({ api_key: 'ank_fake_value' }))
 
 	app.get('/test', (c) => {
@@ -118,14 +126,22 @@ describe('idempotency middleware', () => {
 		expect(dbCtx.calls.inserts).toHaveLength(1)
 	})
 
-	it('still records other responses that carry an api_key, so a retry gets the same answer', async () => {
+	it.each([
+		['signup', '/signup'],
+		['login', '/login'],
+		['invite accept (nested actor.api_key)', '/accept'],
+	])('does not write a %s response to the ledger', async (_name, path) => {
 		const dbCtx = createTestContext()
 		const { app } = createApp('actor-1', dbCtx)
 		dbCtx.mockResults.selectQueue = [[]]
 
-		await app.request('/key', { method: 'POST', headers: { 'Idempotency-Key': 'accept-1' } })
+		const res = await app.request(path, {
+			method: 'POST',
+			headers: { 'Idempotency-Key': 'cred-1' },
+		})
 
-		expect(dbCtx.calls.inserts).toHaveLength(1)
+		expect(res.status).toBeLessThan(300)
+		expect(dbCtx.calls.inserts).toHaveLength(0)
 	})
 
 	it('falls open when DB lookup throws (does not block writes)', async () => {

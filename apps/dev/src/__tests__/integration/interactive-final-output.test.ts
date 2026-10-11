@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { events, conversations, messages, sessionLogs, sessions } from '@maskin/db/schema'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, sql } from 'drizzle-orm'
 import {
 	InteractiveTurnFinalizer,
 	type RetryTurnFn,
@@ -154,6 +154,34 @@ describe('Interactive turn finalizer', () => {
 		conversationId = conversation.id
 
 		finalizer = new InteractiveTurnFinalizer(db)
+	})
+
+	// Posting a message is three sequential writes (insert the row, bump
+	// lastMessageAt, record message_posted). Tests that poll only for the row
+	// can return while the other two are still in flight, and the file's
+	// teardown then runs TRUNCATE actors CASCADE against that events insert and
+	// deadlocks (40P01). Hold every test open until each final_output message
+	// has its event.
+	afterEach(async () => {
+		const deadline = Date.now() + 5_000
+		while (true) {
+			const [posted] = await db
+				.select({ n: count() })
+				.from(messages)
+				.where(
+					and(
+						eq(messages.conversationId, conversationId),
+						sql`${messages.metadata}->>'source' = 'final_output'`,
+					),
+				)
+			const [recorded] = await db
+				.select({ n: count() })
+				.from(events)
+				.where(and(eq(events.entityId, conversationId), eq(events.action, 'message_posted')))
+			if ((recorded?.n ?? 0) >= (posted?.n ?? 0)) return
+			if (Date.now() > deadline) throw new Error('message_posted events never caught up')
+			await new Promise((resolve) => setTimeout(resolve, 10))
+		}
 	})
 
 	it('posts the end-of-turn output as a message from the agent', async () => {

@@ -1,6 +1,9 @@
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Capture Sentry events instead of sending them.
+vi.mock('../../lib/sentry', () => ({ Sentry: { captureMessage: vi.fn() } }))
+
 vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
@@ -45,6 +48,7 @@ import {
 } from '../../lib/claude-oauth'
 import { PRIMARY_RECOVERY_COOLDOWN_MS } from '../../lib/claude-oauth-recovery'
 import type { OAuthSlotStorage } from '../../lib/claude-oauth-slots'
+import { Sentry } from '../../lib/sentry'
 
 type MockDb = {
 	update: () => { set: (patch: Record<string, unknown>) => { where: () => Promise<void> } }
@@ -144,6 +148,7 @@ beforeEach(() => {
 	trackFailoverTriggeredMock.mockClear()
 	trackBackupExhaustedMock.mockClear()
 	trackRecoveredMock.mockClear()
+	vi.mocked(Sentry.captureMessage).mockClear()
 })
 
 afterEach(() => {
@@ -1068,6 +1073,42 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(result?.slot).toBe('backup')
 			expect(eventInserts[0]).toMatchObject({
 				data: expect.objectContaining({ reason: 'auth_failed' }),
+			})
+		})
+
+		it('records one failure event per failed refresh without changing the failover', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi
+					.fn()
+					.mockResolvedValueOnce({
+						ok: false,
+						status: 400,
+						text: () => Promise.resolve('{"error":"invalid_grant"}'),
+					})
+					.mockResolvedValueOnce({ ok: true, headers: new Headers() }),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(Sentry.captureMessage).toHaveBeenCalledTimes(1)
+			expect(vi.mocked(Sentry.captureMessage).mock.calls[0]?.[1]?.extra).toMatchObject({
+				workspaceId: WORKSPACE_ID,
+				slot: 'primary',
+				caller: 'session_start',
+				httpStatus: 400,
+				errorType: 'invalid_grant',
 			})
 		})
 
