@@ -355,6 +355,9 @@ setup_mcps() {
 
 # Write Claude OAuth credentials file if OAuth tokens are provided.
 # Claude Code reads auth from ~/.claude/.credentials.json, not env vars.
+# CLAUDE_OAUTH_REFRESH_TOKEN is normally unset: the platform refreshes at launch and
+# hands the container an access token only, so refreshToken is written empty and
+# the container can never spend (rotate) the workspace's stored refresh token.
 setup_claude_credentials() {
   if [ -z "$CLAUDE_OAUTH_ACCESS_TOKEN" ]; then
     return
@@ -377,7 +380,7 @@ setup_claude_credentials() {
 {
   "claudeAiOauth": {
     "accessToken": "$CLAUDE_OAUTH_ACCESS_TOKEN",
-    "refreshToken": "$CLAUDE_OAUTH_REFRESH_TOKEN",
+    "refreshToken": "${CLAUDE_OAUTH_REFRESH_TOKEN:-}",
     "expiresAt": $expires_at,
     ${sub_fields}
     "scopes": $scopes

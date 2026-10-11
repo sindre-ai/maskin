@@ -80,6 +80,7 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
+	loadSenderLine: vi.fn().mockResolvedValue(''),
 	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
 	appendToLedger: vi.fn().mockResolvedValue(undefined),
 	readLedgerTail: vi.fn().mockResolvedValue([]),
@@ -103,6 +104,7 @@ import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapsh
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
+import { buildWorkspaceStartupBlock } from '../../services/workspace-briefing'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -539,6 +541,8 @@ describe('SessionManager', () => {
 				[], // launchContainer: integrations lookup
 			]
 
+			vi.mocked(buildWorkspaceStartupBlock).mockReturnValueOnce('STARTUP-BLOCK\n\n')
+
 			await manager.startSession(session.id)
 
 			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
@@ -548,6 +552,12 @@ describe('SessionManager', () => {
 			}
 			expect(createArgs.env.INTERACTIVE).toBe('1')
 			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
+			// A chat has no ACTION_PROMPT, so it gets the startup block in its system prompt.
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: true }),
+			)
+			expect(createArgs.env.SYSTEM_PROMPT).toMatch(/^STARTUP-BLOCK\n\n/)
+			expect(createArgs.env.SYSTEM_PROMPT).toContain('You are Workspace Coach.')
 			expect(createArgs.interactive).toBe(true)
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 			// actionPrompt is '' here — no seed turn should be sent once attached.
@@ -739,10 +749,71 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 				interactive?: boolean
 			}
-			expect(createArgs.env.ACTION_PROMPT).toBe('Do the thing')
+			// The goal block sits between the startup text and the prompt itself,
+			// and is saved on the session so the later check can see what was shown.
+			expect(createArgs.env.ACTION_PROMPT).toContain('## Your goal this run')
+			expect(createArgs.env.ACTION_PROMPT?.endsWith('Do the thing')).toBe(true)
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: false }),
+			)
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
 			expect(createArgs.interactive).toBe(false)
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
+			// First launch: one jsonb-merge write of the block onto the session row.
+			expect(
+				calls.updates.some(
+					(u) =>
+						typeof u === 'object' &&
+						u !== null &&
+						'config' in u &&
+						!('llm_route' in (u as { config: object }).config),
+				),
+			).toBe(true)
+		})
+
+		it('reuses the saved goal block on resume instead of rebuilding or overwriting it', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				config: { run_goal: '## Your goal this run\n\nSaved earlier.\n\n---\n\n' },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.ACTION_PROMPT).toContain('Saved earlier.')
+			// No second merge write; the route write carries the saved text through.
+			const configWrites = calls.updates.filter(
+				(u) => typeof u === 'object' && u !== null && 'config' in u,
+			) as { config: Record<string, unknown> }[]
+			expect(configWrites).toHaveLength(1)
+			expect(configWrites[0]?.config.run_goal).toContain('Saved earlier.')
 		})
 
 		it('refuses to launch when the agent has no apiKey', async () => {
@@ -1753,19 +1824,13 @@ describe('SessionManager', () => {
 			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
-		describe('MASKIN_GITHUB_MCP kill-switch', () => {
-			const legacySpec = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
+		describe('auto-injected github-<owner> entries', () => {
 			const officialSpec = {
 				command: 'github-mcp-server',
 				args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
 			}
 
-			afterEach(() => {
-				vi.unstubAllEnvs()
-			})
-
-			async function launchGithubEntries(flag: string | undefined) {
-				vi.stubEnv('MASKIN_GITHUB_MCP', flag)
+			it('emits the shared official spec with the entry name and token env unchanged', async () => {
 				const wsId = randomUUID()
 				const fixtures = buildLaunchFixtures([
 					buildIntegration({
@@ -1785,45 +1850,14 @@ describe('SessionManager', () => {
 					env: Record<string, string>
 				}
 				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-					mcpServers: Record<string, { type: string; command: string; args: string[] }>
+					mcpServers: Record<string, unknown>
 				}
-				return Object.fromEntries(
-					Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-')),
-				)
-			}
-
-			it('emits the legacy npx spec when the flag is unset', async () => {
-				const entries = await launchGithubEntries(undefined)
-				expect(Object.keys(entries)).toEqual(['github-sindre-ai'])
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
-			})
-
-			it('emits the legacy npx spec when the flag is legacy', async () => {
-				const entries = await launchGithubEntries('legacy')
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
-			})
-
-			it('emits the legacy npx spec for any unrecognised flag value', async () => {
-				const entries = await launchGithubEntries('Official ')
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
-			})
-
-			it('emits the shared official spec when the flag is official', async () => {
-				const entries = await launchGithubEntries('official')
-				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...officialSpec })
-			})
-
-			it('keeps entry names and env identical across legacy and official', async () => {
-				const legacy = await launchGithubEntries('legacy')
-				mockContainerManager.create.mockClear()
-				const official = await launchGithubEntries('official')
-				expect(Object.keys(official)).toEqual(Object.keys(legacy))
-				expect(Object.keys(official)).toEqual(['github-sindre-ai'])
-				expect((official['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
-					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
-				})
-				expect((legacy['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
-					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+				const entries = Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-'))
+				expect(entries.map(([k]) => k)).toEqual(['github-sindre-ai'])
+				expect(entries[0]?.[1]).toEqual({
+					type: 'stdio',
+					...officialSpec,
+					env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
 				})
 			})
 		})
@@ -1934,15 +1968,15 @@ describe('SessionManager', () => {
 
 			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
 
-			// Skip the session row's own `config` write (buildLaunchSpec persists
-			// the resolved llm_route there) — the update under test is the
-			// integration row's.
+			// Skip the session row's own `config` writes (buildLaunchSpec persists
+			// the resolved llm_route and the run goal there) — the update under
+			// test is the integration row's.
 			const updateCall = calls.updates.find(
 				(u): u is { config: { owner_login?: string } } =>
 					typeof u === 'object' &&
 					u !== null &&
 					'config' in u &&
-					!('llm_route' in ((u as { config: Record<string, unknown> }).config ?? {})),
+					'owner_login' in ((u as { config: Record<string, unknown> }).config ?? {}),
 			) as { config: { owner_login?: string } } | undefined
 			expect(updateCall?.config.owner_login).toBe('acme-org')
 
@@ -3275,6 +3309,36 @@ describe('SessionManager', () => {
 			).rejects.toThrow('stream closed')
 
 			expect(events).toEqual([])
+		})
+	})
+
+	describe('setSessionModel()', () => {
+		it('writes a set_model control request to a local container and persists nothing', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			const events: unknown[] = []
+			manager.on('log', (e) => events.push(e))
+
+			await manager.setSessionModel(session.id, 'deepseek/deepseek-v4-flash')
+
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'control_request',
+				request_id: expect.any(String),
+				request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+			})
+			// A control message is not a turn: nothing in the transcript, no log event.
+			expect(events).toEqual([])
+		})
+
+		it('refuses a model name that is not one, before anything is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running', agentServerId: null })
+			mockResults.select = [session]
+
+			await expect(manager.setSessionModel(session.id, 'bad name')).rejects.toThrow(
+				'Invalid model name',
+			)
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
 		})
 	})
 
@@ -4639,6 +4703,144 @@ describe('SessionManager', () => {
 			expect(startSpy).toHaveBeenCalledWith(retrySession.id)
 		})
 
+		describe('auth error at access-token expiry (refresh token withheld from the container)', () => {
+			const expiredAt = Date.now() - 5 * 60 * 1000
+			const workspaceWithTwoSlots = (workspaceId: string) => ({
+				id: workspaceId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_800_000_000_000,
+						},
+						backup: {
+							encryptedAccessToken: 'backup-access',
+							encryptedRefreshToken: 'backup-refresh',
+							expiresAt: 1_900_000_000_000,
+						},
+					},
+				},
+			})
+
+			async function settleWithNotLoggedIn(config: Record<string, unknown>) {
+				vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+				mockClassifyCreditExhaustion.mockReturnValue({
+					provider: 'anthropic',
+					reason_code: 'not_logged_in',
+					human_message: 'Claude credentials not connected',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: 'Not logged in',
+				})
+				const session = buildSession({ status: 'running', config })
+				;(
+					manager as unknown as {
+						activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+					}
+				).activeSessions.set(session.id, {
+					tempDir: '/tmp/test',
+					stdoutTail: 'Not logged in · Please run /login',
+				})
+				const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+				mockResults.selectQueue = [
+					[session], // handleCompletion: load session
+					[], // extractSessionUsage fallback
+					[], // hasOtherActiveSessions
+					[], // existing runtime failover retry lookup
+					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
+				]
+				mockResults.insertQueue = [[], [], [], [], [], []]
+				await (
+					manager as unknown as {
+						handleCompletion(
+							sessionId: string,
+							containerId: string,
+							exitCode: number,
+						): Promise<void>
+					}
+				).handleCompletion(session.id, 'container-abc', 1)
+				const movedSlot = calls.updates.some(
+					(u) =>
+						typeof u === 'object' &&
+						u !== null &&
+						Boolean(
+							(u as { settings?: { claude_oauth?: { failover?: { active_slot?: string } } } })
+								.settings?.claude_oauth?.failover?.active_slot,
+						),
+				)
+				return { movedSlot, startSpy }
+			}
+
+			describe('interactive turn failover', () => {
+				async function failOver(config: Record<string, unknown>) {
+					vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+					const session = buildSession({ status: 'running', config })
+					mockResults.selectQueue = [
+						[session], // failOverInteractiveSession: load session
+						[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
+					]
+					mockResults.insertQueue = [[], []]
+					const movedTo = await (
+						manager as unknown as {
+							failOverInteractiveSession(sessionId: string, reason: string): Promise<string | null>
+						}
+					).failOverInteractiveSession(session.id, 'not_logged_in')
+					return movedTo
+				}
+
+				it('leaves the slot alone when the turn failed after the access token expired', async () => {
+					expect(
+						await failOver({
+							llm_route: 'claude_oauth',
+							llm_oauth_slot: 'primary',
+							claude_oauth_expires_at: expiredAt,
+						}),
+					).toBeNull()
+				})
+
+				it('still moves to the next slot when the credential was rejected well before expiry', async () => {
+					expect(
+						await failOver({
+							llm_route: 'claude_oauth',
+							llm_oauth_slot: 'primary',
+							claude_oauth_expires_at: Date.now() + 3 * 60 * 60 * 1000,
+						}),
+					).toBe('backup')
+				})
+			})
+
+			it('does not move the workspace off the slot or start a retry when the session ended after its expiry', async () => {
+				const { movedSlot, startSpy } = await settleWithNotLoggedIn({
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+					claude_oauth_expires_at: expiredAt,
+				})
+
+				expect(movedSlot).toBe(false)
+				expect(startSpy).not.toHaveBeenCalled()
+			})
+
+			it('still fails over a rejected credential when the access token had hours left', async () => {
+				const { movedSlot } = await settleWithNotLoggedIn({
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+					claude_oauth_expires_at: Date.now() + 3 * 60 * 60 * 1000,
+				})
+
+				expect(movedSlot).toBe(true)
+			})
+
+			it('still fails over when the session carries no expiry stamp (flag off)', async () => {
+				const { movedSlot } = await settleWithNotLoggedIn({
+					llm_route: 'claude_oauth',
+					llm_oauth_slot: 'primary',
+				})
+
+				expect(movedSlot).toBe(true)
+			})
+		})
+
 		it('records backup OAuth runtime limits without starting another retry session', async () => {
 			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 			const sourceSessionId = randomUUID()
@@ -5153,5 +5355,38 @@ describe('mergeLaunchRouteConfig()', () => {
 		expect(
 			mergeLaunchRouteConfig({ llm_route: 'workspace_api_key' }, 'workspace_api_key', undefined),
 		).toBeNull()
+	})
+
+	it('stamps the access-token expiry of a launch whose container got no refresh token', () => {
+		const updated = mergeLaunchRouteConfig(
+			{ llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			'claude_oauth',
+			'primary',
+			1_800_000_000_000,
+		)
+		expect(updated).toMatchObject({ claude_oauth_expires_at: 1_800_000_000_000 })
+	})
+
+	it('returns null when the expiry stamp is already current', () => {
+		expect(
+			mergeLaunchRouteConfig(
+				{ llm_route: 'claude_oauth', llm_oauth_slot: 'primary', claude_oauth_expires_at: 5 },
+				'claude_oauth',
+				'primary',
+				5,
+			),
+		).toBeNull()
+	})
+
+	it('clears a stale expiry stamp when the launch can refresh itself', () => {
+		// A retry inherits the failed session's config; if its own launch hands the
+		// container a refresh token (flag off), the old expiry must not survive.
+		const updated = mergeLaunchRouteConfig(
+			{ llm_route: 'claude_oauth', llm_oauth_slot: 'backup', claude_oauth_expires_at: 5 },
+			'claude_oauth',
+			'backup',
+		)
+		expect(updated).not.toBeNull()
+		expect(updated).not.toHaveProperty('claude_oauth_expires_at')
 	})
 })

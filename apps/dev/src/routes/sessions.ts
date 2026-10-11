@@ -28,6 +28,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { resolveSpawnLink } from '../services/helper-link'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
@@ -37,6 +38,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		maskinSessionId?: string
 	}
 }
 
@@ -93,9 +95,25 @@ app.openapi(createSessionRoute, (async (c) => {
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
 	// every session to the agent that received the owner's first turn without
 	// requiring an additive column migration.
-	const config = body.entry_agent_role
-		? { ...body.config, entry_agent_role: body.entry_agent_role }
-		: body.config
+	// Also record who asked (run_agent / create_session land here), so launch can
+	// tell the helper who sent it without rewriting the stored action prompt.
+	const baseConfig = {
+		...body.config,
+		...(body.entry_agent_role ? { entry_agent_role: body.entry_agent_role } : {}),
+		sent_by_actor_id: actorId,
+	}
+
+	// Link the new session to the one that started it, so its outcome can be sent
+	// back. The session id comes from the X-Maskin-Session-Id header, which is a
+	// claim and not proof: it only counts when it is the authenticated caller's own
+	// live session in this workspace (see resolveSpawnLink).
+	const link = await resolveSpawnLink(db, {
+		claimedSessionId: c.get('maskinSessionId'),
+		authenticatedActorId: actorId,
+		workspaceId,
+		objectId: body.initiated_from_object_id ?? null,
+	})
+	const config = link.linked ? { ...baseConfig, hop_depth: link.hopDepth } : baseConfig
 
 	const handle = await startSession({
 		workspaceId,
@@ -107,6 +125,7 @@ app.openapi(createSessionRoute, (async (c) => {
 		createdBy: actorId,
 		autoStart: body.auto_start,
 		parentSessionId: body.source_session_id,
+		spawnedBySessionId: link.linked ? link.spawnedBySessionId : undefined,
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
 		initiatedFromObjectType: body.initiated_from_object_type ?? null,
 		await: 'none',
@@ -124,7 +143,13 @@ app.openapi(createSessionRoute, (async (c) => {
 		}
 		session = row
 	}
-	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
+	const created = serialize(session) as z.infer<typeof sessionResponseSchema>
+	// The work still runs when the chain is too deep; the caller is told nothing
+	// will be sent back, so it does not wait for a return that cannot come.
+	if (!link.linked && link.reason === 'hop_cap') {
+		return c.json({ ...created, spawnLinkDropped: 'hop_cap' }, 201)
+	}
+	return c.json(created, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
 
 /**
@@ -319,12 +344,12 @@ app.openapi(sessionUsageRoute, (async (c) => {
 			date_trunc(${bucket}, completed_at AT TIME ZONE 'UTC') AS bucket,
 			COUNT(*)::int AS session_count,
 			COALESCE(SUM(total_cost_usd), 0)::float8 AS total_cost_usd,
-			COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-			COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
+			COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
+			COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
 			COALESCE(
 				SUM(COALESCE(cache_creation_input_tokens, 0) + COALESCE(cache_read_input_tokens, 0)),
 				0
-			)::int AS cache_tokens
+			)::bigint AS cache_tokens
 		FROM sessions
 		WHERE workspace_id = ${workspaceId}
 			AND actor_id = ${actorId}
@@ -337,9 +362,11 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		bucket: Date | string
 		session_count: number
 		total_cost_usd: number
-		input_tokens: number
-		output_tokens: number
-		cache_tokens: number
+		// bigint sums arrive from postgres.js as strings; Number() below converts
+		// them back (exact below 2^53).
+		input_tokens: number | string
+		output_tokens: number | string
+		cache_tokens: number | string
 	}>
 
 	const buckets = rows.map((r) => ({

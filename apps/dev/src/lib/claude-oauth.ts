@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
+import { Sentry } from './sentry'
 
 /**
  * Hard ceiling on every network call made while resolving Claude credentials
@@ -19,6 +20,63 @@ import { logger } from './logger'
  * failing over on our own network blip).
  */
 export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
+
+/**
+ * Runtime kill-switch for keeping the Claude refresh token out of agent
+ * containers. Default is OFF: only the literal string `true` enables it, until
+ * the launch check (one real session start in the real image with no refresh
+ * token) has passed, so a missing env keeps today's behaviour. On, the platform refreshes at
+ * session launch with a session-sized buffer and the container is handed an
+ * access token only. Off restores today's behaviour exactly: the container gets
+ * the refresh token and the default 10 minute buffer.
+ */
+export const CLAUDE_PLATFORM_REFRESH_FLAG_ENV = 'MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED'
+
+/** Setting for how much access-token life a session launch must start with. */
+export const CLAUDE_LAUNCH_BUFFER_ENV = 'CLAUDE_LAUNCH_BUFFER_MS'
+
+/**
+ * Default launch buffer: 3 h. Covers the longest observed run (2.77 h) and the
+ * 2 h session timeout cap with headroom.
+ */
+export const DEFAULT_CLAUDE_LAUNCH_BUFFER_MS = 3 * 60 * 60 * 1000
+
+export function isClaudePlatformRefreshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return (env[CLAUDE_PLATFORM_REFRESH_FLAG_ENV] ?? '').trim().toLowerCase() === 'true'
+}
+
+/** The launch buffer setting; anything that is not a positive number falls back to the default. */
+export function readClaudeLaunchBufferMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = Number(env[CLAUDE_LAUNCH_BUFFER_ENV])
+	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CLAUDE_LAUNCH_BUFFER_MS
+}
+
+/**
+ * How far ahead of expiry a slot must be refreshed. A number is a fixed buffer.
+ * `{ launchMs }` is the session-launch policy: the setting, capped at half the
+ * slot's known access-token lifetime, and a slot with no known lifetime is
+ * refreshed once so the lifetime becomes known.
+ */
+export type RefreshBuffer = number | { launchMs: number }
+
+/**
+ * Access-token lifetime per workspace+slot, in memory only (no extra storage).
+ * Set by every refresh through refreshSlotSingleFlight, so only the first
+ * launch per slot after a restart pays for a forced refresh.
+ */
+const slotLifetimesMs = new Map<string, number>()
+
+/** Test seam: forget every learned lifetime. */
+export function resetClaudeSlotLifetimes(): void {
+	slotLifetimesMs.clear()
+}
+
+function needsRefresh(key: string, expiresAt: number, buffer: RefreshBuffer): boolean {
+	if (typeof buffer === 'number') return expiresAt <= Date.now() + buffer
+	const lifetime = slotLifetimesMs.get(key)
+	if (lifetime === undefined) return true
+	return expiresAt <= Date.now() + Math.min(buffer.launchMs, lifetime / 2)
+}
 
 export interface ClaudeOAuthTokens {
 	accessToken: string
@@ -38,6 +96,85 @@ interface TokenResponse {
 }
 
 /**
+ * Thrown by `refreshClaudeToken` for every failure of the token endpoint call
+ * (non-2xx, timeout, network error). The message is exactly what the bare
+ * `Error` carried before: `classifierInputFromError` in claude-failover.ts
+ * parses the status out of it. The structured fields exist only so
+ * `reportClaudeRefreshFailure` can record a failure without parsing text.
+ *
+ * `errorType` is the token endpoint's OAuth error code (invalid_grant, ...) or
+ * `timeout` / `network` / `unknown`. It is always a short [a-z0-9_.-] string,
+ * never response text, so it is safe to store.
+ */
+export class ClaudeTokenRefreshError extends Error {
+	readonly status: number | null
+	readonly errorType: string
+	constructor(message: string, status: number | null, errorType: string, cause?: unknown) {
+		super(message, { cause })
+		this.status = status
+		this.errorType = errorType
+	}
+}
+
+const ERROR_TYPE_PATTERN = /^[a-z0-9_.-]{1,64}$/i
+
+/** OAuth error code from a token endpoint body: {error: "x"} or {error: {type: "x"}}. */
+function parseErrorType(body: string): string {
+	try {
+		const parsed = JSON.parse(body) as { error?: unknown } | null
+		const error = parsed?.error
+		const candidate = typeof error === 'string' ? error : (error as { type?: unknown } | null)?.type
+		if (typeof candidate === 'string' && ERROR_TYPE_PATTERN.test(candidate)) return candidate
+	} catch {
+		// Not JSON: nothing in it is safe to keep.
+	}
+	return 'unknown'
+}
+
+/** Which code path asked for the refresh. */
+export type ClaudeRefreshCaller = 'session_start' | 'failover_recovery' | 'keys_status'
+
+/**
+ * Leave a durable record of a failed token refresh as a Sentry event (logs are
+ * off in production, and the api's own stdout only survives about a minute).
+ *
+ * Only failures of the token endpoint call itself are recorded; anything else
+ * a caller's try block can throw (a DB write, say) is not a refresh failure
+ * and is ignored. Fields are an allowlist: ids, status, the OAuth error code,
+ * the caller and a timestamp. The error message is deliberately left out
+ * because it carries the endpoint's response body.
+ *
+ * Never throws and never changes what the caller does next.
+ */
+export function reportClaudeRefreshFailure(params: {
+	workspaceId: string
+	slot: string
+	caller: ClaudeRefreshCaller
+	error: unknown
+}): void {
+	const { workspaceId, slot, caller, error } = params
+	if (!(error instanceof ClaudeTokenRefreshError)) return
+	try {
+		const status = error.status === null ? 'none' : String(error.status)
+		Sentry.captureMessage('Claude OAuth token refresh failed', {
+			level: 'warning',
+			tags: { caller, slot, http_status: status, error_type: error.errorType },
+			extra: {
+				workspaceId,
+				slot,
+				caller,
+				httpStatus: error.status,
+				errorType: error.errorType,
+				failedAt: new Date().toISOString(),
+			},
+			fingerprint: ['claude-oauth-refresh-failed', caller, status, error.errorType],
+		})
+	} catch (sentryErr) {
+		console.error('[sentry] captureMessage failed', sentryErr)
+	}
+}
+
+/**
  * Refresh an expired access token using the refresh token.
  * Returns updated tokens (new access token, possibly new refresh token).
  */
@@ -48,16 +185,32 @@ export async function refreshClaudeToken(tokens: ClaudeOAuthTokens): Promise<Cla
 		refresh_token: tokens.refreshToken,
 	}
 
-	const res = await fetch(CLAUDE_TOKEN_URL, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body),
-		signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
-	})
+	let res: Response
+	try {
+		res = await fetch(CLAUDE_TOKEN_URL, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
+		})
+	} catch (err) {
+		const timedOut =
+			err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+		throw new ClaudeTokenRefreshError(
+			err instanceof Error ? err.message : String(err),
+			null,
+			timedOut ? 'timeout' : 'network',
+			err,
+		)
+	}
 
 	if (!res.ok) {
 		const text = await res.text()
-		throw new Error(`Token refresh failed (${res.status}): ${text}`)
+		throw new ClaudeTokenRefreshError(
+			`Token refresh failed (${res.status}): ${text}`,
+			res.status,
+			parseErrorType(text),
+		)
 	}
 
 	const data = (await res.json()) as TokenResponse
@@ -248,12 +401,13 @@ export async function refreshSlotSingleFlight(
 	workspaceId: string,
 	slot: OAuthSlotKind,
 	stored: EncryptedOAuthData,
-	bufferMs = 10 * 60 * 1000,
+	bufferMs: RefreshBuffer = 10 * 60 * 1000,
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshed: boolean }> {
-	if (stored.expiresAt > Date.now() + bufferMs) {
+	const key = `${workspaceId}:${slot}`
+	if (!needsRefresh(key, stored.expiresAt, bufferMs)) {
 		return { tokens: decryptOAuthData(stored), refreshed: false }
 	}
-	return withSlotRefreshLock(`${workspaceId}:${slot}`, async () => {
+	return withSlotRefreshLock(key, async () => {
 		const readStored = async () => {
 			const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 			const settings = (ws?.settings as Record<string, unknown>) ?? {}
@@ -261,11 +415,15 @@ export async function refreshSlotSingleFlight(
 		}
 		const tokens = decryptOAuthData((await readStored()) ?? stored)
 		try {
-			const result = await refreshClaudeTokenIfNeeded(tokens, bufferMs)
-			if (result.refreshed) {
-				await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
-			}
-			return result
+			if (!needsRefresh(key, tokens.expiresAt, bufferMs)) return { tokens, refreshed: false }
+			logger.info('Claude OAuth token expiring soon, refreshing...')
+			const refreshedTokens = await refreshClaudeToken(tokens)
+			// Lower bound on the real lifetime (expires_in minus the call's own
+			// latency), so the half-life guard errs on the safe side.
+			const lifetimeMs = refreshedTokens.expiresAt - Date.now()
+			if (Number.isFinite(lifetimeMs) && lifetimeMs > 0) slotLifetimesMs.set(key, lifetimeMs)
+			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(refreshedTokens))
+			return { tokens: refreshedTokens, refreshed: true }
 		} catch (err) {
 			const latest = await readStored().catch(() => undefined)
 			if (latest && decrypt(latest.encryptedRefreshToken) !== tokens.refreshToken) {
@@ -284,6 +442,7 @@ export async function getValidOAuthToken(
 	db: Database,
 	workspaceId: string,
 	bufferMs = 10 * 60 * 1000,
+	caller: ClaudeRefreshCaller = 'session_start',
 ): Promise<{ accessToken: string; tokens: ClaudeOAuthTokens } | null> {
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as Record<string, unknown>) ?? {}
@@ -291,13 +450,14 @@ export async function getValidOAuthToken(
 
 	if (!active) return null
 
-	const { tokens: fresh, refreshed } = await refreshSlotSingleFlight(
-		db,
-		workspaceId,
-		active.slot,
-		active.data,
-		bufferMs,
-	)
+	let result: Awaited<ReturnType<typeof refreshSlotSingleFlight>>
+	try {
+		result = await refreshSlotSingleFlight(db, workspaceId, active.slot, active.data, bufferMs)
+	} catch (error) {
+		reportClaudeRefreshFailure({ workspaceId, slot: active.slot, caller, error })
+		throw error
+	}
+	const { tokens: fresh, refreshed } = result
 	if (refreshed) logger.info('Refreshed Claude OAuth token', { workspaceId, slot: active.slot })
 
 	return { accessToken: fresh.accessToken, tokens: fresh }

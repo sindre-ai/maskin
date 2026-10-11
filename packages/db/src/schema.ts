@@ -183,6 +183,12 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Serves list_objects sort=updatedAt, which orders and seeks on the UTC
+		// millisecond-truncated value. Built CONCURRENTLY in migration 0088.
+		index('objects_ws_updated_at_ms_idx').on(
+			t.workspaceId,
+			sql`date_trunc('milliseconds', ${t.updatedAt} AT TIME ZONE 'UTC')`,
+		),
 		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
 		// in migration 0083.
 		index('objects_active_session_idx')
@@ -430,6 +436,16 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// The session whose create_session / run_agent / @mention call started this
+		// one: the sender a finished helper reports back to. Only ever set after the
+		// claimed session was checked to belong to the authenticated caller. NULL =
+		// no known sender. NOT source_session_id, which means "restore that session's
+		// workspace snapshot". No FK on purpose: the pointer must survive a purge of
+		// the sender's row. Index in migration 0090.
+		spawnedBySessionId: uuid('spawned_by_session_id'),
+		// One-shot claim taken by services/helper-return.ts before it posts the
+		// outcome. NULL = not returned yet. Migration 0089.
+		helperReturnedAt: timestamp('helper_returned_at', { withTimezone: true }),
 		// Handed-off strip anchors: the assistant message that triggered this
 		// sub-agent spawn, and the sessions this one is blocked behind. Both
 		// nullable — pre-migration rows read NULL ("no strip"). Written from the
@@ -468,11 +484,14 @@ export const sessions = pgTable(
 			{ onDelete: 'set null' },
 		),
 		initiatedFromObjectType: text('initiated_from_object_type'),
-		inputTokens: integer('input_tokens'),
-		outputTokens: integer('output_tokens'),
-		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
-		cacheReadInputTokens: integer('cache_read_input_tokens'),
-		durationMs: integer('duration_ms'),
+		// bigint (mode 'number'): cumulative counters outgrow int4 on long-lived
+		// sessions (cache reads reached 2.1B). Drizzle maps them back to JS
+		// numbers, exact below 2^53. Widened in migration 0082.
+		inputTokens: bigint('input_tokens', { mode: 'number' }),
+		outputTokens: bigint('output_tokens', { mode: 'number' }),
+		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
+		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
+		durationMs: bigint('duration_ms', { mode: 'number' }),
 		currentActivity: text('current_activity'),
 		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
 		// `status` text because reaper + retry-scheduler need to tell
@@ -507,6 +526,10 @@ export const sessions = pgTable(
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
+		// Helper → sender lookups. Built CONCURRENTLY in migration 0090.
+		index('sessions_spawned_by_session_id_idx')
+			.on(t.spawnedBySessionId)
+			.where(sql`${t.spawnedBySessionId} IS NOT NULL`),
 		// Reconciler self-heal window scan over a session's settled time. Built
 		// CONCURRENTLY in migration 0086.
 		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),

@@ -12,6 +12,9 @@ vi.mock('../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+// Capture Sentry events instead of sending them.
+vi.mock('../../lib/sentry', () => ({ Sentry: { captureMessage: vi.fn() } }))
+
 import {
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
@@ -24,6 +27,7 @@ import {
 	refreshClaudeTokenIfNeeded,
 } from '../../lib/claude-oauth'
 import { decrypt, encrypt } from '../../lib/crypto'
+import { Sentry } from '../../lib/sentry'
 
 /**
  * Mock DB whose select chain supports both the unlocked outer read
@@ -507,5 +511,144 @@ describe('preserveSlotLabels', () => {
 
 	it('is a no-op when there is nothing stored to preserve', () => {
 		expect(preserveSlotLabels(incoming, undefined)).toEqual(incoming)
+	})
+})
+
+describe('refresh failure record', () => {
+	const REFRESH_TOKEN = 'enc-refresh-SECRET'
+	const ACCESS_TOKEN = 'enc-access-SECRET'
+	const expired: EncryptedOAuthData = {
+		encryptedAccessToken: ACCESS_TOKEN,
+		encryptedRefreshToken: REFRESH_TOKEN,
+		expiresAt: Date.now() - 60_000,
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		vi.mocked(decrypt).mockImplementation((input: string) => input)
+		vi.mocked(encrypt).mockImplementation((input: string) => input)
+	})
+
+	async function refreshWith(fetchImpl: ReturnType<typeof vi.fn>, caller?: 'keys_status') {
+		vi.stubGlobal('fetch', fetchImpl)
+		const { db } = createMockDb({ id: 'ws-1', settings: { claude_oauth: expired } })
+		return getValidOAuthToken(db, 'ws-1', 10 * 60 * 1000, caller)
+	}
+
+	function recorded() {
+		const calls = vi.mocked(Sentry.captureMessage).mock.calls
+		return calls.map(
+			([, hint]) => hint as Record<string, unknown> & { extra: Record<string, unknown> },
+		)
+	}
+
+	it('records one event for a 400 with the status and the OAuth error type', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 400,
+			text: () => Promise.resolve(JSON.stringify({ error: 'invalid_grant' })),
+		})
+
+		await expect(refreshWith(fetchImpl)).rejects.toThrow('Token refresh failed (400)')
+
+		expect(recorded()).toHaveLength(1)
+		expect(recorded()[0]?.extra).toMatchObject({
+			workspaceId: 'ws-1',
+			slot: 'primary',
+			caller: 'session_start',
+			httpStatus: 400,
+			errorType: 'invalid_grant',
+		})
+		expect(typeof recorded()[0]?.extra.failedAt).toBe('string')
+	})
+
+	it('reads the error type from a nested error object', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 401,
+			text: () => Promise.resolve(JSON.stringify({ error: { type: 'authentication_error' } })),
+		})
+
+		await expect(refreshWith(fetchImpl)).rejects.toThrow('Token refresh failed (401)')
+
+		expect(recorded()[0]?.extra).toMatchObject({
+			httpStatus: 401,
+			errorType: 'authentication_error',
+		})
+	})
+
+	it('records one event for a 500 whose body is not JSON', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 500,
+			text: () => Promise.resolve('upstream exploded'),
+		})
+
+		await expect(refreshWith(fetchImpl, 'keys_status')).rejects.toThrow(
+			'Token refresh failed (500)',
+		)
+
+		expect(recorded()).toHaveLength(1)
+		expect(recorded()[0]?.extra).toMatchObject({
+			caller: 'keys_status',
+			httpStatus: 500,
+			errorType: 'unknown',
+		})
+	})
+
+	it('records one event for a timeout with no status', async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockRejectedValue(new DOMException('The operation timed out', 'TimeoutError'))
+
+		await expect(refreshWith(fetchImpl)).rejects.toThrow('The operation timed out')
+
+		expect(recorded()).toHaveLength(1)
+		expect(recorded()[0]?.extra).toMatchObject({ httpStatus: null, errorType: 'timeout' })
+	})
+
+	it('records one event for a network error', async () => {
+		const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'))
+
+		await expect(refreshWith(fetchImpl)).rejects.toThrow('fetch failed')
+
+		expect(recorded()).toHaveLength(1)
+		expect(recorded()[0]?.extra).toMatchObject({ httpStatus: null, errorType: 'network' })
+	})
+
+	it('records nothing when the refresh succeeds', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => Promise.resolve({ access_token: 'new-access', expires_in: 3600 }),
+		})
+
+		await refreshWith(fetchImpl)
+
+		expect(Sentry.captureMessage).not.toHaveBeenCalled()
+	})
+
+	it('keeps token values and response text out of the record', async () => {
+		// Worst case: the endpoint echoes the refresh token back in an error
+		// field, a description, and the raw body.
+		const fetchImpl = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 400,
+			text: () =>
+				Promise.resolve(
+					JSON.stringify({
+						error: `bad ${REFRESH_TOKEN}`,
+						error_description: `refresh_token ${REFRESH_TOKEN} access ${ACCESS_TOKEN}`,
+					}),
+				),
+		})
+
+		await expect(refreshWith(fetchImpl)).rejects.toThrow()
+
+		expect(Sentry.captureMessage).toHaveBeenCalledTimes(1)
+		const serialised = JSON.stringify(vi.mocked(Sentry.captureMessage).mock.calls)
+		expect(serialised).not.toContain(REFRESH_TOKEN)
+		expect(serialised).not.toContain(ACCESS_TOKEN)
+		expect(serialised).not.toContain('error_description')
+		expect(recorded()[0]?.extra.errorType).toBe('unknown')
 	})
 })

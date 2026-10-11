@@ -5,8 +5,10 @@ import { serve } from '@hono/node-server'
 import {
 	AGENT_PUSH_DIRECTORIES,
 	type AgentPushDirectory,
+	MODEL_NAME_RE,
 	type PushAgentFilesResponse,
 	type StopSessionOutcome,
+	buildSetModelRequest,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
@@ -1522,6 +1524,19 @@ export function buildApp(deps: AppDeps): Hono {
 			body = await c.req.json()
 		} catch {
 			return c.json({ error: 'Invalid JSON' }, 400)
+		}
+		// A model switch rides the same queue as user turns so it is delivered in
+		// order with them, but it is not a turn: nothing is pending on the CLI
+		// afterwards, so the stall tracker must not be told to expect output.
+		const requestedModel =
+			body && typeof body === 'object' ? (body as Record<string, unknown>).model : undefined
+		if (requestedModel !== undefined) {
+			if (typeof requestedModel !== 'string' || !MODEL_NAME_RE.test(requestedModel)) {
+				return c.json({ error: 'Invalid model field' }, 400)
+			}
+			const control = buildSetModelRequest(requestedModel, crypto.randomUUID())
+			await inputQueue.enqueue(id, `${JSON.stringify(control)}\n`)
+			return c.json({ ok: true })
 		}
 		if (
 			!body ||

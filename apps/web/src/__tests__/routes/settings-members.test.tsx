@@ -115,6 +115,20 @@ describe('MembersPage', () => {
 		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
 	})
 
+	it('hides connected integrations (system members) from the list and the count', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [
+				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
+				{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null },
+				{ actorId: 'a3', name: 'GitHub', type: 'system', role: 'system', joinedAt: null },
+			],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+		expect(screen.queryByText('GitHub')).not.toBeInTheDocument()
+		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+	})
+
 	it('navigates to agent detail when an agent row is clicked', () => {
 		mockUseWorkspaceMembers.mockReturnValue({
 			data: [{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null }],

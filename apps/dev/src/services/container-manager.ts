@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import type { StreamJsonSetModelRequest } from '@maskin/shared'
 import Docker from 'dockerode'
 import tar from 'tar-stream'
 import { logger } from '../lib/logger'
@@ -218,7 +219,10 @@ export class ContainerManager {
 	 * once before propagating the error. Throws if no stream was ever attached
 	 * (i.e. `attachStdin()` was not called) or was explicitly detached.
 	 */
-	async write(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+	async write(
+		sessionId: string,
+		payload: StreamJsonUserMessage | StreamJsonSetModelRequest,
+	): Promise<void> {
 		const handle = this.stdinStreams.get(sessionId)
 		if (!handle) {
 			throw new Error(`No stdin stream attached for session ${sessionId}`)
