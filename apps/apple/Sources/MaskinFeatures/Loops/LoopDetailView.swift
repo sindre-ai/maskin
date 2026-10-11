@@ -13,14 +13,19 @@ struct LoopDetailView: View {
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmDelete = false
 	@State private var underTheHood = false
+	@State private var draft = ""
+	@State private var dictating = false
 
 	var body: some View {
 		ScrollView {
-			LoopDetailContent(
-				store: store, install: install, underTheHood: underTheHood, onOpenTrigger: onOpenTrigger)
-				.padding(MaskinSpace.s9)
-				.frame(maxWidth: 720, alignment: .leading)
-				.frame(maxWidth: .infinity)
+			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+				LoopDetailContent(
+					store: store, install: install, underTheHood: underTheHood, onOpenTrigger: onOpenTrigger)
+				if underTheHood { manage }
+			}
+			.padding(MaskinSpace.s9)
+			.frame(maxWidth: 720, alignment: .leading)
+			.frame(maxWidth: .infinity)
 		}
 		.ambientBackground()
 		.navigationTitle(store.loop.displayName)
@@ -28,31 +33,16 @@ struct LoopDetailView: View {
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
 		.refreshable { await store.refresh() }
+		.safeAreaInset(edge: .bottom, spacing: 0) { composer }
 		.toolbar {
-			if store.loop.status != .draft {
-				ToolbarItem(placement: .primaryAction) {
-					Button {
-						Task { await store.togglePause() }
-					} label: {
-						Label(
-							store.loop.isPaused ? "Resume" : "Pause",
-							systemImage: store.loop.isPaused ? "play.fill" : "pause.fill")
-					}
-					.disabled(store.isTogglingPause)
-				}
-			}
+			// One gear: it opens the Under the hood page (and closes it again).
 			ToolbarItem(placement: .primaryAction) {
-				Menu {
-					Toggle("Under the hood", systemImage: "wrench.and.screwdriver", isOn: $underTheHood)
-					Button {
-						runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). ")
-					} label: { Label("Change in chat", systemImage: "bubble.left") }
-					Button(role: .destructive) { confirmDelete = true } label: {
-						Label("Delete flow", systemImage: "trash")
-					}
+				Button {
+					withAnimation(MaskinMotion.quick) { underTheHood.toggle() }
 				} label: {
-					Label("More", systemImage: "ellipsis.circle")
+					Label("Under the hood", systemImage: underTheHood ? "gearshape.fill" : "gearshape")
 				}
+				.accessibilityValue(underTheHood ? "On" : "Off")
 			}
 		}
 		.confirmationDialog(
@@ -71,11 +61,71 @@ struct LoopDetailView: View {
 		.onDisappear { store.stop() }
 	}
 
+	/// What the nav menu used to hold, now at the foot of Under the hood: pause or resume, change the
+	/// flow in chat, delete it.
+	private var manage: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			FlowSectionHeader("Manage")
+			VStack(spacing: 0) {
+				if store.loop.status != .draft {
+					manageRow(
+						store.loop.isPaused ? "Resume flow" : "Pause flow",
+						symbol: store.loop.isPaused ? "play.fill" : "pause.fill"
+					) { Task { await store.togglePause() } }
+						.disabled(store.isTogglingPause)
+					Divider().overlay(MaskinSurface.separator)
+				}
+				manageRow("Change in chat", symbol: "bubble.left") {
+					runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). ")
+				}
+				Divider().overlay(MaskinSurface.separator)
+				manageRow("Delete flow", symbol: "trash", destructive: true) { confirmDelete = true }
+			}
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+		}
+	}
+
+	private func manageRow(
+		_ title: String, symbol: String, destructive: Bool = false, action: @escaping () -> Void
+	) -> some View {
+		Button(action: action) {
+			HStack(spacing: MaskinSpace.s7) {
+				Image(systemName: symbol).frame(width: MaskinSpace.s11)
+				Text(title).maskinText(.body)
+				Spacer(minLength: 0)
+			}
+			.foregroundStyle(destructive ? MaskinColor.danger : MaskinColor.ink)
+			.padding(.horizontal, MaskinSpace.s9)
+			.frame(minHeight: 44)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+	}
+
+	/// "Change this flow by talking...": hands what you type to a new chat about this flow.
+	private var composer: some View {
+		GlassComposer(
+			text: $draft, placeholder: "Change this flow by talking…",
+			onAttach: { startChat("") },
+			onSend: {
+				let text = draft
+				draft = ""
+				startChat(text)
+			},
+			listening: $dictating, mic: { DictationButton(text: $draft, listening: $dictating) }
+		)
+		.padding(.horizontal, MaskinSpace.s7)
+		.padding(.bottom, MaskinSpace.s3)
+	}
+
+	private func startChat(_ text: String) {
+		runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). \(text)")
+	}
 }
 
 /// The loop page's three tabs.
 enum LoopDetailTab: String, CaseIterable, Identifiable {
-	case outcome = "Outcome"
+	case outcome = "Outcomes"
 	case actions = "Actions"
 	case activity = "Activity"
 	var id: String { rawValue }
