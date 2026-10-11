@@ -17,8 +17,17 @@ final class LiveMeetingSession {
 	private(set) var startedAt: Date?
 	private(set) var endedAt: Date?
 	var captionsOn = false
+	/// What was said on the call, in order: what you said and what the agent replied.
+	var turns: [LiveMeetingFormat.Turn] { log.turns }
 
 	@ObservationIgnored private let now: () -> Date
+	@ObservationIgnored private var seen: Set<String> = []
+	/// A box, so the send closure built in `init` can write to it before `self` is whole.
+	@ObservationIgnored private let log = TurnLog()
+
+	private final class TurnLog {
+		var turns: [LiveMeetingFormat.Turn] = []
+	}
 
 	/// `makePorts` receives the "send" action and returns the microphone/speaker ports around it.
 	init(
@@ -30,7 +39,11 @@ final class LiveMeetingSession {
 		self.chat = chat
 		self.lead = lead
 		self.now = now
-		voice = LiveVoiceController(ports: makePorts { [chat] text in _ = chat.send(text) })
+		let log = log
+		voice = LiveVoiceController(ports: makePorts { [log, chat] text in
+			log.turns.append(.init(speaker: "You", text: text))
+			_ = chat.send(text)
+		})
 	}
 
 	var isLive: Bool { startedAt != nil && endedAt == nil }
@@ -44,11 +57,20 @@ final class LiveMeetingSession {
 	func begin() {
 		guard startedAt == nil else { return }
 		startedAt = now()
+		seen = Set(chat.messages.map(\.id))
 		voice.begin(existing: chat.messages)
 	}
 
 	/// The thread changed; hand the new messages to the voice loop.
-	func messagesChanged() { voice.messagesChanged(chat.messages) }
+	func messagesChanged() {
+		for message in chat.messages where !seen.contains(message.id) {
+			seen.insert(message.id)
+			if message.author == .agent, !message.isSystem, !message.isErrorReply {
+				log.turns.append(.init(speaker: message.actorName, text: message.content))
+			}
+		}
+		voice.messagesChanged(chat.messages)
+	}
 
 	/// What the agent last said, for captions: real message text, as received.
 	var lastAgentWords: String? {
@@ -81,7 +103,7 @@ final class LiveMeetingSession {
 		endedAt = finished
 		guard kind.postsNote else { return }
 		let note = LiveMeetingFormat.endNote(
-			lead: lead.name, guests: guests.map(\.name), seconds: elapsed(at: finished))
+			lead: lead.name, guests: guests.map(\.name), seconds: elapsed(at: finished), turns: turns)
 		_ = chat.send(note)
 	}
 }

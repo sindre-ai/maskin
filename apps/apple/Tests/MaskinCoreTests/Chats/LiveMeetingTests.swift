@@ -13,13 +13,33 @@ import Testing
 	}
 
 	@Test func endNoteNamesGuests() {
-		#expect(LiveMeetingFormat.endNote(lead: "Relay", guests: [], seconds: 42) == "Live meeting with Relay · 0:42")
+		#expect(LiveMeetingFormat.endNote(lead: "Relay", guests: [], seconds: 42).hasPrefix("Live meeting with Relay · 0:42"))
 		#expect(
 			LiveMeetingFormat.endNote(lead: "Relay", guests: ["Forge"], seconds: 42)
-				== "Live meeting with Relay, with Forge · 0:42")
+				.hasPrefix("Live meeting with Relay, with Forge · 0:42"))
 		#expect(
 			LiveMeetingFormat.endNote(lead: "Relay", guests: ["Forge", "Quill", "Sentinel"], seconds: 65)
-				== "Live meeting with Relay, with Forge, Quill and Sentinel · 1:05")
+				.hasPrefix("Live meeting with Relay, with Forge, Quill and Sentinel · 1:05"))
+	}
+
+	@Test func endNoteKeepsTheConversation() {
+		let note = LiveMeetingFormat.endNote(
+			lead: "Relay", guests: [], seconds: 42,
+			turns: [.init(speaker: "You", text: "Move the date"), .init(speaker: "Relay", text: "Done.\nMoved.")])
+		#expect(note == "Live meeting with Relay · 0:42\n\n> **You:** Move the date\n>\n> **Relay:** Done. Moved.")
+	}
+
+	@Test func endNoteSaysWhenNothingWasHeard() {
+		#expect(
+			LiveMeetingFormat.endNote(lead: "Relay", guests: [], seconds: 5)
+				== "Live meeting with Relay · 0:05\n\nNothing was heard on this call.")
+	}
+
+	@Test func endNoteClipsLongReplies() {
+		let long = String(repeating: "a", count: 400)
+		let note = LiveMeetingFormat.endNote(
+			lead: "R", guests: [], seconds: 1, turns: [.init(speaker: "R", text: long)])
+		#expect(note.hasSuffix(String(repeating: "a", count: 280) + "…"))
 	}
 
 	@Test func labelsAndNotes() {

@@ -30,12 +30,36 @@ public enum LiveMeetingFormat {
 			: String(format: "%d:%02d", minutes, secs)
 	}
 
-	/// The line posted into the chat when an ad hoc call ends: "Live meeting with Relay · 0:42", with
-	/// anyone who was invited named: "Live meeting with Relay, with Forge and Quill · 0:42".
-	public static func endNote(lead: String, guests: [String], seconds: TimeInterval) -> String {
+	/// One thing said during a call.
+	public struct Turn: Equatable, Sendable {
+		public let speaker: String
+		public let text: String
+		public init(speaker: String, text: String) {
+			self.speaker = speaker
+			self.text = text
+		}
+	}
+
+	/// The message posted into the chat when an ad hoc call ends: "Live meeting with Relay · 0:42",
+	/// with anyone invited named, then what was said, so the chat keeps a record and the agent has
+	/// the call to follow up on. A call where nothing was heard says so.
+	public static func endNote(
+		lead: String, guests: [String], seconds: TimeInterval, turns: [Turn] = []
+	) -> String {
 		var text = "Live meeting with \(lead)"
 		if !guests.isEmpty { text += ", with \(list(guests))" }
-		return "\(text) · \(duration(seconds))"
+		text += " · \(duration(seconds))"
+		guard !turns.isEmpty else { return text + "\n\nNothing was heard on this call." }
+		let lines = turns.map { "> **\($0.speaker):** \(clip($0.text))" }
+		return text + "\n\n" + lines.joined(separator: "\n>\n")
+	}
+
+	/// Long replies are cut so the note stays readable; the full text is in the thread above.
+	static func clip(_ text: String, limit: Int = 280) -> String {
+		let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+			.trimmingCharacters(in: .whitespaces)
+		guard flat.count > limit else { return flat }
+		return flat.prefix(limit).trimmingCharacters(in: .whitespaces) + "…"
 	}
 
 	/// "A", "A and B", "A, B and C".
