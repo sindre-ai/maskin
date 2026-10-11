@@ -1,6 +1,8 @@
 import Foundation
 
 public enum ObjectsGrouping: String, Sendable, CaseIterable, Identifiable {
+	/// Processing (agents at work), then Needs you, then the rest: the default one-type view.
+	case attention
 	case type
 	case status
 	case none
@@ -8,6 +10,7 @@ public enum ObjectsGrouping: String, Sendable, CaseIterable, Identifiable {
 	public var id: String { rawValue }
 	public var title: String {
 		switch self {
+		case .attention: "Attention"
 		case .type: "Type"
 		case .status: "Status"
 		case .none: "None"
@@ -22,6 +25,8 @@ public struct ObjectGroup: Identifiable, Sendable, Equatable {
 	public var objects: [WorkObject]
 	/// The group is an object type (`id` is the type key) rather than a status.
 	public var isType = false
+	/// The group is an attention bucket (Processing, Needs you, Other).
+	public var isAttention = false
 }
 
 /// How urgently an object wants the person, within its type group (lower sorts first):
@@ -52,6 +57,22 @@ public enum ObjectsGrouper {
 	) -> [ObjectGroup] {
 		let sorted = ObjectsSorter.sorted(objects, by: sort)
 		switch grouping {
+		case .attention:
+			let buckets: [(id: String, title: String)] = [
+				("processing", "Processing"), ("needs_you", "Needs you"), ("other", "Other"),
+			]
+			func bucket(_ object: WorkObject) -> String {
+				if ObjectsUrgency.needsYou(object) { return "needs_you" }
+				switch StatusCategory.of(object.status) {
+				case .needsYou: return "needs_you"
+				case .active: return "processing"
+				default: return object.hasActiveSession ? "processing" : "other"
+				}
+			}
+			return buckets.compactMap { b in
+				let items = sorted.filter { bucket($0) == b.id }
+				return items.isEmpty ? nil : ObjectGroup(id: b.id, title: b.title, objects: items, isAttention: true)
+			}
 		case .type:
 			let present = Set(sorted.map(\.type))
 			let known = schema.types.filter(present.contains)

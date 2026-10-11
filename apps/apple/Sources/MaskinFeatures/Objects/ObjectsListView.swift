@@ -138,33 +138,40 @@ struct ObjectsListView: View {
 
 	// MARK: Pieces
 
-	/// Type tabs: a scrolling row of text tabs, the selected one on a quiet fill.
+	/// Type tabs: text only, one at a time (no "All"); the selected one is ink with its count.
 	private var typePicker: some View {
-		let selected = store.typeFilter ?? ""
-		let types = [""] + store.presentTypes
+		let types = store.presentTypes
+		let selected = store.typeFilter ?? types.first ?? ""
 		return ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s2) {
+			HStack(spacing: MaskinSpace.s12) {
 				ForEach(types, id: \.self) { type in
+					let isSelected = type == selected
 					Button {
-						Task { await store.setType(type.isEmpty ? nil : type) }
+						Task { await store.setType(type) }
 					} label: {
-						Text(type.isEmpty ? "All" : store.directory.typeName(type))
-							.maskinText(.subhead)
-							.fontWeight(type == selected ? .semibold : .regular)
-							.foregroundStyle(type == selected ? MaskinColor.ink : MaskinColor.ink4)
-							.padding(.horizontal, MaskinSpace.s6)
-							.frame(minHeight: MaskinSpace.s14)
-							.background(
-								type == selected ? MaskinSurface.fill : Color.clear, in: Capsule())
-							.contentShape(Capsule())
+						HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s2) {
+							Text(store.directory.typeName(type))
+								.maskinText(.title)
+								.foregroundStyle(isSelected ? MaskinColor.ink : MaskinColor.ink5)
+							if isSelected && !store.visibleObjects.isEmpty {
+								Text("\(store.visibleObjects.count)")
+									.maskinText(.mono)
+									.foregroundStyle(MaskinColor.sigInk)
+							}
+						}
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
 					}
 					.buttonStyle(.maskinPressed(.shrink))
-					.accessibilityAddTraits(type == selected ? .isSelected : [])
+					.accessibilityAddTraits(isSelected ? .isSelected : [])
 				}
 			}
 			.padding(.horizontal, MaskinSpace.s9)
 		}
-		.padding(.vertical, MaskinSpace.s2)
+		.task(id: types) {
+			// There is no "All" tab: the list opens on the first type.
+			if store.typeFilter == nil, let first = types.first { await store.setType(first) }
+		}
 	}
 
 	@ViewBuilder private var content: some View {
@@ -263,7 +270,7 @@ struct ObjectsListView: View {
 	/// The card behind a row; the picked row on a split view's selection takes the quiet fill.
 	private func rowBackground(_ object: WorkObject) -> some View {
 		let selected = selection?.wrappedValue == object.id && !picking.isActive
-		return RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
+		return RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
 			.fill(selected ? MaskinSurface.fillStrong : MaskinSurface.card)
 			.padding(.vertical, MaskinSpace.s2)
 	}
@@ -273,7 +280,7 @@ struct ObjectsListView: View {
 			object: object, typeName: store.directory.typeName(object.type),
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
-			showsStatus: store.grouping != .status, showsDriver: store.display.shows(.driver),
+			showsStatus: store.grouping != .status && store.grouping != .attention, showsDriver: store.display.shows(.driver),
 			showsUpdated: store.display.shows(.updated))
 		Group {
 			if picking.isActive {
