@@ -5988,3 +5988,59 @@ describe('url field injection', () => {
 		})
 	})
 })
+
+// The caller's session id has to reach POST /api/sessions so a helper can be
+// linked to its sender. On stdio the container's SESSION_ID env is the caller's;
+// over HTTP the server runs inside apps/dev, so routes/mcp.ts hands the id in via
+// config.maskinSessionId and it must win over the host process env.
+describe('X-Maskin-Session-Id source', () => {
+	const callerSession = '2297f7f3-dd73-43cf-afbe-3aabd0711265'
+	const hostSession = '11111111-1111-4111-8111-111111111111'
+	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+	function build(extra: Record<string, unknown>) {
+		handlers = new Map()
+		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		createMcpServer({ ...config, ...extra })
+	}
+
+	async function createSessionHeaders(): Promise<Record<string, string>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-1', status: 'pending' }),
+		} as Response)
+		const handler = handlers.get('create_session')
+		if (!handler) throw new Error('create_session handler not registered')
+		await handler({ actor_id: '550e8400-e29b-41d4-a716-446655440000', action_prompt: 'help' })
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/api/sessions'))
+		return (call?.[1] as RequestInit).headers as Record<string, string>
+	}
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	it('sends config.maskinSessionId, ahead of the host process SESSION_ID', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
+	})
+
+	it('falls back to SESSION_ID on stdio, where no override is supplied', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({})
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBe(hostSession)
+	})
+
+	it('sends no header when neither is set', async () => {
+		vi.stubEnv('SESSION_ID', '')
+		build({})
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBeUndefined()
+	})
+})

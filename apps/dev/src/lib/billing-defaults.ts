@@ -1,14 +1,15 @@
 /**
  * Single source of truth for billing-related fallback defaults and the env
- * parsing helper that wraps them. Both `lib/stripe.ts` (boot-time strict read)
- * and `routes/billing.ts` (request-time defensive read) consume this module so
- * the cap literals never drift between code paths, `.env.example`, and the
- * frontend tests that pin the same numbers.
+ * parsing helper that wraps them. Both `lib/stripe.ts` (webhook path) and
+ * `routes/billing.ts` (request-time defensive read) consume this module so the
+ * cap literals never drift between code paths and the frontend tests that pin
+ * the same numbers.
  *
  * `scripts/verify-billing-cap-literals.mjs` runs in CI to enforce the contract
- * — bump the literals here and the script will fail until `.env.example` and
- * `apps/web/src/__tests__/components/settings/billing-section.test.tsx` are
- * updated too.
+ * — bump the literals here and the script will fail until
+ * `apps/web/src/__tests__/components/settings/billing-section.test.tsx` is
+ * updated too. `.env.example` only carries the trial override; pro and team
+ * caps come from the literals, not env.
  */
 
 import { logger } from './logger'
@@ -87,9 +88,8 @@ export function parsePositiveIntEnv(
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_usd_cents` hasn't
  * been populated yet (delayed Stripe webhook, partial state after a webhook
- * failure), in USD cents. Mirrored in `.env.example` and the frontend billing
- * tests — change here and the CI `verify-billing-cap-literals` step will fail
- * until the other sites are updated.
+ * failure), in USD cents. Mirrored in the frontend billing tests — change here
+ * and the CI `verify-billing-cap-literals` step will fail until they are updated.
  *
  * Each paid plan's included-usage cap equals its monthly price in dollars —
  * $49 for Pro (raised from $20 in Sep 2026, matching the Stripe price change)
@@ -107,8 +107,11 @@ export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
- * Resolves the included-usage cap (USD cents) for a plan tier, env first then
- * the documented literal above.
+ * Resolves the included-usage cap (USD cents) for a plan tier. Pro and team
+ * always return the literals above; only the trial cap can be overridden by env
+ * (`MASKIN_TRIAL_HARD_CAP_USD_CENTS`). Pro and team used to read
+ * `MASKIN_PRO_HARD_CAP_USD_CENTS` / `MASKIN_TEAM_HARD_CAP_USD_CENTS` too, and a
+ * stale prod env value kept paying Pro workspaces capped at $20 of their $49.
  *
  * This is the single resolver for both the *enforcement* path
  * (`lib/llm-routing.ts`'s `effectivePlanCap`, which gates spend) and the
@@ -129,14 +132,9 @@ export function resolvePlanCapCents(
 ): number {
 	switch (plan) {
 		case 'pro':
-			return (
-				parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS', env) ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
-			)
+			return PRO_HARD_CAP_DEFAULT_USD_CENTS
 		case 'team':
-			return (
-				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS', env) ??
-				TEAM_HARD_CAP_DEFAULT_USD_CENTS
-			)
+			return TEAM_HARD_CAP_DEFAULT_USD_CENTS
 		default:
 			return (
 				parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ??

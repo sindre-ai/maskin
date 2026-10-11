@@ -6,7 +6,13 @@ import { logger } from '../lib/logger'
 const TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
-const KEY_ROTATION_PATH = /^\/api\/actors\/[^/]+\/api-keys$/
+
+/** True when any object in the body carries an api_key field, at any depth. */
+function carriesApiKey(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(carriesApiKey)
+	if (value === null || typeof value !== 'object') return false
+	return Object.entries(value).some(([k, v]) => k === 'api_key' || carriesApiKey(v))
+}
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null
 
@@ -91,11 +97,6 @@ export function createIdempotencyMiddleware(db: Database) {
 
 		await next()
 
-		// A freshly rotated key must never be written to the ledger. Other routes
-		// that return a key (invite accept, login) stay recorded so a retry after a
-		// lost reply gets the same answer instead of re-running a one-shot action.
-		if (KEY_ROTATION_PATH.test(c.req.path)) return
-
 		const contentType = c.res.headers.get('content-type')
 		if (!contentType?.includes('application/json')) return
 		if (c.res.status >= 500) return
@@ -103,6 +104,11 @@ export function createIdempotencyMiddleware(db: Database) {
 		try {
 			const cloned = c.res.clone()
 			const body = (await cloned.json()) as unknown
+
+			// A credential must never sit in the ledger in plaintext for the TTL. Skip
+			// the write for any response that carries an api_key (signup, login, invite
+			// accept, key rotation); a retry re-runs the handler.
+			if (carriesApiKey(body)) return
 
 			await db
 				.insert(idempotencyRecords)

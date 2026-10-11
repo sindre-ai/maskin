@@ -436,6 +436,16 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// The session whose create_session / run_agent / @mention call started this
+		// one: the sender a finished helper reports back to. Only ever set after the
+		// claimed session was checked to belong to the authenticated caller. NULL =
+		// no known sender. NOT source_session_id, which means "restore that session's
+		// workspace snapshot". No FK on purpose: the pointer must survive a purge of
+		// the sender's row. Index in migration 0090.
+		spawnedBySessionId: uuid('spawned_by_session_id'),
+		// One-shot claim taken by services/helper-return.ts before it posts the
+		// outcome. NULL = not returned yet. Migration 0089.
+		helperReturnedAt: timestamp('helper_returned_at', { withTimezone: true }),
 		// Handed-off strip anchors: the assistant message that triggered this
 		// sub-agent spawn, and the sessions this one is blocked behind. Both
 		// nullable — pre-migration rows read NULL ("no strip"). Written from the
@@ -516,6 +526,10 @@ export const sessions = pgTable(
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
+		// Helper → sender lookups. Built CONCURRENTLY in migration 0090.
+		index('sessions_spawned_by_session_id_idx')
+			.on(t.spawnedBySessionId)
+			.where(sql`${t.spawnedBySessionId} IS NOT NULL`),
 		// Reconciler self-heal window scan over a session's settled time. Built
 		// CONCURRENTLY in migration 0086.
 		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),

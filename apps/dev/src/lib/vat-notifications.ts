@@ -10,15 +10,20 @@
  * every send is auditable in ops; when Task 3 / 4 wires a transport, only
  * the leaf `deliverEmail` call needs to change.
  *
- * The Slack helper posts to Sebk's user DM channel using the bot token in
- * `SLACK_BOT_TOKEN`. It is intentionally a thin wrapper over
+ * The Slack helper posts to Sebk's user DM channel using the bot token of the
+ * Maskin ops workspace's Slack integration (workspace id in
+ * `MASKIN_OPS_WORKSPACE_ID`). It is intentionally a thin wrapper over
  * `chat.postMessage` — no channels config, no template engine, no retry.
  * Delta 5 accepts the risk that a Stripe redelivery could DM Sebk twice.
  */
 
+import type { Database } from '@maskin/db'
 import type { AwaitingViesRow } from '@maskin/db/schema'
 import type Stripe from 'stripe'
+import { getIntegrationCredential } from './integrations/lookup'
+import { TokenManager } from './integrations/oauth/token-manager'
 import { slackApiCall } from './integrations/providers/slack/slack-api'
+import { getProvider } from './integrations/registry'
 import { logger } from './logger'
 
 /**
@@ -161,28 +166,40 @@ export async function sendRejectionEmailForSession(
 
 /**
  * DM Sebk about a Stripe chargeback so he can respond manually from the
- * Dashboard (Delta 5). Silent failure by design — a Slack outage must not
- * break the webhook, which is already idempotent by `webhookDeliveries` on
- * `event.id`.
+ * Dashboard (Delta 5). Never throws — a Slack outage must not break the
+ * webhook, which is already idempotent by `webhookDeliveries` on `event.id`.
+ *
+ * The bot token comes from the Maskin ops workspace's Slack integration, NOT
+ * the workspace the dispute resolves to (that is the paying customer's). A
+ * missing env var or integration logs at error so a dropped alert is visible
+ * in prod logs.
  */
-export async function notifySebkOnSlack(text: string): Promise<void> {
-	const token = process.env.SLACK_BOT_TOKEN?.trim()
-	if (!token) {
-		logger.warn('vat.notify_sebk skipped — SLACK_BOT_TOKEN unset', {
-			preview: text.slice(0, 120),
-		})
-		return
-	}
+export async function notifySebkOnSlack(db: Database, text: string): Promise<void> {
+	const preview = text.slice(0, 120)
 	try {
+		const opsWorkspaceId = process.env.MASKIN_OPS_WORKSPACE_ID?.trim()
+		if (!opsWorkspaceId) {
+			logger.error('vat.notify_sebk dropped — MASKIN_OPS_WORKSPACE_ID unset', { preview })
+			return
+		}
+		const integration = await getIntegrationCredential(db, opsWorkspaceId, 'slack', null)
+		if (!integration) {
+			logger.error('vat.notify_sebk dropped — no active slack integration in ops workspace', {
+				opsWorkspaceId,
+				preview,
+			})
+			return
+		}
+		const token = await new TokenManager().getValidToken(db, integration.id, getProvider('slack'))
 		await slackApiCall(token, 'chat.postMessage', {
 			channel: SEBK_SLACK_USER_ID,
 			text,
 			unfurl_links: false,
 		})
 	} catch (err) {
-		logger.warn('vat.notify_sebk failed', {
+		logger.error('vat.notify_sebk failed', {
 			error: err instanceof Error ? err.message : String(err),
-			preview: text.slice(0, 120),
+			preview,
 		})
 	}
 }

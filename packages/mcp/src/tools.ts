@@ -92,6 +92,19 @@ const actorLlmConfigSchema = z
 		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
 	)
 
+// Optional sentence on the close_condition field of create_loop / update_loop.
+// Runs woken on a loop are shown this text as their finish line, so it says
+// what a good one looks like. A suggestion only; nothing validates it.
+const CLOSE_CONDITION_GUIDANCE =
+	'Runs in this loop are shown this text, so say what done looks like. It can be a status reached, a summary written, a report posted, or a check that found nothing to do. Short is fine.'
+
+// Optional suggestion shown on every field an agent writes a trigger prompt
+// into (create_trigger, update_trigger, and the inline steps of create_loop /
+// update_loop). A suggestion only: nothing validates or rejects a prompt that
+// ignores it. One constant so the places can't drift apart.
+const TRIGGER_PROMPT_GUIDANCE =
+	'A good trigger prompt starts with what the run is for. You can say: the outcome (what is true when it is done), how anyone can see that it is true, what to leave alone, and when to stop and ask a person. Done can be a status that moves, but it can also be a summary written, a report posted, or a check that found nothing to do. Use whichever fits. Short is fine.'
+
 /**
  * Inline loop-step definition accepted by create_loop / update_loop. Each step
  * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
@@ -115,7 +128,7 @@ const loopStepSchema = z.object({
 		.string()
 		.min(1)
 		.describe(
-			'Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically.',
+			`Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically. ${TRIGGER_PROMPT_GUIDANCE}`,
 		),
 	when: z
 		.union([
@@ -637,7 +650,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional().describe('New name for the actor.'),
@@ -728,7 +741,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`.",
+			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -1124,7 +1137,7 @@ export const tools = {
 				.describe(
 					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }',
 				),
-			action_prompt: z.string(),
+			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid(),
 			enabled: z.boolean().default(true),
 		}),
@@ -1137,7 +1150,7 @@ export const tools = {
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			config: z.record(z.unknown()).optional(),
-			action_prompt: z.string().min(1).optional(),
+			action_prompt: z.string().min(1).optional().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid().optional(),
 			enabled: z.boolean().optional(),
 		}),
@@ -1206,7 +1219,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded".',
+					`Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded". ${CLOSE_CONDITION_GUIDANCE}`,
 				),
 			steps: z
 				.array(loopStepSchema)
@@ -1256,7 +1269,9 @@ export const tools = {
 			close_condition: z
 				.string()
 				.optional()
-				.describe('New plain-language close condition. Pass an empty string to clear.'),
+				.describe(
+					`New plain-language close condition. Pass an empty string to clear. ${CLOSE_CONDITION_GUIDANCE}`,
+				),
 			closed_statuses: closedStatusesSchema,
 			add_steps: z
 				.array(loopStepSchema)
@@ -1525,7 +1540,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block or hold a container.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),

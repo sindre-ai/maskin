@@ -80,6 +80,7 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
+	loadSenderLine: vi.fn().mockResolvedValue(''),
 	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
 	appendToLedger: vi.fn().mockResolvedValue(undefined),
 	readLedgerTail: vi.fn().mockResolvedValue([]),
@@ -103,6 +104,7 @@ import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapsh
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
+import { buildWorkspaceStartupBlock } from '../../services/workspace-briefing'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -539,6 +541,8 @@ describe('SessionManager', () => {
 				[], // launchContainer: integrations lookup
 			]
 
+			vi.mocked(buildWorkspaceStartupBlock).mockReturnValueOnce('STARTUP-BLOCK\n\n')
+
 			await manager.startSession(session.id)
 
 			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
@@ -548,6 +552,12 @@ describe('SessionManager', () => {
 			}
 			expect(createArgs.env.INTERACTIVE).toBe('1')
 			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
+			// A chat has no ACTION_PROMPT, so it gets the startup block in its system prompt.
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: true }),
+			)
+			expect(createArgs.env.SYSTEM_PROMPT).toMatch(/^STARTUP-BLOCK\n\n/)
+			expect(createArgs.env.SYSTEM_PROMPT).toContain('You are Workspace Coach.')
 			expect(createArgs.interactive).toBe(true)
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 			// actionPrompt is '' here — no seed turn should be sent once attached.
@@ -739,10 +749,71 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 				interactive?: boolean
 			}
-			expect(createArgs.env.ACTION_PROMPT).toBe('Do the thing')
+			// The goal block sits between the startup text and the prompt itself,
+			// and is saved on the session so the later check can see what was shown.
+			expect(createArgs.env.ACTION_PROMPT).toContain('## Your goal this run')
+			expect(createArgs.env.ACTION_PROMPT?.endsWith('Do the thing')).toBe(true)
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: false }),
+			)
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
 			expect(createArgs.interactive).toBe(false)
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
+			// First launch: one jsonb-merge write of the block onto the session row.
+			expect(
+				calls.updates.some(
+					(u) =>
+						typeof u === 'object' &&
+						u !== null &&
+						'config' in u &&
+						!('llm_route' in (u as { config: object }).config),
+				),
+			).toBe(true)
+		})
+
+		it('reuses the saved goal block on resume instead of rebuilding or overwriting it', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				config: { run_goal: '## Your goal this run\n\nSaved earlier.\n\n---\n\n' },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.ACTION_PROMPT).toContain('Saved earlier.')
+			// No second merge write; the route write carries the saved text through.
+			const configWrites = calls.updates.filter(
+				(u) => typeof u === 'object' && u !== null && 'config' in u,
+			) as { config: Record<string, unknown> }[]
+			expect(configWrites).toHaveLength(1)
+			expect(configWrites[0]?.config.run_goal).toContain('Saved earlier.')
 		})
 
 		it('refuses to launch when the agent has no apiKey', async () => {
@@ -1897,15 +1968,15 @@ describe('SessionManager', () => {
 
 			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
 
-			// Skip the session row's own `config` write (buildLaunchSpec persists
-			// the resolved llm_route there) — the update under test is the
-			// integration row's.
+			// Skip the session row's own `config` writes (buildLaunchSpec persists
+			// the resolved llm_route and the run goal there) — the update under
+			// test is the integration row's.
 			const updateCall = calls.updates.find(
 				(u): u is { config: { owner_login?: string } } =>
 					typeof u === 'object' &&
 					u !== null &&
 					'config' in u &&
-					!('llm_route' in ((u as { config: Record<string, unknown> }).config ?? {})),
+					'owner_login' in ((u as { config: Record<string, unknown> }).config ?? {}),
 			) as { config: { owner_login?: string } } | undefined
 			expect(updateCall?.config.owner_login).toBe('acme-org')
 

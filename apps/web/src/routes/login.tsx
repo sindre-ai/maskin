@@ -2,10 +2,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { safeInternalPath } from '@/lib/safe-redirect'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/login')({
+	// Where to go after logging in, when a page sent the person here (the Skjald connect page).
+	validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+		const redirect = safeInternalPath(search.redirect)
+		return redirect ? { redirect } : {}
+	},
 	head: () => ({
 		meta: [
 			{ title: 'Log in to Maskin — Open-source AI-native workspace' },
@@ -21,6 +27,7 @@ export const Route = createFileRoute('/login')({
 
 function LoginPage() {
 	const { login } = useAuth()
+	const { redirect } = Route.useSearch()
 	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')
 	const [error, setError] = useState('')
@@ -38,7 +45,7 @@ function LoginPage() {
 		}
 		setLoading(true)
 		try {
-			await login({ email: email.trim(), password })
+			await login({ email: email.trim(), password }, redirect)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Login failed')
 		} finally {

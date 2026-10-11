@@ -19,6 +19,7 @@ import {
 	type RefreshBuffer,
 	decryptOAuthData,
 	refreshSlotSingleFlight,
+	reportClaudeRefreshFailure,
 } from './claude-oauth'
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
@@ -425,6 +426,7 @@ async function loadAndRefreshSlot(
 		const result = await refreshSlotSingleFlight(db, workspaceId, slot, encrypted, bufferMs)
 		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
+		reportClaudeRefreshFailure({ workspaceId, slot, caller: 'session_start', error: err })
 		logger.warn('Failed to refresh Claude OAuth slot', {
 			workspaceId,
 			slot,
@@ -475,6 +477,12 @@ async function attemptChainHeadRecovery(params: {
 				recoveredTokens = tokens
 				return { healthy: true }
 			} catch (err) {
+				reportClaudeRefreshFailure({
+					workspaceId,
+					slot: headSlot,
+					caller: 'failover_recovery',
+					error: err,
+				})
 				const decision = classifyClaudeFailureWithReset(classifierInputFromError(err))
 				return { healthy: false, reason: decision.reason }
 			}
