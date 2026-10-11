@@ -78,6 +78,7 @@ import {
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { SEARCH_STOPWORDS, tokenIlikePattern } from '../lib/search/tokens'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
@@ -304,74 +305,6 @@ function buildCursorConditions(
 	return conditions
 }
 
-// Shared stopword set for `q` tokenization — kept verbatim in sync with the
-// offline eval harness so a post-merge run against the seeded fixtures returns
-// the same rows in the same order as the pre-merge T1 numbers.
-const SEARCH_STOPWORDS: ReadonlySet<string> = new Set([
-	'a',
-	'an',
-	'and',
-	'are',
-	'as',
-	'at',
-	'be',
-	'been',
-	'but',
-	'by',
-	'can',
-	'could',
-	'did',
-	'do',
-	'does',
-	'for',
-	'from',
-	'has',
-	'have',
-	'how',
-	'i',
-	'if',
-	'in',
-	'into',
-	'is',
-	'it',
-	'its',
-	'just',
-	'not',
-	'of',
-	'on',
-	'or',
-	'over',
-	'past',
-	'per',
-	'should',
-	'so',
-	'than',
-	'that',
-	'the',
-	'their',
-	'them',
-	'then',
-	'there',
-	'they',
-	'this',
-	'to',
-	'up',
-	'was',
-	'we',
-	'were',
-	'what',
-	'when',
-	'where',
-	'which',
-	'while',
-	'who',
-	'why',
-	'will',
-	'with',
-	'you',
-	'your',
-])
-
 /**
  * Tokenizer for the `q` search parameter. Ports the offline-eval harness rule
  * verbatim so a post-merge run reproduces T1's numbers against the same seeded
@@ -395,10 +328,6 @@ export function tokenizeSearchQuery(q: string): string[] {
 		tokens.push(token)
 	}
 	return tokens
-}
-
-function tokenIlikePattern(token: string): string {
-	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
 }
 
 export function buildObjectListConditions(
