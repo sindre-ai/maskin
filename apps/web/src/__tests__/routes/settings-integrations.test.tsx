@@ -169,6 +169,73 @@ describe('IntegrationsPage', () => {
 		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 	})
 
+	describe('Skjald connect dialog', () => {
+		const skjaldProvider = {
+			name: 'skjald',
+			displayName: 'Skjald',
+			authType: 'manual',
+			events: [{ type: 'meeting.created' }],
+		}
+
+		function renderSkjald() {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [skjaldProvider], isLoading: false })
+			return render(<IntegrationsPage />)
+		}
+
+		it('tells the person where to tap in the Skjald app, without creating a webhook', async () => {
+			const user = userEvent.setup()
+			renderSkjald()
+
+			await user.click(screen.getByRole('button', { name: 'Connect' }))
+
+			const dialog = screen.getByRole('dialog')
+			expect(
+				within(dialog).getByText('Open Skjald and go to Settings → Send to.'),
+			).toBeInTheDocument()
+			expect(within(dialog).getByText('Tap Connect with Maskin.')).toBeInTheDocument()
+			expect(within(dialog).queryByText('Webhook URL')).not.toBeInTheDocument()
+			expect(mockConnect).not.toHaveBeenCalled()
+		})
+
+		it('closes on Done', async () => {
+			const user = userEvent.setup()
+			renderSkjald()
+
+			await user.click(screen.getByRole('button', { name: 'Connect' }))
+			await user.click(screen.getByRole('button', { name: 'Done' }))
+
+			await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+			expect(mockConnect).not.toHaveBeenCalled()
+		})
+
+		it('keeps the URL-and-secret flow behind Set up manually', async () => {
+			const user = userEvent.setup()
+			renderSkjald()
+
+			await user.click(screen.getByRole('button', { name: 'Connect' }))
+			await user.click(screen.getByRole('button', { name: 'Set up manually' }))
+
+			expect(mockConnect).toHaveBeenCalledWith(
+				{ provider: 'skjald' },
+				expect.objectContaining({ onSuccess: expect.any(Function) }),
+			)
+			// Nothing about the URL until the connect call comes back.
+			expect(screen.queryByText('Webhook URL')).not.toBeInTheDocument()
+
+			const [, options] = mockConnect.mock.calls[0]
+			act(() => {
+				options.onSuccess({
+					webhook_url: 'https://maskin.test/api/webhooks/skjald/tok',
+					integration_id: 'int-1',
+				})
+			})
+
+			expect(await screen.findByText('Webhook URL')).toBeInTheDocument()
+			expect(screen.getByText('https://maskin.test/api/webhooks/skjald/tok')).toBeInTheDocument()
+		})
+	})
+
 	it('keeps the api key dialog open until connect succeeds', async () => {
 		const user = userEvent.setup()
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
