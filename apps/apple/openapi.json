@@ -17904,6 +17904,373 @@
 				}
 			}
 		},
+		"/api/integrations/skjald/authorize": {
+			"post": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Approve the Skjald app for this workspace and mint a one-time connect code",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"state": {
+										"type": "string",
+										"minLength": 8,
+										"maxLength": 256
+									},
+									"redirect_uri": {
+										"type": "string",
+										"maxLength": 200
+									},
+									"code_challenge": {
+										"type": "string",
+										"pattern": "^[A-Za-z0-9_-]{43}$"
+									},
+									"code_challenge_method": {
+										"type": "string",
+										"enum": [
+											"S256"
+										]
+									}
+								},
+								"required": [
+									"state",
+									"redirect_uri",
+									"code_challenge",
+									"code_challenge_method"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Where to send the browser: the Skjald app with a one-time code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"redirect_url": {
+											"type": "string"
+										},
+										"workspace_name": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"redirect_url",
+										"workspace_name"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/skjald/exchange": {
+			"post": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Trade the one-time connect code for the webhook URL and signing secret",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"code": {
+										"type": "string",
+										"minLength": 20,
+										"maxLength": 200
+									},
+									"code_verifier": {
+										"type": "string",
+										"pattern": "^[A-Za-z0-9._~-]{43,128}$"
+									}
+								},
+								"required": [
+									"code",
+									"code_verifier"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The webhook URL and signing secret, once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"webhook_url": {
+											"type": "string"
+										},
+										"secret": {
+											"type": "string"
+										},
+										"workspace_name": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"webhook_url",
+										"secret",
+										"workspace_name"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Unknown, expired or used code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/linkedin-unipile/connect": {
 			"post": {
 				"tags": [
