@@ -81,28 +81,22 @@ struct ObjectDetailContent<Decision: View>: View {
 
 	// MARK: Header
 
-	/// Title first, then the object's properties as large, tappable pills (a phone-sized hit area,
-	/// legible text) rather than the small badges a desktop row would use.
+	/// Type chip, title and a byline (driver, status, age), as in the design. The editable
+	/// properties live in the Properties card below.
 	private func header(_ object: WorkObject) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+			MonoLabel(store.directory.typeName(object.type), color: MaskinColor.ink3)
+				.padding(.horizontal, MaskinSpace.s4)
+				.padding(.vertical, MaskinSpace.s2)
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous))
+				.accessibilityLabel("Type \(store.directory.typeName(object.type))")
 			Text(object.displayTitle)
-				.maskinText(.title)
+				.maskinText(.sheetTitle)
 				.foregroundStyle(MaskinColor.ink)
 				.frame(maxWidth: .infinity, alignment: .leading)
-								.fixedSize(horizontal: false, vertical: true)
-			ChipFlow(spacing: MaskinSpace.s4) {
-				statusMenu(object)
-				ownerPill
-				typePill(object)
-			}
-			if object.updatedAt != nil {
-				HStack(spacing: MaskinSpace.s2) {
-					Text("Updated")
-					RelativeTime(object.updatedAt)
-				}
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink4)
-			}
+				.fixedSize(horizontal: false, vertical: true)
+				.accessibilityAddTraits(.isHeader)
+			byline(object)
 			if let activity = object.activeActivity, !activity.isEmpty {
 				Label(activity, systemImage: "sparkles")
 					.maskinText(.subhead)
@@ -114,7 +108,35 @@ struct ObjectDetailContent<Decision: View>: View {
 		}
 	}
 
-	private func statusMenu(_ object: WorkObject) -> some View {
+	private func byline(_ object: WorkObject) -> some View {
+		HStack(spacing: MaskinSpace.s4) {
+			if let owner = store.ownerName {
+				let isAgent = store.directory.actor(for: object.driverId)?.isAgent == true
+				ActorAvatar(name: owner, kind: isAgent ? .agent : .human, size: MaskinSpace.s12)
+				Text(owner).fontWeight(.semibold).foregroundStyle(MaskinColor.ink3)
+				Text("·").foregroundStyle(MaskinColor.ink5)
+			}
+			Text(MaskinStatus.label(for: object.status)).foregroundStyle(MaskinColor.ink3)
+			if object.updatedAt != nil {
+				Text("·").foregroundStyle(MaskinColor.ink5)
+				RelativeTime(object.updatedAt, style: .compact).foregroundStyle(MaskinColor.ink4)
+			}
+		}
+		.maskinText(.subhead)
+		.lineLimit(1)
+		.accessibilityElement(children: .combine)
+	}
+
+	/// "Oct 6 by Signal Analyst": when it was made and by whom, when known.
+	private func createdText(_ object: WorkObject) -> String? {
+		guard let date = object.createdAt else { return nil }
+		let day = date.formatted(.dateTime.month(.abbreviated).day())
+		if let by = store.directory.name(for: object.createdBy) { return "\(day) by \(by)" }
+		return day
+	}
+
+	/// The status as a menu row of the Properties card.
+	private func statusRow(_ object: WorkObject) -> some View {
 		let colors = MaskinStatus.colors(for: object.status)
 		return Menu {
 			ForEach(store.statusOptions, id: \.self) { status in
@@ -130,45 +152,33 @@ struct ObjectDetailContent<Decision: View>: View {
 				}
 			}
 		} label: {
-			PropertyPill(fill: colors.bg) {
-				Circle().fill(colors.fg).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-				Text(MaskinStatus.label(for: object.status)).foregroundStyle(colors.fg)
-				Image(systemName: "chevron.up.chevron.down")
-					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
-					.foregroundStyle(colors.fg.opacity(0.7))
-			}
-			.background {
-				StatusBurst(
-					trigger: object.status, color: colors.fg, sparks: Self.handsOffStatuses.contains(object.status))
-			}
+			propertyRow("Status", value: MaskinStatus.label(for: object.status), trailing: "chevron.up.chevron.down")
+				.background {
+					StatusBurst(
+						trigger: object.status, color: colors.fg,
+						sparks: Self.handsOffStatuses.contains(object.status))
+				}
 		}
+		.buttonStyle(.maskinPressed)
 		.accessibilityLabel("Status \(MaskinStatus.label(for: object.status)). Change status")
 	}
 
-	@ViewBuilder private var ownerPill: some View {
-		if let owner = store.ownerName {
-			let isAgent = store.directory.actor(for: store.object?.driverId)?.isAgent == true
-			PropertyPill {
-				ActorAvatar(name: owner, kind: isAgent ? .agent : .human, size: MaskinSpace.s12)
-				Text(owner).foregroundStyle(MaskinColor.ink)
+	private func propertyRow(_ label: String, value: String, trailing: String? = nil) -> some View {
+		HStack(spacing: MaskinSpace.s5) {
+			Text(label).maskinText(.body).foregroundStyle(MaskinColor.ink)
+			Spacer(minLength: MaskinSpace.s7)
+			Text(value)
+				.maskinText(.body).foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1).truncationMode(.tail)
+			if let trailing {
+				Image(systemName: trailing)
+					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
+					.foregroundStyle(MaskinColor.ink5)
 			}
-			.accessibilityElement(children: .combine)
-			.accessibilityLabel("Driver \(owner)")
 		}
-	}
-
-	private func typePill(_ object: WorkObject) -> some View {
-		let colors = MaskinObjectType.colors(for: object.type)
-		return PropertyPill(fill: colors.bg) {
-			if let symbol = MaskinObjectType.symbol(for: object.type) {
-				Image(systemName: symbol)
-					.font(.system(size: MaskinFontSize.t13, weight: .semibold))
-					.foregroundStyle(colors.fg)
-			}
-			Text(store.directory.typeName(object.type)).foregroundStyle(colors.fg)
-		}
-		.accessibilityElement(children: .combine)
-		.accessibilityLabel("Type \(store.directory.typeName(object.type))")
+		.padding(.horizontal, MaskinSpace.s9)
+		.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s4)
+		.contentShape(Rectangle())
 	}
 
 	// MARK: Sections
@@ -190,6 +200,9 @@ struct ObjectDetailContent<Decision: View>: View {
 								Color.black
 							}
 						}
+					if let created = createdText(object) {
+						Text("Created \(created)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+					}
 					if long {
 						Button(descriptionExpanded ? "Show less" : "Show more") {
 							withAnimation(MaskinMotion.standard) { descriptionExpanded.toggle() }
@@ -211,34 +224,39 @@ struct ObjectDetailContent<Decision: View>: View {
 			.map { ($0.key, store.directory.name(for: $0.value) ?? $0.value) }
 	}
 
-	@ViewBuilder private func properties(_ object: WorkObject) -> some View {
+	private func properties(_ object: WorkObject) -> some View {
 		let all = visibleProperties(object)
-		let rows = showAllProperties ? all : Array(all.prefix(Self.propertyPreview))
-		if !all.isEmpty {
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				SectionHeader("Properties")
-				card {
-					VStack(spacing: MaskinSpace.s6) {
-						ForEach(rows, id: \.key) { row in
-							HStack(alignment: .firstTextBaseline) {
-								Text(row.key.replacingOccurrences(of: "_", with: " ").capitalized)
-									.foregroundStyle(MaskinColor.ink4)
-								Spacer(minLength: MaskinSpace.s7)
-								Text(row.value).foregroundStyle(MaskinColor.ink).multilineTextAlignment(.trailing)
-							}
-							.maskinText(.subhead)
-						}
-						if all.count > Self.propertyPreview {
-							Button(showAllProperties ? "Show fewer" : "Show all \(all.count)") {
-								withAnimation(MaskinMotion.standard) { showAllProperties.toggle() }
-							}
-							.maskinText(.subhead)
-							.foregroundStyle(MaskinColor.ink)
-							.frame(maxWidth: .infinity, alignment: .leading)
-						}
+		let extra = showAllProperties ? all : Array(all.prefix(Self.propertyPreview))
+		var rows: [AnyView] = [AnyView(statusRow(object))]
+		if let owner = store.ownerName { rows.append(AnyView(propertyRow("Driver", value: owner))) }
+		for row in extra {
+			rows.append(
+				AnyView(
+					propertyRow(row.key.replacingOccurrences(of: "_", with: " ").capitalized, value: row.value)))
+		}
+		if let created = createdText(object) { rows.append(AnyView(propertyRow("Created", value: created))) }
+		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			MonoLabel("Properties", size: .section)
+				.padding(.horizontal, MaskinSpace.s4)
+				.accessibilityAddTraits(.isHeader)
+			VStack(spacing: 0) {
+				ForEach(rows.indices, id: \.self) { index in
+					if index > 0 { Divider().overlay(MaskinSurface.separator) }
+					rows[index]
+				}
+				if all.count > Self.propertyPreview {
+					Divider().overlay(MaskinSurface.separator)
+					Button(showAllProperties ? "Show fewer" : "Show all \(all.count)") {
+						withAnimation(MaskinMotion.standard) { showAllProperties.toggle() }
 					}
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink)
+					.padding(.horizontal, MaskinSpace.s9)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
 				}
 			}
+			.background(
+				MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 		}
 	}
 
