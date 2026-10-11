@@ -129,6 +129,17 @@ struct ChatComposer: View {
 			}
 			photoItems = []
 		}
+		// Drag a file onto the composer to attach it (iPad pointer and Stage Manager, Mac).
+		.dropDestination(for: URL.self) { urls, _ in
+			guard allowsAttach else { return false }
+			let files = urls.filter(\.isFileURL)
+			for url in files {
+				model.attach(
+					name: url.lastPathComponent, mimeType: AttachmentLoading.mimeType(for: url),
+					prepare: AttachmentLoading.file(at: url))
+			}
+			return !files.isEmpty
+		}
 	}
 
 	// MARK: Suggestions
@@ -267,7 +278,7 @@ struct ChatComposer: View {
 						toggleDictation()
 					} label: {
 						Image(systemName: "mic")
-							.font(.system(size: MaskinFontSize.t16, weight: .medium))
+							.maskinSymbol(MaskinFontSize.t16, weight: .medium)
 							.foregroundStyle(MaskinColor.ink3)
 							.frame(width: buttonSize, height: buttonSize)
 							.background(MaskinSurface.fill, in: Circle())
@@ -287,7 +298,7 @@ struct ChatComposer: View {
 			onSend()
 		} label: {
 			Image(systemName: "arrow.up")
-				.font(.system(size: MaskinFontSize.t15, weight: .bold))
+				.maskinSymbol(MaskinFontSize.t15, weight: .bold)
 				.foregroundStyle(model.canSend ? MaskinSurface.onInverse : MaskinColor.ink5)
 				.frame(width: buttonSize, height: buttonSize)
 				.background(model.canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
@@ -487,7 +498,7 @@ struct ComposerToolLabel: View {
 
 	var body: some View {
 		Image(systemName: symbol)
-			.font(.system(size: MaskinFontSize.t16, weight: .medium))
+			.maskinSymbol(MaskinFontSize.t16, weight: .medium)
 			.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink3)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s3, height: MaskinSpace.s14 + MaskinSpace.s3)
 			.background(active ? MaskinSurface.fillStrong : (outlined ? MaskinSurface.fill : Color.clear), in: Circle())
@@ -529,7 +540,7 @@ struct ComposerFormatRow: View {
 			apply(item.0)
 		} label: {
 			Image(systemName: item.1)
-				.font(.system(size: MaskinFontSize.t15, weight: .medium))
+				.maskinSymbol(MaskinFontSize.t15, weight: .medium)
 				.foregroundStyle(MaskinColor.ink3)
 				.frame(width: MaskinSpace.s13 + MaskinSpace.s3, height: MaskinSpace.touchMin - MaskinSpace.s2)
 				.contentShape(Rectangle())

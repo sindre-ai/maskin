@@ -542,6 +542,7 @@ struct TeamConversationRow: View {
 		}
 		.padding(.leading, ConversationRow.avatarSize + MaskinSpace.s7)
 		.contentShape(Rectangle())
+		.maskinHover()
 		.accessibilityElement(children: .combine)
 	}
 }

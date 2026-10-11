@@ -22,24 +22,19 @@ public struct ForYouScreen: View {
 	/// Owned by `AppRuntime`; reading it is free and has no side effects.
 	private var runtime: ForYouRuntime { appRuntime.forYou }
 
-	/// Regular width (iPad, Mac, any wide window) is a split view: the feed beside the object a
-	/// card is about. Compact width keeps one column and opens objects in a sheet.
-	private var isSplit: Bool { sizeClass == .regular }
+	/// Regular width (iPad, Mac, any wide window) is one wide feed: briefing row, two columns of
+	/// decision cards. Never a third pane: an object pushes over the feed, Ask opens a form sheet.
+	/// Compact width keeps one column and opens objects in a sheet.
+	private var isWide: Bool { sizeClass == .regular }
+
+	@State private var path: [String] = []
 
 	public var body: some View {
-		if isSplit {
-			NavigationSplitView {
-				feed(openObject: {
-					runtime.chief?.dismiss()
-					appRuntime.forYouSelection = $0
-				})
-					.navigationSplitViewColumnWidth(min: 340, ideal: 430, max: 520)
-			} detail: {
-				detail
-			}
-			.navigationSplitViewStyle(.balanced)
-		} else {
-			NavigationStack { feed(openObject: openObject) }
+		NavigationStack(path: $path) {
+			feed(openObject: isWide ? { path.append($0) } : openObject)
+				.navigationDestination(for: String.self) { id in
+					ForYouObjectDetail(environment: environment, objectId: id) { path.append($0) }
+				}
 		}
 	}
 
@@ -47,8 +42,7 @@ public struct ForYouScreen: View {
 		ForYouFeedView(
 			store: runtime.store, outbox: runtime.outbox,
 			openObject: openObject, chief: runtime.chief, environment: environment,
-			stories: appRuntime.storiesStore(),
-			selectedId: isSplit ? appRuntime.forYouSelection : nil, threadInDetail: isSplit
+			stories: appRuntime.storiesStore(), wide: isWide
 		)
 		.shellToolbar(
 			environment: environment, title: "For you",
@@ -59,22 +53,6 @@ public struct ForYouScreen: View {
 			async let feed: Void = runtime.store.load()
 			async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
 			_ = await (feed, stories)
-		}
-	}
-
-	/// The object behind the selected card, with its own stack so related objects push inside it.
-	@ViewBuilder private var detail: some View {
-		if let chief = runtime.chief, let presented = chief.presented {
-			ChiefOfStaffSheet(
-				environment: environment, desk: chief, presented: presented, onClose: { chief.dismiss() }
-			)
-			.id(presented.conversationID)
-		} else if let id = appRuntime.forYouSelection {
-			ForYouObjectDetail(environment: environment, objectId: id) { appRuntime.forYouSelection = $0 }
-		} else {
-			ContentUnavailableView {
-				Text("Select something").maskinText(.body).foregroundStyle(MaskinColor.ink4)
-			}
 		}
 	}
 
@@ -133,12 +111,9 @@ struct ForYouFeedView: View {
 	var environment: AppEnvironment?
 	/// The briefing cards above the feed; nil in snapshots.
 	var stories: StoriesStore?
-	/// The card open in the detail column at regular width. It gets a 2 pt ink ring: selection,
-	/// not signal, so no Patina.
-	var selectedId: String?
-	/// Regular width: "Ask" opens the Chief of Staff thread in the detail column instead of expanding
-	/// the card, and the sheet is not used.
-	var threadInDetail = false
+	/// Regular width: the wide feed (two columns of decision cards, wide briefing row, no swipe
+	/// rows). Compact width is the one-column list.
+	var wide = false
 	@State private var openStory: StoryCard?
 	/// Which cards the reader opened with Ask; the rest stay compact.
 	@State private var expansion = CardExpansion()
@@ -178,7 +153,10 @@ struct ForYouFeedView: View {
 		}
 		.sheet(item: presentedBinding) { presented in
 			if let chief, let environment {
-				ChiefOfStaffSheet(environment: environment, desk: chief, presented: presented)
+				ChiefOfStaffSheet(
+					environment: environment, desk: chief, presented: presented,
+					card: wide ? sheetCard(for: presented.card.id) : nil
+				)
 					.presentationDetents([.medium, .large])
 					.presentationDragIndicator(.visible)
 			}
@@ -201,7 +179,7 @@ struct ForYouFeedView: View {
 	}
 
 	private var presentedBinding: Binding<ChiefOfStaffDesk.Presented?> {
-		Binding(get: { threadInDetail ? nil : chief?.presented }, set: { if $0 == nil { chief?.dismiss() } })
+		Binding(get: { chief?.presented }, set: { if $0 == nil { chief?.dismiss() } })
 	}
 
 	// MARK: Header
@@ -209,10 +187,6 @@ struct ForYouFeedView: View {
 	@ViewBuilder
 	private func headerRows(entries: [FeedEntry]) -> some View {
 		Group {
-			if !outbox.isOnline {
-				OfflineBanner(
-					message: offlineMessage)
-			}
 			ForEach(outbox.failures.filter { $0.at < openedAt }) { failure in
 				FailureRow(summary: failure.summary, message: failure.message) {
 					outbox.dismissFailure(failure.id)
@@ -220,12 +194,6 @@ struct ForYouFeedView: View {
 			}
 		}
 		.modifier(ReadableRow(width: readableWidth))
-	}
-
-	private var offlineMessage: String {
-		let queued = outbox.pendingCount
-		guard queued > 0 else { return "You're offline. Changes will send when you reconnect." }
-		return "You're offline. \(queued) \(queued == 1 ? "change" : "changes") will send when you reconnect."
 	}
 
 	// MARK: Rows
@@ -327,27 +295,30 @@ struct ForYouFeedView: View {
 	private func card(_ entry: FeedEntry) -> some View {
 		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
 		let id = entry.card.id
-		if threadInDetail {
-			// Split view: the Chief of Staff thread opens in the detail column, so the card stays compact.
+		if wide {
+			// The Chief of Staff thread opens in a form sheet; the card stays compact behind it.
 			actions.expand = { Task { await chief?.openThread(card: entry.card) } }
 		} else {
 			actions.expand = { withAnimation(MaskinMotion.standard) { expansion.expand(id) } }
 			actions.collapse = { withAnimation(MaskinMotion.standard) { expansion.collapse(id) } }
 		}
-		let selected = entry.id == selectedId || (threadInDetail && chief?.presented?.card.id == id)
 		return DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card),
-			expanded: !threadInDetail && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
-			actions: actions, chief: chief, threadInDetail: threadInDetail)
-			.overlay {
-				if selected {
-					// Selection, not signal: an ink ring, no Patina.
-					RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous)
-						.strokeBorder(MaskinColor.ink, lineWidth: 2)
-						.allowsHitTesting(false)
-				}
-			}
+			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
+			actions: actions, chief: chief, threadInDetail: wide)
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
+	}
+
+	/// The compact card shown inside the iPad Ask sheet, live from the same store entry.
+	private func sheetCard(for id: String) -> AnyView? {
+		guard let entry = store.entries.first(where: { $0.id == id }) else { return nil }
+		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+		actions.expand = nil
+		actions.collapse = nil
+		return AnyView(
+			DecisionCardView(
+				entry: entry, sender: store.senderName(of: entry.card), expanded: false,
+				now: fixedNow ?? Date(), actions: actions, chief: nil, threadInDetail: true))
 	}
 
 	private func dismiss(_ entry: FeedEntry) {
@@ -400,7 +371,7 @@ struct CaughtUp: View {
 	var body: some View {
 		VStack(spacing: MaskinSpace.s7) {
 			Image(systemName: "checkmark")
-				.font(.system(size: MaskinSpace.s12, weight: .semibold))
+				.maskinSymbol(MaskinSpace.s12, weight: .semibold)
 				.foregroundStyle(ForYouPalette.receiptCheck)
 				.frame(width: MaskinSpace.touchMin * 1.2, height: MaskinSpace.touchMin * 1.2)
 				.background(ForYouPalette.receiptBackground, in: Circle())
@@ -464,27 +435,36 @@ extension View {
 	}
 }
 
-/// The detail column of For you at regular width.
-private struct ForYouObjectDetail: View {
+/// An object pushed over the wide feed (never a third column). Related objects push on the same stack.
+struct ForYouObjectDetail: View {
 	let environment: AppEnvironment
 	let objectId: String
 	let open: (String) -> Void
-	@State private var path: [String] = []
 
 	var body: some View {
-		NavigationStack(path: $path) {
-			screen(objectId)
-				.navigationDestination(for: String.self) { screen($0) }
-		}
-		// Choosing another card starts a fresh stack rather than pushing onto the last one.
+		ObjectDetailScreen(
+			environment: environment, objectId: objectId, onOpenObject: open,
+			decisionSection: { ObjectDecisionSection(environment: environment, objectId: objectId) }
+		)
 		.id(objectId)
 	}
+}
 
-	private func screen(_ id: String) -> some View {
-		ObjectDetailScreen(
-			environment: environment, objectId: id, onOpenObject: { path.append($0) },
-			decisionSection: { ObjectDecisionSection(environment: environment, objectId: id) }
-		)
-		.id(id)
+extension View {
+	/// The Ask sheet: a centred form sheet (620 x 690, ambient wash) in regular width, detents on
+	/// compact.
+	@ViewBuilder
+	func askSheetSizing(wide: Bool) -> some View {
+		if wide {
+			if #available(iOS 18, macOS 15, *) {
+				self.frame(minWidth: 620, maxWidth: 620, minHeight: 690, maxHeight: 690)
+					.presentationSizing(.fitted)
+					.presentationCornerRadius(32)
+			} else {
+				self.presentationDetents([.large])
+			}
+		} else {
+			self.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+		}
 	}
 }

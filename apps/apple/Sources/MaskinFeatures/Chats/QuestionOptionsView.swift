@@ -142,7 +142,7 @@ private struct OptionRowLabel: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			HStack(spacing: MaskinSpace.s4) {
 				if chosen {
-					Image(systemName: "checkmark").font(.system(size: MaskinFontSize.t12, weight: .bold))
+					Image(systemName: "checkmark").maskinSymbol(MaskinFontSize.t12, weight: .bold)
 				}
 				Text(option.label).maskinText(.subhead).fontWeight(.semibold)
 					.multilineTextAlignment(.leading)

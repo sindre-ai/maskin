@@ -10,6 +10,9 @@ import Foundation
 		private let session: WCSession?
 		private let lock = NSLock()
 		private var handler: (@Sendable (WatchHandoff) -> Void)?
+		private var snapshotHandler: (@Sendable (WatchSnapshot) -> Void)?
+		private var lastHandoff: WatchHandoff?
+		private var lastSnapshot: WatchSnapshot?
 
 		public override init() {
 			session = WCSession.isSupported() ? WCSession.default : nil
@@ -26,20 +29,56 @@ import Foundation
 			#endif
 		}
 
+		/// Watch side: the phone's latest feed/flows/briefing snapshot, so the wrist has data offline.
+		public func onSnapshot(_ handler: @escaping @Sendable (WatchSnapshot) -> Void) {
+			lock.withLock { self.snapshotHandler = handler }
+			#if os(watchOS)
+				if let session, session.activationState == .activated {
+					deliver(session.receivedApplicationContext)
+				}
+			#endif
+		}
+
 		#if os(iOS)
 			/// iPhone side. A no-op until a watch is paired with the app installed.
 			public func publish(_ session: StoredSession?) {
-				guard let wc = self.session, wc.activationState == .activated, wc.isPaired,
+				let merged = lock.withLock {
+					lastHandoff = WatchHandoff(session: session)
+					return mergedContext()
+				}
+				send(merged)
+			}
+
+			/// iPhone side: the snapshot the watch shows offline. The application context holds ONE
+			/// dictionary, so it travels together with the sign-in handoff rather than replacing it.
+			public func publish(snapshot: WatchSnapshot) {
+				let merged = lock.withLock {
+					lastSnapshot = snapshot
+					return mergedContext()
+				}
+				send(merged)
+			}
+
+			private func mergedContext() -> [String: Any] {
+				var context = lastHandoff?.context() ?? [:]
+				// A sign-out has no payload of its own, and a snapshot alone must not read as one.
+				if let lastHandoff, lastHandoff.session == nil { context[WatchHandoff.signedOutKey] = true }
+				if let lastSnapshot { context.merge(lastSnapshot.context()) { _, new in new } }
+				return context
+			}
+
+			private func send(_ context: [String: Any]) {
+				guard let wc = session, wc.activationState == .activated, wc.isPaired,
 					wc.isWatchAppInstalled
 				else { return }
-				try? wc.updateApplicationContext(WatchHandoff(session: session).context())
+				try? wc.updateApplicationContext(context)
 			}
 		#endif
 
 		private func deliver(_ context: [String: Any]) {
-			guard let handoff = WatchHandoff(context: context) else { return }
-			let handler = lock.withLock { self.handler }
-			handler?(handoff)
+			let (handler, snapshotHandler) = lock.withLock { (self.handler, self.snapshotHandler) }
+			if let handoff = WatchHandoff.decode(context: context) { handler?(handoff) }
+			if let snapshot = WatchSnapshot(context: context) { snapshotHandler?(snapshot) }
 		}
 
 		public func session(

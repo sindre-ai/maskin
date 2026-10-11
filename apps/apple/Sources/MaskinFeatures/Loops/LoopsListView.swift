@@ -9,12 +9,62 @@ struct LoopsListView: View {
 	@Binding var selection: String?
 	let search: String
 	var isLive = true
+	/// Regular width: cards in a 2-3 across grid that pushes the detail, instead of a sidebar list.
+	var isGrid = false
 	var zoomNamespace: Namespace.ID?
 	var onNew: () -> Void = {}
 	var onBrowse: () -> Void = {}
 
 	var body: some View {
 		let loops = store.filtered(query: search)
+		Group {
+			if isGrid { grid(loops) } else { list(loops) }
+		}
+		.ambientBackground()
+		.overlay { overlay(isEmpty: loops.isEmpty) }
+		.refreshable { await store.refresh() }
+	}
+
+	private func card(_ loop: LoopSummary) -> LoopCard {
+		LoopCard(
+			loop: loop, needsYou: store.needsYou(loop),
+			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
+			update: store.latestUpdate(for: loop),
+			target: LoopOutcomes.cards(for: [loop]).first)
+	}
+
+	/// 2-3 cards across (adaptive columns); a card pushes the flow's detail full width.
+	private func grid(_ loops: [LoopSummary]) -> some View {
+		ScrollView {
+			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+				if !isLive {
+					OfflineBanner(message: "Live updates paused. Reconnecting…")
+				}
+				if let notice = store.notice {
+					FormError(notice).onTapGesture { store.notice = nil }
+				}
+				if search.isEmpty, let summary = store.summaryLine {
+					Text(summary)
+						.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
+						.foregroundStyle(MaskinColor.ink4)
+				}
+				LazyVGrid(
+					columns: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
+					alignment: .leading, spacing: MaskinSpace.s9
+				) {
+					ForEach(loops) { loop in
+						Button { selection = loop.id } label: { card(loop) }
+							.buttonStyle(.plain)
+							.zoomSource(id: loop.id, in: zoomNamespace)
+					}
+				}
+			}
+			.padding(.horizontal, MaskinSpace.s14)
+			.padding(.vertical, MaskinSpace.s9)
+		}
+	}
+
+	private func list(_ loops: [LoopSummary]) -> some View {
 		List(selection: $selection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…")
@@ -44,12 +94,7 @@ struct LoopsListView: View {
 				}
 			}
 			ForEach(loops) { loop in
-				LoopCard(
-					loop: loop, needsYou: store.needsYou(loop),
-					hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-					update: store.latestUpdate(for: loop),
-					target: LoopOutcomes.cards(for: [loop]).first
-				)
+				card(loop)
 				.tag(loop.id)
 				.zoomSource(id: loop.id, in: zoomNamespace)
 				.listRowSeparator(.hidden)
@@ -71,9 +116,6 @@ struct LoopsListView: View {
 			}
 		}
 		.listStyle(.plain)
-		.ambientBackground()
-		.overlay { overlay(isEmpty: loops.isEmpty) }
-		.refreshable { await store.refresh() }
 	}
 
 	@ViewBuilder

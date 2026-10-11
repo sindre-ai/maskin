@@ -48,6 +48,7 @@ struct ConversationRow: View {
 			}
 		}
 		.contentShape(Rectangle())
+		.maskinHover()
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}

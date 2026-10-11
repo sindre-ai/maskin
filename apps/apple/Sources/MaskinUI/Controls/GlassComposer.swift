@@ -61,7 +61,7 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 			onSend()
 		} label: {
 			Image(systemName: "arrow.up")
-				.font(.system(size: MaskinFontSize.t15, weight: .bold))
+				.maskinSymbol(MaskinFontSize.t15, weight: .bold)
 				.foregroundStyle(MaskinSurface.onInverse)
 				.frame(width: Self.control, height: Self.control)
 				.background(MaskinSurface.inverse, in: Circle())
@@ -82,7 +82,7 @@ public struct ComposerCircleLabel: View {
 	public init(_ symbol: String) { self.symbol = symbol }
 	public var body: some View {
 		Image(systemName: symbol)
-			.font(.system(size: MaskinFontSize.t15, weight: .semibold))
+			.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
 			.foregroundStyle(MaskinColor.ink3)
 			.frame(width: composerControlSize, height: composerControlSize)
 			.background(MaskinSurface.fill, in: Circle())
@@ -96,7 +96,7 @@ public struct ComposerMicLabel: View {
 	public init(listening: Bool) { self.listening = listening }
 	public var body: some View {
 		Image(systemName: listening ? "waveform" : "mic")
-			.font(.system(size: MaskinFontSize.t15, weight: .semibold))
+			.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
 			.symbolEffect(.pulse, isActive: listening)
 			.foregroundStyle(listening ? Color.white : MaskinColor.ink3)
 			.frame(width: composerControlSize, height: composerControlSize)

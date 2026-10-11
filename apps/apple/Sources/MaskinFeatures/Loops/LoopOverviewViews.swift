@@ -197,7 +197,7 @@ struct LoopPostsSection: View {
 				Text(name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 				Spacer(minLength: MaskinSpace.s3)
 				if post.isDecision {
-					Text("Asks you").maskinText(.caption).foregroundStyle(MaskinColor.sigInk)
+					Text("Needs you").maskinText(.caption).foregroundStyle(MaskinColor.sigInk)
 				}
 				RelativeTime(post.date, style: .compact)
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)

@@ -125,6 +125,15 @@ struct ProfileSheet: View {
 			KeysPage(store: services.apiKeyStore())
 		case .settings:
 			SettingsScreen(environment: environment)
+		case .notifications:
+			NotificationsPage()
+		case .autonomy:
+			if let workspaceID = environment.workspaceId {
+				AutonomyView(
+					store: AutonomyStore(
+						workspaceID: workspaceID, actorID: environment.auth.session?.actorId ?? "",
+						storage: UserDefaultsAutonomyStorage()))
+			}
 		}
 	}
 
@@ -145,7 +154,7 @@ struct ProfileSheet: View {
 					}
 					Spacer(minLength: MaskinSpace.s4)
 					Image(systemName: "chevron.right")
-						.font(.system(size: MaskinSpace.s7, weight: .semibold))
+						.maskinSymbol(MaskinSpace.s7, weight: .semibold)
 						.foregroundStyle(MaskinColor.ink5)
 						.accessibilityHidden(true)
 				}
@@ -250,6 +259,8 @@ extension ProfileMenuItem {
 		case .integrations: "puzzlepiece.extension"
 		case .billing: "creditcard"
 		case .keys: "key"
+		case .notifications: "bell"
+		case .autonomy: "slider.horizontal.3"
 		}
 	}
 }
@@ -272,7 +283,7 @@ private struct ProfileTile: View {
 
 	var body: some View {
 		Image(systemName: symbol)
-			.font(.system(size: MaskinSpace.s10, weight: .semibold))
+			.maskinSymbol(MaskinSpace.s10, weight: .semibold)
 			.foregroundStyle(MaskinColor.ink2)
 			.frame(width: Self.size, height: Self.size)
 			.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
@@ -295,7 +306,7 @@ private struct ProfileRow: View {
 				Spacer(minLength: MaskinSpace.s4)
 				if badge > 0 { UnreadBadge(count: badge) }
 				Image(systemName: "chevron.right")
-					.font(.system(size: MaskinSpace.s7, weight: .semibold))
+					.maskinSymbol(MaskinSpace.s7, weight: .semibold)
 					.foregroundStyle(MaskinColor.ink5)
 					.accessibilityHidden(true)
 			}
@@ -305,6 +316,7 @@ private struct ProfileRow: View {
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.maskinPressed)
+		.maskinHover()
 	}
 }
 

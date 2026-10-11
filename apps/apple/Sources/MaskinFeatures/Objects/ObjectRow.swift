@@ -73,6 +73,8 @@ struct ObjectRow: View {
 	var showsStatus = true
 	var showsDriver = true
 	var showsUpdated = true
+	/// Regular width: the driver's name beside the avatar, for the extra room.
+	var showsDriverName = false
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
@@ -81,7 +83,7 @@ struct ObjectRow: View {
 				Spacer(minLength: MaskinSpace.s3)
 				if object.isStarred {
 					Image(systemName: "star.fill")
-						.font(.system(size: MaskinFontSize.t12))
+						.maskinSymbol(MaskinFontSize.t12)
 						.foregroundStyle(MaskinColor.ink4)
 						.accessibilityHidden(true)
 				}
@@ -103,6 +105,7 @@ struct ObjectRow: View {
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
+		.maskinHover()
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
@@ -115,6 +118,12 @@ struct ObjectRow: View {
 					ObjectDriverAvatar(
 						name: ownerName, isAgent: ownerIsAgent, seed: object.driverId,
 						working: object.hasActiveSession)
+					if showsDriverName, let ownerName {
+						Text(ownerName)
+							.maskinText(.caption)
+							.foregroundStyle(MaskinColor.ink3)
+							.lineLimit(1)
+					}
 				}
 				if showsStatus {
 					StatusWord(status: object.status, tone: ObjectsStatusTone.of(object).color)

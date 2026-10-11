@@ -172,7 +172,7 @@ struct ObjectDetailContent<Decision: View>: View {
 				.lineLimit(1).truncationMode(.tail)
 			if let trailing {
 				Image(systemName: trailing)
-					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
+					.maskinSymbol(MaskinFontSize.t11, weight: .semibold)
 					.foregroundStyle(MaskinColor.ink5)
 			}
 		}
@@ -337,7 +337,7 @@ struct ObjectDetailContent<Decision: View>: View {
 			if let status = link.otherStatus { StatusBadge(status, style: .word) }
 			if onOpenObject != nil {
 				Image(systemName: "chevron.right")
-					.font(.system(size: MaskinFontSize.t13, weight: .semibold))
+					.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 					.foregroundStyle(MaskinColor.ink5)
 			}
 		}
@@ -404,7 +404,7 @@ struct ObjectDetailContent<Decision: View>: View {
 		} label: {
 			HStack(spacing: MaskinSpace.s4) {
 				Image(systemName: open ? "chevron.down" : "chevron.right")
-					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
+					.maskinSymbol(MaskinFontSize.t11, weight: .semibold)
 					.padding(.horizontal, MaskinSpace.s3)
 				Text("\(items.count) updates")
 				Spacer(minLength: 0)

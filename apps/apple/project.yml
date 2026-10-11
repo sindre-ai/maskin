@@ -367,6 +367,8 @@ targets:
         excludes:
           - Info.plist
       - path: Apps/LiveActivityShared
+      - path: Apps/Maskin/Resources/Fonts
+        type: folder
     dependencies:
       - package: MaskinKit
         product: MaskinCore
@@ -382,6 +384,9 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         ITSAppUsesNonExemptEncryption: false
+        UIAppFonts:
+          - Fonts/SchibstedGrotesk.ttf
+          - Fonts/JetBrainsMono.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -427,7 +432,6 @@ targets:
           - MaskinWatchWidgets.entitlements
       - path: Apps/MaskinWidgets/Provider.swift
       - path: Apps/MaskinWidgets/Views/WidgetEntry.swift
-      - path: Apps/MaskinWidgets/Views/LockScreenViews.swift
     dependencies:
       - package: MaskinKit
         product: MaskinCore
@@ -552,6 +556,9 @@ targets:
       - path: Apps/Maskin/Resources/Fonts
         type: folder
       - path: Apps/Shared
+      # Pure TV logic, shared with the MaskinFeatures package (tested there). MaskinFeatures itself
+      # does not build for tvOS (WebKit), so the folder is compiled straight into the app.
+      - path: Sources/MaskinFeatures/TV
     dependencies:
       - target: MaskinTVTopShelf
       - package: MaskinKit

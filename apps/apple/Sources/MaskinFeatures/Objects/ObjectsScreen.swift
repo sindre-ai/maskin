@@ -4,7 +4,7 @@ import MaskinUI
 import SwiftUI
 
 /// The Objects tab: every insight, bet and task the workspace's people and agents share.
-/// iPhone: list pushes detail. iPad / Mac: list beside detail. Owns its navigation.
+/// A wide single column on every device; a row pushes its detail. Owns its navigation.
 public struct ObjectsScreen: View {
 	private let environment: AppEnvironment
 	private let services: ObjectsServices
@@ -13,9 +13,6 @@ public struct ObjectsScreen: View {
 	@State private var picking = SelectionModel()
 	@State private var path: [ObjectRoute] = []
 	@Namespace private var zoom
-	@State private var selection: String?
-	@State private var detailPath: [ObjectRoute] = []
-	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	public init(environment: AppEnvironment) {
 		self.environment = environment
@@ -29,18 +26,12 @@ public struct ObjectsScreen: View {
 	}
 
 	public var body: some View {
-		Group {
-			if sizeClass == .compact {
-				stack
-			} else {
-				split
-			}
-		}
+		// One wide column at every width; a row pushes its detail (iPad handoff: no list beside detail).
+		stack
 		.task(id: environment.workspaceId) {
 			store.reset()
 			board.reset()
 			path = []
-			selection = nil
 			await store.load()
 		}
 		.task { await store.observe(environment.events.subscribe()) }
@@ -54,8 +45,6 @@ public struct ObjectsScreen: View {
 			displaySymbol: ShellActions.slidersSymbol)
 	}
 
-	// MARK: iPhone
-
 	private var stack: some View {
 		NavigationStack(path: $path) {
 			ObjectsListView(store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking)
@@ -65,35 +54,6 @@ public struct ObjectsScreen: View {
 					.zoomDestination(id: route.id, in: zoom)
 				}
 		}
-	}
-
-	// MARK: iPad / Mac
-
-	private var split: some View {
-		NavigationSplitView {
-			ObjectsListView(store: store, board: board, selection: $selection, picking: picking)
-				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
-				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
-		} detail: {
-			NavigationStack(path: $detailPath) {
-				if let selection {
-					detail(
-						ObjectRoute(id: selection), onOpen: { detailPath.append(ObjectRoute(id: $0)) },
-						onClose: { self.selection = nil })
-						.id(selection)
-						.navigationDestination(for: ObjectRoute.self) { route in
-							detail(
-								route, onOpen: { detailPath.append(ObjectRoute(id: $0)) },
-								onClose: { detailPath.removeLast() })
-						}
-				} else {
-					EmptyState(
-						symbol: "square.stack.3d.up", title: "Select an object",
-						message: "Pick an insight, bet or task to read it and join the conversation.")
-				}
-			}
-		}
-		.onChange(of: selection) { _, _ in detailPath = [] }
 	}
 
 	private func detail(

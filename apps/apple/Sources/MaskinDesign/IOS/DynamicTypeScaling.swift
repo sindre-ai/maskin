@@ -27,3 +27,29 @@ extension View {
 		dynamicTypeSize(...MaskinScaling.monoLabelCeiling)
 	}
 }
+
+/// A fixed-point-size glyph or icon label that still follows Dynamic Type: the point size is a
+/// `ScaledMetric`, so SF Symbols and one-off glyphs grow with the reader's text size like the
+/// type roles do. Use instead of `.font(.system(size:))`.
+private struct MaskinSymbolFont: ViewModifier {
+	@ScaledMetric private var size: CGFloat
+	private let weight: Font.Weight
+
+	init(size: CGFloat, weight: Font.Weight, style: Font.TextStyle) {
+		_size = ScaledMetric(wrappedValue: size, relativeTo: style)
+		self.weight = weight
+	}
+
+	func body(content: Content) -> some View {
+		content.font(.system(size: size, weight: weight))
+	}
+}
+
+extension View {
+	/// Scaled system font at `size` points (see `MaskinSymbolFont`).
+	public func maskinSymbol(
+		_ size: CGFloat, weight: Font.Weight = .regular, relativeTo style: Font.TextStyle = .body
+	) -> some View {
+		modifier(MaskinSymbolFont(size: size, weight: weight, style: style))
+	}
+}

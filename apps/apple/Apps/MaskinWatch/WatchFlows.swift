@@ -5,65 +5,67 @@ import SwiftUI
 
 /// Flows, read only: a ring and a one-line state per flow, a summary on tap.
 struct WatchFlows: View {
-	let loops: LoopsStore?
-
-	private var live: [LoopSummary] {
-		(loops?.loops ?? []).filter { $0.status != .draft }
-	}
+	let flows: [WatchSnapshot.Flow]
+	/// False while the first load is still on its way, so "No flows yet" is not shown prematurely.
+	let loaded: Bool
 
 	var body: some View {
 		NavigationStack {
 			ScrollView {
-				VStack(alignment: .leading, spacing: 8) {
-					WatchPageTitle(title: "Flows")
-					if let loops, live.isEmpty, loops.phase == .loaded {
+				VStack(alignment: .leading, spacing: MaskinSpace.gapDefault) {
+					WatchPageTitle(title: "Flows", count: flows.filter(\.needsYou).count)
+					if flows.isEmpty, loaded {
 						EmptyState(symbol: "arrow.triangle.2.circlepath", title: "No flows yet")
 					}
-					ForEach(live) { flow in
+					ForEach(flows) { flow in
 						NavigationLink {
 							WatchFlowSummary(flow: flow)
 						} label: { row(flow) }
 							.buttonStyle(.plain)
 					}
 				}
-				.padding(.horizontal, 2)
+				.padding(.horizontal, MaskinSpace.s1)
 			}
 			.toolbar(.hidden, for: .navigationBar)
 			.containerBackground(for: .navigation) { WatchBackdrop() }
 		}
 	}
 
-	private func row(_ flow: LoopSummary) -> some View {
-		HStack(spacing: 12) {
-			WatchRing(progress: flow.ringProgress, paused: flow.status == .paused, size: 36)
-			VStack(alignment: .leading, spacing: 2) {
-				Text(flow.name ?? "Untitled").font(WatchType.row()).foregroundStyle(MaskinColor.ink).lineLimit(1)
-				Text(flow.waitingCount > 0 ? "Needs you" : "On track")
+	private func row(_ flow: WatchSnapshot.Flow) -> some View {
+		HStack(spacing: MaskinSpace.gapLoose) {
+			WatchRing(progress: flow.progress, paused: flow.paused, size: 36)
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text(flow.name).font(WatchType.row()).foregroundStyle(MaskinColor.ink).lineLimit(1)
+				Text(flow.needsYou ? "Needs you" : "On track")
 					.font(WatchType.caption())
-					.foregroundStyle(flow.waitingCount > 0 ? MaskinColor.sigHi : MaskinColor.ink4)
+					.foregroundStyle(flow.needsYou ? MaskinColor.sigHi : MaskinColor.ink4)
 			}
 			Spacer(minLength: 0)
 		}
-		.padding(.horizontal, 14).padding(.vertical, 12)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+		.padding(.horizontal, MaskinSpace.s8).padding(.vertical, MaskinSpace.s7)
+		.frame(minHeight: WatchMetrics.target)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+		.contentShape(Rectangle())
 	}
 }
 
+/// Ring %, cycle · stage, the first target and the latest update. Read only.
 private struct WatchFlowSummary: View {
-	let flow: LoopSummary
+	let flow: WatchSnapshot.Flow
 
 	var body: some View {
 		ScrollView {
-			VStack(alignment: .leading, spacing: 10) {
-				HStack(spacing: 12) {
-					WatchRing(progress: flow.ringProgress, paused: flow.status == .paused, size: 56)
-					Text("\(Int(flow.ringProgress * 100))%").font(WatchType.title()).foregroundStyle(MaskinColor.ink)
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				HStack(spacing: MaskinSpace.gapLoose) {
+					WatchRing(progress: flow.progress, paused: flow.paused, size: 56)
+					Text("\(Int((flow.progress * 100).rounded()))%").font(WatchType.title()).foregroundStyle(MaskinColor.ink)
 				}
-				Text(flow.name ?? "Untitled").font(WatchType.question()).foregroundStyle(MaskinColor.ink)
-				Text(flow.pill.label.uppercased()).font(WatchType.microMono()).foregroundStyle(MaskinColor.ink4)
-				Text("\(flow.inProgressCount) in motion · \(flow.closedCount) closed")
-					.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3)
-				if let latest = flow.content, !latest.isEmpty {
+				Text(flow.name).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
+				Text(flow.cycleStage).font(WatchType.microMono()).foregroundStyle(MaskinColor.ink4)
+				if let target = flow.target {
+					Text(target).font(WatchType.row()).foregroundStyle(MaskinColor.ink2)
+				}
+				if let latest = flow.latest {
 					Text(latest).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).lineLimit(5)
 				}
 			}
@@ -74,7 +76,8 @@ private struct WatchFlowSummary: View {
 	}
 }
 
-/// The Patina progress ring: the gradient stroke, grey when the flow is paused.
+/// The Patina progress ring: the gradient stroke, grey when the flow is paused. Patina is signal
+/// only, so the ring is the one place the accent is drawn.
 struct WatchRing: View {
 	let progress: Double
 	let paused: Bool
@@ -82,11 +85,11 @@ struct WatchRing: View {
 
 	var body: some View {
 		ZStack {
-			Circle().stroke(MaskinSurface.fillStrong, lineWidth: 4)
+			Circle().stroke(MaskinSurface.fillStrong, lineWidth: WatchMetrics.ringStroke)
 			Circle().trim(from: 0, to: max(0.02, progress))
 				.stroke(
 					paused ? AnyShapeStyle(MaskinGradient.ringPaused) : AnyShapeStyle(MaskinGradient.ring),
-					style: StrokeStyle(lineWidth: 4, lineCap: .round)
+					style: StrokeStyle(lineWidth: WatchMetrics.ringStroke, lineCap: .round)
 				)
 				.rotationEffect(.degrees(-90))
 		}

@@ -1,3 +1,4 @@
+import Foundation
 import MaskinCore
 import WidgetKit
 
@@ -6,6 +7,8 @@ import WidgetKit
 struct MaskinWidgetEntry: TimelineEntry {
 	let date: Date
 	let state: WidgetState
+	/// The reader's newest answer from the widget, shown as "You chose …" for a while.
+	var chosen: WidgetDecisionRecord?
 
 	var relevance: TimelineEntryRelevance? {
 		TimelineEntryRelevance(score: WidgetPolicy.relevance(of: state))
@@ -38,4 +41,22 @@ extension WidgetSnapshot {
 			actorId: "preview", workspaceId: "preview", needsCount: 0, decisions: [], unreadCount: 0,
 			updatedAt: now)
 	}
+}
+
+/// What the widget process needs besides the snapshot loader: where the API is, and the service
+/// that sends (and can take back) an answer given from the widget.
+enum WidgetRuntime {
+	static var baseURL: URL {
+		let raw = Bundle.main.object(forInfoDictionaryKey: "MaskinAPIBaseURL") as? String
+		return raw.flatMap(URL.init(string:)) ?? URL(string: "https://maskin.io")!
+	}
+
+	static func decisions() -> WidgetDecisionService {
+		WidgetDecisionService.production(
+			baseURL: baseURL, secrets: KeychainSecretStore(), store: FileWidgetDecisionStore())
+	}
+}
+
+enum WidgetKinds {
+	static let needsYou = "io.maskin.widget.needs-you"
 }

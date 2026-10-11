@@ -137,7 +137,7 @@ struct ShellInkCircle: View {
 
 	var body: some View {
 		Image(systemName: symbol)
-			.font(.system(size: 16, weight: .semibold))
+			.maskinSymbol(16, weight: .semibold)
 			.foregroundStyle(MaskinSurface.onNavInk)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
 			.background(Circle().fill(MaskinSurface.navInk))
@@ -157,7 +157,7 @@ struct ShellNavAvatar: View {
 
 	var body: some View {
 		Text(initial)
-			.font(.system(size: 17, weight: .bold))
+			.maskinSymbol(17, weight: .bold)
 			.foregroundStyle(MaskinColor.sigInk)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
 			.background(Circle().fill(MaskinColor.sigTint))

@@ -76,7 +76,7 @@ public final class ChatComposerModel {
 	@ObservationIgnored private var selectionRequests = 0
 	@ObservationIgnored private let uploader: (any ChatFileUploading)?
 	@ObservationIgnored public let selfActorID: String
-	@ObservationIgnored private var jobs: [String: Task<Void, Never>] = [:]
+	@ObservationIgnored nonisolated(unsafe) private var jobs: [String: Task<Void, Never>] = [:]
 	@ObservationIgnored private var retryLoaders: [String: @Sendable () async throws -> PreparedChatFile] = [:]
 
 	public init(uploader: (any ChatFileUploading)?, selfActorID: String) {
@@ -84,7 +84,8 @@ public final class ChatComposerModel {
 		self.selfActorID = selfActorID
 	}
 
-	deinit { MainActor.assumeIsolated { for job in jobs.values { job.cancel() } } }
+	/// Not main-actor-assumed: `deinit` can run on any thread. `jobs` is `nonisolated(unsafe)`.
+	deinit { for job in jobs.values { job.cancel() } }
 
 	// MARK: Send
 

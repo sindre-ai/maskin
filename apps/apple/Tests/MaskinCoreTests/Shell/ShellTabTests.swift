@@ -49,13 +49,13 @@ struct ProfileMenuTests {
 				])
 		#expect(
 			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
-				== ["Settings"])
+				== ["Settings", "Notifications", "Autonomy"])
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.agents, .artefacts])
-		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings])
+		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings, .notifications])
 	}
 
 	@Test func keysAreForOwnersAndAdminsOnly() {
@@ -73,7 +73,8 @@ struct ProfileMenuTests {
 		#expect(all.count == ProfileMenuItem.allCases.count)
 	}
 
-	@Test func thereIsNoAutonomyRow() {
-		#expect(!ProfileMenuItem.allCases.map(\.title).contains("Autonomy"))
+	@Test func autonomyIsPerWorkspace() {
+		#expect(ProfileMenuItem.autonomy.group == .you)
+		#expect(!ProfileMenu.items(in: .you, hasWorkspace: false).contains(.autonomy))
 	}
 }

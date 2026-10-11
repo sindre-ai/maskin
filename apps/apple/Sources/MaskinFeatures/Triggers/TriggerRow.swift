@@ -13,7 +13,7 @@ struct TriggerRow: View {
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
 			Image(systemName: trigger.kind.symbol)
-				.font(.system(size: MaskinSpace.s8, weight: .semibold))
+				.maskinSymbol(MaskinSpace.s8, weight: .semibold)
 				.foregroundStyle(trigger.enabled ? MaskinColor.ink : MaskinColor.ink5)
 				.frame(width: MaskinSpace.s9)
 				.accessibilityHidden(true)
@@ -37,6 +37,7 @@ struct TriggerRow: View {
 		}
 		.padding(.vertical, MaskinSpace.s2)
 		.contentShape(Rectangle())
+		.maskinHover()
 		.accessibilityElement(children: .contain)
 	}
 }

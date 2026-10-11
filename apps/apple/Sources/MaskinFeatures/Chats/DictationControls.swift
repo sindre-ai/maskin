@@ -14,7 +14,7 @@ struct DictationDiscardButton: View {
 			action()
 		} label: {
 			Image(systemName: "xmark")
-				.font(.system(size: MaskinFontSize.t15, weight: .semibold))
+				.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
 				.foregroundStyle(MaskinColor.ink2)
 				.frame(width: size, height: size)
 				.background(MaskinSurface.fill, in: Circle())
@@ -34,7 +34,7 @@ struct DictationDoneButton: View {
 			action()
 		} label: {
 			Image(systemName: "checkmark")
-				.font(.system(size: MaskinFontSize.t15, weight: .bold))
+				.maskinSymbol(MaskinFontSize.t15, weight: .bold)
 				.foregroundStyle(MaskinSurface.onInverse)
 				.frame(width: size, height: size)
 				.background(MaskinSurface.inverse, in: Circle())

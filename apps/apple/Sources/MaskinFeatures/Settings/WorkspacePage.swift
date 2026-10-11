@@ -35,6 +35,8 @@ struct PageRowModel: Identifiable {
 	enum Accessory {
 		case none
 		case state(PageState)
+		/// A trailing check: the chosen row of a single-choice list.
+		case check
 		case toggle(isOn: Bool, set: (Bool) -> Void)
 	}
 
@@ -111,7 +113,7 @@ private struct PageRow: View {
 			accessory
 			if model.showsChevron {
 				Image(systemName: "chevron.right")
-					.font(.system(size: MaskinSpace.s7, weight: .semibold))
+					.maskinSymbol(MaskinSpace.s7, weight: .semibold)
 					.foregroundStyle(MaskinColor.ink5)
 					.accessibilityHidden(true)
 			}
@@ -130,6 +132,11 @@ private struct PageRow: View {
 			Text(state.text)
 				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.w650))
 				.foregroundStyle(state.tone.color)
+		case .check:
+			Image(systemName: "checkmark")
+				.maskinSymbol(MaskinSpace.s8, weight: .bold)
+				.foregroundStyle(MaskinColor.ink)
+				.accessibilityLabel("Selected")
 		case .toggle(let isOn, let set):
 			Toggle(model.title, isOn: Binding(get: { isOn }, set: set))
 				.labelsHidden()

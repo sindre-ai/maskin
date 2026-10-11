@@ -15,6 +15,8 @@ import UIKit
 struct DecisionCardView: View {
 	struct Actions {
 		var choose: (DecisionOption) -> Void = { _ in }
+		/// A hold with its optional reason ("Why are you holding it?"). Unset: holds go through `choose`.
+		var hold: ((DecisionOption, String?) -> Void)?
 		var reply: (String) -> Void = { _ in }
 		var undo: () -> Void = {}
 		var dismiss: () -> Void = {}
@@ -42,6 +44,8 @@ struct DecisionCardView: View {
 	@FocusState private var replyFocused: Bool
 	/// A destructive option waiting for its "Are you sure?" answer.
 	@State private var pendingDestructive: DecisionOption?
+	/// A hold waiting for its reason (or Skip).
+	@State private var pendingHold: DecisionOption?
 
 	private var card: ForYouCard { entry.card }
 	private var record: DecisionRecord? { entry.record }
@@ -136,7 +140,7 @@ struct DecisionCardView: View {
 	@ViewBuilder private var say: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			if let decision = card.decision {
-				messageText(decision.summary)
+				ReadAllClamp { limit in messageText(decision.summary).lineLimit(limit) }
 			} else {
 				Text(card.headline)
 					.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold))
@@ -236,13 +240,20 @@ struct DecisionCardView: View {
 			ChipFlow(spacing: MaskinSpace.s4) {
 				ForEach(decision.options) { option in
 					Button {
-						if option.destructive { pendingDestructive = option } else { actions.choose(option) }
+						if option.destructive {
+							pendingDestructive = option
+						} else if actions.hold != nil, HoldReason.isHold(option.label) {
+							pendingHold = option
+						} else {
+							actions.choose(option)
+						}
 					} label: {
 						OptionPill(
 							label: pendingDestructive == option ? option.label + "\u{2026}" : option.label,
 							recommended: option.recommended, destructive: option.destructive)
 					}
 					.buttonStyle(.maskinPressed(.shrink))
+					.maskinHover(.fill, cornerRadius: MaskinRadius.card2xl)
 					.accessibilityLabel(option.recommended ? "\(option.label), recommended" : option.label)
 					.accessibilityHint(option.consequences.joined(separator: ". "))
 				}
@@ -251,6 +262,9 @@ struct DecisionCardView: View {
 				Text(line).font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
+		}
+		.sheet(item: $pendingHold) { option in
+			HoldReasonSheet(agent: sender) { reason in actions.hold?(option, reason) }
 		}
 		.confirmationDialog(
 			"Are you sure?", isPresented: Binding(
@@ -319,7 +333,7 @@ struct DecisionCardView: View {
 				} label: {
 					HStack(spacing: MaskinSpace.s3) {
 						Image(systemName: "bubble.left")
-							.font(.system(size: MaskinFontSize.t13, weight: .semibold))
+							.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 							.accessibilityHidden(true)
 						Text("Ask").font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650))
 					}
@@ -391,7 +405,7 @@ struct DecisionCardView: View {
 				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s2)
 			Button(action: sendReply) {
 				Image(systemName: "arrow.up")
-					.font(.system(size: MaskinFontSize.t15, weight: .bold))
+					.maskinSymbol(MaskinFontSize.t15, weight: .bold)
 					.foregroundStyle(MaskinSurface.onInverse)
 					.frame(width: MaskinSpace.touchMin - MaskinSpace.s2, height: MaskinSpace.touchMin - MaskinSpace.s2)
 					.background(MaskinSurface.inverse, in: Circle())
@@ -466,7 +480,7 @@ struct DecisionCardView: View {
 		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack(spacing: MaskinSpace.s4) {
 				Image(systemName: "checkmark")
-					.font(.system(size: MaskinFontSize.t12, weight: .bold))
+					.maskinSymbol(MaskinFontSize.t12, weight: .bold)
 					.foregroundStyle(ForYouPalette.receiptBackground)
 					.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
 					.background(ForYouPalette.receiptCheck, in: Circle())
@@ -493,6 +507,16 @@ struct DecisionCardView: View {
 				}
 				.padding(.leading, MaskinSpace.s12 + MaskinSpace.s1)
 			}
+			if case .option(let label) = record.kind, HoldReason.isHold(label),
+				let reason = HoldReason.normalized(record.note)
+			{
+				Text(HoldReason.note(for: reason))
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.padding(MaskinSpace.s6)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s1)
+			}
 			if record.staysUnread, case .sent = record.phase {
 				Text("Sent, but this thread will stay in your feed.")
 					.maskinText(.caption).foregroundStyle(ForYouPalette.receiptTertiary)
@@ -518,7 +542,7 @@ struct DecisionCardView: View {
 	private func queuedNote(_ record: DecisionRecord) -> some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s4) {
 			Image(systemName: "arrow.up")
-				.font(.system(size: MaskinFontSize.t12, weight: .bold))
+				.maskinSymbol(MaskinFontSize.t12, weight: .bold)
 				.foregroundStyle(MaskinSurface.onInverse)
 				.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
 				.background(MaskinSurface.inverse, in: Circle())
@@ -604,6 +628,11 @@ extension DecisionCardView.Actions {
 		actions.choose = { option in
 			MaskinHaptics.play(.success)
 			withAnimation(MaskinMotion.standard) { store.choose(option, on: card) }
+			announce("You chose \(option.label). Undo is available for a few seconds.")
+		}
+		actions.hold = { option, reason in
+			MaskinHaptics.play(.success)
+			withAnimation(MaskinMotion.standard) { store.choose(option, note: reason, on: card) }
 			announce("You chose \(option.label). Undo is available for a few seconds.")
 		}
 		actions.reply = { text in

@@ -23,6 +23,8 @@ struct BriefViewer: View {
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	private static let swipeToClose: CGFloat = 120
+	/// The player is a centred column on wide screens (iPad, Mac), never edge to edge.
+	static let maxPlayerWidth: CGFloat = 720
 
 	init(environment: AppEnvironment, stories: StoriesStore, sequence: BriefSequence, close: @escaping () -> Void) {
 		self.environment = environment
@@ -50,7 +52,7 @@ struct BriefViewer: View {
 					header(card)
 					slide(card)
 						.contentShape(Rectangle())
-						.gesture(taps(width: proxy.size.width))
+						.gesture(taps(width: min(proxy.size.width, Self.maxPlayerWidth)))
 						.onLongPressGesture(minimumDuration: 0.2, perform: {}, onPressingChanged: { pressing in
 							if pressing { playback.hold() } else { playback.release() }
 						})
@@ -59,6 +61,7 @@ struct BriefViewer: View {
 				}
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s7)
+				.frame(maxWidth: Self.maxPlayerWidth)
 			}
 		}
 		.offset(y: dragY)

@@ -8,37 +8,41 @@ import WidgetKit
 /// Lock Screen banner and Dynamic Island for a running agent turn. Tapping anywhere opens the
 /// thread (`widgetURL`, a `maskin://` link the app's `DeepLinkRouter` validates); a running turn
 /// also offers Stop via `StopTurnIntent`.
+///
+/// A Live Activity is for time-bound work only: a decision waiting on the reader is a widget and a
+/// notification. So the only live state is "working"; every other state is a finished card that
+/// lingers and ends.
 struct TurnLiveActivity: Widget {
 	var body: some WidgetConfiguration {
 		ActivityConfiguration(for: MaskinTurnAttributes.self) { context in
 			LockScreenTurnView(attributes: context.attributes, state: context.state)
 				.padding(MaskinSpace.s9)
-				.activityBackgroundTint(nil)
+				.activityBackgroundTint(MaskinSurface.card)
 				.widgetURL(context.attributes.identity.openURL)
 		} dynamicIsland: { context in
 			let attributes = context.attributes
 			let state = context.state
 			return DynamicIsland {
 				DynamicIslandExpandedRegion(.leading) {
-					StatusGlyph(status: state.status).font(.title3)
+					LiveActivityAgentTile(name: state.agentName, size: 32)
 				}
 				DynamicIslandExpandedRegion(.trailing) {
-					ElapsedLabel(state: state).font(.callout)
+					ElapsedLabel(state: state).maskinText(.subhead)
 				}
 				DynamicIslandExpandedRegion(.center) {
-					Text(state.agentName).font(.headline).lineLimit(1)
+					Text(state.agentName).maskinText(.headline).lineLimit(1)
 				}
 				DynamicIslandExpandedRegion(.bottom) {
 					VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-						Text(state.step).font(.subheadline).lineLimit(2)
+						Text(state.step).maskinText(.subhead).lineLimit(2)
 						TurnActions(attributes: attributes, state: state)
 					}
 					.frame(maxWidth: .infinity, alignment: .leading)
 				}
 			} compactLeading: {
-				StatusGlyph(status: state.status)
+				LiveActivityMarkTile(size: 20)
 			} compactTrailing: {
-				ElapsedLabel(state: state).frame(maxWidth: 48)
+				ElapsedLabel(state: state).maskinText(.mono).frame(maxWidth: 48)
 			} minimal: {
 				StatusGlyph(status: state.status)
 			}
@@ -48,30 +52,29 @@ struct TurnLiveActivity: Widget {
 	}
 }
 
-/// Colour and symbol per status, kept together so every surface agrees.
+/// Colour and symbol per status, kept together so every surface agrees. Brand rules: Patina is a
+/// signal, so only the live "working" state carries it; done and the rest are ink.
 enum StatusStyle {
 	static func tint(_ status: TurnActivityStatus) -> Color {
 		switch status {
-		case .running: MaskinColor.sigHi
-		case .needsYou: MaskinColor.sig
-		case .done: MaskinColor.doneFg
-		case .failed: MaskinColor.warning
+		case .running: MaskinColor.sig
+		case .needsYou, .done, .failed: MaskinColor.ink
 		}
 	}
 
 	static func symbol(_ status: TurnActivityStatus) -> String {
 		switch status {
 		case .running: "sparkles"
-		case .needsYou: "exclamationmark.bubble.fill"
+		case .needsYou: "bubble.left"
 		case .done: "checkmark.circle.fill"
-		case .failed: "xmark.octagon.fill"
+		case .failed: "xmark.circle"
 		}
 	}
 
 	static func label(_ status: TurnActivityStatus) -> String {
 		switch status {
 		case .running: "Working"
-		case .needsYou: "Needs you"
+		case .needsYou: "Waiting on you"
 		case .done: "Done"
 		case .failed: "Failed"
 		}
@@ -98,7 +101,7 @@ private struct ElapsedLabel: View {
 			Text(timerInterval: state.startedAt...Date.distantFuture, countsDown: false)
 				.monospacedDigit()
 				.multilineTextAlignment(.trailing)
-				.foregroundStyle(.secondary)
+				.foregroundStyle(MaskinColor.ink4)
 		}
 	}
 }
@@ -111,16 +114,16 @@ private struct TurnActions: View {
 		switch state.status {
 		case .running:
 			Button(intent: StopTurnIntent(sessionId: attributes.sessionId, workspaceId: attributes.workspaceId)) {
-				Label("Stop", systemImage: "stop.fill").font(.footnote.weight(.semibold))
+				Label("Stop", systemImage: "stop.fill").maskinText(.caption)
 			}
 			.buttonStyle(.bordered)
-			.tint(MaskinColor.danger)
+			.tint(MaskinColor.ink)
 		case .needsYou:
-			// Tapping the card opens the thread; this is the same destination, spelled out.
+			// The ask itself is a notification; this just points at the thread.
 			Link(destination: attributes.identity.openURL) {
-				Label("Open thread", systemImage: "arrow.up.right").font(.footnote.weight(.semibold))
+				Label("Open thread", systemImage: "arrow.up.right").maskinText(.caption)
 			}
-			.tint(MaskinColor.warning)
+			.tint(MaskinColor.ink)
 		case .done, .failed:
 			EmptyView()
 		}
@@ -137,22 +140,21 @@ private struct LockScreenTurnView: View {
 			HStack(spacing: MaskinSpace.s4) {
 				LiveActivityMarkTile(size: 22)
 				Text("MASKIN \u{00B7} LIVE")
-					.font(.system(.caption2, design: .monospaced).weight(.semibold))
-					.tracking(0.8)
-					.foregroundStyle(.secondary)
+					.maskinText(.microLabel)
+					.foregroundStyle(MaskinColor.ink4)
 					.lineLimit(1)
 				Spacer(minLength: MaskinSpace.s4)
-				StatusGlyph(status: state.status).font(.footnote)
-				ElapsedLabel(state: state).font(.footnote)
+				StatusGlyph(status: state.status).maskinText(.caption)
+				ElapsedLabel(state: state).maskinText(.caption)
 			}
 			// No progress bar: nothing in the turn reports a percentage.
 			HStack(spacing: MaskinSpace.s5) {
 				LiveActivityAgentTile(name: state.agentName, size: 44)
-				VStack(alignment: .leading, spacing: 2) {
-					Text(state.agentName).font(.headline).lineLimit(1)
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text(state.agentName).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
 					Text(state.step)
-						.font(.subheadline)
-						.foregroundStyle(.secondary)
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink4)
 						.lineLimit(2)
 				}
 			}

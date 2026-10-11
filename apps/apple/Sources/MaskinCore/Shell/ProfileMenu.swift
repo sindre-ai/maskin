@@ -16,7 +16,7 @@ public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Send
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
 	case agents, marketplace, artefacts, members, integrations, triggers, billing, keys
-	case settings
+	case settings, notifications, autonomy
 
 	public var id: String { rawValue }
 
@@ -31,6 +31,8 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .billing: "Billing"
 		case .keys: "Keys"
 		case .settings: "Settings"
+		case .notifications: "Notifications"
+		case .autonomy: "Autonomy"
 		}
 	}
 
@@ -46,6 +48,8 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .billing: "Plan, seats, invoices"
 		case .keys: "API keys for outside tools"
 		case .settings: "Appearance, workspace, account"
+		case .notifications: "So decisions reach you when they matter"
+		case .autonomy: "How far the Chief of Staff goes before asking"
 		}
 	}
 
@@ -53,14 +57,14 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		switch self {
 		case .agents, .marketplace, .artefacts, .members, .integrations, .triggers, .billing, .keys:
 			.workspace
-		case .settings: .you
+		case .settings, .notifications, .autonomy: .you
 		}
 	}
 
 	/// These belong to a workspace; without one there is nothing to open.
 	var needsWorkspace: Bool {
 		switch self {
-		case .marketplace, .members, .integrations, .triggers, .billing, .keys: true
+		case .marketplace, .members, .integrations, .triggers, .billing, .keys, .autonomy: true
 		default: false
 		}
 	}
@@ -70,7 +74,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 }
 
 public enum ProfileMenu {
-	/// The rows of one group, in order. Autonomy has no API yet, so it has no row.
+	/// The rows of one group, in order.
 	public static func items(
 		in group: ProfileMenuGroup, hasWorkspace: Bool, role: MemberRole = .member
 	) -> [ProfileMenuItem] {

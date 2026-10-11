@@ -168,6 +168,7 @@ struct SearchContentBody: View {
 									.padding(.vertical, MaskinSpace.s3)
 							}
 							.buttonStyle(.maskinPressed)
+							.maskinHover()
 						}
 					}
 				}

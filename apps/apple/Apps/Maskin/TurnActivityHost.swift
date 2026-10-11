@@ -81,14 +81,8 @@
 		func update(sessionId: String, state: TurnActivityState) async {
 			guard let activity = activity(for: sessionId) else { return }
 			let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60))
-			if state.status == .needsYou {
-				await activity.update(
-					content,
-					alertConfiguration: AlertConfiguration(
-						title: "\(state.agentName) needs you", body: "\(state.step)", sound: .default))
-			} else {
-				await activity.update(content)
-			}
+			// No alert: a turn waiting on the reader is a notification, not a Live Activity.
+			await activity.update(content)
 		}
 
 		func endAll() async {
@@ -102,6 +96,38 @@
 			await activity.end(
 				ActivityContent(state: state, staleDate: nil),
 				dismissalPolicy: .after(Date().addingTimeInterval(dismissAfter)))
+		}
+	}
+
+	/// Starts, updates and ends the flow-cycle activity. Nothing in the app calls this yet: the loop
+	/// models carry no cycle number or progress to drive it (state comes from the cycle, never a timer).
+	@MainActor
+	final class CycleActivityHost {
+		private func activity(flowId: String) -> Activity<MaskinCycleAttributes>? {
+			Activity<MaskinCycleAttributes>.activities.first { $0.attributes.flowId == flowId }
+		}
+
+		func start(_ attributes: MaskinCycleAttributes, state: CycleActivityState) {
+			guard ActivityAuthorizationInfo().areActivitiesEnabled, activity(flowId: attributes.flowId) == nil
+			else { return }
+			_ = try? Activity.request(
+				attributes: attributes,
+				content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60)),
+				pushType: nil)
+		}
+
+		/// A cycle that ended needing the reader stays up as "NEEDS YOU" until opened, or eight hours.
+		func update(flowId: String, state: CycleActivityState) async {
+			guard let activity = activity(flowId: flowId) else { return }
+			let stale = state.phase == .needsYou
+				? Date().addingTimeInterval(CycleActivityState.needsYouLifetime)
+				: Date().addingTimeInterval(15 * 60)
+			await activity.update(ActivityContent(state: state, staleDate: stale))
+		}
+
+		func end(flowId: String, state: CycleActivityState? = nil) async {
+			guard let activity = activity(flowId: flowId) else { return }
+			await activity.end(state.map { ActivityContent(state: $0, staleDate: nil) }, dismissalPolicy: .immediate)
 		}
 	}
 

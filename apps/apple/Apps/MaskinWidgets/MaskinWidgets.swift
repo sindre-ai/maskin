@@ -13,7 +13,7 @@ struct MaskinWidgetBundle: WidgetBundle {
 
 /// Home screen: what needs you, with detail. Tapping opens the top decision.
 struct NeedsYouWidget: Widget {
-	static let kind = "io.maskin.widget.needs-you"
+	static let kind = WidgetKinds.needsYou
 
 	var body: some WidgetConfiguration {
 		StaticConfiguration(kind: Self.kind, provider: MaskinTimelineProvider()) { entry in

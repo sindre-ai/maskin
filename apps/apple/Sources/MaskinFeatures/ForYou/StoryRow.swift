@@ -9,6 +9,8 @@ struct StoryRow: View {
 	/// Limits the row to one loop's cards (the loop page); nil shows every card (For you).
 	var loopID: String?
 	let open: (StoryCard) -> Void
+	/// Card size: 124 x 24 radius on iPhone; the wide For you feed passes its own.
+	var metrics = StoryCardMetrics.compact
 
 	private var cards: [StoryCard] { loopID.map { stories.cards(forLoop: $0) } ?? stories.cards }
 
@@ -17,7 +19,7 @@ struct StoryRow: View {
 			ScrollView(.horizontal, showsIndicators: false) {
 				LazyHStack(spacing: MaskinSpace.s5) {
 					ForEach(cards) { card in
-						StoryCardView(card: card, isSeen: stories.isSeen(card)) { open(card) }
+						StoryCardView(card: card, isSeen: stories.isSeen(card), metrics: metrics) { open(card) }
 					}
 				}
 				.scrollTargetLayout()
@@ -30,21 +32,32 @@ struct StoryRow: View {
 	}
 }
 
+/// Width and corner radius of a briefing card. The height is the same everywhere (176, growing
+/// to 220 at accessibility text sizes; Decision 2).
+struct StoryCardMetrics: Equatable {
+	var width: CGFloat
+	var radius: CGFloat
+
+	static let compact = StoryCardMetrics(width: 124, radius: 24)
+	/// iPad (4-iPad.md): 204 wide, radius 28; 150 wide while the sidebar takes room.
+	static let regular = StoryCardMetrics(width: 204, radius: 28)
+	static let regularWithSidebar = StoryCardMetrics(width: 150, radius: 28)
+}
+
 /// One 124 x 176 card (220 tall at accessibility text sizes): unit label (a glass pill) and unseen dot on top, the headline below. No ring,
 /// no border. An unseen card is the Patina gradient; a seen one is a plain card. The mono format
 /// line under the headline says what opening it gives (`READ · 1 MIN`).
 struct StoryCardView: View {
 	let card: StoryCard
 	let isSeen: Bool
+	var metrics = StoryCardMetrics.compact
 	let action: () -> Void
 
-	private static let width: CGFloat = 124
-	private static let radius: CGFloat = 24
 	private static let padding: CGFloat = 14
 	@Environment(\.dynamicTypeSize) private var typeSize
 
 	var body: some View {
-		let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+		let shape = RoundedRectangle(cornerRadius: metrics.radius, style: .continuous)
 		Button(action: action) {
 			VStack(alignment: .leading, spacing: 0) {
 				HStack(alignment: .top, spacing: MaskinSpace.s2) {
@@ -82,7 +95,7 @@ struct StoryCardView: View {
 			}
 			.padding(Self.padding)
 			.frame(
-				width: Self.width, height: MaskinScaling.briefingCardHeight(for: typeSize))
+				width: metrics.width, height: MaskinScaling.briefingCardHeight(for: typeSize))
 			.background(fill, in: shape)
 			.shadow(color: MaskinPatina.cardShadow, radius: 1, y: 1)
 			.shadow(color: MaskinPatina.cardShadow, radius: 9, y: 6)

@@ -58,6 +58,20 @@ struct DecisionServiceTests {
 		#expect(backend.calls.isEmpty)
 	}
 
+	@Test func aHoldKeepsItsReasonOnTheRecordAndInTheComment() async {
+		let (service, _, backend, _) = make()
+		service.choose("Hold", note: "  I need the numbers first ", on: target)
+		#expect(service.record(for: "obj-1")?.note == "I need the numbers first")
+		try? await Task.sleep(for: .milliseconds(500))
+		#expect(backend.calls.first == "comment:obj-1:Hold · I need the numbers first:42")
+	}
+
+	@Test func aHoldWithoutAReasonHasNoNote() {
+		let (service, _, _, _) = make(window: 60)
+		service.choose("Hold", note: "   ", on: target)
+		#expect(service.record(for: "obj-1")?.note == nil)
+	}
+
 	@Test func sendsCommentThenMarkReadAfterTheWindow() async {
 		let (service, _, backend, _) = make()
 		service.choose("Approve", on: target)

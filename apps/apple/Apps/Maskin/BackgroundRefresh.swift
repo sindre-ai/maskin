@@ -12,8 +12,10 @@
 		private static let minimumInterval: TimeInterval = 30 * 60
 
 		/// Must run before the app finishes launching (`MaskinApp.init`).
+		/// The handler runs on the main queue: `assumeIsolated` below traps if iOS calls it on the
+		/// scheduler's own background queue (`using: nil`), which killed build 2610081414 on every wake.
 		static func register(environment: AppEnvironment) {
-			BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+			BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
 				guard let task = task as? BGAppRefreshTask else { return }
 				MainActor.assumeIsolated { run(task, environment: environment) }
 			}

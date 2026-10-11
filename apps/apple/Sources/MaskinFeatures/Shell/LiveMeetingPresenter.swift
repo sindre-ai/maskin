@@ -14,7 +14,7 @@ public enum LiveMeetingRequest: Identifiable {
 		switch self {
 		case .dailyBriefing: "briefing"
 		case .chiefOfStaff: "chief-of-staff"
-		case .thread(let chat, _): "thread:\(MainActor.assumeIsolated { chat.conversationID })"
+		case .thread(let chat, _): "thread:\(chat.conversationID)"
 		}
 	}
 }

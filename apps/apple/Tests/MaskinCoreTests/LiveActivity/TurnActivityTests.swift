@@ -15,7 +15,7 @@ private func session(
 struct TurnActivityStateTests {
 	@Test func defaultsEmptyStepsPerStatus() {
 		for (status, step) in [
-			(TurnActivityStatus.running, "Working"), (.needsYou, "Needs you"), (.done, "Done"),
+			(TurnActivityStatus.running, "Working"), (.needsYou, "Waiting on you"), (.done, "Done"),
 			(.failed, "Failed"),
 		] {
 			let s = TurnActivityState(sessionId: "s", agentName: "Forge", step: "  ", startedAt: t0, status: status)

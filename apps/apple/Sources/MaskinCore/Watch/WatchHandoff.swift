@@ -15,6 +15,17 @@ public struct WatchHandoff: Sendable, Equatable {
 		return [Self.contextKey: data]
 	}
 
+	static let signedOutKey = "maskin.handoff.signedOut.v1"
+
+	/// What a whole application context says about the sign-in: the session it carries, an
+	/// explicit or empty "signed out", or nothing at all (a context that only holds a snapshot).
+	static func decode(context: [String: Any]) -> WatchHandoff? {
+		if context[contextKey] != nil || context[signedOutKey] != nil || context.isEmpty {
+			return WatchHandoff(context: context)
+		}
+		return nil
+	}
+
 	/// An empty context (nothing ever published, or a sign-out) decodes to "signed out"; a payload
 	/// this build can't decode is `nil`, so a newer phone build never signs the watch out.
 	public init?(context: [String: Any]) {

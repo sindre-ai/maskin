@@ -5,5 +5,7 @@ import WidgetKit
 struct MaskinLiveActivityBundle: WidgetBundle {
 	var body: some Widget {
 		TurnLiveActivity()
+		CycleLiveActivity()
+		MeetingLiveActivity()
 	}
 }

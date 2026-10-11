@@ -8,6 +8,12 @@ public protocol WidgetDataSource: Sendable {
 	func actors(workspaceId: String) async throws -> [ForYouActor]
 	/// Unread notifications, capped at `WidgetSnapshot.unreadCap`.
 	func unreadNotificationCount(workspaceId: String) async throws -> Int
+	/// The workspace's flows, for the large widget's ring tiles. Optional garnish.
+	func flows(workspaceId: String) async throws -> [LoopSummary]
+}
+
+extension WidgetDataSource {
+	public func flows(workspaceId: String) async throws -> [LoopSummary] { [] }
 }
 
 /// Set by the HTTP layer when the server answers 401: the widget then shows the signed-out state
@@ -97,14 +103,15 @@ public struct WidgetSnapshotLoader: Sendable {
 		// Names and the notification count are garnish: failing either must not blank the widget.
 		async let actors = try? source.actors(workspaceId: workspaceId)
 		async let unread = try? source.unreadNotificationCount(workspaceId: workspaceId)
+		async let loops = try? source.flows(workspaceId: workspaceId)
 		let cards = try await feed
 		return WidgetSnapshotBuilder.make(
 			cards: cards, actors: await actors ?? [], unreadNotifications: await unread ?? fallbackUnread,
-			actorId: session.actorId, workspaceId: workspaceId, now: now)
+			actorId: session.actorId, workspaceId: workspaceId, now: now, loops: await loops ?? [])
 	}
 
 	/// Races `operation` against a timer. The loser is cancelled.
-	static func withTimeout<T: Sendable>(
+	public static func withTimeout<T: Sendable>(
 		_ seconds: TimeInterval, _ operation: @escaping @Sendable () async throws -> T
 	) async throws -> T {
 		try await withThrowingTaskGroup(of: T.self) { group in

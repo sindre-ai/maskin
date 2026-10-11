@@ -22,7 +22,8 @@ public final class ChatStore {
 		case failed(String)
 	}
 
-	public let conversationID: String
+	/// Immutable, so safe to read from any isolation (e.g. `LiveMeetingRequest.id`).
+	nonisolated public let conversationID: String
 	public let currentActorID: String
 	public let currentActorName: String
 
@@ -82,10 +83,10 @@ public final class ChatStore {
 	@ObservationIgnored private let pollInterval: Duration?
 	@ObservationIgnored private let retryDelays: [Duration]
 	@ObservationIgnored private var retryTask: Task<Void, Never>?
-@ObservationIgnored private var listener: Task<Void, Never>?
-	@ObservationIgnored private var queueListener: Task<Void, Never>?
-	@ObservationIgnored private var deliveryObserver: UUID?
-	@ObservationIgnored private var poller: Task<Void, Never>?
+@ObservationIgnored nonisolated(unsafe) private var listener: Task<Void, Never>?
+	@ObservationIgnored nonisolated(unsafe) private var queueListener: Task<Void, Never>?
+	@ObservationIgnored nonisolated(unsafe) private var deliveryObserver: UUID?
+	@ObservationIgnored nonisolated(unsafe) private var poller: Task<Void, Never>?
 	@ObservationIgnored private var syncing = false
 	@ObservationIgnored private var syncQueued = false
 	@ObservationIgnored private var syncQueuedFull = false
@@ -126,12 +127,15 @@ public final class ChatStore {
 		hydrateIfNeeded()
 	}
 
+	/// `deinit` may run on any thread: cancel the (thread-safe) task handles directly and hop to the
+	/// main actor to unregister from the queue, whose observer table is main-actor state.
 	deinit {
-		MainActor.assumeIsolated {
-			listener?.cancel()
-			queueListener?.cancel()
-			poller?.cancel()
-			if let deliveryObserver { queue.stopObservingDeliveries(deliveryObserver) }
+		listener?.cancel()
+		queueListener?.cancel()
+		poller?.cancel()
+		if let id = deliveryObserver {
+			let queue = queue
+			Task { @MainActor in queue.stopObservingDeliveries(id) }
 		}
 	}
 

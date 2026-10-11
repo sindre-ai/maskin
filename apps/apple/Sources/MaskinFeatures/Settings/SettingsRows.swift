@@ -161,7 +161,7 @@ struct SkillRow: View {
 			HStack {
 				Text(skill.name).foregroundStyle(MaskinColor.ink)
 				if !skill.isValid {
-					Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(MaskinColor.sigInk)
+					Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(MaskinColor.warning)
 						.accessibilityLabel("Needs attention")
 				}
 			}

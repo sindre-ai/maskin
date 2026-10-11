@@ -372,7 +372,7 @@ struct MessageRow: View {
 		let dimmed = message.isPending && !message.isFailed
 		Group {
 			if message.isEmojiOnly {
-				Text(message.content).font(.system(size: emojiSize))
+				Text(message.content).maskinSymbol(emojiSize)
 			} else {
 				MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
 			}

@@ -130,7 +130,7 @@ struct FilesListView: View {
 	private func row(_ file: FileSummary) -> some View {
 		let content = HStack(spacing: MaskinSpace.s8) {
 			Image(systemName: FileKindIcon.symbol(for: file.kind))
-				.font(.system(size: MaskinSpace.s11, weight: .regular))
+				.maskinSymbol(MaskinSpace.s11, weight: .regular)
 				.foregroundStyle(MaskinColor.ink2)
 				.frame(width: MaskinSpace.s14 + MaskinSpace.s4, height: MaskinSpace.s14 + MaskinSpace.s4)
 				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.cardLg, style: .continuous))
@@ -152,7 +152,7 @@ struct FilesListView: View {
 			}
 			Spacer(minLength: 0)
 			Image(systemName: "chevron.right")
-				.font(.system(size: MaskinSpace.s7, weight: .semibold))
+				.maskinSymbol(MaskinSpace.s7, weight: .semibold)
 				.foregroundStyle(MaskinColor.ink5)
 				.accessibilityHidden(true)
 		}

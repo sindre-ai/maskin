@@ -2,25 +2,28 @@ import AVFoundation
 import MaskinCore
 import MaskinDesign
 import MaskinUI
+import MediaPlayer
 import SwiftUI
 
 /// Today's briefing: a card, a Listen button and a text reader. The full-screen story player is
 /// an iPhone, iPad and TV thing.
 struct WatchBriefing: View {
 	let store: ForYouStore?
+	let watch: MaskinWatchStore
 	let firstName: String?
 	@State private var speaker = BriefingSpeaker()
 
+	/// The live briefing, else the one in the last snapshot, so it still reads and plays offline.
 	private var script: String? {
 		if case .loaded(let brief) = store?.brief { return WatchBriefingText.plain(brief.markdown) }
-		return nil
+		return watch.snapshot?.briefing
 	}
 
 	var body: some View {
 		NavigationStack {
 			ScrollView {
-				VStack(alignment: .leading, spacing: 10) {
-					WatchPageTitle(title: "For you", count: store?.needsCount ?? 0)
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					WatchPageTitle(title: "For you", count: store?.needsCount ?? watch.needsCount)
 					NavigationLink {
 						WatchBriefingReader(text: script ?? "")
 					} label: { card }
@@ -28,7 +31,7 @@ struct WatchBriefing: View {
 						.disabled(script == nil)
 					listenControl
 				}
-				.padding(.horizontal, 2)
+				.padding(.horizontal, MaskinSpace.s1)
 			}
 			.toolbar(.hidden, for: .navigationBar)
 			.containerBackground(for: .navigation) { WatchBackdrop() }
@@ -43,43 +46,46 @@ struct WatchBriefing: View {
 				.font(WatchType.microMono())
 				.tracking(0.8)
 				.foregroundStyle(MaskinColor.stLab)
-				.padding(.horizontal, 10).padding(.vertical, 4)
+				.padding(.horizontal, MaskinSpace.s5).padding(.vertical, MaskinSpace.s2)
 				.background(MaskinColor.pill, in: Capsule())
-			Spacer(minLength: 28)
+			Spacer(minLength: MaskinSpace.s13)
 			Text(greeting)
-				.font(MaskinTypeface.sans(22, weight: .bold, relativeTo: .title2))
+				.font(WatchType.title())
 				.foregroundStyle(MaskinColor.stFg)
 				.multilineTextAlignment(.leading)
 			Text(readTime)
 				.font(WatchType.mono())
 				.tracking(0.6)
 				.foregroundStyle(MaskinColor.stLab)
-				.padding(.top, 6)
+				.padding(.top, MaskinSpace.s3)
 		}
-		.padding(14)
+		.padding(MaskinSpace.s8)
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.background(MaskinGradient.unseenBrief, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+		.background(MaskinGradient.unseenBrief, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 	}
 
 	@ViewBuilder
 	private var listenControl: some View {
 		switch store?.brief {
-		case .failed(let message):
+		case .failed(let message) where script == nil:
 			Text(message).font(WatchType.caption()).foregroundStyle(MaskinColor.ink4)
-			Button("Retry") { Task { await store?.loadBrief() } }.buttonStyle(SecondaryActionButtonStyle())
-		case .loaded:
-			Button {
-				if speaker.isSpeaking { speaker.stop() } else if let script { speaker.speak(script) }
-			} label: {
-				Label(speaker.isSpeaking ? "Stop" : "Listen", systemImage: speaker.isSpeaking ? "stop.fill" : "waveform")
-					.font(MaskinTypeface.sans(17, weight: .bold, relativeTo: .body))
-					.foregroundStyle(MaskinSurface.onInverse)
-					.frame(maxWidth: .infinity, minHeight: 44)
-					.background(MaskinSurface.inverse, in: Capsule())
-			}
-			.buttonStyle(.plain)
+			Button("Retry") { Task { await store?.loadBrief() } }
+				.buttonStyle(SecondaryActionButtonStyle())
+				.frame(minHeight: WatchMetrics.target)
 		default:
-			ProgressView().frame(maxWidth: .infinity)
+			if let script {
+				Button { speaker.toggle(script) } label: {
+					Label(speaker.buttonTitle, systemImage: speaker.buttonSymbol)
+						.font(WatchType.action())
+						.foregroundStyle(MaskinSurface.onInverse)
+						.frame(maxWidth: .infinity, minHeight: WatchMetrics.target)
+						.background(MaskinSurface.inverse, in: Capsule())
+						.contentShape(Capsule())
+				}
+				.buttonStyle(.plain)
+			} else {
+				ProgressView().frame(maxWidth: .infinity)
+			}
 		}
 	}
 
@@ -98,7 +104,7 @@ private struct WatchBriefingReader: View {
 
 	var body: some View {
 		ScrollView {
-			VStack(alignment: .leading, spacing: 10) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 				ForEach(Array(WatchBriefingText.paragraphs(text).enumerated()), id: \.offset) { _, paragraph in
 					Text(paragraph).font(WatchType.body()).foregroundStyle(MaskinColor.ink)
 				}
@@ -110,33 +116,119 @@ private struct WatchBriefingReader: View {
 	}
 }
 
-/// Speaks the briefing through the watch speaker or connected AirPods.
+/// Speaks the briefing through the watch speaker or connected AirPods. It plays as long-form
+/// spoken audio, so it routes to AirPods, keeps going with the wrist down, and shows up in Now
+/// Playing, where the Crown sets the volume and the transport buttons pause and resume it.
 @MainActor
 @Observable
 final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
+	enum Phase: Equatable { case idle, speaking, paused }
+
 	private let synthesizer = AVSpeechSynthesizer()
-	private(set) var isSpeaking = false
+	private(set) var phase: Phase = .idle
+	@ObservationIgnored private var commandsInstalled = false
+
+	var isSpeaking: Bool { phase != .idle }
+	var buttonTitle: String {
+		switch phase {
+		case .idle: "Listen"
+		case .speaking: "Pause"
+		case .paused: "Resume"
+		}
+	}
+	var buttonSymbol: String {
+		switch phase {
+		case .idle: "waveform"
+		case .speaking: "pause.fill"
+		case .paused: "play.fill"
+		}
+	}
 
 	override init() {
 		super.init()
 		synthesizer.delegate = self
 	}
 
+	/// Listen starts, Pause pauses, Resume continues.
+	func toggle(_ text: String) {
+		switch phase {
+		case .idle: speak(text)
+		case .speaking: pause()
+		case .paused: resume()
+		}
+	}
+
 	func speak(_ text: String) {
-		isSpeaking = true
-		synthesizer.speak(AVSpeechUtterance(string: text))
+		installCommands()
+		Task {
+			let session = AVAudioSession.sharedInstance()
+			try? session.setCategory(.playback, mode: .spokenAudio, policy: .longFormAudio)
+			_ = try? await session.activate()
+			synthesizer.speak(AVSpeechUtterance(string: text))
+			phase = .speaking
+			updateNowPlaying()
+		}
+	}
+
+	func pause() {
+		guard phase == .speaking else { return }
+		synthesizer.pauseSpeaking(at: .immediate)
+		phase = .paused
+		updateNowPlaying()
+	}
+
+	func resume() {
+		guard phase == .paused else { return }
+		synthesizer.continueSpeaking()
+		phase = .speaking
+		updateNowPlaying()
 	}
 
 	func stop() {
 		synthesizer.stopSpeaking(at: .immediate)
-		isSpeaking = false
+		finish()
+	}
+
+	private func finish() {
+		phase = .idle
+		MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+	}
+
+	private func updateNowPlaying() {
+		MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+			MPMediaItemPropertyTitle: "Daily briefing",
+			MPMediaItemPropertyArtist: "Maskin",
+			MPNowPlayingInfoPropertyPlaybackRate: phase == .speaking ? 1.0 : 0.0,
+		]
+	}
+
+	/// Now Playing's play, pause and toggle buttons drive the same synthesizer.
+	private func installCommands() {
+		guard !commandsInstalled else { return }
+		commandsInstalled = true
+		let center = MPRemoteCommandCenter.shared()
+		center.playCommand.addTarget { [weak self] _ in
+			Task { @MainActor in self?.resume() }
+			return .success
+		}
+		center.pauseCommand.addTarget { [weak self] _ in
+			Task { @MainActor in self?.pause() }
+			return .success
+		}
+		center.togglePlayPauseCommand.addTarget { [weak self] _ in
+			Task { @MainActor in
+				guard let self else { return }
+				if self.phase == .paused { self.resume() } else { self.pause() }
+			}
+			return .success
+		}
 	}
 
 	nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
-		Task { @MainActor in self.isSpeaking = false }
+		Task { @MainActor in self.finish() }
 	}
 
 	nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
-		Task { @MainActor in self.isSpeaking = false }
+		Task { @MainActor in self.finish() }
 	}
 }

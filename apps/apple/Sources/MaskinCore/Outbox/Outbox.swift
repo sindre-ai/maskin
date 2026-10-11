@@ -118,8 +118,8 @@ public final class Outbox {
 	@ObservationIgnored private var draining = false
 	@ObservationIgnored private var drainAgain = false
 	@ObservationIgnored private var subscribers: [UUID: AsyncStream<OutboxEvent>.Continuation] = [:]
-	@ObservationIgnored private var wake: Task<Void, Never>?
-	@ObservationIgnored private var tasks: [Task<Void, Never>] = []
+	@ObservationIgnored nonisolated(unsafe) private var wake: Task<Void, Never>?
+	@ObservationIgnored nonisolated(unsafe) private var tasks: [Task<Void, Never>] = []
 	@ObservationIgnored private var isDiscarded = false
 	/// While `isAuthBlocked`, the only entry allowed out: the one that was refused, retried after
 	/// its back-off as a probe. Everything else waits for it to get through.
@@ -161,11 +161,12 @@ public final class Outbox {
 			.appendingPathComponent("outbox.json")
 	}
 
+	/// `deinit` may run on any thread, so it must not assume main-actor isolation (that traps). The
+	/// task handles are `nonisolated(unsafe)` precisely so cancelling them here is legal; `Task.cancel()`
+	/// is thread-safe.
 	deinit {
-		MainActor.assumeIsolated {
-			for task in tasks { task.cancel() }
-			wake?.cancel()
-		}
+		for task in tasks { task.cancel() }
+		wake?.cancel()
 	}
 
 	// MARK: Triggers

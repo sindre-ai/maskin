@@ -93,7 +93,7 @@ struct SearchResultRow: View {
 
 	private func glyph(_ name: String) -> some View {
 		Image(systemName: name)
-			.font(.system(size: MaskinFontSize.t16))
+			.maskinSymbol(MaskinFontSize.t16)
 			.foregroundStyle(MaskinColor.ink4)
 			.frame(width: MaskinSpace.s13, height: MaskinSpace.s13)
 			.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.input))

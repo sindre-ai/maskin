@@ -28,8 +28,9 @@ public struct ShellCommands: Commands {
 			Button("Search") { runtime?.focusSearch() }
 				.keyboardShortcut("k", modifiers: .command)
 				.disabled(runtime == nil)
+			// Return itself is handled by the focused card (a bare-Return menu shortcut would swallow
+			// Return in every text field), so this item has no key equivalent.
 			Button("Accept recommended option") { runtime?.acceptRecommendedOnSelection() }
-				.keyboardShortcut(.return, modifiers: [])
 				.disabled(runtime?.canAcceptRecommended != true)
 		}
 	}

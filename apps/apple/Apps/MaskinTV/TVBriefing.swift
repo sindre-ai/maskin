@@ -102,9 +102,21 @@ final class TVNarrator: NSObject, AVSpeechSynthesizerDelegate {
 		synthesizer.delegate = self
 	}
 
+	/// Profile > Settings > "Narrate briefings". Off: slides still advance, on a short timer.
+	static let narrateKey = "tv.narrateBriefings"
+	private var silentAdvance: Task<Void, Never>?
+
 	func speak(_ text: String) {
 		synthesizer.stopSpeaking(at: .immediate)
+		silentAdvance?.cancel()
 		isPaused = false
+		if UserDefaults.standard.object(forKey: Self.narrateKey) as? Bool == false {
+			silentAdvance = Task { [weak self] in
+				try? await Task.sleep(for: .seconds(4.5))
+				if !Task.isCancelled { self?.onFinish?() }
+			}
+			return
+		}
 		synthesizer.speak(AVSpeechUtterance(string: text))
 	}
 
@@ -120,6 +132,7 @@ final class TVNarrator: NSObject, AVSpeechSynthesizerDelegate {
 
 	func stop() {
 		onFinish = nil
+		silentAdvance?.cancel()
 		synthesizer.stopSpeaking(at: .immediate)
 	}
 

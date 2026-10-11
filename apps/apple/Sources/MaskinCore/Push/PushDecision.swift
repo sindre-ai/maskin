@@ -23,10 +23,21 @@ public struct PushDecisionOption: Sendable, Equatable {
 	/// option, forwarded by the server).
 	public var destructive: Bool
 
+	/// Hold is an option the agent authors like any other; it is recognised by its label.
+	public var isHold: Bool { HoldOption.matches(label) }
+
 	public init(label: String, recommended: Bool = false, destructive: Bool = false) {
 		self.label = label
 		self.recommended = recommended
 		self.destructive = destructive
+	}
+}
+
+/// Recognises the agent's "Hold" option by its label ("Hold", "Hold a week", "Hold for now").
+public enum HoldOption {
+	public static func matches(_ label: String) -> Bool {
+		let first = label.trimmingCharacters(in: .whitespaces).lowercased().split(separator: " ").first
+		return first == "hold" || first == "later" || first == "wait"
 	}
 }
 
@@ -129,7 +140,10 @@ public struct NotificationActionPlan: Sendable, Equatable {
 	public init(_ payload: PushDecisionPayload) {
 		categoryIdentifier = PushDecisionPayload.categoryPrefix + payload.notificationId
 		var actions: [Action] = []
-		for (index, option) in payload.options.prefix(Self.maxActions - 1).enumerated() {
+		// The recommended option leads and Hold follows it, so the two buttons the design leads with
+		// are the two a banner always shows. The identifier keeps the option's index in the
+		// PAYLOAD, not its place in the plan, so `choice(for:in:)` is independent of ordering.
+		for (index, option) in Self.display(payload.options).prefix(Self.maxActions - 1) {
 			actions.append(
 				Action(
 					identifier: Self.optionPrefix + String(index), title: option.label,
@@ -147,6 +161,17 @@ public struct NotificationActionPlan: Sendable, Equatable {
 					requiresAuthentication: false, isDestructive: false))
 		}
 		self.actions = actions
+	}
+
+	/// Options in the order a banner shows them: the lead (recommended, else the first that is not
+	/// Hold), then Hold, then the rest as sent.
+	/// Pairs each with its index in the payload.
+	static func display(_ options: [PushDecisionOption]) -> [(Int, PushDecisionOption)] {
+		let indexed = Array(options.enumerated())
+		let lead = indexed.first { $0.element.recommended } ?? indexed.first { !$0.element.isHold }
+		let hold = indexed.first { $0.element.isHold && $0.offset != lead?.offset }
+		let rest = indexed.filter { $0.offset != lead?.offset && $0.offset != hold?.offset }
+		return ([lead, hold].compactMap { $0 } + rest).map { ($0.offset, $0.element) }
 	}
 
 	/// What a tapped action identifier means for this payload. `nil` for the default tap,

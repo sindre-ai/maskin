@@ -9,10 +9,14 @@ import SwiftUI
 struct TVThread: View {
 	@State private var chat: ChatStore
 	@State private var composing = false
+	@State private var dictating = false
 	@State private var draft = ""
+	/// Inside Team's split view: no Back, no outer safe-area padding.
+	let embedded: Bool
 	@Environment(\.dismiss) private var dismiss
 
-	init(environment: AppEnvironment, conversationID: String) {
+	init(environment: AppEnvironment, conversationID: String, embedded: Bool = false) {
+		self.embedded = embedded
 		let session = environment.auth.session
 		_chat = State(
 			initialValue: ChatStore(
@@ -40,31 +44,33 @@ struct TVThread: View {
 				Text(notice).font(.system(size: 26)).foregroundStyle(MaskinColor.danger)
 			}
 			HStack(spacing: 16) {
-				Button { composing = true } label: {
+				Button { dictating = true; composing = true } label: {
 					TVCapsuleLabel(title: "Dictate", prominent: true, symbol: "mic.fill", slim: true)
 				}
 				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
-				Button { composing = true } label: { TVCapsuleLabel(title: "Type", symbol: "keyboard", slim: true) }
+				Button { dictating = false; composing = true } label: { TVCapsuleLabel(title: "Type", symbol: "keyboard", slim: true) }
 					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
-				ForEach(Array(TVChat.quickReplies.enumerated()), id: \.offset) { _, phrase in
+				ForEach(Array(TVQuickReplies.chips(lastMessage: recent.last?.content).enumerated()), id: \.offset) { _, phrase in
 					Button { chat.send(phrase) } label: { TVCapsuleLabel(title: phrase, slim: true) }
 						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 				}
 				Spacer(minLength: 0)
-				Button { dismiss() } label: {
-					Label("Back", systemImage: "chevron.left").font(.system(size: 34, weight: .semibold))
-						.foregroundStyle(MaskinColor.ink3).padding(.horizontal, 28).frame(minHeight: 72)
+				if !embedded {
+					Button { dismiss() } label: {
+						Label("Back", systemImage: "chevron.left").font(.system(size: 34, weight: .semibold))
+							.foregroundStyle(MaskinColor.ink3).padding(.horizontal, 28).frame(minHeight: 72)
+					}
+					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 36))
 				}
-				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 36))
 			}
 		}
-		.padding(.horizontal, 96)
-		.padding(.top, 56)
-		.padding(.bottom, 48)
+		.padding(.horizontal, embedded ? 0 : 96)
+		.padding(.top, embedded ? 0 : 56)
+		.padding(.bottom, embedded ? 0 : 48)
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-		.ignoresSafeArea()
-		.alert("Reply", isPresented: $composing) {
-			TextField("Say or type your reply", text: $draft)
+		.ignoresSafeArea(edges: embedded ? [] : .all)
+		.alert(dictating ? "Dictate" : "Type a reply", isPresented: $composing) {
+			TextField(dictating ? "Hold the mic and speak" : "Your reply", text: $draft)
 			Button("Send") {
 				let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
 				draft = ""
@@ -101,7 +107,3 @@ struct TVThread: View {
 	}
 }
 
-/// What the TV thread offers without any input.
-enum TVChat {
-	static let quickReplies = ["Yes", "No", "Thanks"]
-}

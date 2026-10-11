@@ -45,14 +45,14 @@ struct KeysPage: View {
 		.onChange(of: scenePhase) { _, phase in
 			if phase != .active { store.concealForScene(isBackground: phase == .background) }
 		}
-		.confirmationDialog("Make a new key?", isPresented: $confirming, titleVisibility: .visible) {
-			Button("Make a new key and sign out other devices", role: .destructive) {
+		.confirmationDialog("Revoke key?", isPresented: $confirming, titleVisibility: .visible) {
+			Button("Revoke and make a new key", role: .destructive) {
 				copied = false
 				Task { await store.regenerate() }
 			}
 		} message: {
 			Text(
-				"Your current key stops working immediately. Other devices and tools are signed out and must use the new key.")
+				"Anything using it stops working. Other devices are signed out and must use the new key.")
 		}
 	}
 

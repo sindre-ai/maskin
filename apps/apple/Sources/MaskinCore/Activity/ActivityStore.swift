@@ -43,7 +43,7 @@ public final class ActivityStore {
 	@ObservationIgnored private var everLive: Set<String> = []
 	@ObservationIgnored private var settled: Set<String> = []
 	@ObservationIgnored private var inFlight: Set<String> = []
-	@ObservationIgnored private var poller: Task<Void, Never>?
+	@ObservationIgnored nonisolated(unsafe) private var poller: Task<Void, Never>?
 
 	public init(
 		source: any SessionActivitySource, cache: SnapshotCache? = nil,
@@ -55,7 +55,8 @@ public final class ActivityStore {
 		self.idleInterval = idleInterval
 	}
 
-	deinit { MainActor.assumeIsolated { poller?.cancel() } }
+	/// Not main-actor-assumed: `deinit` can run on any thread. `poller` is `nonisolated(unsafe)`.
+	deinit { poller?.cancel() }
 
 	public func stop() {
 		poller?.cancel()

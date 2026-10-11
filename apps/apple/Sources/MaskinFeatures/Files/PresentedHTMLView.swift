@@ -1,6 +1,9 @@
 import MaskinCore
 import SwiftUI
+
+#if canImport(WebKit)
 import WebKit
+#endif
 
 /// An HTML page rendered in the same locked-down web view the file viewer uses, with no review
 /// pins on top: scripts run, the network and navigation don't. Used wherever a page is presented
@@ -17,6 +20,7 @@ struct PresentedHTMLView: View {
 	}
 }
 
+#if canImport(WebKit)
 /// Shared by the iOS and macOS wrappers.
 @MainActor
 private func makeSandboxedWebView() -> WKWebView {
@@ -87,6 +91,18 @@ struct HTMLWebView: NSViewRepresentable {
 		guard context.coordinator.loadedRevision != revision else { return }
 		context.coordinator.loadedRevision = revision
 		view.loadHTMLString(MiniAppHTML.prepare(html), baseURL: nil)
+	}
+}
+#endif
+#else
+/// tvOS ships no WebKit: say so instead of rendering the page.
+struct HTMLWebView: View {
+	let html: String
+	let revision: Int
+	let probe: HTMLProbe?
+
+	var body: some View {
+		Text("Open this page on iPhone, iPad or Mac.").foregroundStyle(.secondary)
 	}
 }
 #endif

@@ -18,6 +18,6 @@ enum ForYouPalette {
 	static let failureBorder = MaskinColor.noticeBd
 	static let failureForeground = MaskinColor.noticeFg
 
-	/// "held 2d": a signal, so Patina ink rather than amber.
-	static let heldNote = MaskinColor.sigInk
+	/// "held 2d": a quiet note, grey (amber is only for error and warning).
+	static let heldNote = MaskinColor.ink4
 }

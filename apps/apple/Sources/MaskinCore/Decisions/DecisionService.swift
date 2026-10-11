@@ -89,12 +89,17 @@ public struct DecisionRecord: Sendable, Equatable {
 	/// The reply went out but the thread has no high-water mark, so it will come back unread.
 	public var staysUnread: Bool
 	public var groupId: String
+	/// The reason typed with a Hold ("Held · your reason"); nil when none was given.
+	public var note: String?
 
-	public init(kind: Kind, phase: Phase, staysUnread: Bool = false, groupId: String = "") {
+	public init(
+		kind: Kind, phase: Phase, staysUnread: Bool = false, groupId: String = "", note: String? = nil
+	) {
 		self.kind = kind
 		self.phase = phase
 		self.staysUnread = staysUnread
 		self.groupId = groupId
+		self.note = note
 	}
 }
 
@@ -161,7 +166,7 @@ public final class DecisionService {
 		let reason = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		submit(
 			content: reason.isEmpty ? label : "\(label) · \(reason)", kind: .option(label),
-			target: target)
+			target: target, note: reason.isEmpty ? nil : reason)
 	}
 
 	/// Answer in the reader's own words.
@@ -226,7 +231,9 @@ public final class DecisionService {
 
 	// MARK: Internals
 
-	private func submit(content: String, kind: DecisionRecord.Kind, target: DecisionTarget) {
+	private func submit(
+		content: String, kind: DecisionRecord.Kind, target: DecisionTarget, note: String? = nil
+	) {
 		let group = UUID().uuidString
 		let comment = enqueue(
 			kind: Self.commentKind, target: target, group: group,
@@ -243,7 +250,7 @@ public final class DecisionService {
 		install(
 			DecisionRecord(
 				kind: kind, phase: .held(until: now().addingTimeInterval(undoWindow)),
-				staysUnread: staysUnread, groupId: group),
+				staysUnread: staysUnread, groupId: group, note: note),
 			for: target.entityId)
 	}
 

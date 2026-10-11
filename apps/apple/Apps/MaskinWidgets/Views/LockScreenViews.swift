@@ -23,13 +23,9 @@ struct LockScreenView: View {
 	}
 }
 
-private func decisionPhrase(_ n: Int) -> String {
-	n == 1 ? "1 decision needs you" : "\(n) decisions need you"
-}
-
-/// "Forge suggests Ship it", or "Suggested: Ship it" when the sender could not be resolved.
-private func suggestionLine(agent: String?, label: String) -> String {
-	agent.map { "\($0) suggests \(label)" } ?? "Suggested: \(label)"
+/// "1 needs you" / "2 need you": the spec's lock-screen phrasing.
+func needPhrase(_ n: Int) -> String {
+	n == 1 ? "1 needs you" : "\(n) need you"
 }
 
 private struct CircularView: View {
@@ -41,15 +37,17 @@ private struct CircularView: View {
 			case .content(let s) where !s.isEmpty:
 				VStack(spacing: 0) {
 					Text(s.needsCount > 99 ? "99+" : "\(s.needsCount)")
-						.font(.system(size: 24, weight: .bold, design: .rounded))
+						.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: MaskinFontWeight.w750, relativeTo: .title2))
 						.minimumScaleFactor(0.6)
 						.lineLimit(1)
-					Image(systemName: "tray.full")
-						.font(.system(size: 10, weight: .semibold))
+					Text(s.needsCount == 1 ? "NEEDS YOU" : "NEED YOU")
+						.font(MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold, relativeTo: .caption2))
+						.minimumScaleFactor(0.7)
+						.lineLimit(1)
 				}
 				.widgetAccentable()
 				.accessibilityElement(children: .ignore)
-				.accessibilityLabel(decisionPhrase(s.needsCount))
+				.accessibilityLabel(needPhrase(s.needsCount))
 			case .content(let s):
 				Image(systemName: s.unreadCount > 0 ? "bell.badge" : "checkmark")
 					.font(.system(size: 22, weight: .semibold))
@@ -75,19 +73,22 @@ private struct RectangularView: View {
 				MaskinMark()
 					.stroke(style: MaskinMark.strokeStyle(side: 11))
 					.frame(width: 11, height: 11)
-				Text("MASKIN").font(.system(size: 10, weight: .semibold, design: .monospaced))
+				Text("NEEDS YOU").font(MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold, relativeTo: .caption2))
 			}
 			.widgetAccentable()
 			switch state {
 			case .content(let s) where !s.isEmpty:
-				Text(decisionPhrase(s.needsCount)).font(.headline).lineLimit(1).minimumScaleFactor(0.8)
 				if let top = s.top {
-					Text(top.title).font(.caption).lineLimit(1).privacySensitive()
-					if let suggestion = top.recommendedLabel {
-						Text(suggestionLine(agent: top.agentName, label: suggestion))
-							.font(.caption2).lineLimit(1).privacySensitive()
+					// The next decision, two lines; redacted while the device is locked.
+					Text(top.title)
+						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+						.lineLimit(2)
+						.privacySensitive()
+					if s.needsCount > 1 {
+						Text(needPhrase(s.needsCount)).font(MaskinTypeface.sans(MaskinFontSize.t11, relativeTo: .caption2)).lineLimit(1)
 					}
 				} else if s.unreadCount > 0 {
+					Text(needPhrase(s.needsCount)).font(.headline).lineLimit(1)
 					Text("\(s.unreadLabel) unread").font(.caption)
 				}
 			case .content(let s):
@@ -111,9 +112,9 @@ private struct InlineView: View {
 	var body: some View {
 		switch state {
 		case .content(let s) where !s.isEmpty:
-			Label("Maskin: \(s.needsCount) need you", systemImage: "tray.full")
+			Label(needPhrase(s.needsCount), systemImage: "tray.full")
 		case .content:
-			Label("Maskin: all clear", systemImage: "checkmark")
+			Label("You\u{2019}re caught up", systemImage: "checkmark")
 		case .signedOut:
 			Label("Open Maskin to sign in", systemImage: "person.crop.circle")
 		case .unavailable:

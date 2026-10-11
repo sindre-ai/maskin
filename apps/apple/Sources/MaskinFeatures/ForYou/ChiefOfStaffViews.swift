@@ -47,6 +47,9 @@ struct ChiefOfStaffSheet: View {
 	let presented: ChiefOfStaffDesk.Presented
 	/// Closes the thread where it is not a sheet (the iPad detail column). Nil: dismiss the sheet.
 	var onClose: (() -> Void)?
+	/// iPad form sheet: a compact copy of the card with its options, above the thread. Deciding
+	/// here updates the feed card, since both read the same store entry.
+	var card: AnyView?
 
 	@Environment(\.dismiss) private var dismiss
 	@State private var holder = Holder()
@@ -78,6 +81,11 @@ struct ChiefOfStaffSheet: View {
 		NavigationStack {
 			VStack(spacing: 0) {
 				header
+				if let card {
+					ScrollView { card.padding(.horizontal, MaskinSpace.s9).padding(.bottom, MaskinSpace.s5) }
+						.frame(maxHeight: 280)
+						.fixedSize(horizontal: false, vertical: true)
+				}
 				Divider()
 				ChatThreadView(
 					store: built.chat, composer: built.composer, conversations: desk.conversations,
@@ -115,7 +123,7 @@ struct ChiefOfStaffSheet: View {
 			Spacer(minLength: MaskinSpace.s3)
 			Button { if let onClose { onClose() } else { dismiss() } } label: {
 				Image(systemName: "xmark")
-					.font(.system(size: MaskinFontSize.t13, weight: .bold))
+					.maskinSymbol(MaskinFontSize.t13, weight: .bold)
 					.foregroundStyle(MaskinColor.ink4)
 					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 			}

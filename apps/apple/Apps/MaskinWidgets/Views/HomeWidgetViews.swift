@@ -27,7 +27,9 @@ struct NeedsYouHomeView: View {
 				symbol: "wifi.slash", title: "Can't refresh",
 				detail: "Open Maskin to check what needs you.", compact: size == .small)
 		case .content(let snapshot):
-			if snapshot.isEmpty {
+			if size == .medium, let chosen = entry.chosen, chosen.isShown(at: entry.date) {
+				ChosenView(record: chosen, now: entry.date)
+			} else if snapshot.isEmpty {
 				AllClearView(snapshot: snapshot, now: entry.date, size: size)
 			} else {
 				switch size {
@@ -87,7 +89,7 @@ func decisionAccessibilityLabel(
 private struct DecisionTitle: View {
 	let decision: WidgetSnapshot.Decision
 	var lines: Int = 2
-	var font: Font = .footnote.weight(.semibold)
+	var font: Font = MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote)
 
 	var body: some View {
 		Text(decision.title)
@@ -107,7 +109,7 @@ private struct OptionChip: View {
 	var body: some View {
 		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous)
 		Text(label)
-			.font(.caption2.weight(.medium))
+			.font(MaskinTypeface.sans(MaskinFontSize.t11, weight: .medium, relativeTo: .caption2))
 			.lineLimit(1)
 			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
 			.padding(.horizontal, MaskinSpace.s4)
@@ -126,6 +128,8 @@ private struct OptionChip: View {
 	}
 }
 
+/// "Chief of Staff · 9:12": who asked and when. Today it is a clock time; older, how long it has
+/// been held ("held 3 days"), in the signal colour.
 private struct AgentLine: View {
 	let decision: WidgetSnapshot.Decision
 	let now: Date
@@ -136,12 +140,16 @@ private struct AgentLine: View {
 			if let agent = decision.agentName {
 				Text(agent).privacySensitive()
 			}
-			if showHeld, let held = ForYouFormat.heldNote(since: decision.since, now: now) {
-				if decision.agentName != nil { Text("·") }
-				Text(held).foregroundStyle(MaskinColor.sigInk)
+			if showHeld, let since = decision.since {
+				if decision.agentName != nil { Text("\u{00B7}") }
+				if Calendar.current.isDate(since, inSameDayAs: now) {
+					Text(since, style: .time)
+				} else if let held = ForYouFormat.heldNote(since: since, now: now) {
+					Text(held).foregroundStyle(MaskinColor.sigInk)
+				}
 			}
 		}
-		.font(.caption2)
+		.font(MaskinTypeface.sans(MaskinFontSize.t11, relativeTo: .caption2))
 		.foregroundStyle(MaskinColor.ink4)
 		.lineLimit(1)
 	}
@@ -153,26 +161,24 @@ private struct SmallView: View {
 	let snapshot: WidgetSnapshot
 	let now: Date
 	@Environment(\.redactionReasons) private var redaction
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			HeaderLabel()
-			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s2) {
-				Text("\(snapshot.needsCount)")
-					.font(.system(size: 40, weight: .bold, design: .rounded))
-					.foregroundStyle(MaskinColor.sigInk)
-					.widgetAccentable()
-					.contentTransition(.numericText())
-				Text(snapshot.needsCount == 1 ? "decision" : "decisions")
-					.font(.footnote)
-					.foregroundStyle(MaskinColor.ink4)
-			}
-			.minimumScaleFactor(0.7)
-			.lineLimit(1)
+			Text("\(snapshot.needsCount)")
+				.font(MaskinTypeface.sans(56, weight: MaskinFontWeight.w750, relativeTo: .largeTitle))
+				.foregroundStyle(MaskinColor.ink)
+				.minimumScaleFactor(0.5)
+				.lineLimit(1)
+				.widgetAccentable()
+				.contentTransition(reduceMotion ? .identity : .numericText())
 			if let top = snapshot.top {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-					DecisionTitle(decision: top, lines: 2, font: .caption.weight(.semibold))
-					AgentLine(decision: top, now: now, showHeld: false)
+					DecisionTitle(
+						decision: top, lines: 2,
+						font: MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .footnote))
+					AgentLine(decision: top, now: now)
 				}
 			}
 			Spacer(minLength: 0)
@@ -198,77 +204,171 @@ private struct MediumView: View {
 	@Environment(\.redactionReasons) private var redaction
 	@Environment(\.dynamicTypeSize) private var typeSize
 
-	/// Two asks fit at normal sizes; at accessibility sizes one, so nothing is clipped.
-	private var asks: [WidgetSnapshot.Decision] {
-		Array(snapshot.decisions.prefix(typeSize.isAccessibilitySize ? 1 : 2))
-	}
+	private var decision: WidgetSnapshot.Decision? { snapshot.top }
 
 	var body: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s7) {
-			countColumn
-				// A share of the widget, not a fixed 118 pt: it follows the device's widget size.
-				.containerRelativeFrame(.horizontal) { width, _ in width * 0.3 }
-
-			Rectangle().fill(MaskinSurface.line).frame(width: 1)
-
-			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-				ForEach(Array(asks.enumerated()), id: \.element.id) { index, decision in
-					if index > 0 { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
-					Link(destination: snapshot.url(for: decision)) { ask(decision) }
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			header
+			if let decision {
+				Link(destination: snapshot.url(for: decision)) {
+					Text(decision.title)
+						.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+						.foregroundStyle(MaskinColor.ink)
+						.lineLimit(typeSize.isAccessibilitySize ? 2 : 3)
+						.multilineTextAlignment(.leading)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.privacySensitive()
 				}
 				Spacer(minLength: 0)
-				UpdatedNote(snapshot: snapshot, now: now)
+				buttons(for: decision)
 			}
-			.frame(maxWidth: .infinity, alignment: .leading)
+			UpdatedNote(snapshot: snapshot, now: now)
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-		.accessibilityElement(children: .ignore)
+		.accessibilityElement(children: .contain)
 		.accessibilityLabel(summary)
 	}
 
-	private var countColumn: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			HeaderLabel()
-			Text("\(snapshot.needsCount)")
-				.font(.system(size: 44, weight: .bold, design: .rounded))
-				.foregroundStyle(MaskinColor.sigInk)
-				.widgetAccentable()
-				.minimumScaleFactor(0.5)
+	/// Chief of Staff on the left, the count as a badge on the right.
+	private var header: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			MaskinLogoTile(size: 22)
+			Text(decision?.agentName ?? "Chief of Staff")
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink)
 				.lineLimit(1)
-			Text(snapshot.needsCount == 1 ? "decision needs you" : "decisions need you")
-				.font(.caption)
-				.foregroundStyle(MaskinColor.ink4)
-				.lineLimit(3)
-				.minimumScaleFactor(0.8)
-			Spacer(minLength: 0)
-			if snapshot.unreadCount > 0 {
-				Label("\(snapshot.unreadLabel) unread", systemImage: "bell.badge")
-					.font(.caption2.weight(.medium))
-					.foregroundStyle(MaskinColor.ink3)
-					.lineLimit(1)
+				.privacySensitive()
+			Spacer(minLength: MaskinSpace.s3)
+			Text("\(snapshot.needsCount)")
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold, relativeTo: .caption))
+				.foregroundStyle(MaskinColor.sigInk)
+				.padding(.horizontal, MaskinSpace.s4)
+				.padding(.vertical, MaskinSpace.s1)
+				.background(MaskinColor.sigTint, in: Capsule())
+				.widgetAccentable()
+				.accessibilityLabel("\(snapshot.needsCount) need you")
+		}
+		.widgetAccentable()
+	}
+
+	/// The agent's recommendation (ink) and Hold. A button decides in place only when the answer
+	/// can be sent as it stands; Hold needs a reason and irreversible options need the confirm
+	/// sheet, so those open the card in the app instead.
+	@ViewBuilder
+	private func buttons(for decision: WidgetSnapshot.Decision) -> some View {
+		HStack(spacing: MaskinSpace.s4) {
+			if let primary = decision.primaryLabel {
+				action(primary, on: decision, recommended: true)
+			}
+			if let secondary = decision.secondaryLabel {
+				action(secondary, on: decision, recommended: false)
 			}
 		}
 	}
 
-	private func ask(_ decision: WidgetSnapshot.Decision) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-			DecisionTitle(decision: decision, lines: 2, font: .footnote.weight(.semibold))
-			HStack(spacing: MaskinSpace.s3) {
-				AgentLine(decision: decision, now: now)
-				if let label = decision.recommendedLabel, !typeSize.isAccessibilitySize {
-					OptionChip(label: label, recommended: true)
-				}
+	@ViewBuilder
+	private func action(_ label: String, on decision: WidgetSnapshot.Decision, recommended: Bool) -> some View {
+		if decision.decidesInPlace(label) {
+			Button(intent: DecideInWidgetIntent(objectId: decision.objectId, label: label)) {
+				OptionButtonLabel(label: label, recommended: recommended)
+			}
+			.buttonStyle(.plain)
+		} else {
+			Link(destination: snapshot.url(for: decision)) {
+				OptionButtonLabel(label: label, recommended: recommended)
 			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
 	private var summary: String {
 		let count = "\(snapshot.needsCount) \(snapshot.needsCount == 1 ? "decision needs" : "decisions need") you."
-		guard !asks.isEmpty else { return count }
-		let hidden = redaction.contains(.privacy)
-		return count + " Most urgent: "
-			+ asks.map { decisionAccessibilityLabel($0, redacted: hidden) }.joined(separator: ". ")
+		guard let decision else { return count }
+		return count + " " + decisionAccessibilityLabel(decision, redacted: redaction.contains(.privacy))
+	}
+}
+
+/// A medium-widget button: the recommended one is the ink capsule, the other a quiet fill.
+private struct OptionButtonLabel: View {
+	let label: String
+	let recommended: Bool
+	@Environment(\.widgetRenderingMode) private var renderingMode
+
+	var body: some View {
+		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
+		Text(label)
+			.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
+			.lineLimit(1)
+			.minimumScaleFactor(0.8)
+			.frame(maxWidth: .infinity, minHeight: 32)
+			.background {
+				if renderingMode == .fullColor {
+					shape.fill(recommended ? MaskinSurface.inverse : MaskinSurface.fill)
+				} else if recommended {
+					shape.stroke(lineWidth: 1)
+				}
+			}
+			.widgetAccentable(recommended)
+			.privacySensitive()
+	}
+}
+
+/// After deciding: "✓ You chose Send all 7", a result line, and Undo while the answer is still
+/// inside its window (before it leaves the device).
+private struct ChosenView: View {
+	let record: WidgetDecisionRecord
+	let now: Date
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			HStack(spacing: MaskinSpace.s4) {
+				MaskinLogoTile(size: 22)
+				Text(record.agentName ?? "Chief of Staff")
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+					.foregroundStyle(MaskinColor.ink)
+					.lineLimit(1)
+					.privacySensitive()
+			}
+			.widgetAccentable()
+			Spacer(minLength: 0)
+			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+				Image(systemName: record.phase == .failed ? "exclamationmark.circle" : "checkmark.circle.fill")
+					.foregroundStyle(MaskinColor.ink)
+					.accessibilityHidden(true)
+				Text(record.phase == .failed ? "Couldn\u{2019}t send" : "You chose \(record.label)")
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.ink)
+					.lineLimit(2)
+					.privacySensitive()
+			}
+			Text(resultLine)
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(2)
+			Spacer(minLength: 0)
+			if record.canUndo(at: now) {
+				Button(intent: UndoWidgetDecisionIntent(objectId: record.objectId)) {
+					Text("Undo")
+						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+						.foregroundStyle(MaskinColor.ink3)
+						.padding(.horizontal, MaskinSpace.s9)
+						.frame(minHeight: 32)
+						.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+				}
+				.buttonStyle(.plain)
+			}
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.accessibilityElement(children: .contain)
+	}
+
+	/// Honest about timing: a held answer has not been sent yet, and Undo is only real until then.
+	private var resultLine: String {
+		switch record.phase {
+		case .held, .sending: record.canUndo(at: now) ? "Sending in a moment. Undo to take it back." : "Sending\u{2026}"
+		case .sent: "Sent. Open Maskin to see what happens next."
+		case .failed: record.message ?? "Open Maskin to answer."
+		}
 	}
 }
 
@@ -280,37 +380,30 @@ private struct LargeView: View {
 	@Environment(\.redactionReasons) private var redaction
 	@Environment(\.dynamicTypeSize) private var typeSize
 
-	/// Accessibility sizes show fewer, simpler rows instead of clipping three crowded ones.
+	/// Up to two rows (spec), one at accessibility sizes, so the flows below still fit.
 	private var shown: [WidgetSnapshot.Decision] {
-		Array(snapshot.decisions.prefix(typeSize.isAccessibilitySize ? 2 : snapshot.decisions.count))
+		Array(snapshot.decisions.prefix(typeSize.isAccessibilitySize ? 1 : Self.maxRows))
 	}
+
+	static let maxRows = 2
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			HStack {
-				HeaderLabel()
-				Spacer()
-				Text("\(snapshot.needsCount)")
-					.font(.system(.subheadline, design: .rounded).weight(.bold))
-					.foregroundStyle(MaskinColor.sigInk)
-					.padding(.horizontal, MaskinSpace.s4)
-					.padding(.vertical, MaskinSpace.s1)
-					.background(MaskinColor.sigTint, in: Capsule())
-					.widgetAccentable()
-			}
+			MonoLabel("Needs you \u{00B7} \(snapshot.needsCount)")
+				.widgetAccentable()
 			VStack(spacing: 0) {
 				ForEach(Array(shown.enumerated()), id: \.element.id) { index, decision in
 					if index > 0 { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
-					Link(destination: snapshot.url(for: decision)) {
-						row(decision)
-					}
-					.accessibilityLabel(decisionAccessibilityLabel(decision, redacted: redaction.contains(.privacy)))
+					row(decision, first: index == 0)
 				}
 			}
 			if snapshot.needsCount > shown.count {
 				Text("+\(snapshot.needsCount - shown.count) more in Maskin")
 					.font(.caption2)
 					.foregroundStyle(MaskinColor.ink4)
+			}
+			if !snapshot.flows.isEmpty {
+				FlowTiles(flows: snapshot.flows)
 			}
 			Spacer(minLength: 0)
 			HStack {
@@ -326,31 +419,121 @@ private struct LargeView: View {
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 	}
 
-	private func row(_ decision: WidgetSnapshot.Decision) -> some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s5) {
-			if !typeSize.isAccessibilitySize {
-				if let agent = decision.agentName {
-					ActorAvatar(name: agent, kind: .agent, size: 24).privacySensitive()
-				} else {
-					Circle().fill(MaskinSurface.fill).frame(width: 24, height: 24)
+	/// Title on the left, one capsule on the right: the agent's answer when it can be sent from
+	/// here, otherwise "Review" (opens the card).
+	private func row(_ decision: WidgetSnapshot.Decision, first: Bool) -> some View {
+		HStack(alignment: .center, spacing: MaskinSpace.s5) {
+			Link(destination: snapshot.url(for: decision)) {
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					DecisionTitle(decision: decision, lines: 2, font: MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+					if typeSize < .accessibility1 { AgentLine(decision: decision, now: now) }
 				}
+				.frame(maxWidth: .infinity, alignment: .leading)
 			}
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				DecisionTitle(decision: decision, lines: 2, font: .subheadline.weight(.semibold))
-				AgentLine(decision: decision, now: now)
-				if !decision.optionLabels.isEmpty && !typeSize.isAccessibilitySize {
-					HStack(spacing: MaskinSpace.s2) {
-						ForEach(Array(decision.optionLabels.prefix(2).enumerated()), id: \.offset) { _, label in
-							OptionChip(label: label, recommended: label == decision.recommendedLabel)
-						}
-					}
-					.padding(.top, MaskinSpace.s1)
-				}
-			}
-			Spacer(minLength: 0)
+			.accessibilityLabel(decisionAccessibilityLabel(decision, redacted: redaction.contains(.privacy)))
+			capsule(for: decision)
 		}
 		.padding(.vertical, MaskinSpace.s4)
 		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	@ViewBuilder
+	private func capsule(for decision: WidgetSnapshot.Decision) -> some View {
+		if let label = decision.primaryLabel, decision.decidesInPlace(label) {
+			Button(intent: DecideInWidgetIntent(objectId: decision.objectId, label: label)) {
+				RowCapsule(label: label, recommended: true)
+			}
+			.buttonStyle(.plain)
+		} else {
+			Link(destination: snapshot.url(for: decision)) {
+				RowCapsule(label: "Review", recommended: false)
+			}
+		}
+	}
+}
+
+/// The large widget's per-row action pill.
+private struct RowCapsule: View {
+	let label: String
+	let recommended: Bool
+	@Environment(\.widgetRenderingMode) private var renderingMode
+
+	var body: some View {
+		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
+		Text(label)
+			.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
+			.lineLimit(1)
+			.frame(maxWidth: 96)
+			.padding(.horizontal, MaskinSpace.s6)
+			.padding(.vertical, MaskinSpace.s4)
+			.background {
+				if renderingMode == .fullColor {
+					shape.fill(recommended ? MaskinSurface.inverse : MaskinSurface.fill)
+				} else if recommended {
+					shape.stroke(lineWidth: 1)
+				}
+			}
+			.widgetAccentable(recommended)
+			.privacySensitive()
+	}
+}
+
+/// "FLOWS" and up to three ring tiles: how far each running flow is, and whether it is waiting on
+/// the reader.
+private struct FlowTiles: View {
+	let flows: [WidgetSnapshot.Flow]
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			MonoLabel("Flows")
+			HStack(spacing: MaskinSpace.s5) {
+				ForEach(flows) { flow in
+					FlowTile(flow: flow)
+				}
+				// Keep tiles the same width when fewer than three.
+				ForEach(0..<max(0, WidgetSnapshot.maxFlows - flows.count), id: \.self) { _ in
+					Color.clear.frame(maxWidth: .infinity)
+				}
+			}
+		}
+	}
+}
+
+private struct FlowTile: View {
+	let flow: WidgetSnapshot.Flow
+	@Environment(\.widgetRenderingMode) private var renderingMode
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			ring
+			Text(flow.name)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .bold, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.privacySensitive()
+			Text(flow.needsYou ? "Needs you" : "On track")
+				.font(MaskinTypeface.sans(MaskinFontSize.t11, weight: flow.needsYou ? .semibold : .regular, relativeTo: .caption2))
+				.foregroundStyle(flow.needsYou ? MaskinColor.sigInk : MaskinColor.ink4)
+				.lineLimit(1)
+		}
+		.padding(MaskinSpace.s5)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("\(flow.name), \(Int((flow.progress * 100).rounded())) percent, \(flow.needsYou ? "needs you" : "on track")")
+	}
+
+	private var ring: some View {
+		ZStack {
+			Circle().stroke(MaskinColor.doneBd, lineWidth: 4)
+			Circle()
+				.trim(from: 0, to: flow.progress)
+				.stroke(MaskinColor.sig, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+				.rotationEffect(.degrees(-90))
+				.widgetAccentable()
+		}
+		.frame(width: 36, height: 36)
 	}
 }
 
@@ -363,26 +546,25 @@ private struct AllClearView: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-			HeaderLabel()
-			Spacer(minLength: 0)
-			Image(systemName: "checkmark.circle")
-				.font(.system(size: size == .small ? 26 : 32, weight: .regular))
+			MonoLabel("Needs you")
+				.widgetAccentable()
+			Image(systemName: "checkmark")
+				.font(.system(size: 18, weight: .regular))
 				.foregroundStyle(MaskinColor.doneFg)
+				.frame(width: 34, height: 34)
+				.background(MaskinColor.ink.opacity(0.06), in: Circle())
+				.padding(.top, MaskinSpace.s3)
 				.accessibilityHidden(true)
-			Text("Nothing needs you")
-				.font(size == .small ? .subheadline.weight(.semibold) : .headline)
+			Spacer(minLength: 0)
+			Text("You\u{2019}re caught up")
+				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
 				.foregroundStyle(MaskinColor.ink)
-			if snapshot.unreadCount > 0 {
-				Text("\(snapshot.unreadLabel) unread \(snapshot.unreadCount == 1 ? "notification" : "notifications")")
-					.font(.caption)
-					.foregroundStyle(MaskinColor.ink4)
-			} else {
-				Text("Agents are working. We'll tell you when they need a call.")
-					.font(.caption)
+			do {
+				Text(snapshot.caughtUpDetail)
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
 					.foregroundStyle(MaskinColor.ink4)
 					.lineLimit(size == .small ? 2 : 3)
 			}
-			Spacer(minLength: 0)
 			UpdatedNote(snapshot: snapshot, now: now)
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

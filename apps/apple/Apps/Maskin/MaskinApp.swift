@@ -15,6 +15,7 @@ struct MaskinApp: App {
 	@Environment(\.scenePhase) private var scenePhase
 	#if os(iOS)
 		@State private var watchBridge = WatchSessionBridge()
+		@State private var watchPublisher: WatchSnapshotPublisher?
 	#endif
 
 	/// Debug builds sign in from `MASKIN_DEMO_SESSION` (see scripts/design-review.sh), in memory,
@@ -68,6 +69,13 @@ struct MaskinApp: App {
 				pushDelegate.attach(registrar: push, router: runtime.router)
 				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
 				IntentDeepLinkRelay.attach(openAgent: { runtime.openAgent($0) }) { runtime.router.open($0) }
+				#if os(iOS)
+					// The wrist's offline copy of Needs you, the briefing and the flows.
+					watchPublisher?.stop()
+					let publisher = WatchSnapshotPublisher(environment: environment, bridge: watchBridge)
+					publisher.start(runtime: runtime)
+					watchPublisher = publisher
+				#endif
 			}
 			#if os(iOS)
 				.frame(minWidth: WindowMetrics.minimumWidth, minHeight: WindowMetrics.minimumHeight)

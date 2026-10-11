@@ -32,6 +32,10 @@ public struct APIWidgetDataSource: WidgetDataSource {
 		try await forYou.fetchActors(workspaceId: workspaceId)
 	}
 
+	public func flows(workspaceId: String) async throws -> [LoopSummary] {
+		try await APILoopsSource(client: client, workspaceID: workspaceId).loops()
+	}
+
 	/// One page of `status=pending` notifications.
 	public func unreadNotificationCount(workspaceId: String) async throws -> Int {
 		let output = try await client.get_sol_api_sol_notifications(

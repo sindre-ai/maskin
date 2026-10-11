@@ -1,11 +1,15 @@
 import MaskinCore
 import MaskinDesign
 import SwiftUI
+
+#if canImport(WebKit)
 import WebKit
+#endif
 
 /// Asks the page which element sits under a point, so a pin records the selector an agent can act
 /// on (the web does the same through `postMessage`). Runs in the app's own content world, so the
 /// page's scripts can neither see nor answer it.
+#if canImport(WebKit)
 @MainActor
 final class HTMLProbe {
 	weak var webView: WKWebView?
@@ -34,6 +38,13 @@ final class HTMLProbe {
 		return (selector, FileBounds(x: number("x"), y: number("y"), w: number("w"), h: number("h")))
 	}
 }
+#else
+/// tvOS has no WebKit, so there is no page to probe; the preview is a placeholder (HTMLWebView).
+@MainActor
+final class HTMLProbe {
+	func element(at point: FilePoint) async -> (selector: String, bounds: FileBounds)? { nil }
+}
+#endif
 
 /// An HTML file rendered like the web's sandboxed preview, with numbered review pins on top.
 /// In annotate mode a tap on the page drops a pin; tapping a pin opens it.

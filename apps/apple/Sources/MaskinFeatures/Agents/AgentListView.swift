@@ -95,6 +95,7 @@ struct AgentRow: View {
 		}
 		.padding(.vertical, MaskinSpace.s2)
 		.contentShape(Rectangle())
+		.maskinHover()
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}

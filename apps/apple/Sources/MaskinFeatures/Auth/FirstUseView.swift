@@ -77,7 +77,7 @@ struct FirstUseView: View {
 						ForEach(FirstUseBeat.all) { beat in
 							HStack(alignment: .top, spacing: MaskinSpace.s9) {
 								Image(systemName: beat.symbol)
-									.font(.system(size: MaskinFontSize.t16, weight: .semibold))
+									.maskinSymbol(MaskinFontSize.t16, weight: .semibold)
 									.foregroundStyle(MaskinColor.ink)
 									.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
 									.background(

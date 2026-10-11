@@ -13,7 +13,7 @@ final class ContentProvider: TVTopShelfContentProvider {
 		// Signed out, nothing waiting, or offline: no content, and the shelf shows the app's own
 		// static images.
 		guard case .content(let snapshot) = state, !snapshot.decisions.isEmpty else { return nil }
-		let items = snapshot.decisions.map { decision -> TVTopShelfSectionedItem in
+		let items = snapshot.decisions.prefix(2).map { decision -> TVTopShelfSectionedItem in
 			let item = TVTopShelfSectionedItem(identifier: decision.objectId)
 			item.title = decision.title
 			let url = snapshot.url(for: decision)

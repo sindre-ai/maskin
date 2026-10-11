@@ -39,6 +39,7 @@ private struct LoopsContainer: View {
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var showMarketplace = false
+	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
@@ -55,11 +56,23 @@ private struct LoopsContainer: View {
 	}
 
 	var body: some View {
-		NavigationSplitView {
-			sidebar
-				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
-		} detail: {
-			detail
+		Group {
+			if sizeClass == .regular {
+				// Regular width: a 2-3 across card grid; a card pushes the flow full width.
+				NavigationStack {
+					sidebar
+						.navigationDestination(item: $loopSelection) { id in
+							pushedDetail(id)
+						}
+				}
+			} else {
+				NavigationSplitView {
+					sidebar
+						.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
+				} detail: {
+					detail
+				}
+			}
 		}
 		.task { await loops.start() }
 		.onDisappear { loops.stop() }
@@ -87,7 +100,7 @@ private struct LoopsContainer: View {
 
 	private var sidebar: some View {
 		LoopsListView(
-			store: loops, selection: $loopSelection, search: search, isLive: isLive, zoomNamespace: zoom,
+			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
 			onNew: { buildLoopInChat() }, onBrowse: { showMarketplace = true }
 		)
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search flows")
@@ -98,6 +111,20 @@ private struct LoopsContainer: View {
 		.shellToolbar(
 			environment: environment, title: "Flows",
 			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
+	}
+
+	@ViewBuilder
+	private func pushedDetail(_ id: String) -> some View {
+		if let loop = loops.loop(id: id) {
+			LoopDetailHost(
+				environment: environment, workspaceID: workspaceID, loop: loop,
+				directory: loops.directory, list: loops, install: loops.installs[id],
+				onOpenTrigger: { triggersRequest = TriggersRequest(triggerID: $0) }
+			)
+			.id(id)
+		} else {
+			EmptyState(symbol: "arrow.triangle.2.circlepath", title: "This flow is gone", message: "It was removed elsewhere.")
+		}
 	}
 
 	@ViewBuilder

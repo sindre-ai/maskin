@@ -72,7 +72,7 @@ public final class ChatSendQueue {
 	@ObservationIgnored private let now: @Sendable () -> Date
 	@ObservationIgnored private var subscribers: [UUID: AsyncStream<ChatSendEvent>.Continuation] = [:]
 	@ObservationIgnored private var deliveryObservers: [UUID: @MainActor (String, ChatMessage) -> Void] = [:]
-	@ObservationIgnored private var listener: Task<Void, Never>?
+	@ObservationIgnored nonisolated(unsafe) private var listener: Task<Void, Never>?
 
 	public init(
 		outbox: Outbox, failedFileURL: URL? = nil, fileManager: FileManager = .default,
@@ -85,7 +85,8 @@ public final class ChatSendQueue {
 		loadFailed()
 	}
 
-	deinit { MainActor.assumeIsolated { listener?.cancel() } }
+	/// Not main-actor-assumed: `deinit` can run on any thread. `listener` is `nonisolated(unsafe)`.
+	deinit { listener?.cancel() }
 
 	/// Begin turning outbox rejections into failed rows. Idempotent.
 	public func start() {

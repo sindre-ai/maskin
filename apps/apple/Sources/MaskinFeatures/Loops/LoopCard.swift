@@ -27,6 +27,7 @@ struct LoopCard: View {
 		.padding(.horizontal, MaskinSpace.s10)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
 		.contentShape(Rectangle())
+		.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
@@ -34,7 +35,7 @@ struct LoopCard: View {
 	private var header: some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s8) {
 			Image(systemName: "arrow.triangle.2.circlepath")
-				.font(.system(size: MaskinSpace.s11, weight: .semibold))
+				.maskinSymbol(MaskinSpace.s11, weight: .semibold)
 				.foregroundStyle(MaskinColor.sigInk)
 				.frame(width: MaskinSpace.s14 + MaskinSpace.s8, height: MaskinSpace.s14 + MaskinSpace.s8)
 				.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))

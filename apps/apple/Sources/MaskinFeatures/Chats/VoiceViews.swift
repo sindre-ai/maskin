@@ -105,7 +105,7 @@ struct LiveVoicePanel: View {
 			Spacer(minLength: 0)
 			Button(action: onToggleMute) {
 				Image(systemName: muted ? "mic.slash.fill" : "mic.fill")
-					.font(.system(size: MaskinFontSize.t22, weight: .medium))
+					.maskinSymbol(MaskinFontSize.t22, weight: .medium)
 					.foregroundStyle(muted ? MaskinColor.danger : MaskinColor.ink3)
 					.frame(width: Self.controlSize, height: Self.controlSize)
 					.background(MaskinSurface.fill, in: Circle())

@@ -20,16 +20,16 @@ struct StatusCategoryGlyph: View {
 				Circle().fill(MaskinColor.sig).padding(size * 0.2)
 			case .active:
 				Image(systemName: "waveform")
-					.font(.system(size: size, weight: .bold))
+					.maskinSymbol(size, weight: .bold)
 					.foregroundStyle(MaskinColor.sigInk)
 					.symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
 			case .done:
 				Image(systemName: "checkmark.circle.fill")
-					.font(.system(size: size))
+					.maskinSymbol(size)
 					.foregroundStyle(MaskinColor.doneFg)
 			case .cancelled:
 				Image(systemName: "circle.slash")
-					.font(.system(size: size))
+					.maskinSymbol(size)
 					.foregroundStyle(MaskinColor.ink5)
 			}
 		}

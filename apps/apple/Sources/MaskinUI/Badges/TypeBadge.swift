@@ -47,7 +47,7 @@ public struct TypeBadge: View {
 		return ZStack {
 			RoundedRectangle(cornerRadius: MaskinRadius.panel, style: .continuous).fill(colors.bg)
 			if let symbol = MaskinObjectType.symbol(for: type) {
-				Image(systemName: symbol).font(.system(size: MaskinFontSize.t15, weight: .semibold))
+				Image(systemName: symbol).maskinSymbol(MaskinFontSize.t15, weight: .semibold)
 			} else {
 				Text(type.prefix(1).uppercased()).font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
 			}

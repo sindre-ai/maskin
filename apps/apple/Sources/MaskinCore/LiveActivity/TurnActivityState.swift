@@ -5,10 +5,16 @@ import Foundation
 #endif
 
 /// Where a running agent turn is, for the Lock Screen / Dynamic Island Live Activity.
+///
+/// A Live Activity is for time-bound work only. A decision waiting on the reader is a widget and
+/// a notification, never a Live Activity, so `needsYou` is a HAND-OFF: the turn has stopped to
+/// wait for the reader, the card ends (it lingers briefly, neutral, pointing at the thread) and
+/// the notification carries the ask. The case stays because the backend push contract can still
+/// send it and an old build must decode it.
 public enum TurnActivityStatus: String, Codable, Sendable, Equatable {
 	case running, needsYou, done, failed
 
-	public var isTerminal: Bool { self == .done || self == .failed }
+	public var isTerminal: Bool { self != .running }
 }
 
 /// The Live Activity's changing part. JSON shape is a CONTRACT with the backend push sender
@@ -40,7 +46,7 @@ public struct TurnActivityState: Codable, Hashable, Sendable {
 	public static func defaultStep(for status: TurnActivityStatus) -> String {
 		switch status {
 		case .running: "Working"
-		case .needsYou: "Needs you"
+		case .needsYou: "Waiting on you"
 		case .done: "Done"
 		case .failed: "Failed"
 		}

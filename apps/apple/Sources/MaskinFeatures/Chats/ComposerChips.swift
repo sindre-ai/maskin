@@ -126,12 +126,12 @@ struct MentionChip: View {
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s2) {
-			Image(systemName: "at").font(.system(size: MaskinFontSize.t11, weight: .semibold))
+			Image(systemName: "at").maskinSymbol(MaskinFontSize.t11, weight: .semibold)
 				.accessibilityHidden(true)
 			Text(mention.name).maskinText(.caption).lineLimit(1)
 			if let onRemove {
 				Button(action: onRemove) {
-					Image(systemName: "xmark").font(.system(size: MaskinFontSize.t10, weight: .bold))
+					Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t10, weight: .bold)
 						.frame(width: MaskinSpace.touchMin - MaskinSpace.s5, height: MaskinSpace.touchMin - MaskinSpace.s5)
 						.contentShape(Rectangle())
 				}

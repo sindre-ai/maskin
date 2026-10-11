@@ -5,10 +5,16 @@ import SwiftUI
 public struct OfflineBanner: View {
 	private let isVisible: Bool
 	private let message: String
+	private let retry: (() -> Void)?
 
-	public init(isVisible: Bool = true, message: String = "Can't reach Maskin. Decisions queue offline.") {
+	/// `retry`: when set, a trailing "Retry" button runs it (the caller wires the real refetch).
+	public init(
+		isVisible: Bool = true, message: String = "Can't reach Maskin. Decisions queue offline.",
+		retry: (() -> Void)? = nil
+	) {
 		self.isVisible = isVisible
 		self.message = message
+		self.retry = retry
 	}
 
 	public var body: some View {
@@ -16,6 +22,15 @@ public struct OfflineBanner: View {
 			HStack(spacing: MaskinSpace.s4) {
 				Image(systemName: "wifi.slash").accessibilityHidden(true)
 				Text(message).maskinText(.subhead)
+				if let retry {
+					Spacer(minLength: MaskinSpace.s3)
+					Button("Retry", action: retry)
+						.maskinText(.subhead)
+						.fontWeight(.semibold)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+						.buttonStyle(.plain)
+				}
 			}
 			.foregroundStyle(MaskinColor.noticeFg)
 			.padding(.horizontal, MaskinSpace.s8)
@@ -26,7 +41,7 @@ public struct OfflineBanner: View {
 				RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 					.strokeBorder(MaskinColor.noticeBd, lineWidth: 1)
 			)
-			.accessibilityElement(children: .combine)
+			.accessibilityElement(children: .contain)
 			.transition(.move(edge: .top).combined(with: .opacity))
 		}
 	}
@@ -34,6 +49,9 @@ public struct OfflineBanner: View {
 
 #Preview("Offline — light") {
 	OfflineBanner().padding().background(MaskinSurface.grouped).preferredColorScheme(.light)
+}
+#Preview("Offline — retry") {
+	OfflineBanner(retry: {}).padding().background(MaskinSurface.grouped)
 }
 #Preview("Offline — dark") {
 	OfflineBanner().padding().background(MaskinSurface.grouped).preferredColorScheme(.dark)

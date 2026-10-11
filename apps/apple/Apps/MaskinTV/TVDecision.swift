@@ -43,23 +43,23 @@ struct TVDecision: View {
 			}
 		}
 		#endif
+		.userActivity(TVHandoff.activityType) { activity in
+			guard let workspace = environment.workspaceId, let card = entry?.card else { return }
+			let handoff = TVHandoff(workspaceId: workspace, objectId: card.id, title: card.objectTitle ?? card.headline)
+			activity.title = handoff.title
+			activity.userInfo = handoff.userInfo
+			activity.isEligibleForHandoff = true
+		}
 		.navigationDestination(item: $thread) { TVThread(environment: environment, conversationID: $0.id) }
 		.alert("Can't open the thread", isPresented: $askFailed) {
 			Button("OK", role: .cancel) {}
 		} message: {
 			Text("There's no Chief of Staff in this workspace to ask.")
 		}
-		.confirmationDialog(
-			confirming.map { "\($0.label)?" } ?? "", isPresented: Binding(
-				get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
-			titleVisibility: .visible, presenting: confirming
-		) { option in
-			Button("Confirm", role: .destructive) {
+		.sheet(item: $confirming) { option in
+			TVConfirmSheet(option: option) {
 				if let entry { store.choose(option, on: entry.card) }
 			}
-			Button("Cancel", role: .cancel) {}
-		} message: { option in
-			Text(option.consequences.joined(separator: "\n"))
 		}
 	}
 
@@ -75,6 +75,10 @@ struct TVDecision: View {
 				if let when = card.latestActivityAt {
 					Text(when.formatted(date: .omitted, time: .shortened))
 						.font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
+					if let held = TVDecisionAge.heldTag(since: when) {
+						Text(held).font(.system(size: 24, weight: .medium, design: .monospaced))
+							.foregroundStyle(MaskinColor.ink4)
+					}
 				}
 			}
 			Text(card.decision?.summary.trimmedNonEmpty ?? card.headline)
@@ -121,6 +125,9 @@ struct TVDecision: View {
 						.foregroundStyle(MaskinColor.ink3).frame(maxWidth: .infinity, minHeight: 80)
 				}
 				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+				Label("Continue on iPhone: open Maskin there to pick this up.", systemImage: "iphone")
+					.font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
 			}
 		}
 	}
@@ -194,4 +201,27 @@ extension String {
 /// Where "Ask Chief of Staff" goes: the conversation about the card's object.
 struct TVThreadRoute: Hashable, Identifiable {
 	let id: String
+}
+
+/// "This can't be undone": Confirm or Cancel, initial focus on Confirm, Menu cancels.
+private struct TVConfirmSheet: View {
+	let option: DecisionOption
+	let confirm: () -> Void
+	@Environment(\.dismiss) private var dismiss
+	@FocusState private var confirmFocused: Bool
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 32) {
+			Text("\(option.label)?").font(.system(size: 52, weight: .bold))
+			Text(TVConfirmCopy.message(for: option)).font(.system(size: 34)).foregroundStyle(MaskinColor.ink3)
+			Button { dismiss(); confirm() } label: { TVCapsuleLabel(title: "Confirm", prominent: true) }
+				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+				.focused($confirmFocused)
+			Button { dismiss() } label: { TVCapsuleLabel(title: "Cancel") }
+				.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+		}
+		.padding(80)
+		.frame(maxWidth: 1100)
+		.onAppear { confirmFocused = true }
+	}
 }

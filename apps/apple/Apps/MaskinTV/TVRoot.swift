@@ -79,9 +79,9 @@ struct TVRoot: View {
 				chromeHidden: $chromeHidden)
 		case .team: TVTeam(environment: environment)
 		case .flows: TVFlows(environment: environment, loops: loops, chromeHidden: $chromeHidden)
-		case .objects: TVObjects(environment: environment)
-		case .search: TVSearch(environment: environment)
-		case .profile: TVProfile(environment: environment)
+		case .objects: TVObjects(environment: environment, forYou: forYou)
+		case .search: TVSearch(environment: environment, forYou: forYou, loops: loops)
+		case .profile: TVProfile(environment: environment, resetToForYou: { tab = .forYou })
 		}
 	}
 

@@ -14,6 +14,7 @@ struct ObjectsListView: View {
 	/// Owned by the screen so the Display menu's "Select" can start it.
 	let picking: SelectionModel
 
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
 	@State private var search = ""
 	@State private var searchPresented = false
@@ -281,7 +282,7 @@ struct ObjectsListView: View {
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsStatus: store.grouping != .status && store.grouping != .attention, showsDriver: store.display.shows(.driver),
-			showsUpdated: store.display.shows(.updated))
+			showsUpdated: store.display.shows(.updated), showsDriverName: sizeClass == .regular)
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {

@@ -1,4 +1,6 @@
 import MaskinCore
+import MaskinDesign
+import MaskinUI
 import SwiftUI
 
 /// The signed-in app: a tab bar on iPhone that becomes a sidebar on iPad and Mac, from one
@@ -48,7 +50,16 @@ public struct MainShell: View {
 			LiveMeetingScreen(request: request, environment: environment) { liveMeeting = nil }
 		}
 		.focusedSceneValue(\.appRuntime, runtime)
-		.syncOfflineBanner(isOnline: runtime.isOnline)
+		.safeAreaInset(edge: .top, spacing: 0) {
+			OfflineBanner(isVisible: !runtime.isOnline, message: offlineMessage) {
+				Task {
+					runtime.syncCoordinator?.requestRefresh(reason: "retry")
+					await runtime.forYou.store.refresh()
+				}
+			}
+				.padding(.horizontal, MaskinSpace.s8)
+				.animation(MaskinMotion.standard, value: runtime.isOnline)
+		}
 		.sheet(item: $runtime.presentation) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
@@ -57,6 +68,14 @@ public struct MainShell: View {
 			"Can't open link", isPresented: rejectionBinding,
 			actions: { Button("OK", role: .cancel) {} },
 			message: { Text(runtime.rejectionMessage ?? "") })
+	}
+
+	/// "Can't reach Maskin. Showing what we had at 08:14. Decisions queue offline."
+	private var offlineMessage: String {
+		var text = "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
+		let queued = runtime.forYou.outbox.pendingCount
+		if queued > 0 { text += " \(queued) waiting to send." }
+		return text
 	}
 
 	private var rejectionBinding: Binding<Bool> {
@@ -71,6 +90,7 @@ private struct AdaptiveTabs: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
 	let badges: ShellBadges
+	@State private var showWorkspaces = false
 
 	var body: some View {
 		TabView(selection: $runtime.selectedTab) {
@@ -87,7 +107,36 @@ private struct AdaptiveTabs: View {
 			}
 		}
 		.tabViewStyle(.sidebarAdaptable)
+		// The sidebar opens with the workspace and a Switch button (4-iPad.md).
+		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
+		.sheet(isPresented: $showWorkspaces) {
+			WorkspaceSwitcher(environment: environment)
+				.presentationDetents([.medium, .large])
+				.environment(\.shellShowsAvatar, false)
+		}
 		.minimizeTabBarOnScroll()
+	}
+}
+
+/// The top of the iPad sidebar: the logo tile, the workspace name, and Switch.
+private struct SidebarWorkspaceHeader: View {
+	let name: String?
+	let switchWorkspace: () -> Void
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			MaskinLogoTile(size: MaskinSpace.s14)
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text("Workspace").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+				Text(name ?? "Choose workspace").maskinText(.headline).foregroundStyle(MaskinColor.ink)
+					.lineLimit(1)
+			}
+			Spacer(minLength: MaskinSpace.s3)
+			Button("Switch", action: switchWorkspace)
+				.buttonStyle(.bordered)
+				.controlSize(.small)
+		}
+		.padding(.vertical, MaskinSpace.s3)
 	}
 }
 

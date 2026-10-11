@@ -21,7 +21,7 @@ public struct EmptyState<Action: View>: View {
 		VStack(spacing: MaskinSpace.s7) {
 			if let symbol {
 				Image(systemName: symbol)
-					.font(.system(size: MaskinSpace.s13, weight: .regular))
+					.maskinSymbol(MaskinSpace.s13, weight: .regular)
 					.foregroundStyle(MaskinColor.ink5)
 					.accessibilityHidden(true)
 			}

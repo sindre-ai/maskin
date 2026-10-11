@@ -270,7 +270,7 @@ private struct LiveMeetingContent: View {
 		Button(action: action) {
 			VStack(spacing: MaskinSpace.s3) {
 				Image(systemName: symbol)
-					.font(.system(size: MaskinFontSize.t19, weight: .medium))
+					.maskinSymbol(MaskinFontSize.t19, weight: .medium)
 					.foregroundStyle(destructive ? MaskinSurface.onInverse : (active ? MaskinSurface.onInverse : MaskinColor.ink))
 					.frame(width: buttonSize, height: buttonSize)
 					.background(
