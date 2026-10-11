@@ -694,14 +694,28 @@ ${surviving}
 			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
 		})
 
-		it('signals done for a turn that ends with nothing to post', async () => {
+		it('signals done for a turn that replied through the chat tool and ended silently', async () => {
 			const session = await seedSession()
 			if (!session) throw new Error('no session')
 			const { instance, finished } = withSignal()
 			finalizer = instance
 			await feed(session.id, `${userTurnLine(32)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
 			await feed(session.id, `${resultLine({ result: '' })}\n`)
 			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('does not signal while a blank turn is being retried', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			// A blank result with no reply is not silence by choice: it is replayed, so the turn
+			// is still going and the Live Activity must stay up.
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([])
 		})
 
 		it('signals failed when the human is told the turn failed', async () => {

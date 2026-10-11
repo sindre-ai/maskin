@@ -1,4 +1,5 @@
-import { workspaceMembers } from '@maskin/db/schema'
+import { actors, workspaceMembers } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -69,8 +70,13 @@ describe('actor routes never expose password hashes or api keys', () => {
 	})
 
 	it('POST /:id/api-keys returns only the new key', async () => {
-		const target = await insertActor(db, { passwordHash: SECRET_HASH })
-		const res = await app.request(jsonRequest('POST', `/api/actors/${target.id}/api-keys`))
+		// Regenerating a key is allowed for the caller's own actor only, so the hash to look for
+		// has to live on that actor.
+		await db
+			.update(actors)
+			.set({ passwordHash: SECRET_HASH })
+			.where(eq(actors.id, getTestActorId()))
+		const res = await app.request(jsonRequest('POST', `/api/actors/${getTestActorId()}/api-keys`))
 		const text = await res.text()
 		expect(Object.keys(JSON.parse(text))).toEqual(['api_key'])
 		expect(text).not.toContain(SECRET_HASH)
