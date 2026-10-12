@@ -13,6 +13,7 @@ import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
+import { redactLogLine } from './lib/redact-path'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -32,6 +33,7 @@ import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
+import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
@@ -45,6 +47,7 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -241,7 +244,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors())
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
-	app.use('*', honoLogger())
+	app.use(
+		'*',
+		honoLogger((line, ...rest) => console.log(redactLogLine(line), ...rest)),
+	)
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -411,6 +417,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/conversations', conversationsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
+	app.route('/api/devices', devicesRoutes)
+	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)

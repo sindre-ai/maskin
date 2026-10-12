@@ -338,6 +338,14 @@ export type InteractiveTurnFinalizerOptions = {
 	 * the retries and the visible message still apply.
 	 */
 	fallbackModel?: string | null
+	/**
+	 * Called when a turn has genuinely ended from the human's point of view:
+	 * its closing message was posted (or it ended with nothing to post).
+	 * NOT called while a replay or correction is pending, because the turn is
+	 * still going — the replay's own writeInput starts the next one. Drives the
+	 * iOS Live Activity lifecycle. Must not throw; errors are swallowed.
+	 */
+	onTurnFinished?: (sessionId: string, outcome: 'done' | 'failed') => void
 }
 
 export class InteractiveTurnFinalizer {
@@ -389,6 +397,7 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
@@ -399,6 +408,7 @@ export class InteractiveTurnFinalizer {
 		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onStopSession = options.onStopSession
+		this.onTurnFinished = options.onTurnFinished
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -446,6 +456,14 @@ export class InteractiveTurnFinalizer {
 					`Interactive turn finalizer failed to post final output for session ${sessionId} (log ${logId}): ${describeError(err)}`,
 				)
 			}
+		}
+	}
+
+	private turnFinished(sessionId: string, outcome: 'done' | 'failed'): void {
+		try {
+			this.onTurnFinished?.(sessionId, outcome)
+		} catch (err) {
+			logger.warn(`onTurnFinished failed for session ${sessionId}: ${describeError(err)}`)
 		}
 	}
 
@@ -572,6 +590,7 @@ export class InteractiveTurnFinalizer {
 			logger.info(
 				`Interactive session ${sessionId} closed a turn with no postable text (log ${logId}, subtype ${result.subtype ?? 'none'}); nothing to post`,
 			)
+			this.turnFinished(sessionId, 'done')
 			return
 		}
 
@@ -1077,7 +1096,11 @@ export class InteractiveTurnFinalizer {
 			logger.info(
 				`Skipped duplicate final output for session ${sessionId} (dedupe_key ${dedupeKey})`,
 			)
+			return
 		}
+		const failed =
+			result.isError || 'error_kind' in extraMetadata || 'pseudo_tool_calls' in extraMetadata
+		this.turnFinished(sessionId, failed ? 'failed' : 'done')
 	}
 
 	/**
@@ -1416,6 +1439,8 @@ export class InteractiveTurnFinalizer {
 				logger.warn(
 					`Interactive session ${sessionId} ${reason} notice was suppressed as a duplicate (dedupe_key ${dedupeKey}-${reason})`,
 				)
+			} else {
+				this.turnFinished(sessionId, 'failed')
 			}
 		} catch (err) {
 			logger.error(
