@@ -103,7 +103,7 @@ export function InlineScopePicker({
 							{nameError}
 						</p>
 					) : envVar ? (
-						<p id={nameNoteId} className="break-all text-xs text-muted-foreground">
+						<p id={nameNoteId} className="break-words text-xs text-muted-foreground">
 							Env var <code className="font-mono">{envVar}</code>
 						</p>
 					) : null}
