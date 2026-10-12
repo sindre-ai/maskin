@@ -50,13 +50,33 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('google-drive MCP server: tool surface and Zod contracts', () => {
-	it('registers exactly the search, list and download tools', async () => {
+	it('registers exactly the search, list, download and watch tools', async () => {
 		const client = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'google_drive__get_file_bytes',
 			'google_drive__list_folder',
 			'google_drive__search_files',
+			'google_drive__watch_folder',
+		])
+	})
+
+	it('watch_folder schema: folderId required; eventTypes optional and limited to the four actions', async () => {
+		const client = await connect()
+		const tool = (await client.listTools()).tools.find(
+			(t) => t.name === 'google_drive__watch_folder',
+		)
+		const schema = tool?.inputSchema as {
+			required?: string[]
+			properties: Record<string, { type?: string; items?: { enum?: string[] } }>
+		}
+		expect(schema.required).toEqual(['folderId'])
+		expect(Object.keys(schema.properties).sort()).toEqual(['eventTypes', 'folderId'])
+		expect(schema.properties.eventTypes?.items?.enum).toEqual([
+			'created',
+			'updated',
+			'deleted',
+			'trashed',
 		])
 	})
 

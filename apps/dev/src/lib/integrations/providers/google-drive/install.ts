@@ -4,12 +4,13 @@ import { eq, sql } from 'drizzle-orm'
 import { logger } from '../../../logger'
 import type { PostInstallContext } from '../../types'
 import { resolveGooglePeopleId } from '../_google/userinfo'
+import { setupDriveWatch } from './watch'
 
 /**
- * postInstall: store the Google People id on the row as config.drive.peopleId.
- * That is the only thing this task writes; the folder-watch task adds the
- * channel fields next to it. Merged with jsonb_set so config keys the OAuth
- * callback already wrote (system_actor_id, ...) survive.
+ * postInstall: store the Google People id on the row as config.drive.peopleId,
+ * then open the row's changes.watch channel (setupDriveWatch writes the channel
+ * fields and the change cursor next to it). Merged with jsonb_set so config keys
+ * the OAuth callback already wrote (system_actor_id, ...) survive.
  *
  * A failure here throws, so the generic callback flips the row to `error` and
  * redirects with post_install_failed rather than leaving a half-set-up row.
@@ -29,4 +30,5 @@ export async function setupDriveInstall(ctx: PostInstallContext): Promise<void> 
 		})
 		.where(eq(integrations.id, ctx.integrationId))
 	logger.info('Google Drive peopleId stored', { integrationId: ctx.integrationId })
+	await setupDriveWatch(ctx)
 }

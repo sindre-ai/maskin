@@ -22,6 +22,7 @@ import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -178,6 +179,10 @@ logger.info('Gmail watch renewer started')
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
+
+const driveWatchRenewer = new DriveWatchRenewer(db)
+driveWatchRenewer.start()
+logger.info('Drive watch renewer started')
 
 const resendDomainVerifier = new ResendDomainVerifier(db)
 resendDomainVerifier.start()

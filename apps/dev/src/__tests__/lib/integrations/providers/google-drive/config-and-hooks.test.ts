@@ -67,8 +67,6 @@ describe('google-drive registry wiring', () => {
 		expect(p.postInstall).toBeTypeOf('function')
 		expect(p.preDisconnect).toBeTypeOf('function')
 		expect(p.customWebhookVerifier).toBeTypeOf('function')
-		expect(p.webhookPreHandler).toBeTypeOf('function')
-		expect(p.webhookFanOut).toBeTypeOf('function')
 		expect(listProviders().map((x) => x.config.name)).toContain('google-drive')
 	})
 
@@ -76,11 +74,13 @@ describe('google-drive registry wiring', () => {
 		expect(actorScopedProviders.has('google-drive')).toBe(false)
 	})
 
-	it('watch hooks are inert stubs: verifier rejects, pre-handler and fan-out do nothing', async () => {
+	it('keeps the generic catch-all closed: its verifier rejects, and no pre-handler or fan-out is set', async () => {
+		// Deliveries use the dedicated POST /google-drive route, so the email-keyed
+		// catch-all must never accept a google-drive delivery.
 		const p = getProvider('google-drive')
 		expect(await p.customWebhookVerifier?.('{}', { 'x-goog-channel-id': 'abc' })).toBe(false)
-		expect(p.webhookPreHandler?.({}, {})).toBeNull()
-		expect(await p.webhookFanOut?.({} as never)).toEqual([])
+		expect(p.webhookPreHandler).toBeUndefined()
+		expect(p.webhookFanOut).toBeUndefined()
 	})
 })
 

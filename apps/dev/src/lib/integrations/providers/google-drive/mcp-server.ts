@@ -32,6 +32,13 @@ import {
 	type SearchFilesInput,
 	searchFiles,
 } from './tools/search-files'
+import {
+	WATCH_FOLDER_DESCRIPTION,
+	WATCH_FOLDER_TOOL,
+	type WatchFolderInput,
+	watchFolder,
+} from './tools/watch-folder'
+import { DRIVE_EVENT_TYPES } from './watch'
 
 /**
  * In-process MCP server for the Google Drive integration, served over
@@ -118,6 +125,22 @@ export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
 			runTool(ctx, GET_FILE_BYTES_TOOL, args, () =>
 				getFileBytes({ ...toolCtx, storage: ctx.storage }, args as GetFileBytesInput),
 			),
+	)
+
+	server.registerTool(
+		WATCH_FOLDER_TOOL,
+		{
+			description: WATCH_FOLDER_DESCRIPTION,
+			inputSchema: {
+				folderId: z.string().min(1).describe('Drive folder id to watch.'),
+				eventTypes: z
+					.array(z.enum(DRIVE_EVENT_TYPES))
+					.optional()
+					.describe('Which actions fire: created, updated, deleted, trashed. Default all four.'),
+			},
+		},
+		async (args) =>
+			runTool(ctx, WATCH_FOLDER_TOOL, args, () => watchFolder(toolCtx, args as WatchFolderInput)),
 	)
 
 	return server

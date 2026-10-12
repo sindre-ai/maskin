@@ -15,8 +15,8 @@ import type { ProviderConfig } from '../../types'
  * Maskin API key, so the Google token never enters the agent container.
  * `autoInject: false` means each agent opts in explicitly (approved call 9).
  *
- * `events` are the Drive change surface the folder-watch sibling task fans out
- * to; nothing emits them yet.
+ * `events` are the Drive change surface the folder-watch fan-out emits to: one
+ * google_drive.file signal per change inside a watched folder.
  */
 export const config: ProviderConfig = {
 	name: 'google-drive',
@@ -49,8 +49,8 @@ export const config: ProviderConfig = {
 		},
 	},
 
-	// Drive pushes over HTTPS channels (X-Goog-Channel-* headers). The verifier,
-	// pre-handler and fan-out are safe no-op stubs until the folder-watch task.
+	// Drive pushes over HTTPS channels (X-Goog-Channel-* headers), handled by the
+	// dedicated POST /api/webhooks/google-drive route, not the generic verifier.
 	webhook: { type: 'custom' },
 
 	events: {
