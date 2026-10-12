@@ -15,16 +15,22 @@ export const SHEET_PAGE_SIZE_DEFAULT = 1000
 export const SHEET_PAGE_SIZE_MAX = 10_000
 
 /**
- * Sheets caps reads at 300 per minute per user per project. We hold 250 per
- * minute per workspace at this surface so Google's own 429 never reaches the
+ * Sheets caps reads at 300 per minute per user per project. The bucket holds a
+ * burst of 50 and refills 250 per minute, so any 60 seconds admit at most
+ * 50 + 250 = 300 reads per workspace and Google's own 429 never reaches the
  * agent. The bucket is in this process's memory: the budget is per API process,
  * not shared across replicas.
  */
 export const SHEETS_READS_PER_MINUTE = 250
-const sheetsReadBucket = createKeyedTokenBucket({
-	capacity: SHEETS_READS_PER_MINUTE,
-	windowMs: 60_000,
-})
+export const SHEETS_READ_BURST = 50
+export const createSheetsReadBucket = (now?: () => number): KeyedTokenBucket =>
+	createKeyedTokenBucket({
+		capacity: SHEETS_READ_BURST,
+		refillPerWindow: SHEETS_READS_PER_MINUTE,
+		windowMs: 60_000,
+		now,
+	})
+const sheetsReadBucket = createSheetsReadBucket()
 
 export interface SheetRangeToolContext extends DocsSheetsToolContext {
 	/** Injection point for tests. Defaults to the process-wide per-workspace bucket. */

@@ -19,6 +19,7 @@ vi.mock('../../../../../lib/analytics/posthog', () => ({
 
 import type { DocsSheetsClient } from '../../../../../lib/integrations/providers/google-drive/docs-sheets-client'
 import {
+	createSheetsReadBucket,
 	getSheetRange,
 	parseA1Range,
 } from '../../../../../lib/integrations/providers/google-drive/tools/get-sheet-range'
@@ -231,13 +232,13 @@ describe('getSheetRange rate limit (S18)', () => {
 		getSheetValues: vi.fn().mockResolvedValue({ values: [['x']] }),
 	})
 
-	it('answers RATE_LIMIT_EXCEEDED from our surface once the 250-per-minute budget is spent', async () => {
+	it('answers RATE_LIMIT_EXCEEDED from our surface once the 50-read burst is spent', async () => {
 		let now = 0
 		const client = fakeClient()
 		const c = {
 			...ctx,
 			docsSheetsClient: client,
-			rateLimiter: createKeyedTokenBucket({ capacity: 250, windowMs: 60_000, now: () => now }),
+			rateLimiter: createSheetsReadBucket(() => now),
 		}
 		const input = { spreadsheetId: 's', range: 'Data!A:A', pageSize: 1 }
 
@@ -256,19 +257,50 @@ describe('getSheetRange rate limit (S18)', () => {
 
 		const allowed = outcomes.filter((o) => o === 'ok')
 		const denied = outcomes.filter((o) => o !== 'ok')
-		expect(allowed).toHaveLength(248)
-		expect(denied).toHaveLength(152)
+		expect(allowed).toHaveLength(48)
+		expect(denied).toHaveLength(352)
 		for (const e of denied) {
 			expect(e).toMatchObject({ code: 'RATE_LIMIT_EXCEEDED' })
 			expect(e.retryAfterMs).toBeGreaterThan(0)
 		}
-		// Exactly 250 Google reads were made in the minute, under Google's cap of 300.
+		// Exactly 50 Google reads were made at once: the burst, not the minute's budget.
 		expect(client.getSpreadsheetSheets).toHaveBeenCalledTimes(1)
-		expect(client.getSheetValues).toHaveBeenCalledTimes(249)
+		expect(client.getSheetValues).toHaveBeenCalledTimes(49)
 
 		// The bucket refills: a minute later the same call goes through.
 		now = 60_000
 		await expect(getSheetRange(c, paged)).resolves.toMatchObject({ values: [['x']] })
+	})
+
+	it('serves at most 300 Google reads when 400 arrive spread over a minute', async () => {
+		let now = 0
+		const client = fakeClient()
+		const c = { ...ctx, docsSheetsClient: client, rateLimiter: createSheetsReadBucket(() => now) }
+		const input = { spreadsheetId: 's', range: 'Data!A:A', pageSize: 1 }
+
+		const first = await getSheetRange(c, input)
+		const paged = { ...input, pageToken: first.nextPageToken }
+
+		// 400 reads, one every 150ms: the whole minute, offered at 400 per minute.
+		const denied: { code?: string; retryAfterMs?: number }[] = []
+		for (let i = 0; i < 400; i++) {
+			now = i * 150
+			await getSheetRange(c, paged).catch((e) => denied.push(e))
+		}
+
+		const googleReads =
+			vi.mocked(client.getSpreadsheetSheets).mock.calls.length +
+			vi.mocked(client.getSheetValues).mock.calls.length
+		expect(googleReads).toBeLessThanOrEqual(300)
+		// The cap is not over-throttling: most of the 300-read budget is used.
+		expect(googleReads).toBeGreaterThanOrEqual(290)
+		// Every paged call we did not serve was refused from our side with a backoff.
+		// The first page cost two of the Google reads, so 400 - (googleReads - 2) were denied.
+		expect(denied).toHaveLength(402 - googleReads)
+		for (const e of denied) {
+			expect(e).toMatchObject({ code: 'RATE_LIMIT_EXCEEDED' })
+			expect(e.retryAfterMs).toBeGreaterThan(0)
+		}
 	})
 
 	it('budgets each workspace on its own', async () => {

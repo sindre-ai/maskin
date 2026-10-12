@@ -79,9 +79,46 @@ describe('createKeyedTokenBucket', () => {
 		expect(bucket.take('ws-a')).toEqual({ allowed: true, remaining: 0 })
 	})
 
+	it('refills at refillPerWindow, not capacity, when it is set', () => {
+		let clock = 0
+		const bucket = createKeyedTokenBucket({
+			capacity: 50,
+			refillPerWindow: 250,
+			windowMs: 60_000,
+			now: () => clock,
+		})
+		for (let i = 0; i < 50; i++) bucket.take('ws-a')
+		// 250 per 60s refills one token every 240ms.
+		expect(bucket.take('ws-a')).toEqual({ allowed: false, retryAfterMs: 240 })
+		clock += 240
+		expect(bucket.take('ws-a').allowed).toBe(true)
+	})
+
+	it('admits at most capacity + refillPerWindow in a sustained minute', () => {
+		let clock = 0
+		const bucket = createKeyedTokenBucket({
+			capacity: 50,
+			refillPerWindow: 250,
+			windowMs: 60_000,
+			now: () => clock,
+		})
+		// Hammer the bucket: 5 attempts every 10ms from t=0 to t=60s inclusive.
+		let admitted = 0
+		for (clock = 0; clock <= 60_000; clock += 10) {
+			for (let i = 0; i < 5; i++) {
+				if (bucket.take('ws-a').allowed) admitted++
+			}
+		}
+		expect(admitted).toBeLessThanOrEqual(300)
+		expect(admitted).toBeGreaterThanOrEqual(299)
+	})
+
 	it('rejects non-positive options and out-of-range costs', () => {
 		expect(() => createKeyedTokenBucket({ capacity: 0, windowMs: 60_000 })).toThrow()
 		expect(() => createKeyedTokenBucket({ capacity: 10, windowMs: 0 })).toThrow()
+		expect(() =>
+			createKeyedTokenBucket({ capacity: 10, windowMs: 60_000, refillPerWindow: 0 }),
+		).toThrow()
 		const { bucket } = setup(10, 60_000)
 		expect(() => bucket.take('ws-a', 0)).toThrow()
 		expect(() => bucket.take('ws-a', 11)).toThrow()
