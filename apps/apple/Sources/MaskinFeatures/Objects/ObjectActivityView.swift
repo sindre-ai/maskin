@@ -169,6 +169,7 @@ struct QuietEventRow: View {
 /// lines show, then "Show more". The same row also draws short items when asked directly
 /// (older call sites), so a `.activity` item renders as a quiet line.
 struct TimelineRow: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let item: TimelineItem
 	let name: String
 	let isAgent: Bool
@@ -255,7 +256,7 @@ struct TimelineRow: View {
 			if clamps {
 				Button {
 					MaskinHaptics.play(.selection)
-					withAnimation(MaskinMotion.standard) { expanded.toggle() }
+					withAnimation(reduceMotion ? nil : MaskinMotion.standard) { expanded.toggle() }
 				} label: {
 					Text(expanded ? "Show less" : "Show more")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
@@ -336,7 +337,7 @@ struct DeliveryFooter: View {
 			}
 			.maskinText(.caption)
 			.buttonStyle(.borderless)
-			.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s4)
+			.frame(minHeight: MaskinSpace.touchMin)
 		}
 	}
 }

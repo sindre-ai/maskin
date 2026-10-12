@@ -8,6 +8,7 @@ struct TVFlows: View {
 	let environment: AppEnvironment
 	let loops: LoopsStore?
 	@Binding var chromeHidden: Bool
+	@Binding var openFlow: String?
 	@State private var path: [String] = []
 
 	private var flows: [LoopSummary] { (loops?.loops ?? []).filter { $0.status != .draft } }
@@ -17,7 +18,12 @@ struct TVFlows: View {
 		NavigationStack(path: $path) {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 40) {
-					Text("Flows").font(.system(size: 64, weight: .bold))
+					VStack(alignment: .leading, spacing: 8) {
+						Text("Flows").font(.system(size: 64, weight: .bold))
+						if let subtitle = TVFlowsHeader.subtitle(for: flows) {
+							Text(subtitle).font(.system(size: 30)).foregroundStyle(MaskinColor.ink4)
+						}
+					}
 					if let loops, flows.isEmpty, loops.phase == .loaded {
 						EmptyState(symbol: "arrow.triangle.2.circlepath", title: "No flows yet")
 					} else if loops == nil || (flows.isEmpty && loops?.phase != .loaded) {
@@ -42,6 +48,12 @@ struct TVFlows: View {
 			}
 		}
 		.onChange(of: path) { _, path in chromeHidden = !path.isEmpty }
+		// A briefing's last slide can point at a flow; open it once the flows are in.
+		.task(id: "\(openFlow ?? "")|\(flows.count)") {
+			guard let id = openFlow, loops?.loop(id: id) != nil else { return }
+			path = [id]
+			openFlow = nil
+		}
 		#if DEBUG
 		.task(id: flows.first?.id) {
 			if ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"] == "flow", let id = flows.first?.id, path.isEmpty {
@@ -57,6 +69,8 @@ struct TVRing: View {
 	var paused = false
 	var size: CGFloat = 84
 	var lineWidth: CGFloat = 8
+	/// Draws the percentage in the middle (the flow detail's large ring).
+	var showsPercent = false
 
 	var body: some View {
 		ZStack {
@@ -65,6 +79,10 @@ struct TVRing: View {
 				.stroke(paused ? MaskinColor.ink5 : MaskinColor.sigHi,
 					style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 				.rotationEffect(.degrees(-90))
+			if showsPercent {
+				Text("\(Int((progress * 100).rounded()))%")
+					.font(.system(size: size * 0.26, weight: .bold))
+			}
 		}
 		.frame(width: size, height: size)
 		.accessibilityHidden(true)
@@ -87,7 +105,15 @@ private struct TVFlowCard: View {
 						.background(MaskinSurface.inverse, in: Capsule())
 						.foregroundStyle(MaskinSurface.onInverse)
 				}
-				Text(flow.statsLine).font(.system(size: 24)).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				// Decision 1: the latest update as one line of secondary text; stats live in the detail.
+				if let latest = flow.content.flatMap(WatchSnapshotBuilder.latestSentence) {
+					Text(latest).font(.system(size: 24)).foregroundStyle(MaskinColor.ink3).lineLimit(2)
+				}
+				if let target = flow.targets?.first {
+					Text("\(target.label) \(Int(target.actual)) of \(Int(target.target))")
+						.font(.system(size: 22, weight: .semibold, design: .monospaced))
+						.foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
 			}
 			Spacer(minLength: 0)
 		}
@@ -146,7 +172,7 @@ struct TVFlowDetail: View {
 
 	private var header: some View {
 		HStack(spacing: 40) {
-			TVRing(progress: flow.ringProgress, paused: flow.isPaused, size: 170, lineWidth: 14)
+			TVRing(progress: flow.ringProgress, paused: flow.isPaused, size: 170, lineWidth: 14, showsPercent: true)
 			VStack(alignment: .leading, spacing: 8) {
 				Text(flow.displayName).font(.system(size: 64, weight: .bold)).lineLimit(2)
 				Text(store.verdict).font(.system(size: 34)).foregroundStyle(MaskinColor.ink4)
@@ -222,14 +248,23 @@ struct TVFlowDetail: View {
 			Text("No activity yet.").font(.system(size: 30)).foregroundStyle(MaskinColor.ink4)
 		} else {
 			ForEach(store.activity.prefix(12)) { entry in
-				VStack(alignment: .leading, spacing: 6) {
-					Text(entry.description ?? entry.action.replacingOccurrences(of: "_", with: " "))
-						.font(.system(size: 28, weight: .semibold)).lineLimit(2)
-					HStack(spacing: 12) {
-						if let name = store.actorName(entry) { Text(name) }
-						if let when = entry.createdAt { RelativeTime(when, style: .compact) }
+				HStack(spacing: 24) {
+					if let name = store.actorName(entry) {
+						Text(String(name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased())
+							.font(.system(size: 24, weight: .bold)).foregroundStyle(MaskinColor.avFg)
+							.frame(width: 56, height: 56)
+							.background(MaskinGradient.avatar, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+							.accessibilityHidden(true)
 					}
-					.font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
+					VStack(alignment: .leading, spacing: 6) {
+						Text(entry.description ?? entry.action.replacingOccurrences(of: "_", with: " "))
+							.font(.system(size: 28, weight: .semibold)).lineLimit(2)
+						HStack(spacing: 12) {
+							if let name = store.actorName(entry) { Text(name) }
+							if let when = entry.createdAt { RelativeTime(when, style: .compact) }
+						}
+						.font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
+					}
 				}
 				.padding(.horizontal, 32).padding(.vertical, 20)
 				.frame(maxWidth: .infinity, alignment: .leading)

@@ -36,12 +36,13 @@ struct DecisionCardView: View {
 	var chief: ChiefOfStaffDesk?
 	/// iPad split view: the thread opens in the detail column, so an open thread never expands the card.
 	var threadInDetail = false
+	/// The workspace's display name for an object type (never the raw key).
+	var typeLabel: (String) -> String = { ForYouTypeLabel.label(for: $0) }
 
-	@State private var draft = ""
+	@State private var fallbackComposer = ChatComposerModel(uploader: nil, selfActorID: "")
 	@State private var composerFocused = false
 	/// Present in the app; absent in previews and snapshots, where `@` falls back to `chief.suggestions`.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
-	@FocusState private var replyFocused: Bool
 	/// A destructive option waiting for its "Are you sure?" answer.
 	@State private var pendingDestructive: DecisionOption?
 	/// A hold waiting for its reason (or Skip).
@@ -54,7 +55,7 @@ struct DecisionCardView: View {
 	private var engagement: CardExpansion.Engagement {
 		CardExpansion.Engagement(
 			composerFocused: composerFocused,
-			hasDraft: chief.map { !$0.composer(for: card).text.isEmpty } ?? !draft.isEmpty,
+			hasDraft: chief.map { !$0.composer(for: card).text.isEmpty } ?? !fallbackComposer.text.isEmpty,
 			threadOpen: !threadInDetail && chief?.presented?.card.id == card.id)
 	}
 
@@ -74,6 +75,7 @@ struct DecisionCardView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
 			say
+			if let draft = card.decision?.draft { DraftPreview(draft: draft) }
 			if isExpanded { objectChip }
 
 			if let record, !isFailed(record) {
@@ -191,9 +193,9 @@ struct DecisionCardView: View {
 				actions.open?()
 			} label: {
 				HStack(spacing: MaskinSpace.s5) {
-					TypeBadge(card.objectType ?? "object", style: .tile)
+					TypeBadge(card.objectType ?? "object", label: card.objectType.map(typeLabel), style: .tile)
 					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-						if let type = card.objectType { TypeBadge(type, style: .mono) }
+						if let type = card.objectType { TypeBadge(type, label: typeLabel(type), style: .mono) }
 						Text(title)
 							.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
 							.foregroundStyle(MaskinColor.ink).lineLimit(1)
@@ -266,17 +268,8 @@ struct DecisionCardView: View {
 		.sheet(item: $pendingHold) { option in
 			HoldReasonSheet(agent: sender) { reason in actions.hold?(option, reason) }
 		}
-		.confirmationDialog(
-			"Are you sure?", isPresented: Binding(
-				get: { pendingDestructive != nil }, set: { if !$0 { pendingDestructive = nil } }),
-			titleVisibility: .visible, presenting: pendingDestructive
-		) { option in
-			Button("Yes, \(option.label)", role: .destructive) { actions.choose(option) }
-			Button("Cancel", role: .cancel) {}
-		} message: { option in
-			Text(
-				(["\u{201C}\(option.label)\u{201D} can't be undone."] + option.consequences)
-					.joined(separator: "\n"))
+		.sheet(item: $pendingDestructive) { option in
+			ConfirmOptionSheet(option: option) { actions.choose(option) }
 		}
 	}
 
@@ -305,7 +298,7 @@ struct DecisionCardView: View {
 							.fill(MaskinObjectType.dotColor(for: type))
 							.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 							.accessibilityHidden(true)
-						Text(type.uppercased())
+						Text(typeLabel(type).uppercased())
 							.font(MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
 							.maskinMonoLabelScale()
 							.tracking(0.7)
@@ -393,30 +386,14 @@ struct DecisionCardView: View {
 		}
 	}
 
+	/// The reply bar when there is no Chief of Staff to route to: the shared composer, inline.
 	private var replyBar: some View {
-		HStack(spacing: MaskinSpace.s4) {
-			TextField(replyPrompt, text: $draft, axis: .vertical)
-				.lineLimit(1...4)
-				.maskinText(.body)
-				.focused($replyFocused)
-				.submitLabel(.send)
-				.onSubmit(sendReply)
-				.padding(.leading, MaskinSpace.s7)
-				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s2)
-			Button(action: sendReply) {
-				Image(systemName: "arrow.up")
-					.maskinSymbol(MaskinFontSize.t15, weight: .bold)
-					.foregroundStyle(MaskinSurface.onInverse)
-					.frame(width: MaskinSpace.touchMin - MaskinSpace.s2, height: MaskinSpace.touchMin - MaskinSpace.s2)
-					.background(MaskinSurface.inverse, in: Circle())
-					.opacity(canSend ? 1 : 0.3)
-			}
-			.buttonStyle(.maskinPressed(.shrink))
-			.disabled(!canSend)
-			.accessibilityLabel("Send reply")
-		}
-		.padding(MaskinSpace.s2)
-		.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+		MaskinComposer(
+			model: fallbackComposer,
+			config: MaskinComposerConfig(
+				variant: .inline, placeholder: replyPrompt, showsAttach: false, showsMic: false,
+				onFocusChange: { composerFocused = $0 }),
+			onSend: sendReply)
 	}
 
 	private var replyPrompt: String {
@@ -424,13 +401,11 @@ struct DecisionCardView: View {
 		return card.decision == nil ? who.prefix(1).uppercased() + who.dropFirst() : "Or \(who)"
 	}
 
-	private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
 	private func sendReply() {
-		guard canSend else { return }
-		actions.reply(draft)
-		draft = ""
-		replyFocused = false
+		let text = fallbackComposer.trimmedText
+		guard !text.isEmpty else { return }
+		actions.reply(text)
+		fallbackComposer.clear()
 	}
 
 	// MARK: Receipts

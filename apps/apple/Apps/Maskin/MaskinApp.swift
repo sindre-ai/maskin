@@ -96,6 +96,7 @@ struct MaskinApp: App {
 				.onChange(of: environment.auth.session, initial: true) { _, session in
 					watchBridge.publish(session)
 					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
+					Task { await CycleActivityController.shared?.workspaceChanged(session?.workspaceId) }
 				}
 			#endif
 		}
@@ -132,11 +133,14 @@ struct MaskinApp: App {
 			AgentsActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
 			AgentsActivityRuntime.shared = AgentsActivityRuntime(environment: environment, coordinator: coordinator)
+			CycleActivityController.shared = CycleActivityController(host: CycleActivityHost())
+			MeetingActivityController.shared = MeetingActivityController(host: MeetingActivityHost())
 			environment.auth.onSessionEnded { ending in
 				let creds = APILiveActivityTokens.Credentials(
 					apiKey: ending.apiKey, workspaceId: ending.workspaceId)
 				Task {
 					await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: nil)
+					await CycleActivityController.shared?.workspaceChanged(nil)
 					await coordinator.signedOut(credentials: creds)
 				}
 			}

@@ -47,6 +47,7 @@ struct UndoOffer: Identifiable {
 
 private struct UndoToastModifier: ViewModifier {
 	@Binding var offer: UndoOffer?
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	func body(content: Content) -> some View {
 		content
@@ -69,7 +70,7 @@ private struct UndoToastModifier: ViewModifier {
 					.padding(.horizontal, MaskinSpace.s9)
 					.maskinGlass(in: Capsule())
 					.padding(.bottom, MaskinSpace.s4)
-					.transition(.move(edge: .bottom).combined(with: .opacity))
+					.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
 					.accessibilityElement(children: .contain)
 					.task(id: offer.id) {
 						try? await Task.sleep(for: .seconds(6))
@@ -77,7 +78,7 @@ private struct UndoToastModifier: ViewModifier {
 					}
 				}
 			}
-			.animation(.snappy, value: offer?.id)
+			.animation(reduceMotion ? nil : .snappy, value: offer?.id)
 	}
 }
 
@@ -100,6 +101,7 @@ private struct SelectionToolbar<Actions: View>: ViewModifier {
 	let allIDs: [String]
 	let noun: String
 	@ViewBuilder let actions: () -> Actions
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	func body(content: Content) -> some View {
 		#if os(iOS)
@@ -132,7 +134,7 @@ private struct SelectionToolbar<Actions: View>: ViewModifier {
 		}
 		.padding(.horizontal, MaskinSpace.s9)
 		.padding(.vertical, MaskinSpace.s4)
-		.transition(.move(edge: .top).combined(with: .opacity))
+		.transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
 	}
 
 	private func pill(_ title: String, action: @escaping () -> Void) -> some View {
@@ -157,7 +159,7 @@ private struct SelectionToolbar<Actions: View>: ViewModifier {
 		.maskinGlass(in: Capsule())
 		.padding(.horizontal, MaskinSpace.s9)
 		.padding(.bottom, MaskinSpace.s4)
-		.transition(.move(edge: .bottom).combined(with: .opacity))
+		.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
 	}
 
 	/// "{n} selected"; before anything is picked it still reads as a count.

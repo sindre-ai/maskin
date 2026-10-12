@@ -93,7 +93,7 @@ private struct CycleActions: View {
 						.maskinText(.caption)
 						.foregroundStyle(MaskinSurface.onInverse)
 						.padding(.horizontal, MaskinSpace.s9)
-						.padding(.vertical, MaskinSpace.s4)
+						.frame(minHeight: MaskinSpace.touchMin)
 						.background(MaskinSurface.inverse, in: Capsule())
 				}
 				Button(intent: DismissCycleActivityIntent(flowId: attributes.flowId)) {
@@ -101,7 +101,7 @@ private struct CycleActions: View {
 						.maskinText(.caption)
 						.foregroundStyle(MaskinColor.ink3)
 						.padding(.horizontal, MaskinSpace.s9)
-						.padding(.vertical, MaskinSpace.s4)
+						.frame(minHeight: MaskinSpace.touchMin)
 						.background(MaskinSurface.fill, in: Capsule())
 				}
 				.buttonStyle(.plain)

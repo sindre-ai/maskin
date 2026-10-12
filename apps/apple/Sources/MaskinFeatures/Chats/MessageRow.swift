@@ -75,6 +75,28 @@ struct MessageAttachments: View {
 	}
 }
 
+/// Your tagged people under your message, each with where they stand: Working, Replied, Waiting for Sam.
+struct MentionStateLine: View {
+	let chips: [MentionStateChip]
+
+	var body: some View {
+		if !chips.isEmpty {
+			ChipFlow {
+				ForEach(chips, id: \.id) { (chip: MentionStateChip) in
+					Text(chip.label)
+						.maskinText(.caption).fontWeight(.semibold)
+						.foregroundStyle(chip.state == .working ? MaskinColor.sigInk : MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s5)
+						.frame(minHeight: MaskinSpace.s12 + MaskinSpace.s2)
+						.background(MaskinSurface.fill, in: Capsule())
+				}
+			}
+			.frame(maxWidth: .infinity, alignment: .trailing)
+			.accessibilityElement(children: .combine)
+		}
+	}
+}
+
 /// "You mentioned Relay" / "Mentioned Relay, Sam".
 struct MentionLine: View {
 	let names: [String]
@@ -105,6 +127,8 @@ struct MessageRow: View {
 	let isOwn: Bool
 	let showsAuthor: Bool
 	var mentionNames: [String] = []
+	/// Where each tagged person stands; shown under your own message in place of the caption.
+	var mentionChips: [MentionStateChip] = []
 	/// The tagged people (id and full name). Their `@Name` in the text is shown bold.
 	var mentions: [(id: String, name: String)] = []
 	/// What the human picked, once this question has been answered.
@@ -220,7 +244,11 @@ struct MessageRow: View {
 			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
-			MentionLine(names: untaggedNames, isOwn: true)
+			if mentionChips.isEmpty {
+				MentionLine(names: untaggedNames, isOwn: true)
+			} else {
+				MentionStateLine(chips: mentionChips)
+			}
 			if let sendStatus {
 				MessageStatusLine(status: sendStatus, time: message.createdAt, onRetry: onRetrySend)
 			}

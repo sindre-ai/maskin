@@ -12,10 +12,13 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
 		public var ask: String
 		public var options: [DecisionOption]
 		public var at: Date?
+		/// The object the decision is about, shown as an underlined link in the message. Absent in
+		/// snapshots written before this field existed.
+		public var objectTitle: String?
 
 		public init(
 			id: String, sender: String, headline: String, summary: String = "", ask: String = "",
-			options: [DecisionOption] = [], at: Date? = nil
+			options: [DecisionOption] = [], at: Date? = nil, objectTitle: String? = nil
 		) {
 			self.id = id
 			self.sender = sender
@@ -24,6 +27,7 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
 			self.ask = ask
 			self.options = options
 			self.at = at
+			self.objectTitle = objectTitle
 		}
 	}
 
@@ -121,7 +125,8 @@ public enum WatchSnapshotBuilder {
 			return WatchSnapshot.Card(
 				id: card.id, sender: sender(card) ?? "Chief of Staff", headline: card.headline,
 				summary: card.decision?.summary ?? "", ask: card.decision?.ask ?? "",
-				options: card.decision?.options ?? [], at: card.latestActivityAt)
+				options: card.decision?.options ?? [], at: card.latestActivityAt,
+				objectTitle: card.objectTitle)
 		}
 		let flows = loops.filter { $0.status != .draft }.prefix(maxFlows).map(flow)
 		return WatchSnapshot(
@@ -141,7 +146,7 @@ public enum WatchSnapshotBuilder {
 	}
 
 	/// The first sentence of the flow's description: a watch has room for one.
-	static func latestSentence(_ text: String) -> String? {
+	public static func latestSentence(_ text: String) -> String? {
 		let plain = WatchBriefingText.plain(text).replacingOccurrences(of: "\n", with: " ")
 			.trimmingCharacters(in: .whitespaces)
 		guard !plain.isEmpty else { return nil }

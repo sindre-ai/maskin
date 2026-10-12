@@ -30,20 +30,22 @@ struct ObjectsDisplayStoreTests {
 
 	@Test("Name asks the server for title order; Needs you and Updated both page by update time")
 	func serverSort() async {
+		// The inventory refresh (newest objects, any type) is its own query; judge the list page only.
+		func pageQueries(_ r: FakeObjectsRemote) -> [ObjectsQuery] { r.listQueries.filter { $0.limit == ObjectsStore.pageSize } }
 		let (store, remote) = makeStore()
 		await store.load()
-		#expect(remote.listQueries.last?.sort == .needsYou)
+		#expect(pageQueries(remote).last?.sort == .needsYou)
 		await store.setSort(.name)
-		#expect(remote.listQueries.last?.sort == .name)
-		let queriesAfterName = remote.listQueries.count
+		#expect(pageQueries(remote).last?.sort == .name)
+		let queriesAfterName = pageQueries(remote).count
 		await store.setSort(.updated)
-		#expect(remote.listQueries.last?.sort == .updated)
+		#expect(pageQueries(remote).last?.sort == .updated)
 		// Between the two update-time orders nothing is refetched: the tiers are local.
 		let (other, otherRemote) = makeStore()
 		await other.load()
-		let loaded = otherRemote.listQueries.count
+		let loaded = pageQueries(otherRemote).count
 		await other.setSort(.updated)
-		#expect(otherRemote.listQueries.count == loaded)
+		#expect(pageQueries(otherRemote).count == loaded)
 		#expect(queriesAfterName >= 2)
 	}
 

@@ -54,13 +54,18 @@ import Testing
 		#expect(MaskinTextRole.sheetTitle.trackingEm == -0.022)
 	}
 
-	@Test func microLabelsAreMonoTenOrTwelve() {
-		#expect(MaskinTextRole.microLabel.referenceSize == 10)
+	@Test func microLabelsAreMonoElevenOrTwelve() {
+		#expect(MaskinTextRole.microLabel.referenceSize == 11)
 		#expect(MaskinTextRole.microLabelLarge.referenceSize == 12)
 		#expect(MaskinTextRole.microLabel.trackingEm == 0.08)
 		#expect(MaskinTextRole.microLabelLarge.trackingEm == 0.07)
 		#expect(MaskinTextRole.microLabel.isUppercase && MaskinTextRole.microLabelLarge.isUppercase)
-		#expect(MaskinTextRole.microLabelMicro.referenceSize == 9 && MaskinTextRole.microLabelMicro.isUppercase)
+		#expect(MaskinTextRole.microLabelMicro.referenceSize == 11 && MaskinTextRole.microLabelMicro.isUppercase)
+	}
+
+	@Test func captionIsRegularNotFiveHundred() {
+		#expect(MaskinFontWeight.css(.regular) == 400)
+		#expect(MaskinFontWeight.css(.medium) == 400)
 	}
 
 	@Test func weightScaleMapsOntoPlatformWeights() {

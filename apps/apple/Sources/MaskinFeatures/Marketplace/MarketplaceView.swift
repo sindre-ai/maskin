@@ -44,6 +44,7 @@ struct MarketplaceContent: View {
 	@Environment(\.isPushedInHostStack) private var pushed
 	@State private var search = ""
 	@State private var useCase: String?
+	@State private var kind: MarketplaceKind = .all
 	@State private var path: [String] = []
 
 	var body: some View {
@@ -72,7 +73,7 @@ struct MarketplaceContent: View {
 			#if os(iOS)
 			.toolbarTitleDisplayMode(.inlineLarge)
 			#endif
-			.searchable(text: $search, prompt: "Search flows")
+			.searchable(text: $search, prompt: "Search the marketplace")
 	}
 
 	private func detail(_ id: String) -> some View {
@@ -85,14 +86,15 @@ struct MarketplaceContent: View {
 	}
 
 	private var catalogList: some View {
-		let rows = store.loops(useCase: useCase, query: search)
+		let rows = kind.showsFlows ? store.loops(useCase: useCase, query: search) : []
 		return ScrollView {
 			LazyVStack(alignment: .leading, spacing: MaskinSpace.s9) {
 				if let notice = store.notice {
 					FormError(notice).onTapGesture { store.notice = nil }
 				}
 				if !store.updatesAvailable.isEmpty, search.isEmpty, useCase == nil { updates }
-				if !store.useCases.isEmpty { chips }
+				kindChips
+				if kind.showsFlows, !store.useCases.isEmpty { chips }
 				LazyVGrid(
 					columns: [GridItem(.adaptive(minimum: 300), spacing: MaskinSpace.s7)],
 					spacing: MaskinSpace.s7
@@ -126,7 +128,9 @@ struct MarketplaceContent: View {
 			}
 		case .loaded:
 			if isEmpty {
-				if search.isEmpty && useCase == nil {
+				if let message = kind.emptyMessage {
+					EmptyState(symbol: "square.grid.2x2", title: "Nothing here yet", message: message)
+				} else if search.isEmpty && useCase == nil {
 					EmptyState(
 						symbol: "square.grid.2x2", title: "Nothing here yet",
 						message: "The marketplace has no flows right now.")
@@ -135,6 +139,20 @@ struct MarketplaceContent: View {
 				}
 			}
 		}
+	}
+
+	private var kindChips: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s4) {
+				ForEach(MarketplaceKind.allCases, id: \.self) { item in
+					chip(item.title, selected: kind == item) {
+						kind = item
+						useCase = nil
+					}
+				}
+			}
+		}
+		.scrollClipDisabled()
 	}
 
 	private var chips: some View {
@@ -200,6 +218,12 @@ struct MarketplaceCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack(alignment: .firstTextBaseline) {
+				Text(MarketplaceKind.flowTag)
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink3)
+					.padding(.horizontal, MaskinSpace.s4)
+					.padding(.vertical, MaskinSpace.s1)
+					.background(MaskinSurface.fill, in: Capsule())
 				if let useCase = loop.useCase, !useCase.isEmpty { MonoLabel(useCase) }
 				Spacer(minLength: 0)
 				Text("v\(loop.version)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)

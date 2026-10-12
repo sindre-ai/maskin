@@ -7,8 +7,8 @@ reader is a widget and a notification, never a Live Activity.
 | Activity | Attributes | Driven by | Status |
 |----------|------------|-----------|--------|
 | **Agents working** (aggregate, one per device) | `MaskinAgentsAttributes` | the workspace's running sessions + the open thread, in the foreground | live, this document |
-| Flow cycle running | `MaskinCycleAttributes` | cycle state (none in the loop models yet) | host wired, no caller |
-| Live meeting | `MaskinMeetingAttributes` | a meeting model (none yet) | UI only |
+| Flow cycle running | `MaskinCycleAttributes` | the flow list (`LoopsStore`), for flows the person follows | `CycleActivityController`, foreground only |
+| Live meeting | `MaskinMeetingAttributes` | the live call (`LiveMeetingScreen`) | `MeetingActivityController`; Mute and End act on the call |
 
 **Needs real-device verification**: the simulator renders the UI but does not deliver Live
 Activity pushes, and ActivityKit token callbacks only fire on hardware.
@@ -45,7 +45,7 @@ Reduce Motion.
 | Workspace-wide running sessions (`GET /api/actors` + `GET /api/sessions?verbose=true`, refetched on session/actor events) | `Sources/MaskinCore/LiveActivity/WorkingAgentsFeed.swift` |
 | One feed per signed-in workspace; foreground/background refresh | `Sources/MaskinCore/LiveActivity/AgentsActivityRuntime.swift` |
 | Pause (background API call, fan-out over `POST /api/sessions/{id}/pause`) | `Sources/MaskinCore/LiveActivity/SessionPauser.swift`, `Apps/LiveActivityShared/PauseAgentsIntent.swift` |
-| ActivityKit hosts (iOS app): `AgentsActivityHost`, `CycleActivityHost` | `Apps/Maskin/AgentsActivityHost.swift`, wired in `MaskinApp.swift`; `BackgroundRefresh.swift` refreshes the feed |
+| ActivityKit hosts (iOS app): `AgentsActivityHost`, `CycleActivityHost`, `MeetingActivityHost` | `Apps/Maskin/AgentsActivityHost.swift`, wired in `MaskinApp.swift`; `BackgroundRefresh.swift` refreshes the feed |
 | Token client for a future push path | `Sources/MaskinCore/LiveActivity/APILiveActivityTokens.swift` (inert: see "What this server cannot do yet") |
 | UI extension target `MaskinLiveActivity` | `Apps/MaskinLiveActivity/{AgentsLiveActivity,CycleLiveActivity,MeetingLiveActivity,LiveActivityBrand}.swift`, `project.yml` |
 | Deep links `maskin://<ws>/agents`, `maskin://<ws>/agents/<id>` | `Sources/MaskinCore/DeepLinks/DeepLink.swift`; handled in `AppRuntime.present` and `InternalLinkInfo` |
@@ -150,11 +150,19 @@ it receives; `count` and `finishingSoon` are read as sent, and a payload without
 
 ## Flow cycle and live meeting
 
-Unchanged from before this handoff: `CycleActivityState` / `MeetingActivityState` are pure
-values, `CycleLiveActivity` / `MeetingLiveActivity` render them, `CycleActivityHost` can start,
-update and end a cycle card, and `DismissCycleActivityIntent` is the card's "Later". Nothing in
-the app drives them yet: the loop models carry no cycle number or progress, and there is no
-meeting model. Both stay as the design names them; they are not in this task's scope.
+**Cycle.** `CycleActivityController` (MaskinCore) follows the flow list. `LoopsStore.refresh()` hands it
+the loaded flows; `CycleActivityPlanner` (pure) decides start, update and end. A flow gets a card only
+while it is running and the person turned it on under Notifications > Flows (stored per device in
+`CycleOptInStorage`). The card shows the cycle running now (one past the cycles closed), progress from
+closed work, and turns to NEEDS YOU when the flow waits on the viewer. State comes from the flow, never
+a timer. `CycleActivityHost` (app target) does the ActivityKit calls. It updates only while the app is
+open: background updates need the push path this server lacks. "Later" is `DismissCycleActivityIntent`.
+
+**Meeting.** `LiveMeetingScreen` starts the card when the call connects (`MeetingActivityController`),
+follows mute, and ends it when the screen closes. Mute and End are `LiveActivityIntent`s that act on the
+live call through `MeetingCallControl`, which the screen registers while a call is up. End hangs up,
+it does not only remove the card. There are no level bars: the call exposes no microphone level to the
+activity.
 
 ## Manual steps (cannot be done from code)
 

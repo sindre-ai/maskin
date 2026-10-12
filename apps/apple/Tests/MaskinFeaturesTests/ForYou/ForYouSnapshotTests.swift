@@ -227,4 +227,31 @@ struct ForYouSnapshotTests {
 				}, width: width, dark: dark, name: "story-cards")
 		}
 	}
+
+	@Test("iPad briefing cards use the regular and sidebar metrics", arguments: [false, true])
+	func ipadStoryCards(dark: Bool) throws {
+		let card = StoryCard(
+			id: "a", unit: "Daily", headline: "3 decisions wait on you",
+			updatedAt: nil, content: .briefing(headline: "h", script: "s"))
+		#expect(StoryCardMetrics.regular.width == 204)
+		#expect(StoryCardMetrics.regularWithSidebar.width == 150)
+		try render(
+			page {
+				HStack {
+					StoryCardView(card: card, isSeen: false, metrics: .regular) {}
+					StoryCardView(card: card, isSeen: true, metrics: .regularWithSidebar) {}
+				}
+			}, width: 1024, dark: dark, name: "ipad-story-cards")
+	}
+
+	@Test("two decision cards side by side on the iPad grid", arguments: [false, true])
+	func ipadGrid(dark: Bool) throws {
+		try render(
+			HStack(alignment: .top, spacing: MaskinSpace.s12) {
+				cardView(entry(decisionCard), expanded: false).frame(maxWidth: .infinity)
+				cardView(entry(irreversibleCard), expanded: false).frame(maxWidth: .infinity)
+			}
+			.padding(MaskinSpace.s13 + MaskinSpace.s4),
+			width: 1024, dark: dark, name: "ipad-grid")
+	}
 }

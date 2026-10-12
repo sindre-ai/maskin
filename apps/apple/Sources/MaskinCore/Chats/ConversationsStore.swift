@@ -429,6 +429,16 @@ public final class ConversationsStore {
 		}
 	}
 
+	/// Drops the row after the reader left the conversation. The server already removed them, so
+	/// nothing is asked of it; the row just stays out of every later page.
+	public func hideAfterLeaving(_ id: String) {
+		conversations.removeAll { $0.id == id }
+		archivedConversations.removeAll { $0.id == id }
+		locallyDeleted.insert(id)
+		setPinOrder(pinOrder.filter { $0 != id })
+		reconcileAgentFilter()
+	}
+
 	/// Removes the row for good. Sources that can delete are asked to; otherwise the row is hidden
 	/// on this device only (API follow-up: `DELETE /api/conversations/{id}`).
 	public func delete(_ id: String) async {

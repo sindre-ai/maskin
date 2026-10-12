@@ -186,7 +186,8 @@ struct ObjectsCacheTests {
 		await second.load()
 		#expect(second.objects.map(\.id) == [Fixtures.objects[0].id])
 		#expect(second.freshness.source == .network)
-		#expect(changed.listQueries.count == 1)
+		// The unfiltered inventory refresh is a separate query; count only the list page itself.
+		#expect(changed.listQueries.filter { $0.limit == ObjectsStore.pageSize }.count == 1)
 	}
 
 	@Test func aFailedRevalidateKeepsTheCachedList() async {

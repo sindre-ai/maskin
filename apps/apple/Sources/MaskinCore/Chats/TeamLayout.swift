@@ -566,7 +566,7 @@ public enum NewConversationCopy {
 	public static let starters = [
 		"Brief me on what changed today",
 		"What's blocked and who can unblock it?",
-		"Draft a follow-up to Northwind",
+		"Draft a follow-up to the latest customer thread",
 	]
 
 	/// Candidates for the To field, matched on name and role.

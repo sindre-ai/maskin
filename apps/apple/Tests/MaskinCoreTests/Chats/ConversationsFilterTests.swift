@@ -99,11 +99,25 @@ struct ConversationsFilterTests {
 		await store.setPinned("a", true)
 		#expect(store.conversation(id: "a")?.pinned == false)
 		await store.setArchived("a", true)
-		#expect(store.conversation(id: "a") != nil, "archive rolled back")
+		#expect(store.conversations.contains { $0.id == "a" }, "archive rolled back")
+		#expect(store.archivedConversations.isEmpty)
 		await api.setFailState(false)
 		await store.setPinned("a", true)
 		#expect(store.conversation(id: "a")?.pinned == true)
 		await store.setArchived("a", true)
-		#expect(store.conversation(id: "a") == nil)
+		// The row leaves the active list and lands in the Archived row (spec 7 section 6).
+		#expect(!store.conversations.contains { $0.id == "a" })
+		#expect(store.archivedConversations.map(\.id) == ["a"])
+	}
+
+	@Test("a chat the reader left stays out of the list and out of later pages")
+	func leavingHidesTheRow() async {
+		let api = FakeListAPI([chatConvo("a"), chatConvo("b")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		store.hideAfterLeaving("a")
+		#expect(store.conversations.map(\.id) == ["b"])
+		await store.refresh()
+		#expect(store.conversations.map(\.id) == ["b"])
 	}
 }

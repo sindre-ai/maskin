@@ -114,17 +114,19 @@
 		}
 	}
 
-	/// Starts, updates and ends the flow-cycle activity. Nothing in the app calls this yet: the loop
-	/// models carry no cycle number or progress to drive it (state comes from the cycle, never a timer).
+	/// Starts, updates and ends the flow-cycle activity for flows the person follows (Notifications
+	/// → Flows). Driven by `CycleActivityController` from the foreground flow list: state comes from
+	/// the cycle, never a timer. Background updates need the push path main's API lacks.
 	@MainActor
-	final class CycleActivityHost {
+	final class CycleActivityHost: CycleActivityHosting {
 		private func activity(flowId: String) -> Activity<MaskinCycleAttributes>? {
 			Activity<MaskinCycleAttributes>.activities.first { $0.attributes.flowId == flowId }
 		}
 
-		func start(_ attributes: MaskinCycleAttributes, state: CycleActivityState) {
-			guard ActivityAuthorizationInfo().areActivitiesEnabled, activity(flowId: attributes.flowId) == nil
+		func start(flowId: String, workspaceId: String, state: CycleActivityState) {
+			guard ActivityAuthorizationInfo().areActivitiesEnabled, activity(flowId: flowId) == nil
 			else { return }
+			let attributes = MaskinCycleAttributes(flowId: flowId, workspaceId: workspaceId, objectId: flowId)
 			_ = try? Activity.request(
 				attributes: attributes,
 				content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60)),
@@ -140,9 +142,35 @@
 			await activity.update(ActivityContent(state: state, staleDate: stale))
 		}
 
-		func end(flowId: String, state: CycleActivityState? = nil) async {
+		func end(flowId: String) async {
 			guard let activity = activity(flowId: flowId) else { return }
-			await activity.end(state.map { ActivityContent(state: $0, staleDate: nil) }, dismissalPolicy: .immediate)
+			await activity.end(nil, dismissalPolicy: .immediate)
+		}
+	}
+
+	/// Starts, updates and ends the one live-meeting activity, driven by the meeting screen.
+	@MainActor
+	final class MeetingActivityHost: MeetingActivityHosting {
+		private var activity: Activity<MaskinMeetingAttributes>? {
+			Activity<MaskinMeetingAttributes>.activities.first
+		}
+
+		func start(meetingId: String, workspaceId: String, conversationId: String?, state: MeetingActivityState) {
+			guard ActivityAuthorizationInfo().areActivitiesEnabled, activity == nil else { return }
+			let attributes = MaskinMeetingAttributes(
+				meetingId: meetingId, workspaceId: workspaceId, conversationId: conversationId)
+			_ = try? Activity.request(
+				attributes: attributes, content: ActivityContent(state: state, staleDate: nil), pushType: nil)
+		}
+
+		func update(state: MeetingActivityState) async {
+			await activity?.update(ActivityContent(state: state, staleDate: nil))
+		}
+
+		func end() async {
+			for live in Activity<MaskinMeetingAttributes>.activities {
+				await live.end(nil, dismissalPolicy: .immediate)
+			}
 		}
 	}
 

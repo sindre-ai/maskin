@@ -205,7 +205,7 @@ struct VersionPager: View {
 		Button(action: action) {
 			Image(systemName: symbol).font(.system(size: MaskinFontSize.t12, weight: .semibold))
 				.foregroundStyle(MaskinColor.ink4)
-				.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 				.contentShape(Rectangle())
 		}
 		.buttonStyle(.maskinPressed)

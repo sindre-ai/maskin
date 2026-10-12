@@ -175,7 +175,8 @@ struct MaskinComposer: View {
 			}
 			row
 		}
-		.padding(MaskinSpace.s2)
+		// Spec 7 §1: bar padding 6, gap 8.
+		.padding(MaskinSpace.s3)
 		.background { surface }
 		.overlay {
 			if isDropTargeted {
@@ -203,7 +204,7 @@ struct MaskinComposer: View {
 	}
 
 	private var row: some View {
-		HStack(alignment: .bottom, spacing: MaskinSpace.s2) {
+		HStack(alignment: .bottom, spacing: MaskinSpace.s4) {
 			if isDictating {
 				ComposerDictationControls(onDiscard: discardDictation, onDone: finishDictation) {
 					field(placeholder: "Listening…")
@@ -233,7 +234,7 @@ struct MaskinComposer: View {
 			.padding(.vertical, MaskinSpace.s4)
 			.frame(minHeight: Self.control)
 			.padding(.vertical, MaskinSpace.s1)
-			.padding(.leading, config.showsAttach && !isDictating ? MaskinSpace.s2 : MaskinSpace.s5)
+			.padding(.leading, config.showsAttach && !isDictating ? 0 : MaskinSpace.s5)
 			.padding(.trailing, MaskinSpace.s1)
 			.frame(maxWidth: .infinity)
 	}
