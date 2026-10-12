@@ -31,8 +31,9 @@ export interface PostCallHook {
  * append here and own their hook's behaviour:
  *   1. disclosure assertion (stamps compliance_flag)  - must precede the email
  *   2. S3 mirror of recording + transcript
- *   3. follow-up email
- *   4. PostHog events
+ *   3. follow-up email (fires post_call_email_sent from send-followup.ts)
+ * The other four PostHog events are not hooks: the webhook calls captureVoiceEvents
+ * (posthog-events.ts) from the reducer result, just before this list runs.
  * Ordering is registration order, so a slice that depends on another's output
  * registers after it. Each hook is isolated: one throwing is logged and the
  * rest still run.
