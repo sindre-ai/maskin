@@ -26,7 +26,9 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	public var eventId: Int?
 	/// Only for local, unsent comments.
 	var idempotencyKey: String?
-	var parentEventId: Int?
+	/// The comment this one answers (`data.parentEventId` on a stored event). Activity nests it
+	/// under that parent.
+	public var parentEventId: Int?
 	/// Actor ids tagged in an unsent comment, kept so a retry mentions the same people.
 	var mentions: [String] = []
 	/// Objects linked from the comment with `/`: ids, resolved to titles by the store.
@@ -62,6 +64,50 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	}
 }
 
+/// The three pages of an object: the one last read is remembered per object.
+public enum ObjectDetailTab: String, CaseIterable, Sendable {
+	case overview, related, activity
+}
+
+/// Links grouped for the Related page: "In flow" first, then one group per relation phrase.
+public struct RelatedGroup: Identifiable, Equatable, Sendable {
+	public var label: String
+	public var links: [ObjectLink]
+	public var id: String { label }
+
+	public init(label: String, links: [ObjectLink]) {
+		self.label = label
+		self.links = links
+	}
+}
+
+public enum RelatedGrouping {
+	public static let flowLabel = "In flow"
+	/// The object type a flow (loop) row carries.
+	public static let flowType = "loop"
+
+	/// Groups in the order first seen, flows first, the phrase sentence-cased ("Blocked by").
+	/// `excluding` drops links shown elsewhere (attached files have their own section).
+	public static func groups(_ links: [ObjectLink], excluding: Set<String> = []) -> [RelatedGroup] {
+		var order: [String] = []
+		var buckets: [String: [ObjectLink]] = [:]
+		for link in links where !excluding.contains(link.otherId) {
+			let label = link.otherType == flowType ? flowLabel : sentence(link.phrase)
+			if buckets[label] == nil { order.append(label) }
+			buckets[label, default: []].append(link)
+		}
+		if let flows = order.firstIndex(of: flowLabel), flows > 0 {
+			order.remove(at: flows)
+			order.insert(flowLabel, at: 0)
+		}
+		return order.map { RelatedGroup(label: $0, links: buckets[$0] ?? []) }
+	}
+
+	static func sentence(_ phrase: String) -> String {
+		phrase.prefix(1).uppercased() + phrase.dropFirst()
+	}
+}
+
 /// One object on screen: the object, its links and activity, and every edit made to it.
 @MainActor
 @Observable
@@ -94,6 +140,14 @@ public final class ObjectDetailStore {
 	/// The signed-in actor, to mark "You" in the timeline.
 	public let currentActorId: String?
 
+	/// The page on screen. Remembered per object, so coming back lands where the reader left.
+	public var selectedTab: ObjectDetailTab {
+		didSet { defaults.set(selectedTab.rawValue, forKey: Self.tabKey(objectId)) }
+	}
+	@ObservationIgnored private let defaults: UserDefaults
+
+	static func tabKey(_ objectId: String) -> String { "object.tab.\(objectId)" }
+
 	/// Called after every successful or optimistic change so the list can mirror it.
 	@ObservationIgnored public var onObjectChanged: (@MainActor (WorkObject) -> Void)?
 	@ObservationIgnored public var onObjectDeleted: (@MainActor (String) -> Void)?
@@ -116,9 +170,11 @@ public final class ObjectDetailStore {
 	public init(
 		objectId: String, remote: any ObjectsRemote, directory: ObjectsDirectory,
 		currentActorId: String?, preload: WorkObject? = nil, cache: SnapshotCache? = nil,
-		files: (any FilesRemote)? = nil
+		files: (any FilesRemote)? = nil, defaults: UserDefaults = .standard
 	) {
 		self.filesRemote = files
+		self.defaults = defaults
+		self.selectedTab = defaults.string(forKey: Self.tabKey(objectId)).flatMap(ObjectDetailTab.init) ?? .overview
 		self.objectId = objectId
 		self.remote = remote
 		self.directory = directory
@@ -150,6 +206,76 @@ public final class ObjectDetailStore {
 
 	public func isAgent(_ item: TimelineItem) -> Bool { directory.actor(for: item.actorId)?.isAgent ?? false }
 
+	/// The newest thing that happened, for the Overview's "Latest" row.
+	public var latest: TimelineItem? {
+		timeline.max { ($0.date ?? .distantPast, $0.eventId ?? Int.max) < ($1.date ?? .distantPast, $1.eventId ?? Int.max) }
+	}
+
+	/// Metadata keys the header chips read. Workspaces define their own fields, so these are the
+	/// common spellings; anything else stays in the metadata list.
+	public static let priorityKey = "priority"
+	public static let dueKeys = ["due", "due_date", "dueDate", "due_at", "deadline"]
+
+	public var priority: String? { object?.metadata[Self.priorityKey] }
+
+	/// The due date, parsed from whichever due key the workspace uses (ISO 8601 or `yyyy-MM-dd`).
+	public var dueDate: Date? {
+		guard let object else { return nil }
+		for key in Self.dueKeys {
+			if let raw = object.metadata[key], let date = Self.parseDate(raw) { return date }
+		}
+		return nil
+	}
+
+	/// Which due key this object already uses, or the default for a new value.
+	var dueKey: String {
+		Self.dueKeys.first { object?.metadata[$0] != nil } ?? Self.dueKeys[0]
+	}
+
+	static func parseDate(_ raw: String) -> Date? {
+		if let date = ISODate.parse(raw) { return date }
+		let f = DateFormatter()
+		f.locale = Locale(identifier: "en_US_POSIX")
+		f.timeZone = TimeZone(secondsFromGMT: 0)
+		f.dateFormat = "yyyy-MM-dd"
+		return f.date(from: raw)
+	}
+
+	/// Links grouped for the Related page; attached files have their own section.
+	public var relatedGroups: [RelatedGroup] {
+		RelatedGrouping.groups(links, excluding: Set(outcomes.map(\.id)))
+	}
+
+	/// Titles fetched for links the graph delivered without one, by object id.
+	public private(set) var linkTitles: [String: String] = [:]
+	@ObservationIgnored private var resolvingLinks: Set<String> = []
+
+	/// The link's title, resolved from the object itself when the edge carried none. "Untitled"
+	/// only when nothing resolves.
+	public func title(for link: ObjectLink) -> String {
+		if link.otherTitle != Self.untitled, !link.otherTitle.isEmpty { return link.otherTitle }
+		return linkTitles[link.otherId] ?? Self.untitled
+	}
+
+	static let untitled = "Untitled"
+
+	private func resolveLinkTitles() {
+		let missing = Set(links.filter { $0.otherTitle == Self.untitled || $0.otherTitle.isEmpty }.map(\.otherId))
+			.subtracting(linkTitles.keys).subtracting(resolvingLinks)
+		for id in missing {
+			resolvingLinks.insert(id)
+			Task { [weak self] in
+				guard let self else { return }
+				if let graph = try? await remote.graph(objectId: id), let title = graph.object.title,
+					!title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+				{
+					linkTitles[id] = title
+				}
+				resolvingLinks.remove(id)
+			}
+		}
+	}
+
 	// MARK: Loading
 
 	public func load() async {
@@ -176,6 +302,7 @@ public final class ObjectDetailStore {
 				if before == editCount { object = graph.object }
 				links = graph.links
 				resolveFiles()
+				resolveLinkTitles()
 				mergeTimeline(graph.events)
 				phase = .loaded
 				hasFetched = true
@@ -291,6 +418,15 @@ public final class ObjectDetailStore {
 		}
 	}
 
+	/// `data.parentEventId` of a threaded comment (the server stores the thread root there).
+	static func parentEventId(in data: JSONValue?) -> Int? {
+		switch data?["parentEventId"] {
+		case .number(let n)?: return Int(n)
+		case .string(let s)?: return Int(s)
+		default: return nil
+		}
+	}
+
 	static func attachmentIDs(in data: JSONValue?) -> [String] {
 		guard case .array(let values)? = data?["attachmentFileIds"] else { return [] }
 		return values.compactMap(\.stringValue).filter { !$0.isEmpty }
@@ -300,10 +436,12 @@ public final class ObjectDetailStore {
 		if event.action == "commented" {
 			let text = event.data?["content"]?.stringValue ?? ""
 			guard !text.isEmpty else { return nil }
-			return TimelineItem(
+			var item = TimelineItem(
 				id: "e-\(event.id)", kind: .comment(text), actorId: event.actorId, date: event.createdAt,
 				delivery: .sent, eventId: event.id, refs: ReferenceTrigger.ids(in: event.data?["metadata"]),
 				attachments: Self.attachmentIDs(in: event.data))
+			item.parentEventId = Self.parentEventId(in: event.data)
+			return item
 		}
 		let summary = (event.summary?.isEmpty == false ? event.summary : nil)
 			?? event.action.replacingOccurrences(of: "_", with: " ")
@@ -364,10 +502,12 @@ public final class ObjectDetailStore {
 			if timeline.contains(where: { $0.eventId == stored.id }) {
 				timeline.remove(at: i)
 			} else {
-				timeline[i] = TimelineItem(
+				var sent = TimelineItem(
 					id: "e-\(stored.id)", kind: .comment(text), actorId: stored.actorId ?? item.actorId,
 					date: stored.createdAt ?? item.date, delivery: .sent, eventId: stored.id, refs: item.refs,
 					attachments: item.attachments)
+				sent.parentEventId = item.parentEventId
+				timeline[i] = sent
 			}
 		} catch {
 			if let i = timeline.firstIndex(where: { $0.id == localId }) { timeline[i].delivery = .failed }
@@ -400,6 +540,12 @@ public final class ObjectDetailStore {
 				if patch.title != nil { now.title = current.title }
 				if patch.content != nil { now.content = current.content }
 				if patch.status != nil { now.status = current.status }
+				if patch.driver != nil { now.driverId = current.driverId }
+				if let keys = patch.metadata?.keys {
+					for key in keys {
+						if let old = current.metadata[key] { now.metadata[key] = old } else { now.metadata.removeValue(forKey: key) }
+					}
+				}
 				object = now
 				onObjectChanged?(now)
 			}
@@ -409,6 +555,68 @@ public final class ObjectDetailStore {
 	}
 
 	public func setStatus(_ status: String) async { await edit(ObjectPatch(status: status)) }
+
+	/// Whether this object's type has an archived state to move to.
+	public var canArchive: Bool { statusOptions.contains(Self.archivedStatus) }
+	public static let archivedStatus = "archived"
+
+	public func archive() async { await setStatus(Self.archivedStatus) }
+
+	// MARK: Properties (driver, priority, due)
+
+	/// Change who drives the object. Optimistic, rolled back if refused. (Clearing the driver needs
+	/// an explicit null the generated client cannot send; an API follow-up.)
+	public func setDriver(_ actorId: String) async {
+		guard object?.driverId != actorId else { return }
+		await edit(ObjectPatch(driver: actorId))
+	}
+
+	/// Set or clear (`nil`) one metadata field, such as priority or the due date.
+	public func setProperty(_ key: String, _ value: String?) async {
+		guard object?.metadata[key] != value else { return }
+		await edit(ObjectPatch(metadata: [key: value ?? ""]))
+	}
+
+	public func setPriority(_ value: String?) async { await setProperty(Self.priorityKey, value) }
+
+	/// Stored as `yyyy-MM-dd`, the way the web's date fields write it.
+	public func setDueDate(_ date: Date?) async {
+		let f = DateFormatter()
+		f.locale = Locale(identifier: "en_US_POSIX")
+		f.timeZone = TimeZone(secondsFromGMT: 0)
+		f.dateFormat = "yyyy-MM-dd"
+		await setProperty(dueKey, date.map(f.string(from:)))
+	}
+
+	// MARK: Linking
+
+	public static let defaultRelation = "relates_to"
+
+	/// Link another object to this one: shown at once, removed again if the server refuses.
+	/// Already-linked objects are left alone.
+	public func linkObject(_ ref: CommentReference, relation: String = ObjectDetailStore.defaultRelation) async {
+		guard let object, ref.id != objectId,
+			!links.contains(where: { $0.otherId == ref.id && $0.relation == relation })
+		else { return }
+		let local = ObjectLink(
+			id: "local-\(UUID().uuidString)", relation: relation, isOutgoing: true, otherId: ref.id,
+			otherType: ref.type, otherTitle: ref.title)
+		links.append(local)
+		do {
+			let stored = try await remote.createRelationship(
+				sourceId: objectId, sourceType: object.type, targetId: ref.id, targetType: ref.type, type: relation,
+				idempotencyKey: IdempotencyKey.make())
+			if let i = links.firstIndex(where: { $0.id == local.id }) {
+				// A refetch may already have brought the edge in; don't show it twice.
+				if links.contains(where: { $0.id == stored.id }) { links.remove(at: i) } else { links[i] = stored }
+			}
+			if let current = self.object { cache?.write(Snapshot(object: current, links: links), cacheName) }
+			actionError = nil
+		} catch {
+			links.removeAll { $0.id == local.id }
+			actionError = Self.message(error)
+		}
+	}
 
 	public func toggleStar() async {
 		guard var current = object else { return }

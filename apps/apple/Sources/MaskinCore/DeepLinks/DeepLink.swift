@@ -15,6 +15,10 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	case chat(workspaceId: String, id: String)
 	/// `maskin://<ws>/notifications` (or the web's workspace home): open the inbox.
 	case notifications(workspaceId: String)
+	/// `…/<ws>/agents`: the Agents screen ("See all" on the agents Live Activity).
+	case agents(workspaceId: String)
+	/// `…/<ws>/agents/<id>`: one agent.
+	case agent(workspaceId: String, id: String)
 
 	public static let scheme = "maskin"
 
@@ -23,7 +27,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 
 	public var workspaceId: String {
 		switch self {
-		case .object(let ws, _), .chat(let ws, _), .notifications(let ws): ws
+		case .object(let ws, _), .chat(let ws, _), .notifications(let ws), .agents(let ws), .agent(let ws, _): ws
 		}
 	}
 
@@ -36,6 +40,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case .object(_, let id): c.path = "/objects/\(id)"
 		case .chat(_, let id): c.path = "/chats/\(id)"
 		case .notifications: c.path = "/notifications"
+		case .agents: c.path = "/agents"
+		case .agent(_, let id): c.path = "/agents/\(id)"
 		}
 		return c.url!
 	}
@@ -49,6 +55,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case .object(let ws, let id): c.path = "/\(ws)/objects/\(id)"
 		case .chat(let ws, let id): c.path = "/\(ws)/chats/\(id)"
 		case .notifications(let ws): c.path = "/\(ws)"
+		case .agents(let ws): c.path = "/\(ws)/agents"
+		case .agent(let ws, let id): c.path = "/\(ws)/agents/\(id)"
 		}
 		return c.url!
 	}
@@ -86,11 +94,14 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 			self = .notifications(workspaceId: workspace)
 		case 1 where rest[0] == "notifications":
 			self = .notifications(workspaceId: workspace)
+		case 1 where rest[0] == "agents":
+			self = .agents(workspaceId: workspace)
 		case 2:
 			guard Self.isSafeID(rest[1]) else { return nil }
 			switch rest[0] {
 			case "objects": self = .object(workspaceId: workspace, id: rest[1])
 			case "chats": self = .chat(workspaceId: workspace, id: rest[1])
+			case "agents": self = .agent(workspaceId: workspace, id: rest[1])
 			default: return nil
 			}
 		default:

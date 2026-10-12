@@ -44,8 +44,8 @@ struct ProfileMenuTests {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
 				== [
-					"Agents", "Marketplace", "Artefacts", "Members", "Integrations", "Triggers",
-					"Billing", "Keys",
+					"Marketplace", "Artefacts", "Members", "Integrations", "Triggers",
+					"Billing", "Keys & MCP",
 				])
 		#expect(
 			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
@@ -54,15 +54,21 @@ struct ProfileMenuTests {
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
 		#expect(
-			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.agents, .artefacts])
+			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.artefacts])
 		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings, .notifications])
 	}
 
-	@Test func keysAreForOwnersAndAdminsOnly() {
-		for role in [MemberRole.owner, .admin] {
+	@Test func keysAndMCPAreForEveryMember() {
+		// The page shows the person's own key and how to connect their own tools, so a plain member
+		// must reach it too; what only a manager may do is gated on the page.
+		for role in MemberRole.allCases {
 			#expect(ProfileMenu.items(in: .workspace, hasWorkspace: true, role: role).contains(.keys))
 		}
-		#expect(!ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .member).contains(.keys))
+	}
+
+	@Test func agentsLiveInsideMembersNotAsARow() {
+		#expect(!ProfileMenuItem.allCases.map(\.title).contains("Agents"))
+		#expect(ProfileMenuItem.members.subtitle == "People and agents in this workspace")
 	}
 
 	@Test func everyItemIsInExactlyOneGroup() {

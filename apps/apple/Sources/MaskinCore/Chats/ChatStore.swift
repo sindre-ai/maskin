@@ -69,6 +69,16 @@ public final class ChatStore {
 	@ObservationIgnored public var trace: ActivityStore?
 	/// Told after every successful session refresh (feeds the Live Activity).
 	@ObservationIgnored public var onSessionsRefreshed: (@MainActor ([ChatAgentSession]) -> Void)?
+	/// The flow this conversation belongs to, when the opener knows it (the API does not link a
+	/// conversation to a loop yet). Drives the flow-channel nav bar.
+	public var flowContext: ChatFlowContext?
+	/// Per-message UI state the server has no field for (versions, stopped, feedback), by row id.
+	public private(set) var overrides: [String: MessageOverride] = [:]
+	/// The one pinned message of this chat, by server id. Kept on this device (`ChatPinStoring`).
+	public private(set) var pinnedMessageServerID: Int?
+	/// Agents whose reply the user stopped before it finished, until they speak again.
+	public private(set) var stoppedAgentIDs: Set<String> = []
+	@ObservationIgnored private let pinStore: any ChatPinStoring
 
 	@ObservationIgnored let api: any ChatAPI
 	@ObservationIgnored let queue: ChatSendQueue
@@ -108,9 +118,12 @@ public final class ChatStore {
 		pollInterval: Duration? = .seconds(5), cache: SnapshotCache? = nil,
 		retryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15)],
 		knownLastMessageAt: Date? = nil,
+		pinStore: any ChatPinStoring = UserDefaultsChatPinStore(),
 		now: @escaping @Sendable () -> Date = { Date() }
 	) {
 		self.knownLastMessageAt = knownLastMessageAt
+		self.pinStore = pinStore
+		pinnedMessageServerID = pinStore.pinnedMessageID(conversationID: conversationID)
 		self.conversationID = conversationID
 		self.currentActorID = currentActorID
 		self.currentActorName = currentActorName
@@ -244,6 +257,137 @@ public final class ChatStore {
 	public func activity(for agentID: String) -> String? {
 		liveSessions().first { $0.actorID == agentID }?.currentActivity.flatMap { $0.isEmpty ? nil : $0 }
 	}
+
+	/// A reply is still owed: the user just sent something, or the newest message is not from an
+	/// agent. A chat session stays `running` between turns, so session status alone cannot say
+	/// whether a turn is in flight. Locks the versions pager and decides the `Stopped` marker.
+	public var replyInFlight: Bool {
+		if awaitingReplySince != nil { return true }
+		guard let last = confirmed.last(where: { $0.kind == "message" }) else { return false }
+		return last.author != .agent
+	}
+
+	// MARK: - Presence (typing / replying / working)
+
+	/// What an agent is doing right now, from its live session and the trace's current step: a
+	/// text or thinking step means it is composing (typing), a tool step means it is working on a
+	/// task, and a session with no step yet (or the spawn grace right after a send) means it has the
+	/// message but has not started answering (replying).
+	public func presence(of agentID: String, at date: Date? = nil) -> ChatAgentPresence? {
+		if let session = liveSessions(at: date).first(where: { $0.actorID == agentID }) {
+			if let turn = trace?.liveTurn(sessionID: session.id) {
+				guard let step = turn.steps.last(where: \.isRunning) else { return .typing }
+				switch step.kind {
+				case .text, .thinking: return .typing
+				case .toolUse, .error: return .working
+				}
+			}
+			return session.status == .running ? .working : .replying
+		}
+		if workingAgents(at: date).contains(where: { $0.id == agentID }) { return .replying }
+		return nil
+	}
+
+	/// Every agent with a presence, as the nav bar and indicators want them.
+	public func presences(at date: Date? = nil) -> [(agent: ChatParticipant, presence: ChatAgentPresence)] {
+		var seen: Set<String> = []
+		return (liveSessions(at: date).map(\.actorID) + workingAgents(at: date).map(\.id))
+			.filter { seen.insert($0).inserted }
+			.compactMap { id in presence(of: id, at: date).map { (participant(for: id), $0) } }
+	}
+
+	/// Agents composing a reply right now (the dots bubble).
+	public func typingAgents(at date: Date? = nil) -> [ChatParticipant] {
+		presences(at: date).filter { $0.presence == .typing }.map(\.agent)
+	}
+
+	/// Partial reply text while an agent's turn is open. The API delivers a reply as one message
+	/// when the turn ends and the activity feed carries one-line step labels only, so there is no
+	/// token stream to read yet; the bubble shows its caret over this once the backend streams.
+	public func liveReplyDraft(for agentID: String) -> String? { nil }
+
+	/// Who has read one of your messages: the agent whose session picked it up, else the first
+	/// agent that answered after it. Nil until then (`Sent`).
+	public func readBy(_ message: ChatMessage) -> String? {
+		guard message.actorID == currentActorID, let id = message.serverID else { return nil }
+		if let session = agentSessions.first(where: { $0.messageID == id }) {
+			return participant(for: session.actorID).name
+		}
+		if let reply = confirmed.first(where: { $0.author == .agent && ($0.serverID ?? 0) > id }) {
+			return participants.first { $0.id == reply.actorID }?.name ?? reply.actorName
+		}
+		return nil
+	}
+
+	// MARK: - Pinned message
+
+	public var pinnedMessage: ChatMessage? {
+		guard let id = pinnedMessageServerID else { return nil }
+		return confirmed.first { $0.serverID == id }
+	}
+
+	public func isPinned(_ message: ChatMessage) -> Bool {
+		message.serverID != nil && message.serverID == pinnedMessageServerID
+	}
+
+	/// One pinned message per chat; pinning another replaces it. Only a confirmed message can be
+	/// pinned (a pending one has no stable id).
+	public func pin(_ message: ChatMessage) {
+		guard let id = message.serverID else { return }
+		pinnedMessageServerID = id
+		pinStore.setPinnedMessageID(id, conversationID: conversationID)
+	}
+
+	public func unpin() {
+		pinnedMessageServerID = nil
+		pinStore.setPinnedMessageID(nil, conversationID: conversationID)
+	}
+
+	// MARK: - Overrides (versions, feedback)
+
+	public func override(for messageID: String) -> MessageOverride {
+		overrides[messageID] ?? MessageOverride()
+	}
+
+	private func update(_ messageID: String, _ change: (inout MessageOverride) -> Void) {
+		var value = overrides[messageID] ?? MessageOverride()
+		change(&value)
+		overrides[messageID] = value.isEmpty ? nil : value
+	}
+
+	/// Record another answer for an agent message and show it. Nothing calls this in production
+	/// yet: regenerating an answer as a *version* of the same message needs a revision endpoint the
+	/// API does not have (`retryAgent` posts a fresh message instead).
+	public func addVersion(_ text: String, to messageID: String) {
+		guard let message = messages.first(where: { $0.id == messageID }) else { return }
+		update(messageID) { value in
+			if value.versions.isEmpty { value.versions = [message.content] }
+			value.versions.append(text)
+			value.versionIndex = value.versions.count - 1
+		}
+	}
+
+	/// Step between versions; locked while a reply is still on its way.
+	public func selectVersion(_ index: Int, of messageID: String) {
+		guard !replyInFlight else { return }
+		update(messageID) { value in
+			guard value.versions.indices.contains(index) else { return }
+			value.versionIndex = index
+		}
+	}
+
+	/// "Good answer" / "Not right", kept on this device: the API has no message feedback yet.
+	public func setFeedback(_ feedback: MessageOverride.Feedback?, on messageID: String) {
+		update(messageID) { $0.feedback = feedback }
+	}
+
+	/// "Make it shorter": the API has no regenerate-with-instruction call, so this asks in the
+	/// chat the way a person would, quoting the answer. The shorter reply lands as a new message.
+	@discardableResult
+	public func askForShorter(_ message: ChatMessage) -> String? {
+		send(ChatQuote.make(author: message.actorName, content: message.content) + "Make it shorter")
+	}
+
 
 	// MARK: - Loading
 
@@ -571,6 +715,8 @@ public final class ChatStore {
 				conversationID: conversationID, content: content, metadata: metadata,
 				afterServerID: lastServerID)
 			awaitingReplySince = now()
+			// Asking again lifts the "Stopped" marker: a new answer is on its way.
+			stoppedAgentIDs = []
 			return "local-\(pending.id)"
 		} catch {
 			notice = "Couldn't queue that message."
@@ -714,13 +860,26 @@ public final class ChatStore {
 		}
 	}
 
+	/// Stop an agent mid-turn. Its reply, if one was owed, shows as `Stopped` until it speaks again.
 	public func stopSession(_ id: String) async {
+		let agentID = agentSessions.first { $0.id == id }?.actorID
 		do {
 			try await api.stopSession(sessionID: id)
+			if let agentID, replyInFlight || liveSessions().contains(where: { $0.id == id }) {
+				stoppedAgentIDs.insert(agentID)
+			}
+			awaitingReplySince = nil
 		} catch {
 			notice = Self.message(error)
 		}
 		await refreshSessions()
+	}
+
+	/// Stop whatever is live: the composer's Stop button ends every running turn in the chat.
+	public func stopLiveSessions() async {
+		for session in liveSessions() where session.status == .running {
+			await stopSession(session.id)
+		}
 	}
 
 	public func resumeSession(_ id: String) async {
@@ -790,6 +949,8 @@ public final class ChatStore {
 			} else {
 				if let alias = aliases[serverID] { message.id = alias }
 				rows.append(message)
+				// A fresh answer lifts the agent's "Stopped" marker; a re-read of old rows does not.
+				if message.author == .agent { stoppedAgentIDs.remove(message.actorID) }
 			}
 			if message.author == .agent, awaitingReplySince != nil,
 				let sent = rows.last(where: { $0.actorID == currentActorID })?.serverID,

@@ -1,9 +1,11 @@
 import MaskinCore
 import SwiftUI
 
+/// Settings keeps the account and the workspace's setup. Members, Integrations, Billing and
+/// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, workspace, members, integrations, apiKey, skills, billing, objectTypes, mcp
+	case profile, workspace, skills, objectTypes
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -95,6 +97,15 @@ struct SettingsServices {
 	/// The MCP endpoint lives on the API origin.
 	var mcpURL: URL { environment.baseURL.appendingPathComponent("mcp") }
 
+	func mcpStore() -> MCPStore {
+		MCPStore(api: source ?? NoSettingsSource(), serverURL: mcpURL, currentRole: role)
+	}
+
+	/// The signed-in key, for the Keys & MCP page to mask and to embed in the connect commands.
+	var apiKey: @MainActor () -> SecretValue? {
+		{ [environment] in environment.auth.session.map { SecretValue($0.apiKey) } }
+	}
+
 	func skillsStore() -> SkillsStore {
 		SkillsStore(api: source ?? NoSettingsSource(), workspaceId: workspaceId ?? "")
 	}
@@ -102,7 +113,7 @@ struct SettingsServices {
 
 /// Stands in when no workspace is selected, so views still render and every call fails plainly.
 struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, IntegrationsAPI, APIKeysAPI,
-	SkillsAPI, BillingAPI, SchemaAPI
+	SkillsAPI, BillingAPI, SchemaAPI, MCPAPI
 {
 	private var failure: SettingsError { SettingsError("Pick a workspace first.") }
 	func rename(actorId: String, name: String, idempotencyKey: String) async throws -> ProfileInfo {
@@ -136,6 +147,9 @@ struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integrations
 	{ throw failure }
 	func delete(workspaceId: String, name: String, idempotencyKey: String) async throws { throw failure }
 	func usage() async throws -> BillingUsage { throw failure }
+	func mcpServerInfo() async throws -> MCPServerInfo { throw failure }
+	func mcpClients() async throws -> [MCPClient] { throw failure }
+	func disconnectMCPClient(id: String, idempotencyKey: String) async throws { throw failure }
 	func load() async throws -> WorkspaceSchema { throw failure }
 	func save(_ schema: WorkspaceSchema, keys: Set<WorkspaceSchema.Key>, idempotencyKey: String)
 		async throws

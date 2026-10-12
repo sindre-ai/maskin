@@ -18,6 +18,39 @@ struct PickedImageFile: Transferable {
 	}
 }
 
+/// A video from the picker, copied to a temp file.
+struct PickedMovieFile: Transferable {
+	let url: URL
+
+	static var transferRepresentation: some TransferRepresentation {
+		FileRepresentation(importedContentType: .movie) { received in
+			let name = "\(UUID().uuidString)-\(received.file.lastPathComponent)"
+			let destination = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+			try FileManager.default.copyItem(at: received.file, to: destination)
+			return PickedMovieFile(url: destination)
+		}
+	}
+}
+
+/// Something pasted into or dropped onto the composer bar: a picture, or any file.
+enum ComposerDrop: Transferable {
+	case image(Data)
+	case file(URL)
+
+	static var transferRepresentation: some TransferRepresentation {
+		DataRepresentation(importedContentType: .image) { ComposerDrop.image($0) }
+		FileRepresentation(importedContentType: .item) { received in
+			let name = received.file.lastPathComponent
+			let destination = FileManager.default.temporaryDirectory
+				.appendingPathComponent(UUID().uuidString, isDirectory: true)
+			try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+			let copy = destination.appendingPathComponent(name)
+			try FileManager.default.copyItem(at: received.file, to: copy)
+			return ComposerDrop.file(copy)
+		}
+	}
+}
+
 /// PhotosPickerItem is not declared Sendable; it is only ever used from the one loading task.
 private struct ItemBox: @unchecked Sendable { let item: PhotosPickerItem }
 
@@ -40,6 +73,30 @@ enum AttachmentLoading {
 		}
 	}
 
+	/// True when the picker item is a video rather than a picture.
+	static func isMovie(_ item: PhotosPickerItem) -> Bool {
+		item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+	}
+
+	/// A photo or a video from the picker. Pictures are downsampled; a video is sent as it is, if it
+	/// is under the size cap.
+	static func media(_ item: PhotosPickerItem, name: String) -> @Sendable () async throws -> PreparedChatFile {
+		guard isMovie(item) else { return photo(item, name: name) }
+		let box = ItemBox(item: item)
+		return {
+			guard let picked = try await box.item.loadTransferable(type: PickedMovieFile.self) else {
+				throw ChatAttachmentError("Couldn't read that video.")
+			}
+			defer { try? FileManager.default.removeItem(at: picked.url) }
+			let size = (try? picked.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+			guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 10 MB limit.") }
+			let data = try Data(contentsOf: picked.url, options: .mappedIfSafe)
+			let base = (name as NSString).deletingPathExtension
+			let ext = picked.url.pathExtension.isEmpty ? "mov" : picked.url.pathExtension
+			return PreparedChatFile(name: "\(base).\(ext)", mimeType: mimeType(for: picked.url), data: data)
+		}
+	}
+
 	/// A picture already in memory (a camera shot, an image pasted from the clipboard): written to a temp
 	/// file and sent through the same downsampling as a library photo.
 	static func image(data: Data, name: String) -> @Sendable () async throws -> PreparedChatFile {
@@ -56,11 +113,15 @@ enum AttachmentLoading {
 		}
 	}
 
-	/// A file from the Files picker. Size is checked before a single byte is read.
-	static func file(at url: URL) -> @Sendable () async throws -> PreparedChatFile {
+	/// A file from the Files picker, or one dropped on the bar (`deleteAfter` removes our temp copy).
+	/// Size is checked before a single byte is read.
+	static func file(at url: URL, deleteAfter: Bool = false) -> @Sendable () async throws -> PreparedChatFile {
 		{
 			let scoped = url.startAccessingSecurityScopedResource()
-			defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+			defer {
+				if scoped { url.stopAccessingSecurityScopedResource() }
+				if deleteAfter { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+			}
 			let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 			guard size <= ChatLimits.maxFileBytes else {
 				throw ChatAttachmentError("Over the 10 MB limit.")

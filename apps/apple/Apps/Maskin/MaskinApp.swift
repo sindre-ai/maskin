@@ -91,9 +91,11 @@ struct MaskinApp: App {
 				Task { await IntentDeepLinkRelay.openSpotlight(identifier: id) }
 			}
 			#if os(iOS)
-				// Hand the sign-in to the paired watch, and again whenever it changes.
+				// Hand the sign-in to the paired watch, and again whenever it changes; point the
+				// "Agents working" activity at the signed-in workspace.
 				.onChange(of: environment.auth.session, initial: true) { _, session in
 					watchBridge.publish(session)
+					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
 				}
 			#endif
 		}
@@ -102,17 +104,21 @@ struct MaskinApp: App {
 			.windowResizability(.contentMinSize)
 			.onChange(of: scenePhase) { _, phase in
 				if phase == .background { BackgroundRefresh.schedule() }
+				// Back in front: the agents card has no push path on this server, so refetch now.
+				if phase == .active { Task { await AgentsActivityRuntime.shared?.refresh() } }
 			}
 		#endif
 		.commands { ShellCommands() }
 	}
 
 	#if os(iOS)
-		/// Agent-turn Live Activity: ActivityKit host, token registration against the backend (once
-		/// the push registrar knows the server's device id), and the foreground fallback.
+		/// "Agents working" Live Activity: ActivityKit host, the workspace-wide feed of running
+		/// sessions, and token registration (inert on this server: `/api/live-activities/tokens` and
+		/// `/api/devices` are not in main's API yet, so no device id ever arrives and nothing is
+		/// registered). The open thread adds its turns through `AgentsActivityCoordinator.shared`.
 		private static func setUpLiveActivity(environment: AppEnvironment, registrar: PushRegistrar) {
-			let host = TurnActivityHost()
-			let coordinator = TurnActivityCoordinator(
+			let host = AgentsActivityHost()
+			let coordinator = AgentsActivityCoordinator(
 				host: host,
 				tokens: APILiveActivityTokens(
 					baseURL: apiBaseURL, clientSource: "ios",
@@ -123,12 +129,16 @@ struct MaskinApp: App {
 							}
 						}
 					}))
-			TurnActivityCoordinator.shared = coordinator
+			AgentsActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
+			AgentsActivityRuntime.shared = AgentsActivityRuntime(environment: environment, coordinator: coordinator)
 			environment.auth.onSessionEnded { ending in
 				let creds = APILiveActivityTokens.Credentials(
 					apiKey: ending.apiKey, workspaceId: ending.workspaceId)
-				Task { await coordinator.signedOut(credentials: creds) }
+				Task {
+					await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: nil)
+					await coordinator.signedOut(credentials: creds)
+				}
 			}
 			registrar.onDeviceChanged = { id in Task { await coordinator.deviceChanged(id) } }
 		}

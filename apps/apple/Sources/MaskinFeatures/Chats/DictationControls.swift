@@ -5,7 +5,7 @@ import SwiftUI
 /// The recording state's two buttons, shared by the chat composer and the new-conversation sheet:
 /// Discard (puts back the text from before the mic opened) and Done (keeps the text).
 struct DictationDiscardButton: View {
-	var size: CGFloat = MaskinSpace.s14 + MaskinSpace.s3
+	var size: CGFloat = MaskinSpace.touchMin - MaskinSpace.s2
 	let action: () -> Void
 
 	var body: some View {
@@ -25,7 +25,7 @@ struct DictationDiscardButton: View {
 }
 
 struct DictationDoneButton: View {
-	var size: CGFloat = MaskinSpace.s14 + MaskinSpace.s3
+	var size: CGFloat = MaskinSpace.touchMin - MaskinSpace.s2
 	let action: () -> Void
 
 	var body: some View {

@@ -4,9 +4,17 @@ import Testing
 
 @testable import MaskinCore
 
+/// A throwaway defaults suite so tab memory never leaks between tests or into the real app.
+private func freshDefaults() -> UserDefaults {
+	let name = "ObjectDetailStoreTests.\(UUID().uuidString)"
+	let defaults = UserDefaults(suiteName: name)!
+	defaults.removePersistentDomain(forName: name)
+	return defaults
+}
+
 @MainActor
 private func makeStore(
-	objectId: String = "t1", preload: Bool = false
+	objectId: String = "t1", preload: Bool = false, defaults: UserDefaults = freshDefaults()
 ) -> (ObjectDetailStore, FakeObjectsRemote) {
 	let remote = FakeObjectsRemote(objects: Fixtures.objects)
 	let object = Fixtures.objects.first { $0.id == objectId }!
@@ -14,7 +22,7 @@ private func makeStore(
 	let directory = ObjectsDirectory(remote: remote, actors: Fixtures.actors)
 	let store = ObjectDetailStore(
 		objectId: objectId, remote: remote, directory: directory, currentActorId: "me",
-		preload: preload ? object : nil)
+		preload: preload ? object : nil, defaults: defaults)
 	return (store, remote)
 }
 
@@ -230,6 +238,171 @@ struct ObjectDetailStoreTests {
 		try await waitUntil { store.phase == .gone }
 		continuation.finish()
 		await task.value
+	}
+
+	@Test("the last tab is remembered per object")
+	func tabMemory() async {
+		let defaults = freshDefaults()
+		let (first, _) = makeStore(defaults: defaults)
+		#expect(first.selectedTab == .overview)
+		first.selectedTab = .activity
+		let (again, _) = makeStore(defaults: defaults)
+		#expect(again.selectedTab == .activity)
+		let (other, _) = makeStore(objectId: "t2", defaults: defaults)
+		#expect(other.selectedTab == .overview)
+	}
+
+	@Test("Latest is the newest event by date, whatever order the server sent them in")
+	func latest() async {
+		let (store, remote) = makeStore()
+		var graph = Fixtures.graph(for: Fixtures.objects[0])
+		// Newer than everything else but with a lower id and listed first.
+		graph.events.insert(
+			ObjectEvent(id: 0, actorId: "forge", action: "session_started", createdAt: Fixtures.date(1), summary: "started working"),
+			at: 0)
+		remote.setGraph(graph)
+		await store.load()
+		#expect(store.latest?.eventId == 0)
+		#expect(store.latest.map(ActivityGrouping.summary(of:)) == "started working")
+	}
+
+	@Test("a stored reply carries its parent, and a reply posted here keeps it after sending")
+	func threading() async throws {
+		let (store, remote) = makeStore()
+		var graph = Fixtures.graph(for: Fixtures.objects[0])
+		graph.events.append(
+			ObjectEvent(
+				id: 5, actorId: "sigrid", action: "commented",
+				data: .object(["content": .string("Agreed"), "parentEventId": .number(3)]), createdAt: Fixtures.date(8)))
+		remote.setGraph(graph)
+		await store.load()
+		#expect(store.timeline.first { $0.eventId == 5 }?.parentEventId == 3)
+		await store.postComment("Replying", parentEventId: 3)
+		let sent = try #require(store.timeline.last)
+		#expect(sent.delivery == .sent)
+		#expect(sent.parentEventId == 3)
+		// Fixture dates sit in the future, so only membership is asserted here; order is covered
+		// by ActivityGroupingTests.
+		let days = ActivityGrouping.days(store.timeline)
+		let root = days.flatMap(\.entries).first { $0.item.eventId == 3 }
+		let kinds = root?.replies.map(\.item.kind) ?? []
+		#expect(kinds.count == 2)
+		#expect(kinds.contains(.comment("Agreed")) && kinds.contains(.comment("Replying")))
+	}
+
+	@Test("a link without a title resolves it from the object; Untitled only when nothing resolves")
+	func linkTitles() async throws {
+		let (store, remote) = makeStore()
+		var graph = Fixtures.graph(for: Fixtures.objects[0])
+		graph.links.append(
+			ObjectLink(id: "r3", relation: "relates_to", isOutgoing: true, otherId: "i1", otherType: "insight", otherTitle: "Untitled"))
+		graph.links.append(
+			ObjectLink(id: "r4", relation: "relates_to", isOutgoing: true, otherId: "ghost", otherType: "task", otherTitle: "Untitled"))
+		remote.setGraph(graph)
+		remote.setGraph(Fixtures.graph(for: Fixtures.objects[3]))  // i1: "Users want push notifications"
+		await store.load()
+		let insight = try #require(store.links.first { $0.id == "r3" })
+		try await waitUntil { store.title(for: insight) == "Users want push notifications" }
+		let ghost = try #require(store.links.first { $0.id == "r4" })
+		#expect(store.title(for: ghost) == "Untitled")
+		#expect(store.title(for: store.links[0]) == "Write migration for devices")
+	}
+
+	@Test("related groups put the flow first and sentence-case the phrase")
+	func relatedGroups() async {
+		let (store, remote) = makeStore()
+		var graph = Fixtures.graph(for: Fixtures.objects[0])
+		graph.links.append(
+			ObjectLink(id: "r5", relation: "relates_to", isOutgoing: false, otherId: "l1", otherType: "loop", otherTitle: "Mobile launch"))
+		remote.setGraph(graph)
+		await store.load()
+		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocks", "Part of"])
+	}
+
+	// Each property gets a fresh store: the fake's `update` answers from the graph it was seeded
+	// with, not from the last write, so chained writes would read back stale fields.
+
+	@Test("driver persists through a PATCH and rolls back when refused")
+	func driver() async {
+		let (store, remote) = makeStore(preload: true)
+		await store.load()
+		await store.setDriver("sigrid")
+		#expect(store.object?.driverId == "sigrid")
+		#expect(store.ownerName == "Sigrid Larsen")
+		#expect(remote.updateKeys.count == 1)
+		await store.setDriver("sigrid")
+		#expect(remote.updateKeys.count == 1)
+
+		remote.fail("update")
+		await store.setDriver("me")
+		#expect(store.object?.driverId == "sigrid")
+		#expect(store.actionError == "boom")
+	}
+
+	@Test("priority is one metadata key, cleared with an empty value, rolled back when refused")
+	func priority() async {
+		let (store, remote) = makeStore(preload: true)
+		await store.load()
+		await store.setPriority("high")
+		#expect(store.priority == "high")
+		#expect(remote.updateKeys.count == 1)
+
+		remote.fail("update")
+		await store.setPriority("low")
+		#expect(store.priority == "high")
+		#expect(store.actionError == "boom")
+		remote.heal()
+
+		let (fresh, _) = makeStore(preload: true)
+		await fresh.load()
+		#expect(fresh.priority == nil)
+		await fresh.setPriority(nil)
+		#expect(fresh.priority == nil)
+	}
+
+	@Test("the due date is stored as yyyy-MM-dd and read back as a date")
+	func due() async {
+		let (store, remote) = makeStore(preload: true)
+		await store.load()
+		#expect(store.dueDate == nil)
+		await store.setDueDate(Date(timeIntervalSince1970: 1_791_374_400))
+		#expect(store.object?.metadata["due"] == "2026-10-07")
+		#expect(store.dueDate != nil)
+		#expect(remote.updateKeys.count == 1)
+		#expect(ObjectDetailStore.parseDate("2026-10-07T12:00:00Z") != nil)
+		#expect(ObjectDetailStore.parseDate("next week") == nil)
+	}
+
+	@Test("linking an object shows it at once, stores the edge, never links to itself, and undoes a refusal")
+	func link() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		let ref = CommentReference(id: "i1", title: "Users want push notifications", type: "insight")
+		await store.linkObject(ref)
+		await store.linkObject(ref)
+		await store.linkObject(CommentReference(id: "t1", title: "Me", type: "task"))
+		let linked = store.links.filter { $0.otherId == "i1" }
+		#expect(linked.count == 1)
+		#expect(linked.first?.id.hasPrefix("rel-") == true)
+		#expect(!store.links.contains { $0.otherId == "t1" })
+		#expect(store.relatedGroups.map(\.label).contains("Relates to"))
+
+		remote.fail("relationship")
+		await store.linkObject(CommentReference(id: "t3", title: "Design empty states", type: "task"))
+		#expect(!store.links.contains { $0.otherId == "t3" })
+		#expect(store.actionError == "boom")
+	}
+
+	@Test("archive is offered only when the type has an archived status")
+	func archive() async {
+		let (task, _) = makeStore()
+		await task.load()
+		#expect(!task.canArchive)
+		let (bet, _) = makeStore(objectId: "b1")
+		await bet.load()
+		#expect(bet.canArchive)
+		await bet.archive()
+		#expect(bet.object?.status == "archived")
 	}
 
 	@Test("link phrases read from the viewed object's side")

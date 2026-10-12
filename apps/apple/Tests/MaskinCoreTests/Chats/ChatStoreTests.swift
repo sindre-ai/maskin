@@ -661,3 +661,149 @@ struct ChatSendMetadataTests {
 		#expect(message.mentionIDs == ["m1", "m2"])
 	}
 }
+
+@Suite("ChatStore spec 7 state: pinned, overrides, stopped, presence")
+@MainActor
+struct ChatStoreSpec7StateTests {
+	@Test("pinning keeps one message per chat, survives a new store on the same pin store, and unpins")
+	func pinned() async {
+		let pins = MemoryChatPinStore()
+		let rows = [chatMsg(1, by: "relay", agent: true, "Plan"), chatMsg(2, by: "relay", agent: true, "Budget")]
+		let h = ChatHarness(server: rows, pinStore: pins)
+		await h.store.start()
+		#expect(h.store.pinnedMessage == nil)
+		h.store.pin(h.store.messages[0])
+		#expect(h.store.pinnedMessage?.content == "Plan")
+		#expect(h.store.isPinned(h.store.messages[0]))
+		h.store.pin(h.store.messages[1])
+		#expect(h.store.pinnedMessage?.content == "Budget", "one pinned message per chat")
+		#expect(!h.store.isPinned(h.store.messages[0]))
+		// A pending message has no stable id and cannot be pinned.
+		var pending = chatMsg(9)
+		pending.serverID = nil
+		h.store.pin(pending)
+		#expect(h.store.pinnedMessageServerID == 2)
+
+		let reopened = ChatHarness(server: rows, pinStore: pins)
+		await reopened.store.start()
+		#expect(reopened.store.pinnedMessage?.content == "Budget")
+		reopened.store.unpin()
+		#expect(reopened.store.pinnedMessage == nil)
+		#expect(pins.pinnedMessageID(conversationID: "c1") == nil)
+	}
+
+	@Test("versions start from the message's own text, step, and lock while a reply is in flight")
+	func versions() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "me", "Summarise"), chatMsg(2, by: "relay", agent: true, "Long answer")])
+		await h.store.start()
+		let id = h.store.messages[1].id
+		#expect(h.store.override(for: id) == MessageOverride())
+		#expect(!h.store.override(for: id).hasVersions)
+		h.store.addVersion("Short answer", to: id)
+		let override = h.store.override(for: id)
+		#expect(override.versions == ["Long answer", "Short answer"])
+		#expect(override.versionIndex == 1)
+		#expect(override.text(original: "Long answer") == "Short answer")
+		h.store.selectVersion(0, of: id)
+		#expect(h.store.override(for: id).text(original: "Long answer") == "Long answer")
+		h.store.selectVersion(5, of: id)
+		#expect(h.store.override(for: id).versionIndex == 0, "out-of-range is ignored")
+		// Locked while a reply is streaming.
+		h.store.send("again")
+		h.store.selectVersion(1, of: id)
+		#expect(h.store.override(for: id).versionIndex == 0)
+	}
+
+	@Test("feedback is kept per message and clearing it drops the empty override")
+	func feedback() async {
+		let h = ChatHarness(server: [chatMsg(2, by: "relay", agent: true, "Answer")])
+		await h.store.start()
+		let id = h.store.messages[0].id
+		h.store.setFeedback(.good, on: id)
+		#expect(h.store.override(for: id).feedback == .good)
+		h.store.setFeedback(nil, on: id)
+		#expect(h.store.overrides[id] == nil)
+	}
+
+	@Test("asking for a shorter answer quotes the message and sends through the outbox")
+	func shorter() async {
+		let h = ChatHarness(server: [chatMsg(2, by: "relay", name: "Relay", agent: true, "A long answer")])
+		await h.store.start()
+		let id = h.store.askForShorter(h.store.messages[0])
+		#expect(id != nil)
+		#expect(await h.settled())
+		let sent = await h.api.sentContents.last ?? ""
+		#expect(sent.hasPrefix("> **Relay**\n> A long answer"))
+		#expect(sent.hasSuffix("Make it shorter"))
+	}
+
+	@Test("stopping a live agent marks its reply Stopped until it answers again or you ask again")
+	func stopped() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "me", "Go")])
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .running, startedAt: chatT0)])
+		await h.store.start()
+		#expect(h.store.liveSessions().map(\.id) == ["s1"])
+		await h.store.stopSession("s1")
+		#expect(h.store.stoppedAgentIDs == ["relay"])
+		#expect(await h.api.stopped == ["s1"])
+		// A fresh answer from that agent lifts the marker; re-reading old rows does not.
+		await h.store.sync(full: true)
+		#expect(h.store.stoppedAgentIDs == ["relay"])
+		await h.api.append(chatMsg(2, by: "relay", agent: true, "Here you go"))
+		await h.store.sync()
+		#expect(h.store.stoppedAgentIDs.isEmpty)
+
+		await h.store.stopSession("s1")
+		#expect(h.store.stoppedAgentIDs == ["relay"])
+		h.store.send("Try once more")
+		#expect(h.store.stoppedAgentIDs.isEmpty)
+	}
+
+	@Test("stopping a session that is not live leaves no Stopped marker")
+	func stopIdle() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "Done")])
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .completed, startedAt: chatT0)])
+		await h.store.start()
+		await h.store.stopSession("s1")
+		#expect(h.store.stoppedAgentIDs.isEmpty)
+	}
+
+	@Test("presence: a running session with no trace is working, a fresh send is replying, idle is nil")
+	func presence() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "Hi")])
+		await h.store.start()
+		#expect(h.store.presence(of: "relay") == nil)
+		#expect(h.store.presences().isEmpty)
+		h.store.send("Summarise this")
+		#expect(h.store.presence(of: "relay") == .replying, "spawn grace right after a send")
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .running, startedAt: chatT0)])
+		await h.store.refreshSessions()
+		#expect(h.store.presence(of: "relay") == .working)
+		#expect(h.store.presences().map(\.presence) == [.working])
+		#expect(h.store.typingAgents().isEmpty)
+		await h.api.setSessions([ChatAgentSession(id: "s2", actorID: "relay", status: .pending, startedAt: chatT0)])
+		await h.store.refreshSessions()
+		#expect(h.store.presence(of: "relay") == .replying)
+	}
+
+	@Test("read receipts: Sent until an agent session picks the message up or an agent answers after it")
+	func readBy() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "me", "Hello"), chatMsg(2, by: "me", "Anyone?")])
+		await h.store.start()
+		#expect(h.store.readBy(h.store.messages[0]) == nil)
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .running, messageID: 2)])
+		await h.store.refreshSessions()
+		#expect(h.store.readBy(h.store.messages[1]) == "Relay")
+		#expect(h.store.readBy(h.store.messages[0]) == nil)
+		await h.api.append(chatMsg(3, by: "relay", agent: true, "Yes"))
+		await h.store.sync()
+		#expect(h.store.readBy(h.store.messages[0]) == "Relay")
+		#expect(h.store.readBy(h.store.messages[2]) == nil, "only your own messages have receipts")
+	}
+
+	@Test("the live reply draft is nil until the API streams partial text")
+	func noStreamYet() async {
+		let h = ChatHarness()
+		#expect(h.store.liveReplyDraft(for: "relay") == nil)
+	}
+}

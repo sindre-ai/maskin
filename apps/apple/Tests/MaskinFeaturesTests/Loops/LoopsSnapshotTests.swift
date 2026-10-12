@@ -162,6 +162,28 @@ struct LoopsSnapshotTests {
 		}
 	}
 
+	@Test("the Flows header pill renders off and on", arguments: [false, true])
+	func needsYouPill(dark: Bool) throws {
+		for width in Self.widths {
+			let view = VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				Text("Flows").maskinText(.largeTitle).foregroundStyle(MaskinColor.ink)
+				FlowsNeedsYouPill(count: 2, isOn: false) {}
+				FlowsNeedsYouPill(count: 1, isOn: false) {}
+				FlowsNeedsYouPill(count: 2, isOn: true) {}
+			}
+			.padding(MaskinSpace.s9)
+			try render(view, width: width, dark: dark, name: "flows-needs-you-pill")
+		}
+	}
+
+	@Test("the pill reads as the handoff writes it")
+	func pillCopy() {
+		#expect(FlowsNeedsYouPill.label(count: 2, isOn: false) == "2 need you ›")
+		#expect(FlowsNeedsYouPill.label(count: 1, isOn: false) == "1 needs you ›")
+		#expect(FlowsNeedsYouPill.label(count: 2, isOn: true) == "Showing 2 that need you · Show all")
+		#expect(FlowsNeedsYouPill.height == 34)
+	}
+
 	@Test("loop pills render all states", arguments: [false, true])
 	func pills(dark: Bool) throws {
 		for width in Self.widths {

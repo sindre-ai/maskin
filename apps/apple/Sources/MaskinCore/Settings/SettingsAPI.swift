@@ -47,6 +47,18 @@ public protocol APIKeysAPI: Sendable {
 	func regenerate(actorId: String) async throws -> SecretValue
 }
 
+/// The workspace's MCP server as the Keys & MCP page shows it. The server URL itself is derived
+/// from the API origin (`/mcp`) and needs no call.
+public protocol MCPAPI: Sendable {
+	/// Tool count and sign-in modes. STUB until the API offers an endpoint: `APISettingsSource`
+	/// throws `SettingsError.mcpNotAvailable`.
+	func mcpServerInfo() async throws -> MCPServerInfo
+	/// Clients connected to the MCP server. STUB until the API lists them.
+	func mcpClients() async throws -> [MCPClient]
+	/// Revokes one client's access. STUB until the API offers a revoke call.
+	func disconnectMCPClient(id: String, idempotencyKey: String) async throws
+}
+
 public protocol SkillsAPI: Sendable {
 	func list(workspaceId: String) async throws -> [WorkspaceSkill]
 	/// `GET …/skills/{name}`: the skill's markdown body.
