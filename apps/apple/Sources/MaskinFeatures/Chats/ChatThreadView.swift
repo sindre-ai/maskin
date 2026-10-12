@@ -287,7 +287,7 @@ struct ChatThreadView: View {
 		switch store.phase {
 		case .idle, .loading:
 			// A skeleton only if loading takes longer than 300ms; before that the card stays blank.
-			DelayedSkeleton()
+			ThreadDelayedSkeleton()
 		case .failed(let message):
 			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't open this chat", message: message) {
 				Button("Try again") { Task { await store.load() } }.buttonStyle(.secondaryAction)
@@ -929,7 +929,7 @@ struct QuickReplyChips: View {
 }
 
 /// The thread skeleton, drawn only once loading has taken more than 300ms (7-Chat §2).
-struct DelayedSkeleton: View {
+struct ThreadDelayedSkeleton: View {
 	@State private var visible = false
 
 	var body: some View {
