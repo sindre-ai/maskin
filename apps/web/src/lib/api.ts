@@ -1603,7 +1603,8 @@ export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' |
 export interface ChatCaptureInput {
 	sessionId: string
 	providerMode: 'byo_apikey'
-	detectedProvider: ChatCaptureProvider
+	/** manual: the user typed the ! prefix, so nothing was detected. */
+	detectedProvider: ChatCaptureProvider | 'manual'
 	displayName: string
 	rawSecret: string
 	/** Omit for the default (the session's agent). [] means unassigned. */

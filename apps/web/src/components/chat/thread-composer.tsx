@@ -44,6 +44,11 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			agent: { id: live.actorId, name: agent?.actorName ?? 'the agent' },
 		}
 	}, [sessions, conversation?.participants])
+	// Vault mode (the ! prefix) needs a running session to vault into. It waits while the
+	// conversation has none, or has one still coming up (pending, starting or queued).
+	const vaultModeBlocked =
+		!sessions?.some((s) => s.status === 'running') ||
+		sessions.some((s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued')
 	const participantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
@@ -139,6 +144,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			textareaLabel="Message this conversation"
 			draftKey={conversationId}
 			secretCapture={secretCapture}
+			vaultModeBlocked={vaultModeBlocked}
 		/>
 	)
 }
