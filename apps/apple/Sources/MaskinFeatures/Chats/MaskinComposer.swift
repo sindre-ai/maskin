@@ -647,8 +647,9 @@ private struct SelectionTextField: View {
 
 	private func offsets(of selection: TextSelection?) -> Range<Int>? {
 		guard let selection, case .selection(let range) = selection.indices else { return nil }
-		let text = model.text
-		return text.distance(from: text.startIndex, to: range.lowerBound)..<text.distance(from: text.startIndex, to: range.upperBound)
+		// Not String.distance directly: the selection can hold indices from an older text (cleared
+		// after a send, replaced by a draft or dictation) and distance traps on those.
+		return TextOffsets.characterOffsets(of: range, in: model.text)
 	}
 
 	private func textSelection(for range: Range<Int>) -> TextSelection {
