@@ -45,7 +45,9 @@ describe('ConnectWizard', () => {
 		expect(within(callout as HTMLElement).getAllByRole('listitem')).toHaveLength(
 			DRIVE_SCOPES.length,
 		)
-		expect(within(callout as HTMLElement).getByText('Edit & comment on any file')).toBeVisible()
+		expect(
+			within(callout as HTMLElement).getByText('Full access to your Drive files'),
+		).toBeVisible()
 	})
 
 	it('default: Continue starts the connect and Cancel backs out', async () => {

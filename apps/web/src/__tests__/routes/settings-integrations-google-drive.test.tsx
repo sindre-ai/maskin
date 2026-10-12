@@ -52,6 +52,7 @@ vi.mock('@/hooks/use-actors', () => ({
 		data: [
 			{ id: 'actor-priya', name: 'Priya Shah' },
 			{ id: 'actor-kai', name: 'Kai Ono' },
+			{ id: 'actor-linker', name: 'Linker (Sigrid)' },
 		],
 	}),
 }))
@@ -137,7 +138,7 @@ describe('Google Drive detail page', () => {
 		expect(screen.getByTestId('drive-detail')).toHaveAttribute('data-variant', 'scope-add')
 		expect(screen.getByLabelText('Partial')).toBeInTheDocument()
 		expect(screen.getByTestId('drive-mline')).toHaveTextContent(
-			'2 humans on Google · 1 has Drive · 1 needs scope add',
+			'2 humans on Google · 1 has Drive · 1 needs Drive',
 		)
 		const banner = screen.getByRole('status')
 		expect(banner).toHaveAttribute('aria-live', 'polite')
@@ -145,12 +146,22 @@ describe('Google Drive detail page', () => {
 
 		const priya = screen.getByTestId('scope-row-priya@acme.test')
 		expect(priya).toHaveAttribute('data-state', 'is-missing')
-		expect(within(priya).getByLabelText('Edit & comment on any file, not granted')).toBeVisible()
+		expect(
+			within(priya).getByLabelText('Full access to your Drive files, not granted'),
+		).toBeVisible()
 
 		await userEvent.click(within(priya).getByRole('button', { name: 'Add Drive permissions →' }))
 		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive' })
-		await userEvent.click(within(banner).getByRole('button', { name: 'Grant for all →' }))
+		await userEvent.click(within(banner).getByRole('button', { name: 'Connect Drive →' }))
 		expect(mockConnect).toHaveBeenCalledTimes(2)
+	})
+
+	it('avatar initials skip punctuation: "Linker (Sigrid)" is LS, not "L("', () => {
+		setRows([googleRow('sigrid@acme.test', 'actor-linker')])
+		render(<DriveDetailPage />)
+		expect(
+			within(screen.getByTestId('scope-row-sigrid@acme.test')).getByText('LS'),
+		).toBeInTheDocument()
 	})
 
 	it('connected: every human has Drive, no banner, scope chip granted', () => {
@@ -164,10 +175,12 @@ describe('Google Drive detail page', () => {
 		expect(screen.getByTestId('drive-detail')).toHaveAttribute('data-variant', 'connected')
 		expect(screen.getByLabelText('Connected')).toBeInTheDocument()
 		expect(screen.getByTestId('drive-mline')).toHaveTextContent('2 humans connected')
+		expect(screen.getByText(/Nothing to configure here beyond who's connected/)).toBeInTheDocument()
+		expect(screen.queryByText(/To turn it on for a human/)).not.toBeInTheDocument()
 		expect(screen.queryByRole('status')).not.toBeInTheDocument()
 		const kai = screen.getByTestId('scope-row-kai@acme.test')
 		expect(kai).toHaveAttribute('data-state', 'is-complete')
-		expect(within(kai).getByLabelText('Edit & comment on any file, granted')).toBeVisible()
+		expect(within(kai).getByLabelText('Full access to your Drive files, granted')).toBeVisible()
 		expect(screen.queryByRole('button', { name: /Add Drive permissions/ })).not.toBeInTheDocument()
 	})
 
@@ -188,7 +201,7 @@ describe('Google Drive detail page', () => {
 			within(banner).getByText('Reconnect Google — your token was invalidated'),
 		).toBeInTheDocument()
 		const kai = screen.getByTestId('scope-row-kai@acme.test')
-		expect(within(kai).getByLabelText('Edit & comment on any file, not granted')).toBeVisible()
+		expect(within(kai).getByLabelText('Full access to your Drive files, not granted')).toBeVisible()
 		await userEvent.click(within(banner).getByRole('button', { name: 'Reconnect →' }))
 		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive' })
 	})
@@ -206,6 +219,8 @@ describe('Google Drive detail page', () => {
 				screen.getByRole('heading', { name: 'Connect your Google account for Drive' }),
 			).toBeInTheDocument()
 			expect(screen.queryByText('Drive is not connected')).not.toBeInTheDocument()
+			// A workspace that never connected Drive is not at fault: no status pill.
+			expect(screen.queryByLabelText('Attention')).not.toBeInTheDocument()
 			expect(screen.queryByTestId('drive-first-call')).not.toBeInTheDocument()
 
 			await userEvent.click(screen.getByRole('button', { name: 'Continue with Google →' }))
@@ -304,7 +319,10 @@ describe('Google Drive detail page', () => {
 	})
 
 	it('folder watches: lists seeded watches under the human the Drive row belongs to', () => {
-		setRows([googleRow('priya@acme.test', 'actor-priya'), driveRow('priya@acme.test')])
+		setRows([
+			googleRow('priya@acme.test', 'actor-priya'),
+			driveRow('priya@acme.test', { config: { first_tool_call_at: STAMP } }),
+		])
 		mockDriveWatches.mockReturnValue({
 			data: [
 				buildDriveWatch({ folderId: 'f-rec', name: 'Meet Recordings', account: 'priya@acme.test' }),
@@ -327,7 +345,7 @@ describe('Google Drive detail page', () => {
 	})
 
 	it('folder watches: no watches shows the empty state on the connected page', () => {
-		setRows([driveRow('priya@acme.test')])
+		setRows([driveRow('priya@acme.test', { config: { first_tool_call_at: STAMP } })])
 		render(<DriveDetailPage />)
 		expect(screen.getByText('No folders are being watched')).toBeInTheDocument()
 	})
@@ -362,7 +380,7 @@ describe('Google Drive detail page, disconnect flow', () => {
 		googleRow('kai@acme.test', 'actor-kai', 'gmail'),
 		googleRow('kai@acme.test', 'actor-kai', 'google-calendar'),
 		googleRow('kai@acme.test', 'actor-kai', 'google-meet'),
-		driveRow('kai@acme.test', { actorId: 'actor-kai' }),
+		driveRow('kai@acme.test', { actorId: 'actor-kai', config: { first_tool_call_at: STAMP } }),
 	]
 
 	it('flag off: the page is unreachable, so is the modal', () => {
@@ -455,7 +473,7 @@ describe('Google Drive detail page, disconnect flow', () => {
 	it('names only the services that actually remain when the human had no Meet row', async () => {
 		setRows([
 			googleRow('kai@acme.test', 'actor-kai', 'gmail'),
-			driveRow('kai@acme.test', { actorId: 'actor-kai' }),
+			driveRow('kai@acme.test', { actorId: 'actor-kai', config: { first_tool_call_at: STAMP } }),
 		])
 		mockDisconnect.mockImplementation((_input, opts) => opts.onSuccess())
 		render(<DriveDetailPage />)

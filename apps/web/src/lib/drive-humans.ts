@@ -17,7 +17,9 @@ export const DRIVE_PROVIDER = 'google-drive'
 export const DRIVE_SCOPES: readonly { scope: string; label: string; sublabel: string }[] = [
 	{
 		scope: 'https://www.googleapis.com/auth/drive',
-		label: 'Edit & comment on any file',
+		// EDITED (conformance pass): the spec's "Edit & comment on any file" was scope 3 of 3;
+		// for the single drive scope it under-describes what Google's screen shows.
+		label: 'Full access to your Drive files',
 		sublabel: 'drive',
 	},
 ]

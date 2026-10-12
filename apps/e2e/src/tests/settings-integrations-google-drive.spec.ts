@@ -205,7 +205,7 @@ test.describe('Settings — Google Drive detail page', () => {
 		await expect(page.getByTestId('drive-detail')).toHaveAttribute('data-variant', 'scope-add')
 		await expect(page.getByLabel('Partial')).toBeVisible()
 		await expect(page.getByTestId('drive-mline')).toHaveText(
-			'2 humans on Google · 1 has Drive · 1 needs scope add',
+			'2 humans on Google · 1 has Drive · 1 needs Drive',
 		)
 
 		const banner = page.getByRole('status')
@@ -226,7 +226,7 @@ test.describe('Settings — Google Drive detail page', () => {
 				req.method() === 'POST' &&
 				new URL(req.url()).pathname === '/api/integrations/google-drive/connect',
 		)
-		await banner.getByRole('button', { name: 'Grant for all →' }).click()
+		await banner.getByRole('button', { name: 'Connect Drive →' }).click()
 		await bannerRequest
 
 		const rowRequest = page.waitForRequest(
@@ -257,7 +257,9 @@ test.describe('Settings — Google Drive detail page', () => {
 		await expect(page.getByRole('status')).toHaveCount(0)
 		await expect(page.getByRole('button', { name: /Add Drive permissions/ })).toHaveCount(0)
 		await expect(
-			page.getByTestId('scope-row-kai@acme.test').getByLabel('Edit & comment on any file, granted'),
+			page
+				.getByTestId('scope-row-kai@acme.test')
+				.getByLabel('Full access to your Drive files, granted'),
 		).toBeVisible()
 	})
 
@@ -287,7 +289,7 @@ test.describe('Settings — Google Drive detail page', () => {
 		await expect(
 			page
 				.getByTestId('scope-row-kai@acme.test')
-				.getByLabel('Edit & comment on any file, not granted'),
+				.getByLabel('Full access to your Drive files, not granted'),
 		).toBeVisible()
 
 		const request = page.waitForRequest(
