@@ -5,6 +5,8 @@ public enum ObjectsGrouping: String, Sendable, CaseIterable, Identifiable {
 	case attention
 	case type
 	case status
+	/// By the driver, agents and people alike; objects without one last.
+	case driver
 	case none
 
 	public var id: String { rawValue }
@@ -13,6 +15,7 @@ public enum ObjectsGrouping: String, Sendable, CaseIterable, Identifiable {
 		case .attention: "Attention"
 		case .type: "Type"
 		case .status: "Status"
+		case .driver: "Driver"
 		case .none: "None"
 		}
 	}
@@ -53,7 +56,7 @@ public enum ObjectsGrouper {
 	/// `sort`: by default needs you first, then blocked, active, done, newest-updated within each.
 	public static func group(
 		_ objects: [WorkObject], by grouping: ObjectsGrouping, schema: ObjectsSchema, type: String?,
-		sort: ObjectsSort = .needsYou
+		sort: ObjectsSort = .needsYou, driverName: (String) -> String? = { _ in nil }
 	) -> [ObjectGroup] {
 		let sorted = ObjectsSorter.sorted(objects, by: sort)
 		switch grouping {
@@ -82,6 +85,21 @@ public enum ObjectsGrouper {
 					id: type, title: schema.displayName(for: type), objects: sorted.filter { $0.type == type },
 					isType: true)
 			}
+		case .driver:
+			var order: [String] = []
+			var buckets: [String: [WorkObject]] = [:]
+			for object in sorted {
+				let key = object.driverId ?? ""
+				if buckets[key] == nil { order.append(key) }
+				buckets[key, default: []].append(object)
+			}
+			let named = order.filter { !$0.isEmpty }.map { id in
+				(id: id, title: driverName(id) ?? "Someone", objects: buckets[id] ?? [])
+			}
+			.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+			var groups = named.map { ObjectGroup(id: $0.id, title: $0.title, objects: $0.objects) }
+			if let none = buckets[""] { groups.append(ObjectGroup(id: "", title: "No driver", objects: none)) }
+			return groups
 		case .none:
 			return sorted.isEmpty ? [] : [ObjectGroup(id: "", title: nil, objects: sorted)]
 		case .status:

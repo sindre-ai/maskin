@@ -41,6 +41,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// Set when the reader sends a comment, so the timeline follows it to the bottom.
 	@State private var followNextItem = false
 	@State private var atTop = true
+	/// The activity entry the next comment replies to (set by long-pressing it).
+	@State private var replyTo: TimelineItem?
+	@State private var undoOffer: UndoOffer?
 
 	public init(
 		environment: AppEnvironment, objectId: String, onOpenObject: ((String) -> Void)? = nil,
@@ -60,6 +63,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		store.onObjectChanged = { [weak listStore] in listStore?.apply($0) }
 		store.onObjectDeleted = { [weak listStore] in listStore?.remove($0) }
 		_store = State(initialValue: store)
+		_page = State(initialValue: ObjectTabMemory.last(for: objectId))
 		let env = services.environment
 		_attachments = State(
 			initialValue: ChatComposerModel(
@@ -147,6 +151,24 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.padding(.horizontal, MaskinSpace.s5)
 					}
+					if let replyTo {
+						HStack(spacing: MaskinSpace.s4) {
+							Image(systemName: "arrowshape.turn.up.left").maskinSymbol(MaskinFontSize.t12)
+							Text("Replying to \(store.authorName(for: replyTo))")
+								.maskinText(.caption).lineLimit(1)
+							Spacer(minLength: 0)
+							Button {
+								self.replyTo = nil
+							} label: {
+								Image(systemName: "xmark.circle.fill").maskinSymbol(MaskinFontSize.t16)
+									.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+									.contentShape(Rectangle())
+							}
+							.accessibilityLabel("Cancel reply")
+						}
+						.foregroundStyle(MaskinColor.ink4)
+						.padding(.leading, MaskinSpace.s7)
+					}
 					ComposerChips(model: attachments)
 					if let notice = attachments.notice {
 						Text(notice).maskinText(.caption).foregroundStyle(MaskinColor.danger)
@@ -167,9 +189,14 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							tagged = []
 							linked = []
 							attachments.clear()
+							let parent = replyTo?.eventId
+							replyTo = nil
 							followNextItem = true
 							withAnimation(MaskinMotion.spring) { page = .activity }
-							Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files) }
+							Task {
+								await store.postComment(
+									text, mentions: mentions, refs: refs, attachments: files, parentEventId: parent)
+							}
 						},
 						listening: $dictating, mic: { DictationButton(text: $comment, listening: $dictating) })
 				}
@@ -218,22 +245,29 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				if let object = store.object {
 					Button {
 						MaskinHaptics.play(.selection)
-						withAnimation(MaskinMotion.spring) { page = .activity }
+						Task { await store.toggleStar() }
 					} label: {
-						Label("Activity", systemImage: "bubble.left.and.text.bubble.right")
+						Label(
+							object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
 					}
 					Menu {
-						Button {
-							MaskinHaptics.play(.selection)
-							Task { await store.toggleStar() }
-						} label: {
-							Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
-						}
 						ShareLink(item: shareText(object)) { Label("Share", systemImage: "square.and.arrow.up") }
+						Button {
+							Clipboard.copy(object.id)
+						} label: {
+							Label("Copy ID", systemImage: "number")
+						}
 						Button {
 							editing = true
 						} label: {
 							Label("Edit", systemImage: "pencil")
+						}
+						if store.archiveTarget != nil, !store.isArchived {
+							Button {
+								archive()
+							} label: {
+								Label("Archive", systemImage: "archivebox")
+							}
 						}
 						Button(role: .destructive) {
 							confirmingDelete = true
@@ -246,6 +280,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				}
 			}
 		}
+		.undoToast($undoOffer)
 		.sheet(isPresented: $editing) {
 			if let object = store.object {
 				EditObjectSheet(object: object) { patch in await store.edit(patch) }
@@ -329,7 +364,10 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.scrollTargetBehavior(.paging)
 		.scrollPosition(id: $page)
-		.onChange(of: page) { _, _ in MaskinHaptics.play(.selection) }
+		.onChange(of: page) { _, new in
+			MaskinHaptics.play(.selection)
+			if let new { ObjectTabMemory.remember(new, for: store.objectId) }
+		}
 		.scrollBounceBehavior(.basedOnSize, axes: .horizontal)
 	}
 
@@ -337,7 +375,12 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		ScrollViewReader { proxy in
 			ScrollView {
 				ObjectDetailContent(
-					store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true }
+					store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
+					onShowActivity: {
+						MaskinHaptics.play(.selection)
+						withAnimation(MaskinMotion.spring) { page = .activity }
+					},
+					onReply: { replyTo = $0 }
 				) { decision }
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.top, MaskinSpace.s3)
@@ -358,6 +401,15 @@ public struct ObjectDetailScreen<Decision: View>: View {
 
 	private func shareText(_ object: WorkObject) -> String {
 		[object.displayTitle, object.content].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+	}
+
+	/// Archives and stays on the page, which then offers "Archived \u{00B7} Unarchive"; the toast undoes it.
+	private func archive() {
+		MaskinHaptics.play(.selection)
+		Task {
+			guard await store.archive() else { return }
+			undoOffer = UndoOffer(message: "Archived. Undo.") { await store.unarchive() }
+		}
 	}
 
 	private func close() {

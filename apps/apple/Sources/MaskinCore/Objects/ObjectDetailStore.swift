@@ -26,7 +26,8 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	public var eventId: Int?
 	/// Only for local, unsent comments.
 	var idempotencyKey: String?
-	var parentEventId: Int?
+	/// The comment this one replies to; replies indent under it.
+	public var parentEventId: Int?
 	/// Actor ids tagged in an unsent comment, kept so a retry mentions the same people.
 	var mentions: [String] = []
 	/// Objects linked from the comment with `/`: ids, resolved to titles by the store.
@@ -142,6 +143,49 @@ public final class ObjectDetailStore {
 	}
 
 	public var ownerName: String? { directory.name(for: object?.driverId) }
+
+	/// Who the Driver chip offers: agents first, then people, each by name (handoff 8).
+	public var assignees: [ActorRef] {
+		directory.actors.values.sorted {
+			$0.isAgent != $1.isAgent ? $0.isAgent : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+		}
+	}
+
+	/// The newest timeline entry, for the Overview's "Latest" row.
+	public var latest: TimelineItem? { timeline.last(where: { $0.delivery == .sent }) }
+
+	/// The status archiving this object would move it to, nil when its type has none.
+	public var archiveTarget: String? {
+		guard let object else { return nil }
+		return StatusFlow.archiveTarget(in: directory.schema.statuses(for: object.type))
+	}
+
+	/// Whether the object sits in its archive status (the page then shows "Archived · Unarchive").
+	public var isArchived: Bool {
+		guard let object, let target = archiveTarget else { return false }
+		return object.status == target
+	}
+
+	/// Where Unarchive returns to: the status it was archived from, else the first status that is
+	/// not cancelled.
+	@ObservationIgnored private var archivedFrom: String?
+
+	/// Moves to the archive status and stays on the page. Returns false when the type has none.
+	@discardableResult
+	public func archive() async -> Bool {
+		guard let object, let target = archiveTarget, object.status != target else { return false }
+		archivedFrom = object.status
+		await setStatus(target)
+		return true
+	}
+
+	public func unarchive() async {
+		guard let object else { return }
+		let order = directory.schema.statuses(for: object.type)
+		let back = archivedFrom.flatMap { order.contains($0) ? $0 : nil }
+			?? order.first { StatusCategory.of($0) != .cancelled }
+		if let back { await setStatus(back) }
+	}
 
 	public func authorName(for item: TimelineItem) -> String {
 		if let id = item.actorId, id == currentActorId { return "You" }
@@ -296,14 +340,25 @@ public final class ObjectDetailStore {
 		return values.compactMap(\.stringValue).filter { !$0.isEmpty }
 	}
 
+	/// The comment this one replies to, when the event data carries it (`parent_event_id`).
+	static func parentId(in data: JSONValue?) -> Int? {
+		switch data?["parent_event_id"] {
+		case .number(let n)?: Int(exactly: n)
+		case .string(let s)?: Int(s)
+		default: nil
+		}
+	}
+
 	static func item(from event: ObjectEvent) -> TimelineItem? {
 		if event.action == "commented" {
 			let text = event.data?["content"]?.stringValue ?? ""
 			guard !text.isEmpty else { return nil }
-			return TimelineItem(
+			var item = TimelineItem(
 				id: "e-\(event.id)", kind: .comment(text), actorId: event.actorId, date: event.createdAt,
 				delivery: .sent, eventId: event.id, refs: ReferenceTrigger.ids(in: event.data?["metadata"]),
 				attachments: Self.attachmentIDs(in: event.data))
+			item.parentEventId = Self.parentId(in: event.data)
+			return item
 		}
 		let summary = (event.summary?.isEmpty == false ? event.summary : nil)
 			?? event.action.replacingOccurrences(of: "_", with: " ")
@@ -400,6 +455,7 @@ public final class ObjectDetailStore {
 				if patch.title != nil { now.title = current.title }
 				if patch.content != nil { now.content = current.content }
 				if patch.status != nil { now.status = current.status }
+				if patch.driver != nil { now.driverId = current.driverId }
 				object = now
 				onObjectChanged?(now)
 			}

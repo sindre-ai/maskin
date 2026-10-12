@@ -47,7 +47,7 @@ public enum TimelineGrouping {
 					flush()
 					out.append(
 						.day(id: "\(Int(day.timeIntervalSince1970))",
-							label: ThreadLayout.dayLabel(day, now: now, calendar: calendar)))
+							label: ActivityLayout.dayLabel(day, now: now, calendar: calendar)))
 					lastDay = day
 				}
 			}

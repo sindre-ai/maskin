@@ -19,10 +19,18 @@ public final class ObjectsStore {
 	public private(set) var objects: [WorkObject] = [] {
 		didSet {
 			// Remembered across type filters, so the type pills don't vanish once one is chosen.
-			if typeFilter == nil { seenTypes.formUnion(objects.map(\.type)) }
+			if typeFilter == nil {
+				seenTypes.formUnion(objects.map(\.type))
+				typeCounts = Dictionary(grouping: objects, by: \.type).mapValues(\.count)
+				typeNeedsYou = Dictionary(grouping: objects.filter(needsYou), by: \.type).mapValues(\.count)
+			}
 		}
 	}
 	private var seenTypes: Set<String> = []
+	/// How many of each type the last unfiltered list held, and how many of those need the person:
+	/// the Go to sheet's counts. Empty until an unfiltered page has loaded.
+	public private(set) var typeCounts: [String: Int] = [:]
+	public private(set) var typeNeedsYou: [String: Int] = [:]
 	public private(set) var phase: Phase = .idle
 	public private(set) var isOffline = false
 	public private(set) var isLoadingMore = false
@@ -36,7 +44,13 @@ public final class ObjectsStore {
 	/// loaded; while it is on the list keeps paging until the starred ones surface.
 	public var starredOnly = false
 	public private(set) var searchText = ""
-	public var grouping: ObjectsGrouping = .attention
+	public var grouping: ObjectsGrouping = .status
+	/// Open asks by object id, pushed in from the For You feed. They put an object under "Needs
+	/// you" and give its row the ask line.
+	public private(set) var asks: [String: ObjectAsk] = [:]
+	/// Folded group headers, keyed by grouping so each grouping remembers its own folds (for the
+	/// session).
+	public private(set) var collapsedGroups: Set<String> = []
 	/// Sort, "Needs you only", shown properties and list/board: remembered across launches.
 	public private(set) var display = ObjectsDisplay() {
 		didSet { if display != oldValue { displayStorage?.save(display) } }
@@ -97,9 +111,55 @@ public final class ObjectsStore {
 	public var visibleObjects: [WorkObject] {
 		var visible = objects
 		if starredOnly { visible = visible.filter(\.isStarred) }
-		if display.needsYouOnly { visible = visible.filter(ObjectsUrgency.needsYou) }
+		if display.needsYouOnly { visible = visible.filter(needsYou) }
 		return visible
 	}
+
+	/// Whether an object wants the person: unread, in a review/decision status, or an open ask.
+	public func needsYou(_ object: WorkObject) -> Bool {
+		asks[object.id] != nil || ObjectsUrgency.needsYou(object)
+	}
+
+	public func setAsks(_ asks: [String: ObjectAsk]) {
+		if asks != self.asks { self.asks = asks }
+	}
+
+	/// The count on the "Needs you" tab: loaded objects that want the person.
+	public var needsYouCount: Int { objects.filter(needsYou).count }
+
+	/// Rows show a type glyph only when the list mixes types.
+	public var mixesTypes: Bool { typeFilter == nil }
+
+	/// The tab the list is on: Needs you and All share the unfiltered list.
+	public var tab: ObjectsTab {
+		if let typeFilter { return .type(typeFilter) }
+		return display.needsYouOnly ? .needsYou : .all
+	}
+
+	public func select(_ tab: ObjectsTab) async {
+		switch tab {
+		case .needsYou:
+			display.needsYouOnly = true
+			await setType(nil)
+		case .all:
+			display.needsYouOnly = false
+			await setType(nil)
+		case .type(let type):
+			display.needsYouOnly = false
+			await setType(type)
+		}
+	}
+
+	public func isCollapsed(_ group: ObjectGroup) -> Bool {
+		collapsedGroups.contains(Self.foldKey(grouping, group.id))
+	}
+
+	public func toggleCollapsed(_ group: ObjectGroup) {
+		let key = Self.foldKey(grouping, group.id)
+		if collapsedGroups.contains(key) { collapsedGroups.remove(key) } else { collapsedGroups.insert(key) }
+	}
+
+	private static func foldKey(_ grouping: ObjectsGrouping, _ id: String) -> String { "\(grouping.rawValue):\(id)" }
 
 	/// The types the filter pills offer: those the workspace actually has objects of (schema
 	/// order first), or every configured type until something has loaded.
@@ -107,13 +167,14 @@ public final class ObjectsStore {
 		let schemaTypes = directory.schema.types
 		var seen = seenTypes
 		if let typeFilter { seen.insert(typeFilter) }
-		if seen.isEmpty { return schemaTypes }
-		return schemaTypes.filter(seen.contains) + seen.subtracting(schemaTypes).sorted()
+		if seen.isEmpty { return ObjectTypeOrder.sorted(schemaTypes) }
+		return ObjectTypeOrder.sorted(schemaTypes.filter(seen.contains) + seen.subtracting(schemaTypes).sorted())
 	}
 
 	public var groups: [ObjectGroup] {
 		ObjectsGrouper.group(
-			visibleObjects, by: grouping, schema: directory.schema, type: typeFilter, sort: display.sort)
+			visibleObjects, by: grouping, schema: directory.schema, type: typeFilter, sort: display.sort,
+			driverName: { [directory] in directory.name(for: $0) })
 	}
 
 	/// Statuses offered by the status filter for the current type filter.
@@ -148,6 +209,8 @@ public final class ObjectsStore {
 		generation += 1
 		objects = []
 		seenTypes = []
+		typeCounts = [:]
+		typeNeedsYou = [:]
 		phase = .idle
 		hasMore = false
 		isOffline = false
@@ -419,6 +482,20 @@ public final class ObjectsStore {
 			StatusFlow.archiveTarget(in: self.directory.schema.statuses(for: object.type))
 		}
 		return moved
+	}
+
+	/// Done: the type's first status in the Done category. Nil when the object is already done or
+	/// cancelled, or its type has none (the swipe is then not offered).
+	public func doneTarget(for object: WorkObject) -> String? {
+		StatusFlow.doneTarget(from: object.status, in: directory.schema.statuses(for: object.type))
+	}
+
+	/// Moves one object to its Done status; the undo puts it back.
+	public func markDone(_ id: String) async -> StatusUndo? {
+		let moved = await move([id], action: "update", past: "updated") { object in
+			StatusFlow.doneTarget(from: object.status, in: self.directory.schema.statuses(for: object.type))
+		}
+		return moved.undo.isEmpty ? nil : moved.undo
 	}
 
 	/// Sets each object to `status` (bulk) and remembers where each came from.

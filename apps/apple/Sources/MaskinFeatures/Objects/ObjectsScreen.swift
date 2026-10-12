@@ -47,7 +47,8 @@ public struct ObjectsScreen: View {
 
 	private var stack: some View {
 		NavigationStack(path: $path) {
-			ObjectsListView(store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking)
+			ObjectsListView(store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking,
+				openObject: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(environment: environment, title: "Objects", actions: shellActions)
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })

@@ -20,6 +20,11 @@ struct ObjectsListView: View {
 	@State private var searchPresented = false
 	@State private var pendingDelete: WorkObject?
 	@State private var statusTarget: WorkObject?
+	@State private var goingTo = false
+	@State private var holdTarget: ObjectAsk?
+	@Environment(AppRuntime.self) private var appRuntime: AppRuntime?
+	/// Opens an object (pushes its detail); used when an ask can't be answered by a swipe.
+	var openObject: ((String) -> Void)?
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -31,6 +36,12 @@ struct ObjectsListView: View {
 			content
 		}
 		.ambientBackground()
+		.onChange(of: openAsks, initial: true) { _, asks in store.setAsks(asks) }
+		.task { await loadAsks() }
+		.sheet(isPresented: $goingTo) { ObjectsGoToSheet(store: store) }
+		.sheet(item: $holdTarget) { ask in
+			HoldReasonSheet(agent: ask.by) { reason in hold(ask, reason: reason) }
+		}
 		.animation(.snappy, value: picking.isActive)
 		// Selection belongs to the list; leaving it for the board ends it.
 		.onChange(of: store.display.layout) { picking.exit() }
@@ -139,40 +150,111 @@ struct ObjectsListView: View {
 
 	// MARK: Pieces
 
-	/// Type tabs: text only, one at a time (no "All"); the selected one is ink with its count.
+	// MARK: Asks
+
+	/// Open decisions from the For You feed, keyed by object: they put a row under "Needs you" and
+	/// give it its ask line. The same store the feed and the object page read.
+	private var openAsks: [String: ObjectAsk] {
+		guard let feed = appRuntime?.forYou.store else { return [:] }
+		return ObjectAsk.map(from: feed.entries, senderName: { feed.senderName(of: $0) })
+	}
+
+	private func loadAsks() async {
+		if let feed = appRuntime?.forYou.store, feed.phase == .idle { await feed.load() }
+	}
+
+	/// Swipe right-hand "Approve": take the agent's recommendation. One that can't be undone, or an
+	/// ask with no recommendation, opens the object so its confirmation stays on the decision card.
+	private func approve(_ ask: ObjectAsk) {
+		guard let feed = appRuntime?.forYou.store, let option = ask.swipeApprove else {
+			openObject?(ask.objectId)
+			return
+		}
+		MaskinHaptics.play(.success)
+		withAnimation(MaskinMotion.standard) { feed.choose(option, on: ask.card) }
+		undoOffer = UndoOffer(message: "Approved: \(option.label). Undo.") {
+			_ = feed.undo(ask.card)
+		}
+	}
+
+	private func hold(_ ask: ObjectAsk, reason: String?) {
+		guard let feed = appRuntime?.forYou.store, let option = ask.holdOption else { return }
+		MaskinHaptics.play(.success)
+		withAnimation(MaskinMotion.standard) { feed.choose(option, note: reason, on: ask.card) }
+		undoOffer = UndoOffer(message: "Held. Undo.") { _ = feed.undo(ask.card) }
+	}
+
+	// MARK: Tabs
+
+	/// Type tabs (handoff 8): Needs you (with its count), All, then one tab per type present. The
+	/// active tab is an ink pill and scrolls to centre. The chevron opens the Go to sheet.
 	private var typePicker: some View {
 		let types = store.presentTypes
-		let selected = store.typeFilter ?? types.first ?? ""
-		return ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s12) {
-				ForEach(types, id: \.self) { type in
-					let isSelected = type == selected
-					Button {
-						Task { await store.setType(type) }
-					} label: {
-						HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s2) {
-							Text(store.directory.typeName(type))
-								.maskinText(.title)
-								.foregroundStyle(isSelected ? MaskinColor.ink : MaskinColor.ink5)
-							if isSelected && !store.visibleObjects.isEmpty {
-								Text("\(store.visibleObjects.count)")
-									.maskinText(.mono)
-									.foregroundStyle(MaskinColor.sigInk)
-							}
+		return HStack(spacing: 0) {
+			Button {
+				MaskinHaptics.play(.selection)
+				goingTo = true
+			} label: {
+				Image(systemName: "chevron.down.circle")
+					.maskinSymbol(MaskinFontSize.t18)
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed(.shrink))
+			.accessibilityLabel("Go to")
+			ScrollViewReader { proxy in
+				ScrollView(.horizontal, showsIndicators: false) {
+					HStack(spacing: MaskinSpace.s1) {
+						tabButton(.needsYou, "Needs you", count: store.needsYouCount, proxy: proxy)
+						tabButton(.all, "All", proxy: proxy)
+						ForEach(types, id: \.self) { type in
+							tabButton(
+								.type(type), ObjectTypeOrder.plural(store.directory.typeName(type)), proxy: proxy)
 						}
-						.frame(minHeight: MaskinSpace.touchMin)
-						.contentShape(Rectangle())
 					}
-					.buttonStyle(.maskinPressed(.shrink))
-					.accessibilityAddTraits(isSelected ? .isSelected : [])
+					.padding(.trailing, MaskinSpace.s9)
 				}
 			}
-			.padding(.horizontal, MaskinSpace.s9)
 		}
-		.task(id: types) {
-			// There is no "All" tab: the list opens on the first type.
-			if store.typeFilter == nil, let first = types.first { await store.setType(first) }
+		.padding(.leading, MaskinSpace.s2)
+		.frame(minHeight: MaskinSpace.touchMin)
+	}
+
+	private func tabButton(
+		_ tab: ObjectsTab, _ title: String, count: Int = 0, proxy: ScrollViewProxy
+	) -> some View {
+		let isSelected = store.tab == tab && !store.starredOnly
+		let urgent = tab == .needsYou && count > 0
+		return Button {
+			MaskinHaptics.play(.selection)
+			withAnimation(MaskinMotion.standard) { proxy.scrollTo(tab, anchor: .center) }
+			Task {
+				if store.starredOnly { await store.setStarredOnly(false) }
+				await store.select(tab)
+			}
+		} label: {
+			HStack(spacing: MaskinSpace.s3) {
+				Text(title).maskinText(.body).fontWeight(.semibold)
+				if urgent {
+					Text("\(count)").maskinText(.caption).fontWeight(.bold)
+						.foregroundStyle(isSelected ? MaskinSurface.onInverse : MaskinColor.sigInk)
+				}
+			}
+			.foregroundStyle(
+				isSelected ? MaskinSurface.onInverse : (urgent ? MaskinColor.sigInk : MaskinColor.ink4)
+			)
+			.padding(.horizontal, MaskinSpace.s8)
+			.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s2)
+			.background(
+				isSelected ? MaskinSurface.inverse : (urgent ? MaskinColor.sigTint : Color.clear), in: Capsule()
+			)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Capsule())
 		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.id(tab)
+		.accessibilityAddTraits(isSelected ? .isSelected : [])
 	}
 
 	@ViewBuilder private var content: some View {
@@ -209,22 +291,37 @@ struct ObjectsListView: View {
 			}
 		case .loaded:
 			ScrollView {
-				if store.display.needsYouOnly && !store.isFiltered {
-					EmptyState(
-						symbol: "checkmark.circle", title: "Nothing here yet",
-						message: "Nothing in this list needs you right now.")
-				} else if store.isFiltered {
+				if store.isFiltered && (store.statusFilter != nil || store.starredOnly || !store.searchText.isEmpty) {
 					EmptyState(
 						symbol: "magnifyingglass", title: "No matches",
-						message: "Nothing fits these filters. Try a different type, status or word.")
+						message: "Nothing fits these filters. Try a different type, status or word."
+					) {
+						Button("Clear filter") { clearFilters() }.buttonStyle(.secondaryAction)
+					}
+				} else if store.tab == .needsYou {
+					EmptyState(
+						symbol: "checkmark.circle", title: "All caught up",
+						message: "Nothing in this list needs you right now.")
+				} else if case .type(let type) = store.tab {
+					let name = store.directory.typeName(type).lowercased()
+					EmptyState(
+						symbol: ObjectTypeOrder.symbol(for: type), title: "No \(ObjectTypeOrder.plural(name)) yet",
+						message: "\(ObjectTypeOrder.plural(store.directory.typeName(type))) from you and your agents land here.")
 				} else {
 					EmptyState(
 						symbol: "square.stack.3d.up", title: "Nothing here yet",
-						message: "Insights, bets and tasks from you and your agents land here."
-					)
+						message: "Insights, bets and tasks from you and your agents land here.")
 				}
 			}
 			.refreshable { await store.reload() }
+		}
+	}
+
+	private func clearFilters() {
+		search = ""
+		Task {
+			await store.setStarredOnly(false)
+			await store.setStatus(nil)
 		}
 	}
 
@@ -246,11 +343,20 @@ struct ObjectsListView: View {
 			}
 			ForEach(store.groups) { group in
 				Section {
-					ForEach(group.objects) { object in
-						row(object)
+					if !store.isCollapsed(group) {
+						ForEach(group.objects) { object in
+							row(object)
+						}
 					}
 				} header: {
-					if group.title != nil { ObjectGroupHeader(group: group) }
+					if group.title != nil {
+						ObjectGroupHeader(
+							group: group, isCollapsed: store.isCollapsed(group),
+							toggle: {
+								MaskinHaptics.play(.selection)
+								withAnimation(MaskinMotion.standard) { store.toggleCollapsed(group) }
+							})
+					}
 				}
 			}
 			if store.hasMore {
@@ -263,7 +369,7 @@ struct ObjectsListView: View {
 				.task(id: store.objects.count) { await store.loadMore() }
 			}
 		}
-		.listStyle(.plain)
+		.modifier(InsetCardsListStyle())
 		.scrollContentBackground(.hidden)
 		.refreshable { await store.reload() }
 	}
@@ -271,17 +377,17 @@ struct ObjectsListView: View {
 	/// The card behind a row; the picked row on a split view's selection takes the quiet fill.
 	private func rowBackground(_ object: WorkObject) -> some View {
 		let selected = selection?.wrappedValue == object.id && !picking.isActive
-		return RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
-			.fill(selected ? MaskinSurface.fillStrong : MaskinSurface.card)
-			.padding(.vertical, MaskinSpace.s2)
+		return (selected ? MaskinSurface.fillStrong : MaskinSurface.card)
 	}
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {
+		let ask = store.asks[object.id]
 		let content = ObjectRow(
 			object: object, typeName: store.directory.typeName(object.type),
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
-			showsStatus: store.grouping != .status && store.grouping != .attention, showsDriver: store.display.shows(.driver),
+			ask: ask, needsYou: store.needsYou(object), showsTypeGlyph: store.mixesTypes,
+			showsStatus: store.grouping != .status, showsDriver: store.display.shows(.driver),
 			showsUpdated: store.display.shows(.updated), showsDriverName: sizeClass == .regular)
 		Group {
 			if picking.isActive {
@@ -300,67 +406,104 @@ struct ObjectsListView: View {
 				.zoomSource(id: object.id, in: zoomNamespace)
 			}
 		}
-		.listRowSeparator(.hidden)
+		.listRowSeparatorTint(MaskinSurface.separator)
 		.listRowBackground(rowBackground(object))
 		.listRowInsets(
 			EdgeInsets(
-				top: MaskinSpace.s4, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
-		.swipeActions(edge: .leading) {
-			if !picking.isActive, let target = store.approveTarget(for: object) {
+				top: MaskinSpace.s7, leading: MaskinSpace.s8, bottom: MaskinSpace.s7, trailing: MaskinSpace.s8))
+		// The mockup puts both swipes on one side: Approve / Hold when an agent is waiting on you,
+		// otherwise Archive / Done. The outer button is the full swipe.
+		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+			if !picking.isActive { swipeActions(for: object, ask: ask) }
+		}
+		.contextMenu {
+			if !picking.isActive { menu(for: object, ask: ask) }
+		}
+	}
+
+	@ViewBuilder private func swipeActions(for object: WorkObject, ask: ObjectAsk?) -> some View {
+		if let ask {
+			Button {
+				approve(ask)
+			} label: {
+				Label("Approve", systemImage: "checkmark")
+			}
+			.tint(MaskinSurface.inverse)
+			if ask.holdOption != nil {
+				Button {
+					holdTarget = ask
+				} label: {
+					Label("Hold", systemImage: "pause")
+				}
+				.tint(MaskinColor.ink4)
+			}
+		} else if store.needsYou(object), let target = store.approveTarget(for: object) {
+			Button {
+				MaskinHaptics.play(.selection)
+				Task {
+					if let undo = await store.approve(object.id) {
+						offerUndo(undo, message: "Moved to \(MaskinStatus.label(for: target)). Undo.")
+					}
+				}
+			} label: {
+				Label("Approve", systemImage: "checkmark")
+			}
+			.tint(MaskinSurface.inverse)
+		} else {
+			if store.canArchive([object.id]) {
+				Button {
+					MaskinHaptics.play(.selection)
+					runRecording([object.id], verb: "Archived") { await store.archive([object.id]) }
+				} label: {
+					Label("Archive", systemImage: "archivebox")
+				}
+				.tint(MaskinColor.dangerStrong)
+			}
+			if store.doneTarget(for: object) != nil {
 				Button {
 					MaskinHaptics.play(.selection)
 					Task {
-						if let undo = await store.approve(object.id) {
-							offerUndo(undo, message: "Moved to \(MaskinStatus.label(for: target)). Undo.")
-						}
+						if let undo = await store.markDone(object.id) { offerUndo(undo, message: "Done. Undo.") }
 					}
 				} label: {
-					Label("Approve", systemImage: "checkmark")
+					Label("Done", systemImage: "checkmark.circle")
 				}
-				.tint(MaskinColor.sigInk)
-			}
-			if !picking.isActive { Button {
-				MaskinHaptics.play(.selection)
-				Task { await store.toggleStar(object.id) }
-			} label: {
-				Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.slash" : "star")
-			}
-			.tint(MaskinColor.ink) }
-		}
-		.swipeActions(edge: .trailing) {
-			if !picking.isActive {
-			Button(role: .destructive) {
-				pendingDelete = object
-			} label: {
-				Label("Delete", systemImage: "trash")
-			}
-			Button {
-				statusTarget = object
-			} label: {
-				Label("Status", systemImage: "circle.dashed")
-			}
-			.tint(MaskinColor.ink3)
+				.tint(MaskinColor.ink4)
 			}
 		}
-		.contextMenu {
-			if !picking.isActive {
-			Button("Select", systemImage: "checkmark.circle") { picking.enter(selecting: object.id) }
+	}
+
+	@ViewBuilder private func menu(for object: WorkObject, ask: ObjectAsk?) -> some View {
+		Button("Select", systemImage: "checkmark.circle") { picking.enter(selecting: object.id) }
+		Button {
+			statusTarget = object
+		} label: {
+			Label("Change status", systemImage: "circle.dashed")
+		}
+		Menu("Assign", systemImage: "person") {
+			ForEach(assignees) { actor in
+				Button(actor.name) {
+					MaskinHaptics.play(.selection)
+					Task { await store.assign([object.id], to: actor.id) }
+				}
+			}
+		}
+		Button {
+			Task { await store.toggleStar(object.id) }
+		} label: {
+			Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.slash" : "star")
+		}
+		if store.canArchive([object.id]) {
 			Button {
-				statusTarget = object
+				runRecording([object.id], verb: "Archived") { await store.archive([object.id]) }
 			} label: {
-				Label("Change status", systemImage: "circle.dashed")
+				Label("Archive", systemImage: "archivebox")
 			}
-			Button {
-				Task { await store.toggleStar(object.id) }
-			} label: {
-				Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.slash" : "star")
-			}
-			Button(role: .destructive) {
-				pendingDelete = object
-			} label: {
-				Label("Delete", systemImage: "trash")
-			}
-			}
+		}
+		Button(role: .destructive) {
+			pendingDelete = object
+		} label: {
+			Label("Delete", systemImage: "trash")
 		}
 	}
 }
@@ -387,11 +530,6 @@ struct ObjectsDisplayMenu: View {
 			.pickerStyle(.inline)
 			.labelsHidden()
 		}
-		Toggle(
-			"Needs you only", systemImage: "circle.fill",
-			isOn: Binding(
-				get: { store.display.needsYouOnly },
-				set: { store.setNeedsYouOnly($0) }))
 		Section("Show") {
 			ForEach(ObjectsProperty.allCases) { property in
 				Toggle(
@@ -429,19 +567,31 @@ struct ObjectsDisplayMenu: View {
 				isOn: Binding(
 					get: { store.starredOnly },
 					set: { value in Task { await store.setStarredOnly(value) } }))
+			// Flow is not offered: the list payload carries no flow yet.
 			Picker("Group by", selection: $store.grouping) {
-				ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
+				ForEach(ObjectsGrouping.allCases.filter { $0 != .attention }) { Text($0.title).tag($0) }
 			}
 		}
-		if store.statusFilter != nil || store.starredOnly || store.display.needsYouOnly {
+		if store.statusFilter != nil || store.starredOnly {
 			Divider()
 			Button("Clear filters", systemImage: "xmark.circle") {
-				store.setNeedsYouOnly(false)
 				Task {
 					await store.setStarredOnly(false)
 					await store.setStatus(nil)
 				}
 			}
 		}
+	}
+}
+
+/// One inset card per group with hairline separators (iOS Settings, Things): `insetGrouped` on iOS,
+/// the closest list style elsewhere.
+private struct InsetCardsListStyle: ViewModifier {
+	func body(content: Content) -> some View {
+		#if os(iOS)
+			content.listStyle(.insetGrouped)
+		#else
+			content.listStyle(.inset)
+		#endif
 	}
 }

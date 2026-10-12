@@ -100,13 +100,13 @@ struct ObjectsBoardView: View {
 				if !column.value.isEmpty {
 					StatusCategoryGlyph(category: StatusCategory.of(column.value))
 				}
-				Text(MaskinStatus.label(for: column.value).uppercased())
-					.maskinText(.microLabel)
-					.foregroundStyle(MaskinColor.ink4)
+				Text(MaskinStatus.label(for: column.value))
+					.maskinText(.subhead).fontWeight(.semibold)
+					.foregroundStyle(MaskinColor.ink2)
 					.lineLimit(1)
 				Spacer(minLength: MaskinSpace.s3)
 				Text("\(board.count(in: column, needsYouOnly: needsYouOnly))")
-					.maskinText(.microLabel)
+					.maskinText(.caption)
 					.foregroundStyle(MaskinColor.ink5)
 			}
 			.padding(.horizontal, MaskinSpace.s3)
@@ -168,6 +168,7 @@ struct ObjectsBoardView: View {
 			object: object, typeName: store.directory.typeName(object.type),
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
+			ask: store.asks[object.id], needsYou: store.needsYou(object),
 			showsDriver: store.display.shows(.driver), showsUpdated: store.display.shows(.updated))
 		Group {
 			if let selection {
@@ -182,6 +183,11 @@ struct ObjectsBoardView: View {
 		.draggable(object.id)
 		// The same move without dragging, for VoiceOver and a steady hand.
 		.contextMenu {
+			Button {
+				Task { await store.toggleStar(object.id) }
+			} label: {
+				Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.slash" : "star")
+			}
 			Menu("Move to", systemImage: "arrow.right") {
 				ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) {
 					status in
@@ -192,64 +198,28 @@ struct ObjectsBoardView: View {
 	}
 }
 
-/// A board card: type dot over the title over the driver, with "Needs you" when it does.
+/// A board card (handoff 8): the same content as a list row (title, the ask while it needs the
+/// person, driver, working bars, status and time) on a card. The column already says the status
+/// and the board is one type, so neither the glyph nor the status word repeat.
 struct ObjectBoardCard: View {
 	let object: WorkObject
 	let typeName: String
 	let ownerName: String?
 	var ownerIsAgent = false
+	var ask: ObjectAsk?
+	var needsYou = false
 	var showsDriver = true
 	var showsUpdated = true
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			HStack(spacing: MaskinSpace.s3) {
-				RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-					.fill(MaskinObjectType.dotColor(for: object.type))
-					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-					.accessibilityHidden(true)
-				Text(typeName)
-					.maskinText(.caption)
-					.foregroundStyle(MaskinColor.ink4)
-					.lineLimit(1)
-				Spacer(minLength: MaskinSpace.s3)
-				if ObjectsUrgency.needsYou(object) {
-					Text("Needs you")
-						.maskinText(.caption).fontWeight(.semibold)
-						.foregroundStyle(MaskinColor.sigInk)
-						.padding(.horizontal, MaskinSpace.s3)
-						.padding(.vertical, MaskinSpace.s1)
-						.background(MaskinColor.sigTint, in: Capsule())
-						.fixedSize()
-				}
-			}
-			Text(object.displayTitle)
-				.maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinColor.ink)
-				.lineLimit(3)
-				.multilineTextAlignment(.leading)
-			if (showsDriver && ownerName != nil) || showsUpdated {
-				HStack(spacing: MaskinSpace.s3) {
-					if showsDriver, let ownerName {
-						ObjectDriverAvatar(
-							name: ownerName, isAgent: ownerIsAgent, seed: object.driverId,
-							working: object.hasActiveSession)
-						Text(ownerName)
-							.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-					}
-					Spacer(minLength: MaskinSpace.s3)
-					if showsUpdated {
-						RelativeTime(object.updatedAt, style: .compact)
-							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-					}
-				}
-			}
-		}
-		.padding(.horizontal, MaskinSpace.s6)
-		.padding(.vertical, MaskinSpace.s6)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
-		.contentShape(Rectangle())
-		.accessibilityElement(children: .combine)
+		ObjectRow(
+			object: object, typeName: typeName, ownerName: ownerName, ownerIsAgent: ownerIsAgent,
+			ask: ask, needsYou: needsYou, showsTypeGlyph: false, showsStatus: false,
+			showsDriver: showsDriver, showsUpdated: showsUpdated)
+			.padding(.horizontal, MaskinSpace.s7)
+			.padding(.vertical, MaskinSpace.s7)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+			.contentShape(Rectangle())
 	}
 }
