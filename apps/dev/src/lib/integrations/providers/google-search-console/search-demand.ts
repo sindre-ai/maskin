@@ -24,9 +24,34 @@ export interface KeywordStats {
 
 // ── Formula ────────────────────────────────────────────────────────────────
 
-/** Turn a keyword's window totals into the search_demand scalar. The one place the formula lives. */
+/**
+ * Impressions only count when the result was actually shown, and page 1 nearly
+ * always is, so deeper results undercount the searches that happened. Each row
+ * is [highest average position it covers, multiplier]. Calibration heuristics,
+ * not measured values: tune them here.
+ */
+export const POSITION_MULTIPLIERS: ReadonlyArray<readonly [number, number]> = [
+	[10, 1],
+	[20, 3],
+	[30, 8],
+	[Number.POSITIVE_INFINITY, 15],
+]
+
+function positionMultiplier(position: number): number {
+	for (const [upTo, multiplier] of POSITION_MULTIPLIERS) {
+		if (position <= upTo) return multiplier
+	}
+	return 1
+}
+
+/**
+ * Turn a keyword's window totals into the search_demand scalar: the 30-day
+ * impressions scaled by how deep the result sits. An estimate and a lower bound
+ * on monthly searches, not comparable to third-party volumes. The one place the
+ * formula lives.
+ */
 export function estimateSearchDemand(stats: KeywordStats): number {
-	return Math.round(stats.impressions)
+	return Math.round(stats.impressions * positionMultiplier(stats.position))
 }
 
 // ── Aggregation ────────────────────────────────────────────────────────────
@@ -75,9 +100,37 @@ export function indexWindowRows(
 }
 
 /**
- * Totals for one keyword over the indexed window, summed over countries and
- * devices. With a page URL only that page's rows count, so two pages of ours
- * showing for one search do not count it twice.
+ * Totals for one keyword over the indexed window, per page, summed over dates,
+ * countries and devices. Never summed across pages: a query shown on several
+ * of our pages would count its searches once per page.
+ */
+function statsByPage(rows: GscRow[]): Map<string, KeywordStats> {
+	const sums = new Map<string, { impressions: number; clicks: number; positionWeighted: number }>()
+	for (const row of rows) {
+		const page = normalizePageUrl(row[1])
+		const sum = sums.get(page) ?? { impressions: 0, clicks: 0, positionWeighted: 0 }
+		sum.impressions += row[5]
+		sum.clicks += row[6]
+		sum.positionWeighted += row[8] * row[5]
+		sums.set(page, sum)
+	}
+	const out = new Map<string, KeywordStats>()
+	for (const [page, sum] of sums) {
+		if (sum.impressions === 0) continue
+		out.set(page, {
+			impressions: sum.impressions,
+			clicks: sum.clicks,
+			position: sum.positionWeighted / sum.impressions,
+		})
+	}
+	return out
+}
+
+/**
+ * Stats for one keyword over the indexed window. The piece's own page wins when
+ * it has at least the impressions floor for the query. Otherwise fall back to
+ * the single page with the most impressions for it, since the demand for the
+ * query is the same whichever page Google chose to show.
  */
 export function keywordStats(
 	byQuery: Map<string, GscRow[]>,
@@ -86,18 +139,14 @@ export function keywordStats(
 ): KeywordStats | null {
 	const rows = byQuery.get(normalizeKeyword(keyword))
 	if (!rows) return null
-	const page = pageUrl ? normalizePageUrl(pageUrl) : null
-	let impressions = 0
-	let clicks = 0
-	let positionWeighted = 0
-	for (const row of rows) {
-		if (page && normalizePageUrl(row[1]) !== page) continue
-		impressions += row[5]
-		clicks += row[6]
-		positionWeighted += row[8] * row[5]
+	const perPage = statsByPage(rows)
+	const own = pageUrl ? perPage.get(normalizePageUrl(pageUrl)) : undefined
+	if (own && own.impressions >= SEARCH_DEMAND_MIN_IMPRESSIONS) return own
+	let best: KeywordStats | null = null
+	for (const stats of perPage.values()) {
+		if (!best || stats.impressions > best.impressions) best = stats
 	}
-	if (impressions === 0) return null
-	return { impressions, clicks, position: positionWeighted / impressions }
+	return best
 }
 
 /** The derived value, or null when the keyword has too few impressions to trust. */
@@ -116,15 +165,19 @@ export function deriveSearchDemand(
 export interface SearchDemandResult {
 	updated: number
 	unchanged: number
+	/** Under the impressions floor, or no data: left as it was. */
 	skipped: number
+	/** Already carries a value someone typed by hand: not overwritten. */
+	preserved: number
 }
 
 /**
  * After a sync: set metadata.search_demand on every live content object that
  * has a primary_keyword, from the workspace's Search Console knowledge objects.
- * Pieces under the impressions floor are not touched. Each change is audited
- * with an event carrying data.source, so it reads differently from a manual
- * edit, and the old value stays in the event.
+ * Pieces under the impressions floor are not touched, and neither is a value
+ * with no source marker: a hand-entered volume beats a lower-bound estimate.
+ * Each change is audited with an event carrying data.source, so it reads
+ * differently from a manual edit.
  */
 export async function writeSearchDemand(
 	db: Database,
@@ -162,7 +215,7 @@ export async function writeSearchDemand(
 			),
 		)
 
-	const result: SearchDemandResult = { updated: 0, unchanged: 0, skipped: 0 }
+	const result: SearchDemandResult = { updated: 0, unchanged: 0, skipped: 0, preserved: 0 }
 	for (const piece of pieces) {
 		const metadata = (piece.metadata ?? {}) as Record<string, unknown>
 		const keyword = String(metadata.primary_keyword)
@@ -174,7 +227,11 @@ export async function writeSearchDemand(
 		}
 
 		const previous = metadata.search_demand
-		if (previous === derived.value && metadata.search_demand_source === SEARCH_DEMAND_SOURCE) {
+		if (previous != null && metadata.search_demand_source !== SEARCH_DEMAND_SOURCE) {
+			result.preserved++
+			continue
+		}
+		if (previous === derived.value) {
 			result.unchanged++
 			continue
 		}

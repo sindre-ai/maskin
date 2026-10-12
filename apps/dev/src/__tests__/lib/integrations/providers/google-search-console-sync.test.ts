@@ -256,7 +256,7 @@ describe('syncGscIntegration', () => {
 	beforeEach(() => {
 		runnerSpy.mockReset()
 		recordEventSpy.mockReset().mockResolvedValue(undefined)
-		writeDemandSpy.mockReset().mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0 })
+		writeDemandSpy.mockReset().mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0, preserved: 0 })
 	})
 	afterEach(() => vi.unstubAllGlobals())
 
