@@ -14,6 +14,7 @@ import { logger } from '../../../logger'
 import { config as driveConfig } from './config'
 import { DriveError, isDriveError } from './errors'
 import type { DriveToolContext } from './operations'
+import { getGoogleDriveAccessToken } from './token'
 import {
 	GET_DOCUMENT_STRUCTURED_DESCRIPTION,
 	GET_DOCUMENT_STRUCTURED_TOOL,
@@ -52,7 +53,6 @@ import {
 	watchFolder,
 } from './tools/watch-folder'
 import { DRIVE_EVENT_TYPES } from './watch'
-import { getGoogleDriveAccessToken } from './token'
 import { isDriveWriteError } from './write-errors'
 import type { StorageSource } from './write-file'
 import {
