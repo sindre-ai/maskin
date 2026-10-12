@@ -441,7 +441,7 @@ describe('Sessions Routes', () => {
 			const session = buildSession({
 				workspaceId: wsId,
 				createdBy: 'test-actor-id',
-				spawnedBySessionId: '00000000-0000-0000-0000-0000000000aa',
+				spawnedBySessionId: 'parent-session-id',
 			})
 			const updated = { ...session, config: { notify_on_complete: true } }
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')

@@ -51,7 +51,6 @@ describe('SessionManager.createSession — trigger provenance (Integration)', ()
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 			})
 			sessionId = session.id
 		} finally {
@@ -77,7 +76,6 @@ describe('SessionManager.createSession — trigger provenance (Integration)', ()
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 			})
 			sessionId = session.id
 		} finally {
@@ -99,7 +97,6 @@ describe('SessionManager.createSession — trigger provenance (Integration)', ()
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 			})
 			sessionId = session.id
 		} finally {

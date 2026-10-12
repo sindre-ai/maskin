@@ -390,7 +390,7 @@ describe('checkActor', () => {
 				name: 'dry_run_suggested',
 				status: 'warn',
 				message: expect.stringContaining('dry-run'),
-				fix: expect.objectContaining({ tool: 'run_agent' }),
+				fix: expect.objectContaining({ tool: 'create_session' }),
 			},
 		])
 	})

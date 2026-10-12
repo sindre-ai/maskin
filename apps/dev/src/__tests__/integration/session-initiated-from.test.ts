@@ -78,7 +78,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: bet.id,
-				initiatedFromObjectType: 'bet',
 			})
 			sessionId = session.id
 		} finally {
@@ -87,10 +86,9 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId))
 		expect(row?.initiatedFromObjectId).toBe(bet.id)
-		expect(row?.initiatedFromObjectType).toBe('bet')
 	})
 
-	it('leaves both columns NULL when the caller passes null (§3.4 NULL-safe posture)', async () => {
+	it('leaves the column NULL when the caller passes null (§3.4 NULL-safe posture)', async () => {
 		const manager = new SessionManager(db, stubStorage())
 		let sessionId: string
 		try {
@@ -100,7 +98,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 			})
 			sessionId = session.id
 		} finally {
@@ -109,7 +106,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId))
 		expect(row?.initiatedFromObjectId).toBeNull()
-		expect(row?.initiatedFromObjectType).toBeNull()
 	})
 
 	it('nulls the column when the originating object is deleted (ON DELETE SET NULL cascade)', async () => {
@@ -127,7 +123,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: bet.id,
-				initiatedFromObjectType: 'bet',
 			})
 			sessionId = session.id
 		} finally {
@@ -138,13 +133,9 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId))
 		expect(row?.initiatedFromObjectId).toBeNull()
-		// Type is deliberately NOT cascaded — it's a plain text tag, not an
-		// FK, so a deleted object clears the reference but the row still
-		// remembers what kind of thing it was spawned for.
-		expect(row?.initiatedFromObjectType).toBe('bet')
 	})
 
-	it('emits runtime_session_ended with context_object_id + context_object_type when the session carries an originating object', async () => {
+	it('emits runtime_session_ended with context_object_id when the session carries an originating object', async () => {
 		const bet = await insertObject(db, workspaceId, actorId, {
 			type: 'bet',
 			title: 'Failure bet',
@@ -159,7 +150,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: bet.id,
-				initiatedFromObjectType: 'bet',
 			})
 
 			// Move the session to a non-terminal state, then fire the
@@ -175,11 +165,10 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		const ended = captured.find((c) => c.event === 'runtime_session_ended')
 		expect(ended).toBeDefined()
 		expect(ended?.properties?.context_object_id).toBe(bet.id)
-		expect(ended?.properties?.context_object_type).toBe('bet')
 		expect(ended?.properties?.end_reason).toBe('failed')
 	})
 
-	it('omits both context properties from runtime_session_ended when the session has no originating object (NULL-safe payload)', async () => {
+	it('omits the context property from runtime_session_ended when the session has no originating object (NULL-safe payload)', async () => {
 		const { telemetry, captured } = stubTelemetry()
 		const manager = new SessionManager(db, stubStorage(), telemetry)
 		try {
@@ -189,7 +178,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 			})
 			await db.update(sessions).set({ status: 'running' }).where(eq(sessions.id, session.id))
 			await manager.markSessionFailedAfterContainerLoss(session.id, workspaceId)
@@ -204,7 +192,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		// value that reads as "we had context but chose null".
 		expect(ended?.properties).toBeDefined()
 		expect('context_object_id' in (ended?.properties ?? {})).toBe(false)
-		expect('context_object_type' in (ended?.properties ?? {})).toBe(false)
 	})
 
 	it('emits both a session_failed event AND a runtime_session_ended payload with context when the remote-dispatch enqueue path fails (spec §3.5.3, new site at 839)', async () => {
@@ -231,7 +218,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 				createdBy: actorId,
 				autoStart: false,
 				initiatedFromObjectId: bet.id,
-				initiatedFromObjectType: 'task',
 			})
 			sessionId = session.id
 			await expect(manager.startSession(session.id)).rejects.toThrow('queue full')
@@ -260,7 +246,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		expect(ended?.properties?.session_id).toBe(sessionId)
 		expect(ended?.properties?.end_reason).toBe('failed')
 		expect(ended?.properties?.context_object_id).toBe(bet.id)
-		expect(ended?.properties?.context_object_type).toBe('task')
 	})
 
 	// The parent task (06679c31) threaded runtime_session_ended through the 8
@@ -270,7 +255,7 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 	// so without these emissions Criterion 3's numerator undercounts in prod.
 	// These three cases pin the new remote-completion site: write path,
 	// NULL-safe payload, and no-duplicate-emission on the dropped-signal path.
-	it('emits runtime_session_ended with context_object_id + context_object_type when markRemoteSessionComplete lands the terminal transition', async () => {
+	it('emits runtime_session_ended with context_object_id when markRemoteSessionComplete lands the terminal transition', async () => {
 		const bet = await insertObject(db, workspaceId, actorId, {
 			type: 'bet',
 			title: 'Remote complete bet',
@@ -278,7 +263,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			initiatedFromObjectId: bet.id,
-			initiatedFromObjectType: 'bet',
 		})
 
 		const { telemetry, captured } = stubTelemetry()
@@ -297,14 +281,12 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		expect(ended?.properties?.session_id).toBe(session.id)
 		expect(ended?.properties?.end_reason).toBe('completed')
 		expect(ended?.properties?.context_object_id).toBe(bet.id)
-		expect(ended?.properties?.context_object_type).toBe('bet')
 	})
 
-	it('omits both context properties from runtime_session_ended when markRemoteSessionComplete runs on a session with no originating object', async () => {
+	it('omits the context property from runtime_session_ended when markRemoteSessionComplete runs on a session with no originating object', async () => {
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 		})
 
 		const { telemetry, captured } = stubTelemetry()
@@ -322,7 +304,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		// task 06679c31 so downstream PostHog dashboards see a clean absence
 		// rather than a null value that reads as "we had context but chose null".
 		expect('context_object_id' in (ended?.properties ?? {})).toBe(false)
-		expect('context_object_type' in (ended?.properties ?? {})).toBe(false)
 	})
 
 	it('does not fire a second runtime_session_ended when markRemoteSessionComplete is called on an already-terminal session (dropped-signal path)', async () => {
@@ -333,7 +314,6 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			initiatedFromObjectId: bet.id,
-			initiatedFromObjectType: 'bet',
 		})
 
 		const { telemetry, captured } = stubTelemetry()

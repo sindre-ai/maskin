@@ -97,7 +97,7 @@ app.openapi(createSessionRoute, (async (c) => {
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
 	// every session to the agent that received the owner's first turn without
 	// requiring an additive column migration.
-	// Also record who asked (run_agent / create_session land here), so launch can
+	// Also record who asked (create_session lands here), so launch can
 	// tell the helper who sent it without rewriting the stored action prompt.
 	const baseConfig = {
 		...body.config,
@@ -137,7 +137,6 @@ app.openapi(createSessionRoute, (async (c) => {
 		parentSessionId: body.source_session_id,
 		spawnedBySessionId: link.linked ? link.spawnedBySessionId : undefined,
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
-		initiatedFromObjectType: body.initiated_from_object_type ?? null,
 		await: 'none',
 		spawnedByMessageId: body.spawned_by_message_id,
 		dependsOnSessionIds: body.depends_on_session_ids,
@@ -471,7 +470,7 @@ app.openapi(getSessionRoute, (async (c) => {
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
 /**
- * The flag arrived after the helper ended (run_agent sets it at poll timeout, and
+ * The flag arrived after the helper ended (create_session with wait: true sets it at poll timeout, and
  * the helper can finish in the gap). Nothing else will fire the return, so do it
  * here. If the end-of-session return already ran and was skipped only because the
  * sender was live, give the one-shot claim back so the flag gets its turn.
@@ -508,7 +507,7 @@ async function returnIfAlreadyEnded(
 const updateSessionSchema = z
 	.object({
 		current_activity: z.string().max(500).nullable().optional(),
-		// run_agent sets this when its poll times out: "send me the result later".
+		// create_session (wait: true) sets this when its poll times out: "send me the result later".
 		// It only ever turns the flag on.
 		notify_on_complete: z.literal(true).optional(),
 	})

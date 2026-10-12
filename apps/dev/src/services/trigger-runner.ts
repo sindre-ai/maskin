@@ -49,12 +49,12 @@ import { loadSenderLine } from './workspace-briefing'
 const SCOPE_MATCH_LIMIT = 100
 
 /**
- * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * Resolve `{ initiatedFromObjectId }` for a
  * `SessionManager.createSession()` call. The two fields on the sessions row
  * are FK-constrained to `objects.id`, so passing an entity id that isn't an
  * object row (a slack.message uuid, a session id, a webhook delivery id)
- * would trip the FK on insert. This helper resolves the id → object type
- * with one PK read, or returns `null / null` when the entity isn't an
+ * would trip the FK on insert. This helper checks the id against the
+ * objects table with one PK read, or returns `null` when the entity isn't an
  * object — matching the same "not a uuid → not an object" posture the
  * `getObjectContext()` hydration path already uses in `handleEvent()`.
  */
@@ -63,18 +63,17 @@ async function loadInitiatedFromObject(
 	entityId: string | null | undefined,
 ): Promise<{
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }> {
 	if (!entityId || !UUID_RE.test(entityId)) {
-		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+		return { initiatedFromObjectId: null }
 	}
 	const [row] = await db
-		.select({ id: objects.id, type: objects.type })
+		.select({ id: objects.id })
 		.from(objects)
 		.where(eq(objects.id, entityId))
 		.limit(1)
-	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
-	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+	if (!row) return { initiatedFromObjectId: null }
+	return { initiatedFromObjectId: row.id }
 }
 
 /**
@@ -1318,7 +1317,6 @@ export class TriggerRunner {
 			// correct value when no single originating object exists (spec §3.3,
 			// cron/reminder rows).
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'none',
 		}).catch((err) =>
 			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
@@ -1624,7 +1622,6 @@ export class TriggerRunner {
 				createdBy: trigger.createdBy,
 				// Reminder trigger: one-shot, no originating object.
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				await: 'none',
 			}).catch((err) =>
 				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
