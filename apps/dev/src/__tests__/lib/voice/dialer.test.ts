@@ -22,7 +22,11 @@ function contact(n: number, over: Partial<QueuedContact> = {}): QueuedContact {
 		id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
 		status: 'voice_queued',
 		nextDialAt: null,
-		metadata: { owner: 'sebk', phone: `+45201234${String(n).padStart(2, '0')}` },
+		metadata: {
+			owner: 'sebk',
+			phone: `+45201234${String(n).padStart(2, '0')}`,
+			company_type: 'aps',
+		},
 		...over,
 	}
 }
@@ -95,7 +99,6 @@ function setup(store: FakeStore, over: Partial<DialerDeps> = {}) {
 		gate: {
 			founders: parseFounderActors(JSON.stringify({ sebk: SEBK })),
 			findActor: async () => ({ type: 'human' }),
-			robinson: { has: () => false },
 		},
 		config: CONFIG,
 		autosendEnabled: true,
@@ -145,7 +148,7 @@ describe('runDialerTick', () => {
 		const c = contact(1, {
 			status: 'voice_no_answer',
 			nextDialAt: '2026-10-01T08:00:00.000Z',
-			metadata: { owner: 'sebk', phone: '+4520123401', dial_attempt_n: 2 },
+			metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'aps', dial_attempt_n: 2 },
 		})
 		const { deps, createCall } = setup(fakeStore([c]))
 		await runDialerTick(WS, deps)
@@ -180,7 +183,7 @@ describe('runDialerTick', () => {
 		const retry = contact(1, {
 			status: 'voice_no_answer',
 			nextDialAt: '2026-10-01T08:00:00.000Z',
-			metadata: { owner: 'sebk', phone: '+4520123401', dial_attempt_n: 1 },
+			metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'aps', dial_attempt_n: 1 },
 		})
 		const store = fakeStore([retry])
 		const { deps, createCall } = setup(store)
@@ -275,7 +278,12 @@ describe('runDialerTick', () => {
 	describe('DNC gate in the tick', () => {
 		it('writes an event with the reason, stamps the contact and moves on to the next one', async () => {
 			const held = contact(1, {
-				metadata: { owner: 'sebk', phone: '+4520123401', held_reason: 'legal' },
+				metadata: {
+					owner: 'sebk',
+					phone: '+4520123401',
+					company_type: 'aps',
+					held_reason: 'legal',
+				},
 			})
 			const ok = contact(2)
 			const store = fakeStore([held, ok])
@@ -292,52 +300,48 @@ describe('runDialerTick', () => {
 			expect(store.rows.get(held.id)?.status).toBe('voice_queued')
 		})
 
-		it('stamps robinson_listed_at when the number is on the list', async () => {
-			const store = fakeStore([contact(1)])
+		it('stamps a company_type refusal that names the value found, and does not dial', async () => {
+			const store = fakeStore([
+				contact(1, {
+					metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'enkeltmandsvirksomhed' },
+				}),
+			])
 			const { deps, createCall } = setup(store)
-			deps.gate.robinson = { has: () => true }
 			await runDialerTick(WS, deps)
 			expect(createCall).not.toHaveBeenCalled()
-			expect(store.stamps[0]?.patch).toMatchObject({
-				robinson_listed_at: NOW.toISOString(),
-				dnc_refusal: { check: 'robinson', phone: '+4520123401' },
-			})
-		})
-
-		it('stamps no phone when the Robinson list is unavailable, so that refusal is never read as permanent', async () => {
-			const store = fakeStore([contact(1)])
-			const { deps } = setup(store)
-			deps.gate.robinson = {
-				has: () => {
-					throw new Error('no file')
-				},
-			}
-			await runDialerTick(WS, deps)
 			const stamp = store.stamps[0]?.patch.dnc_refusal as Record<string, unknown>
-			expect(stamp).toMatchObject({ check: 'robinson' })
-			expect(stamp).not.toHaveProperty('phone')
+			expect(stamp).toMatchObject({ check: 'company_type', at: NOW.toISOString() })
+			expect(String(stamp.reason)).toContain('enkeltmandsvirksomhed')
 		})
 
-		it('stamps a listed contact again when its number changed and the new number is listed too', async () => {
-			const store = fakeStore([contact(1)])
+		it('stamps a refusal again when the company_type changes to another refused value', async () => {
+			const store = fakeStore([contact(1, { metadata: { owner: 'sebk', phone: '+4520123401' } })])
 			const { deps } = setup(store)
-			deps.gate.robinson = { has: () => true }
 			await runDialerTick(WS, deps)
 			await runDialerTick(WS, deps)
 			expect(store.stamps).toHaveLength(1)
 
 			const row = store.rows.get(contact(1).id)
-			if (row) row.metadata = { ...row.metadata, phone: '+4520999999' }
+			if (row) row.metadata = { ...row.metadata, company_type: 'enk' }
 			await runDialerTick(WS, deps)
 
 			expect(store.stamps).toHaveLength(2)
-			expect(store.stamps[1]?.patch.dnc_refusal).toMatchObject({ phone: '+4520999999' })
+			expect(String((store.stamps[1]?.patch.dnc_refusal as { reason: string }).reason)).toContain(
+				'"enk"',
+			)
 			expect(actions(store).filter((a) => a === 'dnc_refused')).toHaveLength(2)
 		})
 
 		it('does not repeat the event for a contact refused for the same reason on the previous tick', async () => {
 			const store = fakeStore([
-				contact(1, { metadata: { owner: 'sebk', phone: '+4520123401', approval_hold: true } }),
+				contact(1, {
+					metadata: {
+						owner: 'sebk',
+						phone: '+4520123401',
+						company_type: 'aps',
+						approval_hold: true,
+					},
+				}),
 			])
 			const { deps } = setup(store)
 			await runDialerTick(WS, deps)
@@ -348,7 +352,7 @@ describe('runDialerTick', () => {
 
 		it('does not let refused contacts eat the pacing budget', async () => {
 			const refused = [1, 2, 3, 4, 5].map((n) =>
-				contact(n, { metadata: { owner: 'rune', phone: '+4520123401' } }),
+				contact(n, { metadata: { owner: 'rune', phone: '+4520123401', company_type: 'aps' } }),
 			)
 			const store = fakeStore([...refused, contact(6), contact(7)])
 			const { deps, createCall } = setup(store)

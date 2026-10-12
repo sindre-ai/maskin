@@ -52,14 +52,12 @@ const isTrue = (name: string) =>
 /**
  * True when the contact carries a stamped dnc_refusal AND a permanent cause still holds in its
  * live metadata. The stamp alone is never enough: a check name also covers transient refusals
- * (Robinson list unavailable, founder lookup failed), and a cause that was cleared (hold lifted,
- * phone added) must put the contact back on the queue. Each cause below mirrors the gate check
- * named beside it in dnc-gate.ts and is checked against it in voice-dialer.test.ts. Time of day
- * (check 5) is never stamped and has no clause here. Status (check 2) cannot occur: the queue
- * only holds voice_queued and the retry statuses. Robinson-listed has no live cause in metadata,
- * so the dialer stamps the matched number as dnc_refusal.phone (only on a confirmed match) and the
- * read excludes while that still equals the contact's normalized phone: an edited number re-admits
- * it, and clearing dnc_refusal does too. Every clause is null-safe, so the predicate is never null.
+ * (founder lookup failed), and a cause that was cleared (hold lifted, phone added, company type
+ * stamped aps or as) must put the contact back on the queue. Each cause below mirrors the gate
+ * check named beside it in dnc-gate.ts and is checked against it in voice-dialer.test.ts. Time of
+ * day (check 5) is never stamped and has no clause here. Status (check 2) cannot occur: the queue
+ * only holds voice_queued and the retry statuses. Every clause is null-safe, so the predicate is
+ * never null.
  */
 function permanentlyRefused(exclusion: QueueExclusion) {
 	const tags = PROTECT_TAGS.join('|')
@@ -83,7 +81,7 @@ function permanentlyRefused(exclusion: QueueExclusion) {
 		or coalesce(case when jsonb_typeof(${field('dial_attempt_n')}) = 'number'
 			then (${field('dial_attempt_n')} #>> '{}')::numeric end >= ${MAX_DIALS_PER_CONTACT}::numeric, false)
 		or ${phone} is null
-		or coalesce((${field('dnc_refusal')} ->> 'phone') = ${phone}, false)
+		or coalesce(${field('company_type')} not in ('"aps"'::jsonb, '"as"'::jsonb), true)
 		or coalesce(not (${isString('owner')}), true) or ${owner} = ''
 		${
 			slugs

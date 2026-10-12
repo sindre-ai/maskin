@@ -168,17 +168,8 @@ async function refuse(
 	// the permanent cause still holds (dialer-store.ts); a transient refusal is re-read every tick.
 	// Write the event and the stamp once per distinct reason, not every ten seconds.
 	// Time of day is not a property of the contact, so it is never stamped.
-	const previous = contact.metadata?.dnc_refusal as
-		| { reason?: unknown; phone?: unknown }
-		| undefined
-	// A Robinson match is for one number: a changed number is a new refusal, so it is stamped again.
-	if (
-		refusal.check !== 'time_of_day' &&
-		previous?.reason === refusal.reason &&
-		previous?.phone === refusal.listedNumber
-	) {
-		return
-	}
+	const previous = contact.metadata?.dnc_refusal as { reason?: unknown } | undefined
+	if (refusal.check !== 'time_of_day' && previous?.reason === refusal.reason) return
 	await deps.store.recordEvent({
 		workspaceId,
 		actorId,
@@ -189,13 +180,7 @@ async function refuse(
 	})
 	if (refusal.check === 'time_of_day') return
 	await deps.store.stampMetadata(workspaceId, contact.id, {
-		...(refusal.stamp ?? {}),
-		dnc_refusal: {
-			check: refusal.check,
-			reason: refusal.reason,
-			at: now.toISOString(),
-			...(refusal.listedNumber ? { phone: refusal.listedNumber } : {}),
-		},
+		dnc_refusal: { check: refusal.check, reason: refusal.reason, at: now.toISOString() },
 	})
 }
 

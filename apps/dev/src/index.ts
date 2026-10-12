@@ -239,7 +239,7 @@ logger.info('VIES scheduler job started')
 
 // Voice dialer (bet/5b8e-voice-outreach): ~10s tick inside the Copenhagen workday
 // window. Registers unconditionally; the dial itself is behind voice-outreach-autosend.
-const voiceDialerJob = new VoiceDialerJob(db, storageProvider)
+const voiceDialerJob = new VoiceDialerJob(db)
 voiceDialerJob.start()
 logger.info('Voice dialer job started')
 // Voice call recordings: daily blob expiry (24 months from last touch) and

@@ -44,7 +44,7 @@ async function seedContact(
 	return insertObject(db, workspaceId, getTestActorId(), {
 		type,
 		status,
-		metadata: { owner: 'sebk', phone: '+4520123456', ...metadata },
+		metadata: { owner: 'sebk', phone: '+4520123456', company_type: 'aps', ...metadata },
 	})
 }
 
@@ -60,7 +60,6 @@ function deps(workspaceId: string, over: Partial<DialerDeps> = {}) {
 		gate: {
 			founders: parseFounderActors(JSON.stringify({ sebk: getTestActorId() })),
 			findActor: async () => ({ type: 'human' }),
-			robinson: { has: () => false },
 		},
 		config: CONFIG,
 		autosendEnabled: true,
@@ -166,7 +165,7 @@ describe('voice dialer against real Postgres', () => {
 		const STAMP = {
 			dnc_refusal: { check: 'hold', reason: 'stamped by an earlier tick', at: DUE },
 		}
-		const OK = { owner: 'sebk', phone: '+4520123456' }
+		const OK = { owner: 'sebk', phone: '+4520123456', company_type: 'aps' }
 
 		async function readIds(workspaceId: string, exclusion = EXCLUSION) {
 			const { store } = deps(workspaceId)
@@ -191,7 +190,18 @@ describe('voice dialer against real Postgres', () => {
 			['role something else', { ...OK, role: 'founder' }],
 			['3 dials made', { ...OK, dial_attempt_n: 3 }],
 			['2 dials made', { ...OK, dial_attempt_n: 2 }],
-			['no phone', { owner: 'sebk' }],
+			['company_type as', { ...OK, company_type: 'as' }],
+			['no company_type', { ...OK, company_type: undefined }],
+			['company_type null', { ...OK, company_type: null }],
+			['company_type empty', { ...OK, company_type: '' }],
+			['company_type enkeltmandsvirksomhed', { ...OK, company_type: 'enkeltmandsvirksomhed' }],
+			['company_type enk', { ...OK, company_type: 'enk' }],
+			['company_type iv', { ...OK, company_type: 'iv' }],
+			['company_type in capitals', { ...OK, company_type: 'APS' }],
+			['company_type padded', { ...OK, company_type: ' aps' }],
+			['company_type stored as a JSON number', { ...OK, company_type: 7 }],
+			['company_type stored as a JSON array', { ...OK, company_type: ['aps'] }],
+			['no phone', { owner: 'sebk', company_type: 'aps' }],
 			['phone that is not a number', { ...OK, phone: 'call me' }],
 			['phone stored as a JSON number', { ...OK, phone: 4520123456 }],
 			['phone with a non-Danish prefix', { ...OK, phone: '+4670123456' }],
@@ -199,7 +209,7 @@ describe('voice dialer against real Postgres', () => {
 			['phone with 0045 and spaces', { ...OK, phone: '0045 20 12 34 56' }],
 			['phone with a no-break space', { ...OK, phone: '+45 20 12 34 56' }],
 			['phone with brackets and dashes', { ...OK, phone: '(+45) 20-12-34-56' }],
-			['no owner', { phone: '+4520123456' }],
+			['no owner', { phone: '+4520123456', company_type: 'aps' }],
 			['owner not a string', { ...OK, owner: 7 }],
 			['owner not a founder', { ...OK, owner: 'rune' }],
 			['owner in another case with padding', { ...OK, owner: '\tSebk\n' }],
@@ -233,52 +243,49 @@ describe('voice dialer against real Postgres', () => {
 			expect(await readIds(ws.id)).toEqual([])
 		})
 
-		describe('Robinson-listed', () => {
-			const listed = (phone: string) => ({
-				dnc_refusal: {
-					check: 'robinson',
-					reason: 'number is on the Robinson list',
-					at: DUE,
-					phone,
-				},
+		describe('company type', () => {
+			const refused = (reason: string) => ({
+				dnc_refusal: { check: 'company_type', reason, at: DUE },
 			})
 
-			it('excludes a contact while the stamped number still equals its phone, in any format', async () => {
+			it('excludes a stamped contact while company_type is missing or not aps or as', async () => {
 				const ws = await freshWorkspace()
-				await seedContact(ws.id, 'voice_queued', listed('+4520123456'))
 				await seedContact(ws.id, 'voice_queued', {
-					phone: '0045 20-12-34-56',
-					...listed('+4520123456'),
+					company_type: undefined,
+					...refused('company_type is missing'),
 				})
-				await seedContact(ws.id, 'voice_queued', { phone: '20 12 34 56', ...listed('+4520123456') })
+				await seedContact(ws.id, 'voice_queued', {
+					company_type: 'enk',
+					...refused('company_type "enk" is not ApS or A/S'),
+				})
 				expect(await readIds(ws.id)).toEqual([])
 			})
 
-			it('reads the contact again once its phone is edited to another number', async () => {
+			it.each(['aps', 'as'])(
+				'reads the contact again once its company_type is stamped %s',
+				async (companyType) => {
+					const ws = await freshWorkspace()
+					const c = await seedContact(ws.id, 'voice_queued', {
+						company_type: undefined,
+						...refused('company_type is missing'),
+					})
+					expect(await readIds(ws.id)).toEqual([])
+					await db
+						.update(objects)
+						.set({
+							metadata: sql`${objects.metadata} || ${JSON.stringify({ company_type: companyType })}::jsonb`,
+						})
+						.where(eq(objects.id, c?.id ?? ''))
+					expect(await readIds(ws.id)).toEqual([c?.id])
+				},
+			)
+
+			it('is stamped by the tick with the value found, then skipped on later reads', async () => {
 				const ws = await freshWorkspace()
 				const c = await seedContact(ws.id, 'voice_queued', {
-					phone: '+4520999999',
-					...listed('+4520123456'),
+					company_type: 'enkeltmandsvirksomhed',
 				})
-				expect(await readIds(ws.id)).toEqual([c?.id])
-			})
-
-			it('reads the contact again once dnc_refusal is cleared', async () => {
-				const ws = await freshWorkspace()
-				const c = await seedContact(ws.id, 'voice_queued', listed('+4520123456'))
-				expect(await readIds(ws.id)).toEqual([])
-				await db
-					.update(objects)
-					.set({ metadata: sql`${objects.metadata} - 'dnc_refusal'` })
-					.where(eq(objects.id, c?.id ?? ''))
-				expect(await readIds(ws.id)).toEqual([c?.id])
-			})
-
-			it('is stamped by the tick, skipped afterwards, and stamped again for a new listed number', async () => {
-				const ws = await freshWorkspace()
-				const c = await seedContact(ws.id, 'voice_queued')
 				const { d, createCall } = deps(ws.id)
-				d.gate.robinson = { has: () => true }
 
 				await runDialerTick(ws.id, d)
 				const [stamped] = await db
@@ -286,30 +293,24 @@ describe('voice dialer against real Postgres', () => {
 					.from(objects)
 					.where(eq(objects.id, c?.id ?? ''))
 				expect(stamped?.metadata).toMatchObject({
-					dnc_refusal: { check: 'robinson', phone: '+4520123456' },
+					dnc_refusal: {
+						check: 'company_type',
+						reason: expect.stringContaining('enkeltmandsvirksomhed'),
+					},
 				})
-				expect(await readIds(ws.id)).toEqual([])
-
-				await db
-					.update(objects)
-					.set({ metadata: sql`${objects.metadata} || '{"phone":"+4520777777"}'::jsonb` })
-					.where(eq(objects.id, c?.id ?? ''))
-				expect(await readIds(ws.id)).toEqual([c?.id])
-				await runDialerTick(ws.id, d)
-				const [restamped] = await db
-					.select({ metadata: objects.metadata })
-					.from(objects)
-					.where(eq(objects.id, c?.id ?? ''))
-				expect(restamped?.metadata).toMatchObject({ dnc_refusal: { phone: '+4520777777' } })
 				expect(await readIds(ws.id)).toEqual([])
 				expect(createCall).not.toHaveBeenCalled()
 			})
 		})
 
-		it('reads a stamped contact whose refusal was transient, such as an unavailable Robinson list', async () => {
+		it('reads a stamped contact whose refusal was transient, such as a failed founder lookup', async () => {
 			const ws = await freshWorkspace()
 			const c = await seedContact(ws.id, 'voice_queued', {
-				dnc_refusal: { check: 'robinson', reason: 'Robinson list is unavailable', at: DUE },
+				dnc_refusal: {
+					check: 'owner',
+					reason: 'founder actor for "sebk" could not be looked up',
+					at: DUE,
+				},
 			})
 			expect(await readIds(ws.id)).toEqual([c?.id])
 		})
@@ -331,14 +332,8 @@ describe('voice dialer against real Postgres', () => {
 				{ protect: true },
 				{ role: 'investor' },
 				{ dial_attempt_n: 3 },
-				{
-					dnc_refusal: {
-						check: 'robinson',
-						reason: 'number is on the Robinson list',
-						at: DUE,
-						phone: '+4520123456',
-					},
-				},
+				{ company_type: undefined },
+				{ company_type: 'enk' },
 			]
 			for (let i = 0; i < 60; i++) {
 				const at = new Date(Date.parse('2026-10-01T06:00:00Z') + i * 1000).toISOString()
@@ -349,6 +344,32 @@ describe('voice dialer against real Postgres', () => {
 				})
 			}
 			const dialable = await seedContact(ws.id, 'voice_queued', { next_dial_at: DUE })
+			const { d, createCall } = deps(ws.id)
+
+			const result = await runDialerTick(ws.id, d)
+
+			expect(result).toMatchObject({ dialed_count: 1, refused_count: 0 })
+			const sent = createCall.mock.calls[0]?.[0] as unknown as {
+				clientState: { contact_id: string }
+			}
+			expect(sent.clientState.contact_id).toBe(dialable?.id)
+			expect(await statusOf(dialable?.id ?? '')).toBe('voice_dialing')
+		})
+
+		it('dials the one aps contact behind 60 stamped contacts that all lack company_type', async () => {
+			const ws = await freshWorkspace()
+			for (let i = 0; i < 60; i++) {
+				const at = new Date(Date.parse('2026-10-01T06:00:00Z') + i * 1000).toISOString()
+				await seedContact(ws.id, 'voice_queued', {
+					...STAMP,
+					company_type: undefined,
+					next_dial_at: at,
+				})
+			}
+			const dialable = await seedContact(ws.id, 'voice_queued', {
+				company_type: 'aps',
+				next_dial_at: DUE,
+			})
 			const { d, createCall } = deps(ws.id)
 
 			const result = await runDialerTick(ws.id, d)
@@ -409,6 +430,7 @@ describe('voice dialer against real Postgres', () => {
 			['a valid +45 number is added', { phone: '+4520123456' }],
 			['the hold is cleared', { approval_hold: false }],
 			['the owner is mapped to a founder', { owner: 'sebk' }],
+			['company_type is stamped aps', { company_type: 'aps' }],
 		])('dials a stamped contact once %s', async (_n, fix) => {
 			const ws = await freshWorkspace()
 			const base =
@@ -416,7 +438,9 @@ describe('voice dialer against real Postgres', () => {
 					? { phone: undefined }
 					: _n === 'the hold is cleared'
 						? { approval_hold: true }
-						: { owner: 'rune' }
+						: _n === 'company_type is stamped aps'
+							? { company_type: undefined }
+							: { owner: 'rune' }
 			const c = await seedContact(ws.id, 'voice_queued', { ...base, ...STAMP })
 			const { d, createCall } = deps(ws.id)
 
@@ -477,7 +501,14 @@ describe('voice dialer against real Postgres', () => {
 			// Another writer reschedules the contact between the read and the claim.
 			await db
 				.update(objects)
-				.set({ metadata: { owner: 'sebk', phone: '+4520123456', next_dial_at: LATER } })
+				.set({
+					metadata: {
+						owner: 'sebk',
+						phone: '+4520123456',
+						company_type: 'aps',
+						next_dial_at: LATER,
+					},
+				})
 				.where(eq(objects.id, retry?.id ?? ''))
 			expect(await store.claim(ws.id, read, getTestActorId(), NOW)).toBe(false)
 			expect(await statusOf(retry?.id ?? '')).toBe('voice_no_answer')
@@ -637,7 +668,7 @@ describe('voice dialer against real Postgres', () => {
 			const c = await seedContact(ws.id, 'voice_queued', { keep: 'me' })
 			const { store } = deps(ws.id)
 			await store.stampMetadata(ws.id, c?.id ?? '', {
-				robinson_listed_at: '2026-10-01T09:00:00.000Z',
+				dnc_refusal: { check: 'company_type', reason: 'company_type is missing', at: DUE },
 			})
 			const [row] = await db
 				.select()
@@ -647,7 +678,7 @@ describe('voice dialer against real Postgres', () => {
 			expect(row?.metadata).toMatchObject({
 				keep: 'me',
 				owner: 'sebk',
-				robinson_listed_at: '2026-10-01T09:00:00.000Z',
+				dnc_refusal: { check: 'company_type' },
 			})
 		})
 	})
