@@ -113,6 +113,26 @@ struct StoriesStoreTests {
 		#expect(s.cards.first { $0.id == "briefing" }?.loopID == nil)
 	}
 
+	@Test("the row shows unseen cards first and moves a card to the end once it is opened")
+	func rowOrder() async {
+		let s = await store()
+		await s.load()
+		#expect(s.rowCards.map(\.id) == ["briefing", "b", "a"])
+		s.markSeen(s.cards[0])
+		#expect(s.rowCards.map(\.id) == ["b", "a", "briefing"])
+		#expect(s.cards.map(\.id) == ["briefing", "b", "a"])  // the stored order is untouched
+	}
+
+	@Test("the byline is the Chief of Staff for the briefing and the flow for a page")
+	func byline() async {
+		let s = await store()
+		await s.load()
+		#expect(s.cards[0].byline == "Chief of Staff")
+		#expect(s.cards[0].isBriefing)
+		#expect(s.cards[1].byline == "Market & Competitors")
+		#expect(!s.cards[1].isBriefing)
+	}
+
 	@Test("a briefing that fails to load is left out; the pages still show")
 	func briefingFails() async {
 		let s = await store(brief: nil)
@@ -155,11 +175,11 @@ struct StoryCardFormatLabelTests {
 	}
 
 	@Test func shortBriefingReadsInOneMinute() {
-		#expect(briefing(words: 40).formatLabel == "READ \u{00B7} 1 MIN")
+		#expect(briefing(words: 40).formatLabel == "1 MIN READ")
 	}
 
 	@Test func longerBriefingRoundsUp() {
-		#expect(briefing(words: 450).formatLabel == "READ \u{00B7} 3 MIN")
+		#expect(briefing(words: 450).formatLabel == "3 MIN READ")
 	}
 
 	@Test func pageIsLabelledAPage() {

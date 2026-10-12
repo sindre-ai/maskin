@@ -28,7 +28,7 @@ struct QuickQuestionChips: View {
 							.font(MaskinTypeface.sans(MaskinFontSize.t13_5, weight: .semibold))
 							.foregroundStyle(MaskinColor.ink)
 							.padding(.horizontal, MaskinSpace.s7)
-							.frame(minHeight: MaskinSpace.s14)
+							.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s1)
 							.background(MaskinSurface.fill, in: Capsule())
 					}
 					.buttonStyle(.maskinPressed(.shrink))
