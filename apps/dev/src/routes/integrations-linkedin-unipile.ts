@@ -115,7 +115,7 @@ const PROVIDER = 'linkedin-unipile'
 const CONNECTED_STATUS = INTEGRATION_STATUS_ACTIVE
 
 function callbackUrl(): string {
-	const base = (process.env.MASKIN_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '')
+	const base = (process.env.MASKIN_PUBLIC_URL || 'http://localhost:3000').replace(/\/$/, '')
 	return `${base}/api/integrations/linkedin-unipile/callback`
 }
 
