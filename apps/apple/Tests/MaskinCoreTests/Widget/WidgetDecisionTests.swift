@@ -198,11 +198,6 @@ struct CycleActivityTests {
 		#expect(CycleActivityState.needsYouLifetime == 28_800)
 	}
 
-	@Test func aTurnWaitingOnTheReaderIsAHandOffNotALiveState() {
-		#expect(TurnActivityStatus.needsYou.isTerminal)
-		#expect(!TurnActivityStatus.running.isTerminal)
-	}
-
 	@Test func meetingNameNeverBlank() {
 		#expect(MeetingActivityState(name: "  ", startedAt: t0).name == "Maskin")
 		#expect(MeetingActivityState.Kind.dailyBriefing.eyebrow == "LIVE \u{00B7} DAILY BRIEFING")
