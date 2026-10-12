@@ -257,6 +257,37 @@ describe('AddCredentialPage', () => {
 		expect(mockNavigate).not.toHaveBeenCalled()
 		expect(screen.getByLabelText('Secret')).toHaveValue(SECRET)
 	})
+
+	it('shows the server message when the name is taken, and keeps the form', async () => {
+		const taken = new ApiError(409, 'Another key in this workspace already has this name.')
+		taken.code = 'NAME_TAKEN'
+		mockCreate.mockRejectedValue(taken)
+		const user = userEvent.setup()
+		render(<AddCredentialPage />)
+		await user.type(screen.getByLabelText('Name'), 'Linear')
+		await user.type(screen.getByLabelText('Secret'), SECRET)
+		await user.click(screen.getByRole('button', { name: 'Save' }))
+		expect(
+			await screen.findByText('Another key in this workspace already has this name.'),
+		).toBeInTheDocument()
+		expect(mockNavigate).not.toHaveBeenCalled()
+		expect(screen.getByLabelText('Secret')).toHaveValue(SECRET)
+	})
+
+	it('refuses a name the server would refuse, before any request', async () => {
+		const user = userEvent.setup()
+		render(<AddCredentialPage />)
+		const name = screen.getByLabelText('Name')
+		await user.click(name)
+		// Pasted, because typing treats square brackets as key names.
+		await user.paste('bad [name]')
+		await user.type(screen.getByLabelText('Secret'), SECRET)
+		expect(
+			screen.getByText("Names can't contain square brackets or control characters."),
+		).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+		expect(mockCreate).not.toHaveBeenCalled()
+	})
 })
 
 function auditPage(entries: Partial<CredentialAuditEntry>[], next: string | null = null) {

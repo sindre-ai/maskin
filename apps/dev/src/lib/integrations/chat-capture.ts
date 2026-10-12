@@ -12,12 +12,29 @@ import { SECRET_PROVIDER_IDS, type SecretProviderId } from '@maskin/shared'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
+import { BYO_APIKEY_PROVIDER } from './byo-apikey'
 import { insertCredentialAccessLog } from './credential-audit'
+import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 
 /** How long a captured key stays undoable before the sweeper activates it. */
 export const UNDO_WINDOW_MS = 5 * 60 * 1000
 
-export const CHAT_CAPTURE_PROVIDERS: readonly SecretProviderId[] = SECRET_PROVIDER_IDS
+/** Not a provider: the user typed the ! prefix and named the key themselves, so nothing was detected. */
+export const MANUAL_CAPTURE = 'manual'
+
+export type ChatCaptureProvider = SecretProviderId | typeof MANUAL_CAPTURE
+
+export const CHAT_CAPTURE_PROVIDERS: readonly ChatCaptureProvider[] = [
+	...SECRET_PROVIDER_IDS,
+	MANUAL_CAPTURE,
+]
+
+/** How the capture started: the user typed the prefix, or the scanner caught a pasted key. The client never says. */
+export type ChatCaptureTrigger = 'prefix' | 'detected'
+
+export function captureTrigger(provider: ChatCaptureProvider): ChatCaptureTrigger {
+	return provider === MANUAL_CAPTURE ? 'prefix' : 'detected'
+}
 
 export class ChatCaptureError extends Error {
 	constructor(
@@ -35,7 +52,7 @@ export interface ChatCaptureInput {
 	/** The human who pasted the key. */
 	actorId: string
 	sessionId: string
-	detectedProvider: SecretProviderId
+	detectedProvider: ChatCaptureProvider
 	displayName: string
 	scopeGrants?: ScopeGrant[]
 	/** Consumed here and never stored, logged or put on an event. */
@@ -44,6 +61,9 @@ export interface ChatCaptureInput {
 
 export interface ChatCaptureResult {
 	integrationId: string
+	trigger: ChatCaptureTrigger
+	/** What the row stores as its provider: the detected one, or custom for a manual capture. */
+	provider: string
 	undoExpiresAt: Date
 	scopeGrants: ScopeGrant[]
 	origin: { sessionId: string }
@@ -65,6 +85,9 @@ export async function captureChatSecret(
 	now: Date = new Date(),
 ): Promise<ChatCaptureResult> {
 	const { workspaceId, actorId, sessionId } = input
+	// Before anything is read or encrypted. The name rule needs no database, and its
+	// messages never repeat the name.
+	assertValidCredentialName(input.displayName)
 
 	const [session] = await db
 		.select({ id: sessions.id, actorId: sessions.actorId, conversationId: sessions.conversationId })
@@ -119,15 +142,23 @@ export async function captureChatSecret(
 		? requested
 		: [{ kind: 'actor', actorId: session.actorId }]
 
+	// A taken name is refused before the KMS call. The check is repeated under the lock
+	// below, because two vaults of one name can both pass this one.
+	await assertSlugFree(db, workspaceId, input.displayName)
+
 	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, input.rawSecret)
 	const undoExpiresAt = new Date(now.getTime() + UNDO_WINDOW_MS)
 	const integrationId = randomUUID()
+	const provider =
+		input.detectedProvider === MANUAL_CAPTURE ? BYO_APIKEY_PROVIDER : input.detectedProvider
 
 	await db.transaction(async (tx) => {
+		await lockCredentialSlug(tx, workspaceId, input.displayName)
+		await assertSlugFree(tx, workspaceId, input.displayName)
 		await tx.insert(integrations).values({
 			id: integrationId,
 			workspaceId,
-			provider: input.detectedProvider,
+			provider,
 			status: 'pending_undo',
 			credentials,
 			dekCiphertext,
@@ -156,7 +187,7 @@ export async function captureChatSecret(
 			entityId: integrationId,
 			// Never the value, the ciphertext or the wrapped key.
 			data: {
-				provider: input.detectedProvider,
+				provider,
 				provider_mode: 'byo_apikey',
 				source: 'chat_capture',
 				origin_session_id: sessionId,
@@ -164,5 +195,12 @@ export async function captureChatSecret(
 		})
 	})
 
-	return { integrationId, undoExpiresAt, scopeGrants: grants, origin: { sessionId } }
+	return {
+		integrationId,
+		trigger: captureTrigger(input.detectedProvider),
+		provider,
+		undoExpiresAt,
+		scopeGrants: grants,
+		origin: { sessionId },
+	}
 }

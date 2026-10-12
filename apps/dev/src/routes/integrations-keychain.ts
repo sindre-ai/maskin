@@ -13,6 +13,7 @@ import {
 	captureChatSecret,
 } from '../lib/integrations/chat-capture'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { CredentialNameError } from '../lib/integrations/credential-name'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -103,6 +104,10 @@ const chatCaptureRoute = createRoute({
 			description: 'Session not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'NAME_TAKEN: another active or pending-undo key has this env var name',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -134,9 +139,10 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		void capturePosthogEvent('keychain_credential_created', actorId, {
 			workspace_id: workspaceId,
 			integration_id: result.integrationId,
-			provider: body.detectedProvider,
+			provider: result.provider,
 			provider_mode: 'byo_apikey',
 			source: 'chat_capture',
+			trigger: result.trigger,
 		})
 
 		return c.json(
@@ -150,6 +156,9 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		)
 	} catch (err) {
 		if (err instanceof ChatCaptureError) {
+			return c.json(createApiError(err.code, err.message), err.status)
+		}
+		if (err instanceof CredentialNameError) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
 		// Error text only, never the request: a driver error can carry bound params.
@@ -185,6 +194,10 @@ const byoApiKeyRoute = createRoute({
 		},
 		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
 		403: { description: 'Not a human', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'NAME_TAKEN: another active or pending-undo key has this env var name',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -220,6 +233,9 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 
 		return c.json({ integrationId: result.integrationId }, 201)
 	} catch (err) {
+		if (err instanceof CredentialNameError) {
+			return c.json(createApiError(err.code, err.message), err.status)
+		}
 		// Error name only, never the request: a driver error can carry bound params.
 		logger.error('Keychain paste failed', {
 			workspaceId,
