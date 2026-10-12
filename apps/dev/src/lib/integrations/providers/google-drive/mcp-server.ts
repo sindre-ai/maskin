@@ -15,11 +15,24 @@ import { config as driveConfig } from './config'
 import { isDriveError } from './errors'
 import type { DriveToolContext } from './operations'
 import {
+	GET_DOCUMENT_STRUCTURED_DESCRIPTION,
+	GET_DOCUMENT_STRUCTURED_TOOL,
+	type GetDocumentStructuredInput,
+	getDocumentStructured,
+} from './tools/get-document-structured'
+import {
 	GET_FILE_BYTES_DESCRIPTION,
 	GET_FILE_BYTES_TOOL,
 	type GetFileBytesInput,
 	getFileBytes,
 } from './tools/get-file-bytes'
+import {
+	GET_SHEET_RANGE_DESCRIPTION,
+	GET_SHEET_RANGE_TOOL,
+	type GetSheetRangeInput,
+	SHEET_PAGE_SIZE_MAX,
+	getSheetRange,
+} from './tools/get-sheet-range'
 import {
 	LIST_FOLDER_DESCRIPTION,
 	LIST_FOLDER_TOOL,
@@ -141,6 +154,58 @@ export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
 		},
 		async (args) =>
 			runTool(ctx, WATCH_FOLDER_TOOL, args, () => watchFolder(toolCtx, args as WatchFolderInput)),
+	)
+
+	server.registerTool(
+		GET_DOCUMENT_STRUCTURED_TOOL,
+		{
+			description: GET_DOCUMENT_STRUCTURED_DESCRIPTION,
+			inputSchema: {
+				documentId: z.string().min(1).describe('Google Doc id.'),
+				startIndex: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.describe('Start of the range to read, in UTF-16 code units. Default: the start.'),
+				endIndex: z
+					.number()
+					.int()
+					.min(1)
+					.optional()
+					.describe('End of the range to read, in UTF-16 code units. Default: the end.'),
+			},
+		},
+		async (args) =>
+			runTool(ctx, GET_DOCUMENT_STRUCTURED_TOOL, args, () =>
+				getDocumentStructured(toolCtx, args as GetDocumentStructuredInput),
+			),
+	)
+
+	server.registerTool(
+		GET_SHEET_RANGE_TOOL,
+		{
+			description: GET_SHEET_RANGE_DESCRIPTION,
+			inputSchema: {
+				spreadsheetId: z.string().min(1).describe('Google Sheet id.'),
+				range: z.string().min(1).describe('A1 notation, e.g. "Sheet1!A1:D500" or "Sheet1".'),
+				pageSize: z
+					.number()
+					.int()
+					.min(1)
+					.optional()
+					.describe(`Sheet rows per page. Default 1000, capped at ${SHEET_PAGE_SIZE_MAX}.`),
+				pageToken: z.string().optional().describe('nextPageToken from a previous call.'),
+				majorDimension: z
+					.enum(['ROWS', 'COLUMNS'])
+					.optional()
+					.describe('ROWS (default) or COLUMNS.'),
+			},
+		},
+		async (args) =>
+			runTool(ctx, GET_SHEET_RANGE_TOOL, args, () =>
+				getSheetRange(toolCtx, args as GetSheetRangeInput),
+			),
 	)
 
 	return server
