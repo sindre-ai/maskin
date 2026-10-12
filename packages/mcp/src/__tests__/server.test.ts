@@ -5265,7 +5265,7 @@ describe('tool handlers', () => {
 				return { ok: true, json: () => Promise.resolve([]) } as Response
 			})
 			const handler = getHandler('list_workspaces')
-			const result = (await handler({})) as {
+			const result = (await handler({ include_settings: true })) as {
 				content: Array<{ text: string }>
 				structuredContent: { workspaces: Array<{ settings: Record<string, unknown> }> }
 			}
@@ -5281,6 +5281,133 @@ describe('tool handlers', () => {
 			expect(result.content[0].text).not.toContain('sk-secret')
 			expect(result.content[0].text).not.toContain('sk-also-secret')
 			expect(result.content[0].text).not.toContain('cus_X')
+		})
+
+		describe('list_workspaces default (slim) rows', () => {
+			const apiRows = [
+				{
+					id: 'ws-1',
+					name: 'Mesh Firm',
+					role: 'owner',
+					createdAt: '2026-02-01T00:00:00.000Z',
+					updatedAt: '2026-03-01T00:00:00.000Z',
+					onboardingEnabled: true,
+					enterprise: false,
+					memberCount: 3,
+					billingOwnerId: 'actor-1',
+					createdBy: 'actor-1',
+					settings: {
+						llm_keys: { openai: 'sk-secret' },
+						statuses: { bet: ['signal', 'active'] },
+					},
+				},
+				{
+					id: 'ws-2',
+					name: 'Side Project',
+					role: 'member',
+					createdAt: '2026-02-02T00:00:00.000Z',
+					updatedAt: '2026-03-02T00:00:00.000Z',
+					onboardingEnabled: false,
+					settings: { statuses: { bet: ['signal'] } },
+				},
+			]
+
+			function stubWorkspaces() {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					if ((url as string).includes('/api/workspaces')) {
+						return { ok: true, json: () => Promise.resolve(apiRows) } as Response
+					}
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				})
+			}
+
+			type SlimResult = {
+				content: Array<{ text: string }>
+				structuredContent: { workspaces: Array<Record<string, unknown>> }
+			}
+
+			it('returns exactly six keys per row, including the onboarding flag', async () => {
+				stubWorkspaces()
+				const result = (await getHandler('list_workspaces')({})) as SlimResult
+				const expectedKeys = ['createdAt', 'id', 'name', 'onboardingEnabled', 'role', 'updatedAt']
+				for (const row of result.structuredContent.workspaces) {
+					expect(Object.keys(row).sort()).toEqual(expectedKeys)
+				}
+				expect(result.structuredContent.workspaces.map((r) => r.onboardingEnabled)).toEqual([
+					true,
+					false,
+				])
+				expect(result.structuredContent.workspaces[0]).toMatchObject({
+					id: 'ws-1',
+					name: 'Mesh Firm',
+					role: 'owner',
+					createdAt: '2026-02-01T00:00:00.000Z',
+					updatedAt: '2026-03-01T00:00:00.000Z',
+				})
+			})
+
+			it('carries the same rows in the content and structuredContent channels', async () => {
+				stubWorkspaces()
+				const result = (await getHandler('list_workspaces')({})) as SlimResult
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.workspaces).toEqual(result.structuredContent.workspaces)
+				expect(result.content[0].text).not.toContain('sk-secret')
+				expect(result.content[0].text).not.toContain('settings')
+			})
+
+			it('keeps the heroCard rendering from the same five fields', async () => {
+				stubWorkspaces()
+				const result = (await getHandler('list_workspaces')({})) as {
+					structuredContent: { heroCard: { objects?: Array<Record<string, unknown>> } }
+				}
+				expect(result.structuredContent.heroCard.objects?.[0]).toMatchObject({
+					id: 'ws-1',
+					type: 'workspace',
+					title: 'Mesh Firm',
+					status: 'owner',
+				})
+			})
+
+			it('fills a missing field with null so the row still has six keys', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+					return { ok: true, json: () => Promise.resolve([{ id: 'ws-3' }]) } as Response
+				})
+				const result = (await getHandler('list_workspaces')({})) as SlimResult
+				expect(result.structuredContent.workspaces[0]).toEqual({
+					id: 'ws-3',
+					name: null,
+					role: null,
+					createdAt: null,
+					updatedAt: null,
+					onboardingEnabled: null,
+				})
+			})
+
+			it('include_settings false behaves like the default', async () => {
+				stubWorkspaces()
+				const result = (await getHandler('list_workspaces')({
+					include_settings: false,
+				})) as SlimResult
+				expect(Object.keys(result.structuredContent.workspaces[0])).toHaveLength(6)
+			})
+
+			it('include_settings true returns the full rows with secrets redacted in both channels', async () => {
+				stubWorkspaces()
+				const result = (await getHandler('list_workspaces')({
+					include_settings: true,
+				})) as SlimResult
+				const row = result.structuredContent.workspaces[0] as {
+					settings: Record<string, unknown>
+					memberCount: number
+				}
+				expect(row.memberCount).toBe(3)
+				expect(row.settings.statuses).toEqual({ bet: ['signal', 'active'] })
+				expect(row.settings.llm_keys).toBeUndefined()
+				expect(JSON.parse(result.content[0].text).workspaces).toEqual(
+					result.structuredContent.workspaces,
+				)
+				expect(result.content[0].text).not.toContain('sk-secret')
+			})
 		})
 
 		it('passes limit/offset to /api/actors and uses X-Total-Count for the +N more footer', async () => {
