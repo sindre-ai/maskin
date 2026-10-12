@@ -1,7 +1,7 @@
-import { sessions } from '@maskin/db/schema'
+import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import type { SessionDispatchQueue } from '../../services/session-dispatch-queue'
+import { SessionDispatchQueue } from '../../services/session-dispatch-queue'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertWorkspace } from '../factories'
@@ -74,5 +74,46 @@ describe('SessionManager.startSession — rows waiting in the dispatch queue (In
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId))
 		expect(row?.status).toBe('starting')
 		expect(row?.sessionState).toBe('waiting_for_machine')
+	})
+
+	// The waiting_for_machine mark must not switch off the queue's own give-up:
+	// a row whose dispatch keeps failing has to end failed, not wait forever.
+	it('still ends the session failed when the queue exhausts its attempts', async () => {
+		const agent = await insertActor(db, { type: 'agent' })
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		const queue = new SessionDispatchQueue(
+			db,
+			async () => ({ kind: 'transient_failure', error: 'no agent server accepted it' }),
+			{ maxAttempts: 1 },
+		)
+		manager.setDispatchQueue(queue)
+
+		let sessionId: string
+		try {
+			const session = await manager.createSession(workspaceId, {
+				actorId: agent.id,
+				actionPrompt: 'queue gives up',
+				createdBy: actorId,
+				autoStart: false,
+			})
+			sessionId = session.id
+			await manager.startSession(sessionId)
+
+			const [waiting] = await db.select().from(sessions).where(eq(sessions.id, sessionId))
+			expect(waiting?.sessionState).toBe('waiting_for_machine')
+
+			await queue.tick()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId))
+		expect(row?.status).toBe('failed')
+		const [attempt] = await db
+			.select()
+			.from(sessionDispatchAttempts)
+			.where(eq(sessionDispatchAttempts.sessionId, sessionId))
+		expect(attempt?.status).toBe('failed')
 	})
 })
