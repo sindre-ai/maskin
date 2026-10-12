@@ -11,7 +11,7 @@ Status: **drafted, never run.** Nothing here has touched AWS. The first staging 
 | `human-bootstrap.cfn.yaml` | The human-only bundle: OIDC provider, runtime boundary, bootstrap role (one stack per environment). |
 | `runtime-user-policy.json.tpl` | Inline policy the bootstrap workflow writes on the runtime user. Same statements as the runtime boundary. |
 | `keychain-aws-preflight.yml` | Prints the OIDC `sub`, assumes the role, proves the other environment's role refuses. Changes nothing. |
-| `keychain-aws-bootstrap.yml` | One environment: smoke KMS key, CloudTrail with its own bucket, runtime user with boundary. Staging also gets the Governance bucket and the delete-refused test. |
+| `keychain-aws-bootstrap.yml` | One environment: smoke KMS key, CloudTrail with its own bucket, runtime user with boundary. Staging also gets the Governance bucket and the delete-refused test, then mints a runtime key inside the job, runs the runtime-identity smoke and deletes the key. |
 | `keychain-aws-production-bucket.yml` | Production Compliance bucket, 24 months. Own workflow, own approval, created last, gated. |
 | `keychain-aws-rotate-key.yml` | Creates the runtime access key (first key too), verifies it, writes it to Coolify, redeploys, deletes the old key last. |
 
@@ -44,11 +44,13 @@ Also run once from a non-main branch: it must be refused before any secret or to
 - Whether `iam:CreateUser` with a permissions boundary also needs `iam:PutUserPermissionsBoundary` (the policy denies it today).
 - The `sub` claim format for this repository.
 - Whether CloudTrail accepts the bucket policy as written and `create-trail` needs nothing beyond the listed actions.
+- Whether S3 accepts a conditional PutObject (`If-None-Match`) on the Governance Object Lock bucket, and whether the runner CLI has `--if-none-match`.
 
 ## What each run proves
 
 - Bootstrap: CreateKey without the tag is refused, CreateKey with the other environment's tag value is refused, CreateKey in eu-west-1 is refused, CreateUser without the boundary is refused. If any of these succeed the run fails loudly, and a stray key or user exists. The role cannot delete either, so the break-glass admin cleans up.
 - Staging lock test: the role can call DeleteObject (a delete marker is written, proving delete permission), and deleting the locked version is refused with the text "protected by object lock". A plain permission error fails the test.
+- Staging runtime-identity smoke (rows 9 and 19, AWS side; CTO ruling 2026-10-12, no staging app): the job mints a runtime key, uses it and deletes it in the same step. As the runtime user it does CreateKey with the tag, CreateAlias, then KMS encrypt and decrypt through the alias (`alias/maskin-keychain-staging-rtsmoke`, created once and reused, since nobody can delete keys). On `snapshots/` it does ListObjectsV2 with the prefix, a conditional PutObject (`If-None-Match: *`), a repeat of the same PutObject that must fail with PreconditionFailed, GetObject and a second lookup that finds the exact key. It then proves the refusals: write and list outside `snapshots/`, DeleteObject, IAM, CreateKey for the other environment and outside eu-central-1. The conditional PUT on an Object Lock bucket is the one thing an SDK mock cannot settle. The snapshot test object is locked for 1 day by the bucket default and stays as a small object. Fails closed if the user already holds 2 keys.
 - Rotate: the new key, used as the runtime identity, does a KMS encrypt and decrypt round trip on the smoke key and is denied `iam:ListUsers` (boundary holds).
 
 Not covered, run by a human once with a throwaway untagged key: PutKeyPolicy and CreateAlias on an untagged key are refused; TagResource on an untagged key is refused.
