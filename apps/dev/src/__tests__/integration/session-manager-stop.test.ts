@@ -408,7 +408,9 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			},
 			shutdown: async () => {},
 		}
-		return { telemetry: new RuntimeTelemetry({ client }), endedFor }
+		// Guard off: these tests prove SessionManager itself emits once, so the
+		// telemetry duplicate guard must not hide a regression in the manager.
+		return { telemetry: new RuntimeTelemetry({ client, endedDedupLimit: 0 }), endedFor }
 	}
 
 	async function tickReaper(telemetry?: RuntimeTelemetry): Promise<SessionManager> {

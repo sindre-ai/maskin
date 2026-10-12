@@ -1428,6 +1428,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {
