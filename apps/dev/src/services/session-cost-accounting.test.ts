@@ -50,7 +50,10 @@ function makeStub(row: StubRow) {
 		update() {
 			return {
 				set(setPatch: Record<string, unknown>) {
-					captured.push({ setPatch })
+					// Only the terminal write is under test. After a settle, the helper
+					// return takes its own one-shot claim with a separate update
+					// (helperReturnedAt only); it is not part of the setPatch contract.
+					if (!('helperReturnedAt' in setPatch)) captured.push({ setPatch })
 					return {
 						where() {
 							return { returning: async () => [{ id: row.id }] }

@@ -128,9 +128,13 @@ describe('MCP Routes', () => {
 			)
 		})
 
-		it('falls back to key query param when no Authorization header', async () => {
+		it('treats a key in the query string exactly like a request with no credentials', async () => {
 			const app = await createApp()
 			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+
+			await app.request(jsonPostRequest('/mcp', body), undefined, env)
+			const noCredentials = mockCreateMcpServer.mock.calls[0][0]
+			mockCreateMcpServer.mockClear()
 
 			await app.request(
 				new Request('http://localhost/mcp?key=query-key', {
@@ -142,8 +146,31 @@ describe('MCP Routes', () => {
 				env,
 			)
 
+			const queryOnly = mockCreateMcpServer.mock.calls[0][0]
+			expect(queryOnly.apiKey).toBe('')
+			// The per-request anonymous telemetry id differs by design; everything else must match.
+			expect({ ...queryOnly, telemetrySessionId: null }).toEqual({
+				...noCredentials,
+				telemetrySessionId: null,
+			})
+		})
+
+		it('uses the Authorization header when a key query param is also present', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+
+			await app.request(
+				new Request('http://localhost/mcp?key=query-key', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', Authorization: 'Bearer header-key' },
+					body: JSON.stringify(body),
+				}),
+				undefined,
+				env,
+			)
+
 			expect(mockCreateMcpServer).toHaveBeenCalledWith(
-				expect.objectContaining({ apiKey: 'query-key' }),
+				expect.objectContaining({ apiKey: 'header-key' }),
 			)
 		})
 
@@ -275,6 +302,32 @@ describe('MCP Routes', () => {
 			expect(mockCreateMcpServer).toHaveBeenCalledWith(
 				expect.objectContaining({ triggeringEventId: 4242 }),
 			)
+		})
+
+		it('threads a uuid X-Maskin-Session-Id into the MCP config as maskinSessionId', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			const sessionId = '2297f7f3-dd73-43cf-afbe-3aabd0711265'
+			await app.request(
+				jsonPostRequest('/mcp', body, { 'X-Maskin-Session-Id': sessionId }),
+				undefined,
+				env,
+			)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ maskinSessionId: sessionId }),
+			)
+		})
+
+		it('leaves maskinSessionId undefined when the header is missing or not a uuid', async () => {
+			for (const headers of [{}, { 'X-Maskin-Session-Id': 'not-a-uuid' }]) {
+				vi.clearAllMocks()
+				const app = await createApp()
+				const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+				await app.request(jsonPostRequest('/mcp', body, headers), undefined, env)
+				expect(mockCreateMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({ maskinSessionId: undefined }),
+				)
+			}
 		})
 
 		it('leaves triggeringEventId undefined when no header is set', async () => {

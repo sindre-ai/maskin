@@ -7,6 +7,7 @@ vi.mock('@/lib/api', () => ({
 			list: vi.fn(),
 			providers: vi.fn(),
 			disconnect: vi.fn(),
+			connect: vi.fn(),
 		},
 	},
 }))
@@ -15,7 +16,12 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-import { useDisconnectIntegration, useIntegrations, useProviders } from '@/hooks/use-integrations'
+import {
+	useConnectIntegration,
+	useDisconnectIntegration,
+	useIntegrations,
+	useProviders,
+} from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
@@ -96,6 +102,36 @@ describe('useIntegrations', () => {
 
 			await waitFor(() => expect(result.current.isError).toBe(true))
 			expect(result.current.error?.message).toBe('Failed to fetch')
+		})
+	})
+
+	describe('useConnectIntegration', () => {
+		it('sends install_new_org when asked to install on another org', async () => {
+			vi.mocked(api.integrations.connect).mockResolvedValue({ webhook_url: 'https://stub' })
+
+			const { result } = renderHook(() => useConnectIntegration('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({ provider: 'github', installNewOrg: true })
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.integrations.connect).toHaveBeenCalledWith('ws-1', 'github', {
+				install_new_org: true,
+			})
+		})
+
+		it('sends no body for a plain connect', async () => {
+			vi.mocked(api.integrations.connect).mockResolvedValue({ webhook_url: 'https://stub' })
+
+			const { result } = renderHook(() => useConnectIntegration('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({ provider: 'github' })
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.integrations.connect).toHaveBeenCalledWith('ws-1', 'github', undefined)
 		})
 	})
 

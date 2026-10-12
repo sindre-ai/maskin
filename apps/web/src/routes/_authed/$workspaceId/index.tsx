@@ -84,6 +84,11 @@ function ForYouFeed() {
 		() => new Map(),
 	)
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
+	// Cards hidden because the reader typed an answer, keyed to the
+	// `latest_event_id` they answered. Unlike `pendingKeys`, this hide ends on
+	// its own: a newer mention on the same thread (the agent answering) is
+	// activity the reader hasn't seen, so the card has to come back.
+	const [answeredAt, setAnsweredAt] = useState<Map<string, number>>(() => new Map())
 
 	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
 	// sentinel display-settings row — the same store the object-detail sidebar
@@ -154,9 +159,14 @@ function ForYouFeed() {
 	}, [items, sort])
 
 	const visibleRegular = useMemo(() => {
-		if (pendingKeys.size === 0) return sortedRegular
-		return sortedRegular.filter((item) => !pendingKeys.has(feedItemKey(item)))
-	}, [sortedRegular, pendingKeys])
+		if (pendingKeys.size === 0 && answeredAt.size === 0) return sortedRegular
+		return sortedRegular.filter((item) => {
+			const key = feedItemKey(item)
+			if (pendingKeys.has(key)) return false
+			const answered = answeredAt.get(key)
+			return answered === undefined || (item.latest_event_id ?? 0) > answered
+		})
+	}, [sortedRegular, pendingKeys, answeredAt])
 
 	const unreadRegular = useMemo(
 		() => visibleRegular.filter((item) => item.unread_count > 0),
@@ -330,10 +340,11 @@ function ForYouFeed() {
 	)
 
 	// Typing an answer settles the thread exactly as taking an option does, so
-	// it leaves the feed the same way: the card shows "Waiting on <agent>" until
-	// the next fetch drops it. The composer has already posted the comment by
-	// the time this fires — all that is left is the high-water mark, which is
-	// what the card was missing.
+	// the card has to leave the column the same way. The composer has already
+	// posted the comment by the time this fires, so the card is hidden
+	// optimistically — but only until the thread has a newer mention than the
+	// one answered (`answeredAt`), so the agent's answer to this reply still
+	// shows up live.
 	const handleReplied = useCallback(
 		(item: UnreadItem) => {
 			const key = feedItemKey(item)
@@ -344,16 +355,27 @@ function ForYouFeed() {
 				card_kind: classifyCardKind(item),
 				card_id: item.entity_id,
 			})
-			const forget = () =>
+			const forget = () => {
 				setRepliedKeys((prev) => {
 					const next = new Set(prev)
 					next.delete(key)
 					return next
 				})
+				setAnsweredAt((prev) => {
+					if (!prev.has(key)) return prev
+					const next = new Map(prev)
+					next.delete(key)
+					return next
+				})
+			}
 			// Same honesty as a taken option: an unmarkable thread comes back on
 			// the next fetch carrying the reader's own answer, so say so rather
-			// than implying it is settled.
-			if (!markItemRead(item, forget)) {
+			// than implying it is settled. Only hide the card when the mark-read
+			// was actually dispatched — otherwise `forget` on failure has
+			// nothing meaningful to un-hide.
+			if (markItemRead(item, forget)) {
+				setAnsweredAt((prev) => new Map(prev).set(key, item.latest_event_id ?? 0))
+			} else {
 				forget()
 				toast.warning('Reply sent, but the thread stayed unread.')
 			}

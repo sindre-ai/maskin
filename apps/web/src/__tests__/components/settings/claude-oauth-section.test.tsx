@@ -251,6 +251,63 @@ describe('Settings > Keys > Claude Subscriptions', () => {
 		expect(primary).not.toHaveTextContent('Unhealthy')
 	})
 
+	it('marks the last subscription unhealthy and shows the exhausted banner when it is dead too', async () => {
+		mockStatus.mockResolvedValue(
+			statusFixture(
+				[
+					{ slot: 'primary', failure_reason: 'quota_exhausted_5h' },
+					{ slot: 'backup', failure_reason: 'auth_failed' },
+				],
+				{ active_slot: 'backup' },
+			),
+		)
+
+		renderPage()
+
+		expect(await screen.findByTestId('exhausted-banner')).toHaveTextContent(
+			'Every Claude login is failing. Replace one in Settings > Keys.',
+		)
+		expect(screen.queryByTestId('failover-banner')).not.toBeInTheDocument()
+		const backup = screen.getByTestId('slot-backup')
+		expect(backup).toHaveTextContent('Unhealthy')
+		expect(backup).not.toHaveTextContent('Connected')
+		expect(backup).toHaveTextContent('In use')
+		expect(within(backup).getByRole('button', { name: 'Replace' })).toBeInTheDocument()
+		expect(screen.getByTestId('slot-primary')).toHaveTextContent('Unhealthy')
+	})
+
+	it('keeps the fallback banner when an earlier subscription is dead but the last one is serving', async () => {
+		mockStatus.mockResolvedValue(
+			statusFixture(
+				[
+					{ slot: 'primary', failure_reason: 'auth_failed' },
+					{ slot: 'backup', failure_reason: 'quota_exhausted_5h' },
+					{ slot: 'slot_3' },
+				],
+				{ active_slot: 'slot_3' },
+			),
+		)
+
+		renderPage()
+
+		expect(await screen.findByTestId('failover-banner')).toHaveTextContent('Running on fallback 3')
+		expect(screen.queryByTestId('exhausted-banner')).not.toBeInTheDocument()
+		expect(screen.getByTestId('slot-slot_3')).toHaveTextContent('Connected')
+	})
+
+	it('does not read a lone subscription as exhausted, since nothing stamps a one-slot chain', async () => {
+		mockStatus.mockResolvedValue(
+			statusFixture([{ slot: 'primary', failure_reason: 'auth_failed' }], {
+				active_slot: 'primary',
+			}),
+		)
+
+		renderPage()
+
+		expect(await screen.findByTestId('slot-primary')).toHaveTextContent('Connected')
+		expect(screen.queryByTestId('exhausted-banner')).not.toBeInTheDocument()
+	})
+
 	it('opens the paste flow defaulted to a new slot when adding another subscription', async () => {
 		const user = userEvent.setup()
 		mockStatus.mockResolvedValue(statusFixture([{ slot: 'primary' }, { slot: 'backup' }]))

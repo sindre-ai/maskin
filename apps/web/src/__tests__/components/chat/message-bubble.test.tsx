@@ -34,6 +34,14 @@ vi.mock('@/hooks/use-actors', async () => {
 	return { ...actual, useActors: () => ({ data: [] }) }
 })
 
+const mockUseFiles = vi.fn((_workspaceId: string, _params?: { ids?: string[] }) => ({
+	data: [] as unknown[],
+}))
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: (workspaceId: string, params?: { ids?: string[] }) => mockUseFiles(workspaceId, params),
+	useFile: () => ({ data: undefined }),
+}))
+
 import { MessageBubble } from '@/components/chat/message-bubble'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
@@ -131,6 +139,38 @@ describe('MessageBubble', () => {
 		)
 		expect(screen.getByText('Referenced')).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Retry window/ })).toBeInTheDocument()
+	})
+
+	// Regression: an attachment whose metadata omits `name` (older messages,
+	// MCP-posted messages) previously fell through to the hardcoded "Attachment"
+	// label. It must resolve against the file record instead — same reading as
+	// the right sidebar.
+	it('resolves an attached file name via useFiles when metadata.name is missing', () => {
+		mockUseFiles.mockReturnValueOnce({
+			data: [
+				{
+					id: 'file-1',
+					workspaceId: 'ws-1',
+					name: 'design.pdf',
+					mimeType: 'application/pdf',
+					sizeBytes: 12345,
+					storageKey: 'k',
+					createdBy: 'me',
+					createdAt: '2026-01-01T00:00:00Z',
+					updatedAt: '2026-01-01T00:00:00Z',
+				},
+			],
+		})
+		renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				metadata: { attachments: [{ file_id: 'file-1' }] },
+			}),
+		)
+		expect(screen.getByText('design.pdf')).toBeInTheDocument()
+		expect(screen.queryByText('Attachment')).not.toBeInTheDocument()
 	})
 
 	it('renders a system message as a hairline divider, not a pill', () => {

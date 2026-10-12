@@ -51,6 +51,8 @@ export class ApiError extends Error {
 	planCapContext?: PlanCapContext
 	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
 	retryAfterMs?: number
+	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
+	retryAfter?: number
 
 	constructor(
 		public status: number,
@@ -162,6 +164,8 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		err.code = code
 		err.planCapContext = planCapContext
 		err.retryAfterMs = retryAfterMs
+		const retryAfter = Number(res.headers.get('Retry-After'))
+		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
@@ -303,6 +307,29 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+	},
+
+	// Email invites. `preview` and `accept` are mounted outside the membership
+	// middleware (the invitee isn't a member yet), so neither passes a
+	// workspaceId: sending X-Workspace-Id on accept would trigger a membership
+	// check on an actor who isn't a member.
+	invites: {
+		create: (data: CreateInviteInput) =>
+			request<CreateInviteResponse>('/invites', { method: 'POST', body: data }),
+		list: (workspaceId: string) =>
+			request<PendingInviteListItem[]>(`/invites?workspaceId=${encodeURIComponent(workspaceId)}`),
+		resend: (id: string) =>
+			request<{ status: 'pending'; invite: InviteSummary }>(`/invites/${id}/resend`, {
+				method: 'POST',
+			}),
+		revoke: (id: string) => request<{ revoked: true }>(`/invites/${id}`, { method: 'DELETE' }),
+		preview: (token: string) =>
+			request<InvitePreview>(`/invites/preview?token=${encodeURIComponent(token)}`),
+		accept: (token: string, body?: AcceptInviteSignupInput) =>
+			request<AcceptInviteResponse>(`/invites/${encodeURIComponent(token)}/accept`, {
+				method: 'POST',
+				body: body ?? {},
+			}),
 	},
 
 	landingEvents: {
@@ -459,7 +486,7 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string },
+			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
 		) =>
 			request<{
 				install_url?: string
@@ -477,6 +504,21 @@ export const api = {
 				// The response carries the Set-Cookie that binds this browser to the
 				// OAuth `state`; without `include` it is dropped and the callback 400s.
 				credentials: 'include',
+			}),
+		/** "Connect with Maskin" from the Skjald app: approve it for this workspace and get the redirect that carries the one-time code back. */
+		skjaldAuthorize: (
+			workspaceId: string,
+			body: {
+				state: string
+				redirect_uri: string
+				code_challenge: string
+				code_challenge_method: 'S256'
+			},
+		) =>
+			request<{ redirect_url: string; workspace_name: string }>('/integrations/skjald/authorize', {
+				method: 'POST',
+				body,
+				workspaceId,
 			}),
 		resendDnsPrecheck: (workspaceId: string, domain: string) =>
 			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
@@ -1386,6 +1428,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {
@@ -1426,6 +1471,50 @@ export interface UpdateWorkspaceInput {
 	name?: string
 	settings?: Record<string, unknown>
 }
+
+export interface InviteSummary {
+	id: string
+	email: string
+	role: string
+	expiresAt: string
+}
+
+export interface PendingInviteListItem extends InviteSummary {
+	invitedByActorId: string
+	invitedByName: string
+	createdAt: string
+}
+
+export interface CreateInviteInput {
+	workspaceId: string
+	email: string
+	role: 'member' | 'viewer'
+}
+
+export type CreateInviteResponse =
+	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
+	| { status: 'pending'; invite: InviteSummary }
+
+export interface InvitePreview {
+	status: 'pending'
+	workspaceId: string
+	workspaceName: string
+	inviterName: string
+	inviteEmail: string
+	expiresAt: string
+}
+
+export interface AcceptInviteSignupInput {
+	email: string
+	password: string
+	name?: string
+}
+
+// New-signup accepts return the new actor (carrying its api_key); authenticated
+// accepts return only the ids.
+export type AcceptInviteResponse =
+	| { actor: ActorWithKey; workspaceId: string }
+	| { workspaceId: string; actorId: string }
 
 export interface MemberResponse {
 	actorId: string

@@ -209,11 +209,32 @@ describe('Relationships Routes', () => {
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
 			mockResults.select = [r1, r2]
 
-			const res = await app.request(jsonGet('/api/relationships'))
+			const res = await app.request(jsonGet('/api/relationships', { 'X-Workspace-Id': wsId }))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+		})
+
+		it('returns 400 when the X-Workspace-Id header is missing', async () => {
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.select = [buildRelationship()]
+
+			const res = await app.request(jsonGet('/api/relationships'))
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 and no edges when the caller is not a member of the workspace', async () => {
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [[]] // isWorkspaceMember: no row
+			mockResults.select = [buildRelationship()]
+
+			const res = await app.request(jsonGet('/api/relationships', { 'X-Workspace-Id': wsId }))
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body).not.toBeInstanceOf(Array)
 		})
 	})
 

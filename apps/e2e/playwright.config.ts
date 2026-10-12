@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { E2E_AGENT_SERVER_SECRET } from './src/helpers/api.helper'
 import { isArgosEnabled } from './src/helpers/argos.helper'
+import { E2E_MOCK_RESEND_PORT } from './src/helpers/mock-resend.helper'
 import {
 	E2E_POSTHOG_STUB_URL,
 	E2E_TELNYX_PUBLIC_KEY,
@@ -49,6 +50,13 @@ export default defineConfig({
 	],
 	webServer: [
 		{
+			// In-memory Resend stand-in; see scripts/mock-resend.mjs.
+			command: 'node scripts/mock-resend.mjs',
+			port: E2E_MOCK_RESEND_PORT,
+			reuseExistingServer: !process.env.CI,
+			env: { E2E_MOCK_RESEND_PORT: String(E2E_MOCK_RESEND_PORT) },
+		},
+		{
 			command: 'pnpm --filter @maskin/dev dev',
 			port: 3000,
 			reuseExistingServer: !process.env.CI,
@@ -61,6 +69,11 @@ export default defineConfig({
 			// applies when Playwright spawns the server: with
 			// reuseExistingServer (local runs against an already-up dev stack)
 			// the server keeps whatever secret it was started with.
+			// RESEND_* point packages/email's Resend SDK at the in-memory mock
+			// above, so invite mail can be read back by specs instead of sent.
+			// APP_URL is what the accept link is built from; with a Resend key set
+			// and no APP_URL the invite route refuses to send.
+			//
 			// TELNYX_PUBLIC_KEY is what the Telnyx webhook specs sign against; without
 			// it the route rejects every request with 401. The remaining TELNYX_* and
 			// VOICE_SMS_* values point the reducer's outbound calls at the stub REST
@@ -69,6 +82,10 @@ export default defineConfig({
 			// voice-posthog-events.spec.ts runs; the key is a throwaway, without it nothing is captured.
 			env: {
 				AGENT_SERVER_SECRET: E2E_AGENT_SERVER_SECRET,
+				RESEND_API_KEY: 're_e2e_mock',
+				RESEND_BASE_URL: `http://localhost:${E2E_MOCK_RESEND_PORT}`,
+				EMAIL_FROM: 'notifications@e2e.invalid',
+				APP_URL: 'http://localhost:5173',
 				TELNYX_PUBLIC_KEY: E2E_TELNYX_PUBLIC_KEY,
 				TELNYX_API_KEY: 'e2e-telnyx-key',
 				TELNYX_API_BASE_URL: E2E_TELNYX_STUB_URL,

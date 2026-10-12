@@ -25,7 +25,6 @@ const ROUTES: RouteSpec[] = [
 	{ label: 'loops index', path: (ctx) => `/${ctx.workspaceId}/loops` },
 	{ label: 'triggers index', path: (ctx) => `/${ctx.workspaceId}/triggers` },
 	{ label: 'marketplace index', path: (ctx) => `/${ctx.workspaceId}/marketplace` },
-	{ label: 'briefing', path: (ctx) => `/${ctx.workspaceId}/briefing` },
 	{ label: 'settings index', path: (ctx) => `/${ctx.workspaceId}/settings` },
 	{ label: 'settings integrations', path: (ctx) => `/${ctx.workspaceId}/settings/integrations` },
 	{ label: 'settings members', path: (ctx) => `/${ctx.workspaceId}/settings/members` },

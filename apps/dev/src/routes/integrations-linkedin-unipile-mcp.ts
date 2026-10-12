@@ -2,8 +2,14 @@ import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import {
+	CallToolRequestSchema,
+	ErrorCode,
+	ListToolsRequestSchema,
+	McpError,
+} from '@modelcontextprotocol/sdk/types.js'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
@@ -59,6 +65,24 @@ const DEPRECATED_AGGREGATE_TOOL_CALL_MESSAGE =
 
 const PROVIDER = 'linkedin-unipile'
 
+/**
+ * Wire codes for the per-identity route when it cannot serve the requested
+ * identity's tools. Both answer `tools/list` with a JSON-RPC error and
+ * `tools/call` with an `isError` result, so an agent sees a named failure
+ * rather than a connected server with zero tools.
+ */
+const LINKEDIN_UNAVAILABLE = 'LINKEDIN_UNAVAILABLE'
+const LINKEDIN_IDENTITY_NOT_FOUND = 'LINKEDIN_IDENTITY_NOT_FOUND'
+
+type RouteError = { code: string; message: string; retryable: boolean; validSlugs: string[] }
+
+type WorkspaceIdentities = {
+	instances: LinkedInMcpInstanceConfig[]
+	/** Active credentials whose registry slot is empty because enumeration failed. */
+	unavailableCredentials: number
+	activeCredentials: number
+}
+
 type Env = {
 	Variables: {
 		db: Database
@@ -71,7 +95,7 @@ const app = new Hono<Env>()
 async function resolveWorkspaceIdentities(
 	db: Database,
 	workspaceId: string,
-): Promise<LinkedInMcpInstanceConfig[]> {
+): Promise<WorkspaceIdentities> {
 	// P3-C · Filter on `status = 'active'` so a revoked row's still-registered
 	// fan-out tools disappear from `tools/list` on the very next request, even
 	// if the DELETE hook's `deregisterLinkedInMcpInstancesForIntegration` call
@@ -99,9 +123,66 @@ async function resolveWorkspaceIdentities(
 	// repopulation covers the common restart case; this covers a boot that
 	// raced a still-starting Unipile plus any credential whose connect-time
 	// enumeration failed and needs a passive retry.
-	await Promise.all(credentialRows.map(selfHealLinkedInMcpCredential))
+	const outcomes = await Promise.all(credentialRows.map(selfHealLinkedInMcpCredential))
 
-	return credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
+	return {
+		instances: credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id)),
+		unavailableCredentials: outcomes.filter((outcome) => outcome === 'unavailable').length,
+		activeCredentials: credentialRows.length,
+	}
+}
+
+/**
+ * Decide whether a request whose slug matched nothing is an error or the
+ * (unchanged) empty list. A workspace with no active credential is a
+ * disconnected or revoked identity (P3-C) and keeps the empty list. With an
+ * active credential present, an empty answer is never silent: either its
+ * enumeration failed (retryable) or the slug is wrong (valid slugs named).
+ */
+function routeErrorForUnmatchedSlug(
+	requestedSlug: string,
+	identities: WorkspaceIdentities,
+): RouteError | null {
+	const validSlugs = identities.instances.map((cfg) => instanceSlug(cfg))
+	if (identities.unavailableCredentials > 0) {
+		return {
+			code: LINKEDIN_UNAVAILABLE,
+			message: `LinkedIn identities could not be loaded for this workspace (${identities.unavailableCredentials} active credential(s) failed enumeration), so no tools are available for "${requestedSlug}" right now. Retry in about a minute.`,
+			retryable: true,
+			validSlugs,
+		}
+	}
+	if (identities.activeCredentials > 0) {
+		return {
+			code: LINKEDIN_IDENTITY_NOT_FOUND,
+			message: `No connected LinkedIn identity matches "${requestedSlug}". Valid instance slugs: ${validSlugs.length > 0 ? validSlugs.join(', ') : '(none)'}.`,
+			retryable: false,
+			validSlugs,
+		}
+	}
+	return null
+}
+
+/**
+ * Install tools/list + tools/call handlers that answer with the given error.
+ * Needed for the same SDK reason as the deprecated aggregate route: a server
+ * with zero registered tools never installs these handlers, so without this
+ * the client would see a bare `-32601 Method not found`.
+ */
+function serveRouteError(mcpServer: McpServer, err: RouteError): void {
+	const text = `${err.code}: ${err.message} (retryable: ${err.retryable})`
+	mcpServer.server.registerCapabilities({ tools: { listChanged: false } })
+	mcpServer.server.setRequestHandler(ListToolsRequestSchema, async () => {
+		throw new McpError(ErrorCode.InternalError, text, {
+			code: err.code,
+			retryable: err.retryable,
+			validSlugs: err.validSlugs,
+		})
+	})
+	mcpServer.server.setRequestHandler(CallToolRequestSchema, async () => ({
+		isError: true,
+		content: [{ type: 'text', text }],
+	}))
 }
 
 /**
@@ -133,16 +214,19 @@ app.post('/:instanceSlug', async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
-	const allInstances = await resolveWorkspaceIdentities(db, workspaceId)
+	const identities = await resolveWorkspaceIdentities(db, workspaceId)
 	// Match on the composed instance slug (`linkedin-{acc}-{identity}`) so the
-	// URL is stable and human-readable. A slug that no longer resolves — the
-	// identity was un-admined, the credential was disconnected — returns an
-	// empty tool set rather than a 404; the empty list is the correct signal
-	// for the agent to notice the identity is gone, and matches the
-	// `github-*` MCP surface's shape.
-	const scoped = allInstances.filter((cfg) => instanceSlug(cfg) === requestedSlug)
+	// URL is stable and human-readable. A slug that resolves to nothing while
+	// the workspace still has an active credential is an explicit error (see
+	// routeErrorForUnmatchedSlug). Only a workspace with no active credential
+	// — the credential was disconnected or revoked — keeps the empty tool set,
+	// the signal for the agent to notice the identity is gone.
+	const scoped = identities.instances.filter((cfg) => instanceSlug(cfg) === requestedSlug)
+	const routeError =
+		scoped.length === 0 ? routeErrorForUnmatchedSlug(requestedSlug, identities) : null
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, scoped)
+	if (routeError) serveRouteError(mcpServer, routeError)
 
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
@@ -165,6 +249,7 @@ app.post('/:instanceSlug', async (c) => {
 		method: (body as { method?: string })?.method,
 		instanceSlug: requestedSlug,
 		matched: scoped.length,
+		errorCode: routeError?.code,
 	})
 
 	await mcpServer.connect(transport)

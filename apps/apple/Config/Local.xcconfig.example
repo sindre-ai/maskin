@@ -1,0 +1,8 @@
+// Copy to Local.xcconfig (gitignored) and fill in. Optional: CI and unsigned builds don't need it.
+DEVELOPMENT_TEAM = YOURTEAMID
+
+// Uncomment to install on a device without Push / Associated Domains on the App ID:
+// MASKIN_IOS_ENTITLEMENTS = Apps/Maskin/Maskin-nopush.entitlements
+
+// Web app on another origin than the API (e.g. the Vite dev server):
+// MASKIN_WEB_BASE_URL = http://localhost:5173

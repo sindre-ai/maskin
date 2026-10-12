@@ -17,6 +17,10 @@
   --r-panel-lg: 15px;
   --r-panel-xl: 16px;
   --r-hero: 18px;
+  --r-card-2xl: 20px;   /* v4 list cards and pills (was MaskinRadiusLarge.card) */
+  --r-tile: 22px;       /* v4 grouped lists, pinned tiles (was MaskinRadiusLarge.tile) */
+  --r-brief: 24px;      /* v4 decision and briefing cards */
+  --r-composer: 26px;   /* v4 floating composer */
   --r-pill: 99px;       /* full pill — toast, unread-badge pill */
   --r-round: 999px;     /* fully round — dots, prompt chips */
   --r-avatar: 50%;      /* round avatar (default) */
