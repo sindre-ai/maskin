@@ -53,7 +53,10 @@ const ROLE_OPTIONS = ['admin', 'member'] as const
 
 function MembersPage() {
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
+	const { data: allMembers, isLoading } = useWorkspaceMembers(workspaceId)
+	// Connected integrations hold a 'system' member row so they can act in the
+	// workspace; this list is people and agents only.
+	const members = allMembers?.filter((member) => member.type !== 'system')
 	const { data: pendingInvites } = useWorkspaceInvites(workspaceId)
 	const resendInvite = useResendInvite(workspaceId)
 	const revokeInvite = useRevokeInvite(workspaceId)

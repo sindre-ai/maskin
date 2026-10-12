@@ -593,6 +593,50 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		expect(onPermanentFailure).not.toHaveBeenCalled()
 	})
 
+	// Regression: a worker that lost claimSlot to a slow first dispatch returned
+	// permanent_failure, and the queue overwrote the now-running session to
+	// failed. settleSession only refuses four terminal statuses, so the queue
+	// has to refuse every status that is not pending, queued or starting.
+	it.each(['running', 'paused', 'timeout', 'snapshotting', 'waiting_for_input'])(
+		'leaves a %s session alone when dispatch reports a permanent failure',
+		async (status) => {
+			const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+			const session = aSessionRow({ status })
+			const { db, dispatchRows, events } = makeFakeDb({
+				dispatchRows: [row],
+				sessionRows: [session],
+			})
+			const onPermanentFailure = vi.fn()
+			const queue = makeQueue(
+				db,
+				async () => ({
+					kind: 'permanent_failure',
+					error: 'Session s-1 not in dispatchable state',
+				}),
+				{ onPermanentFailure },
+			)
+
+			await queue.tick()
+
+			expect(session.status).toBe(status)
+			expect(session.result).toBeNull()
+			expect(events).toHaveLength(0)
+			expect(onPermanentFailure).not.toHaveBeenCalled()
+			expect(dispatchRows[0]?.status).toBe('failed')
+		},
+	)
+
+	it('leaves a running session alone when dispatch exhausts its retries', async () => {
+		const row = aDispatchRow({ attempt: 2, maxAttempts: 3 })
+		const session = aSessionRow({ status: 'running' })
+		const { db } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const queue = makeQueue(db, async () => ({ kind: 'transient_failure', error: 'boom' }))
+
+		await queue.tick()
+
+		expect(session.status).toBe('running')
+	})
+
 	// Regression: the UPDATE and the `session_failed` insert used to share one
 	// try/catch, so an insert failure returned null and was read by
 	// handlePermanentFailure as "already terminal — nothing to notify about".

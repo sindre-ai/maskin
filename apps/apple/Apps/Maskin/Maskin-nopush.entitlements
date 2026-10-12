@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Device-test set for teams whose App ID lacks Push Notifications / Associated Domains:
+	     keychain group only. Select with MASKIN_IOS_ENTITLEMENTS (Config/Local.xcconfig).
+	     Push registration and universal links do not work in this configuration. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)io.maskin.app</string>
+	</array>
+	<!-- Offline share queue: the share extension parks shares here, the app sends them. Needs the
+	     App Groups capability (group.io.maskin.app) on io.maskin.app and io.maskin.app.share. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.io.maskin.app</string>
+	</array>
+</dict>
+</plist>

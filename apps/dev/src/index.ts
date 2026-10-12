@@ -426,6 +426,12 @@ ${mcpSetup}
 	// canonical "install_completed" moment for the open-source launch bet.
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
+	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
+	// no Docker socket exists; the two warm calls below could only fail there.
+	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
+		logger.warn('Docker unavailable; skipping agent-base and browser-sidecar image warm-up')
+		return
+	}
 	sessionManager.warmAgentBaseImage().catch((err) => {
 		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
 			error: err instanceof Error ? err.message : String(err),

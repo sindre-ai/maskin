@@ -16,6 +16,7 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
+import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
@@ -23,7 +24,6 @@ import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/
 import { Route as AuthedWorkspaceIdSearchRouteImport } from './routes/_authed/$workspaceId/search'
 import { Route as AuthedWorkspaceIdProfileRouteImport } from './routes/_authed/$workspaceId/profile'
 import { Route as AuthedWorkspaceIdChatsRouteImport } from './routes/_authed/$workspaceId/chats'
-import { Route as AuthedWorkspaceIdBriefingRouteImport } from './routes/_authed/$workspaceId/briefing'
 import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
 import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_authed/$workspaceId/settings/index'
 import { Route as AuthedWorkspaceIdObjectsIndexRouteImport } from './routes/_authed/$workspaceId/objects/index'
@@ -87,6 +87,11 @@ const PrototypesAboveTitleHeaderRoute =
     path: '/prototypes/above-title-header',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ConnectSkjaldRoute = ConnectSkjaldRouteImport.update({
+  id: '/connect/skjald',
+  path: '/connect/skjald',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthedWorkspacesRoute = AuthedWorkspacesRouteImport.update({
   id: '/workspaces',
   path: '/workspaces',
@@ -124,12 +129,6 @@ const AuthedWorkspaceIdChatsRoute = AuthedWorkspaceIdChatsRouteImport.update({
   path: '/chats',
   getParentRoute: () => AuthedWorkspaceIdRoute,
 } as any)
-const AuthedWorkspaceIdBriefingRoute =
-  AuthedWorkspaceIdBriefingRouteImport.update({
-    id: '/briefing',
-    path: '/briefing',
-    getParentRoute: () => AuthedWorkspaceIdRoute,
-  } as any)
 const AuthedWorkspaceIdTriggersIndexRoute =
   AuthedWorkspaceIdTriggersIndexRouteImport.update({
     id: '/triggers/',
@@ -300,9 +299,9 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
+  '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
-  '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/chats': typeof AuthedWorkspaceIdChatsRouteWithChildren
   '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
@@ -341,10 +340,10 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof AuthedWorkspacesRoute
+  '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/': typeof AuthedIndexRoute
-  '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
@@ -384,10 +383,10 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
+  '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/_authed/': typeof AuthedIndexRoute
-  '/_authed/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/_authed/$workspaceId/chats': typeof AuthedWorkspaceIdChatsRouteWithChildren
   '/_authed/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/_authed/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
@@ -430,9 +429,9 @@ export interface FileRouteTypes {
     | '/signup'
     | '/$workspaceId'
     | '/workspaces'
+    | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
-    | '/$workspaceId/briefing'
     | '/$workspaceId/chats'
     | '/$workspaceId/profile'
     | '/$workspaceId/search'
@@ -471,10 +470,10 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/workspaces'
+    | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/'
-    | '/$workspaceId/briefing'
     | '/$workspaceId/profile'
     | '/$workspaceId/search'
     | '/$workspaceId'
@@ -513,10 +512,10 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
+    | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/_authed/'
-    | '/_authed/$workspaceId/briefing'
     | '/_authed/$workspaceId/chats'
     | '/_authed/$workspaceId/profile'
     | '/_authed/$workspaceId/search'
@@ -556,6 +555,7 @@ export interface RootRouteChildren {
   InviteRoute: typeof InviteRoute
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  ConnectSkjaldRoute: typeof ConnectSkjaldRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
 }
@@ -611,6 +611,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrototypesAboveTitleHeaderRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/connect/skjald': {
+      id: '/connect/skjald'
+      path: '/connect/skjald'
+      fullPath: '/connect/skjald'
+      preLoaderRoute: typeof ConnectSkjaldRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authed/workspaces': {
       id: '/_authed/workspaces'
       path: '/workspaces'
@@ -658,13 +665,6 @@ declare module '@tanstack/react-router' {
       path: '/chats'
       fullPath: '/$workspaceId/chats'
       preLoaderRoute: typeof AuthedWorkspaceIdChatsRouteImport
-      parentRoute: typeof AuthedWorkspaceIdRoute
-    }
-    '/_authed/$workspaceId/briefing': {
-      id: '/_authed/$workspaceId/briefing'
-      path: '/briefing'
-      fullPath: '/$workspaceId/briefing'
-      preLoaderRoute: typeof AuthedWorkspaceIdBriefingRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/triggers/': {
@@ -920,7 +920,6 @@ const AuthedWorkspaceIdSettingsRouteWithChildren =
   )
 
 interface AuthedWorkspaceIdRouteChildren {
-  AuthedWorkspaceIdBriefingRoute: typeof AuthedWorkspaceIdBriefingRoute
   AuthedWorkspaceIdChatsRoute: typeof AuthedWorkspaceIdChatsRouteWithChildren
   AuthedWorkspaceIdProfileRoute: typeof AuthedWorkspaceIdProfileRoute
   AuthedWorkspaceIdSearchRoute: typeof AuthedWorkspaceIdSearchRoute
@@ -942,7 +941,6 @@ interface AuthedWorkspaceIdRouteChildren {
 }
 
 const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
-  AuthedWorkspaceIdBriefingRoute: AuthedWorkspaceIdBriefingRoute,
   AuthedWorkspaceIdChatsRoute: AuthedWorkspaceIdChatsRouteWithChildren,
   AuthedWorkspaceIdProfileRoute: AuthedWorkspaceIdProfileRoute,
   AuthedWorkspaceIdSearchRoute: AuthedWorkspaceIdSearchRoute,
@@ -990,6 +988,7 @@ const rootRouteChildren: RootRouteChildren = {
   InviteRoute: InviteRoute,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  ConnectSkjaldRoute: ConnectSkjaldRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,
 }
