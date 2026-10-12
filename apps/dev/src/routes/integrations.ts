@@ -38,6 +38,7 @@ import {
 	persistRecoveredInstallationId,
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
+import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
@@ -3286,6 +3287,21 @@ const pendingAsyncWebhookWork = new Set<Promise<unknown>>()
 export async function __flushAsyncWebhookProcessingForTests(): Promise<void> {
 	await Promise.all(pendingAsyncWebhookWork)
 }
+
+// ── Google Drive channel notifications ──────────────────────────────────
+// Registered ahead of the '/:provider' catch-all on purpose. Drive pushes carry an
+// empty body (the catch-all rejects that as invalid JSON) and identify the
+// delivery by X-Goog-Channel-ID, not by the Google account email the catch-all
+// joins on (two workspaces can connect the same account). Token check, channel
+// join, dedup and fan-out live in the provider's webhook-handler.
+webhookApp.post('/google-drive', async (c) => {
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+	const result = await processDriveWebhook(c.get('db'), headers)
+	return c.json(result.body, result.status)
+})
 
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
