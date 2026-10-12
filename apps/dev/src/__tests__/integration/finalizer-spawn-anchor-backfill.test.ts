@@ -55,7 +55,7 @@ describe('Interactive turn finalizer — spawn-anchor backfill (Integration)', (
 	}
 
 	/**
-	 * Spawn a sub-agent row directly (mirrors run_agent's write shape).
+	 * Spawn a sub-agent row directly (mirrors create_session's write shape).
 	 * `source_session_id` is set, `spawned_by_message_id` is NULL.
 	 */
 	async function spawnSubAgent(primarySessionId: string): Promise<{

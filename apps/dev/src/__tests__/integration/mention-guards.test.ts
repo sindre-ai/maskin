@@ -45,7 +45,6 @@ function createRecordingSessionManager(started: StartedSession[]) {
 					status: 'completed',
 					spawnedBySessionId: params.spawnedBySessionId ?? null,
 					initiatedFromObjectId: params.initiatedFromObjectId ?? null,
-					initiatedFromObjectType: params.initiatedFromObjectType ?? null,
 				},
 			)
 			started.push({

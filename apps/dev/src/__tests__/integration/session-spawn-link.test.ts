@@ -189,7 +189,7 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 			expect(flagOf((await spawn(theirs.id, { notify_on_complete: true })).row)).toBeUndefined()
 		})
 
-		describe('PATCH (run_agent sets it when its wait times out)', () => {
+		describe('PATCH (create_session wait:true sets it when its wait times out)', () => {
 			let objectId: string
 
 			beforeEach(async () => {
