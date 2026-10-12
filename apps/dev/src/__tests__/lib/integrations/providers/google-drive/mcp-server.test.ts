@@ -50,10 +50,11 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('google-drive MCP server: tool surface and Zod contracts', () => {
-	it('registers exactly google_drive__search_files and google_drive__list_folder', async () => {
+	it('registers exactly the search, list and download tools', async () => {
 		const client = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
+			'google_drive__get_file_bytes',
 			'google_drive__list_folder',
 			'google_drive__search_files',
 		])

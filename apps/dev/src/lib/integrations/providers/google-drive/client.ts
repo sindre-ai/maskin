@@ -73,7 +73,7 @@ export function createDefaultDriveClient(
 	}
 }
 
-async function requestWithRetry(
+export async function requestWithRetry(
 	fetchImpl: typeof fetch,
 	sleepImpl: (ms: number) => Promise<void>,
 	url: string,
@@ -121,7 +121,7 @@ async function requestWithRetry(
 	throw new DriveError({ code: 'PROVIDER_ERROR', message: `Exhausted retries on ${operation}.` })
 }
 
-async function parseJson<T>(res: Response): Promise<T> {
+export async function parseJson<T>(res: Response): Promise<T> {
 	const text = await res.text()
 	if (!text) return {} as T
 	try {
@@ -149,6 +149,6 @@ function readRetryAfterMs(header: string | null): number | undefined {
 	return undefined
 }
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms))
 }
