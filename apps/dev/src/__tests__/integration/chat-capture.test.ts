@@ -581,7 +581,11 @@ describe('manual capture (the ! prefix)', () => {
 			expect.objectContaining({ provider: 'cloudflare', trigger: 'detected' }),
 		)
 		// The body schema is strict: a client-sent trigger is refused, not honoured.
-		const forged = await capture(app, s.ws.id, manualBody(s.session.id, { trigger: 'detected', displayName: 'Other' }))
+		const forged = await capture(
+			app,
+			s.ws.id,
+			manualBody(s.session.id, { trigger: 'detected', displayName: 'Other' }),
+		)
 		expect(forged.status).toBe(400)
 	})
 
@@ -603,7 +607,10 @@ describe('credential names', () => {
 		validBody(sessionId, { detectedProvider: 'manual', displayName })
 
 	async function writtenFor(workspaceId: string) {
-		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, workspaceId))
+		const rows = await db
+			.select()
+			.from(integrations)
+			.where(eq(integrations.workspaceId, workspaceId))
 		const log = await db
 			.select()
 			.from(credentialAccessLog)
@@ -652,15 +659,22 @@ describe('credential names', () => {
 		const app = appFor(s.human)
 		const first = await capture(app, s.ws.id, named(s.session.id, 'Coolify'))
 		const { integrationId } = (await first.json()) as { integrationId: string }
-		await db.update(integrations).set({ status: 'active' }).where(eq(integrations.id, integrationId))
+		await db
+			.update(integrations)
+			.set({ status: 'active' })
+			.where(eq(integrations.id, integrationId))
 		expect((await capture(app, s.ws.id, named(s.session.id, 'COOLIFY'))).status).toBe(409)
 	})
 
 	it('is per workspace', async () => {
 		const a = await setup()
 		const b = await setup()
-		expect((await capture(appFor(a.human), a.ws.id, named(a.session.id, 'Coolify'))).status).toBe(201)
-		expect((await capture(appFor(b.human), b.ws.id, named(b.session.id, 'Coolify'))).status).toBe(201)
+		expect((await capture(appFor(a.human), a.ws.id, named(a.session.id, 'Coolify'))).status).toBe(
+			201,
+		)
+		expect((await capture(appFor(b.human), b.ws.id, named(b.session.id, 'Coolify'))).status).toBe(
+			201,
+		)
 	})
 
 	it('holds across both entry points: the paste form and chat', async () => {
@@ -703,15 +717,18 @@ describe('credential names', () => {
 		['sk_live_' + 'c'.repeat(24)],
 		['xoxb-' + '1'.repeat(24)],
 		['sk-' + 'e'.repeat(44)],
-	])('rejects a secret-shaped name with 400 NAME_LOOKS_LIKE_SECRET and does not echo it', async (name) => {
-		const s = await setup()
-		const res = await capture(appFor(s.human), s.ws.id, named(s.session.id, name))
-		expect(res.status).toBe(400)
-		const text = await res.text()
-		expect(JSON.parse(text).error.code).toBe('NAME_LOOKS_LIKE_SECRET')
-		expect(text).not.toContain(name)
-		expect(await writtenFor(s.ws.id)).toEqual({ rows: 0, log: 0, events: 0 })
-	})
+	])(
+		'rejects a secret-shaped name with 400 NAME_LOOKS_LIKE_SECRET and does not echo it',
+		async (name) => {
+			const s = await setup()
+			const res = await capture(appFor(s.human), s.ws.id, named(s.session.id, name))
+			expect(res.status).toBe(400)
+			const text = await res.text()
+			expect(JSON.parse(text).error.code).toBe('NAME_LOOKS_LIKE_SECRET')
+			expect(text).not.toContain(name)
+			expect(await writtenFor(s.ws.id)).toEqual({ rows: 0, log: 0, events: 0 })
+		},
+	)
 
 	it.each([
 		['square brackets', 'bad [name]'],

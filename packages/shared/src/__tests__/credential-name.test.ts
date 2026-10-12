@@ -60,7 +60,13 @@ describe('checkCredentialName', () => {
 	})
 
 	it('gives every problem a message', () => {
-		for (const problem of ['empty', 'too_long', 'bad_characters', 'no_slug', 'looks_like_secret'] as const) {
+		for (const problem of [
+			'empty',
+			'too_long',
+			'bad_characters',
+			'no_slug',
+			'looks_like_secret',
+		] as const) {
 			expect(credentialNameMessage(problem).length).toBeGreaterThan(0)
 		}
 	})
@@ -94,7 +100,9 @@ describe('manualRedactionMarker', () => {
 				const problem = checkCredentialName(name)
 				if (problem === null) {
 					expect(scanForSecrets(manualRedactionMarker(name), { highOnly: true })).toEqual([])
-					expect(scanForSecrets(redactionMarker(`${prefix}x`, name), { highOnly: true })).toEqual([])
+					expect(scanForSecrets(redactionMarker(`${prefix}x`, name), { highOnly: true })).toEqual(
+						[],
+					)
 				} else {
 					expect(problem).toBe('looks_like_secret')
 				}
