@@ -67,6 +67,26 @@ public final class ChatComposerModel {
 	public private(set) var attachments: [ChatAttachmentDraft] = []
 	/// A rule the last action ran into ("That file is over 10 MB."), shown once then cleared.
 	public var notice: String?
+	/// The message being replied to or edited, shown as a strip inside the bar (7-Chat §1).
+	public private(set) var quote: Quote?
+
+	/// "Replying to Forge" / "Editing message" with the quoted text on one line.
+	public struct Quote: Equatable, Sendable {
+		public enum Kind: Equatable, Sendable { case reply, edit }
+		public var kind: Kind
+		/// The author's name for a reply; empty for an edit.
+		public var name: String
+		public var text: String
+		/// The server id of the message being edited.
+		public var messageID: String?
+
+		public var label: String {
+			switch kind {
+			case .reply: "Replying to \(name)"
+			case .edit: "Editing message"
+			}
+		}
+	}
 
 	public struct SelectionRequest: Equatable, Sendable {
 		public var id: Int
@@ -96,6 +116,9 @@ public final class ChatComposerModel {
 	}
 	public var isOverLength: Bool { trimmedText.count > ChatLimits.maxMessageLength }
 
+	/// Anything to send: words or an attachment. Decides whether the last slot shows Send or the mic.
+	public var hasContent: Bool { !trimmedText.isEmpty || !attachments.isEmpty }
+
 	/// Text is required (the API rejects an empty message); every attachment must have settled.
 	public var canSend: Bool {
 		!trimmedText.isEmpty && !isOverLength && !isUploading && !hasFailedAttachment
@@ -111,17 +134,30 @@ public final class ChatComposerModel {
 
 	/// The message to send, and the composer cleared. Nil when `canSend` is false.
 	public func take() -> (text: String, metadata: ChatSendMetadata?)? {
-		guard canSend else { return nil }
+		guard canSend, quote?.kind != .edit else { return nil }
 		let metadata = ChatSendMetadata(
 			attachments: attachments.compactMap(\.ref),
 			mentions: Array(
 				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)))
-		let result = (EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
+		// A reply carries its quote in the message text, the form the web renders as a block quote.
+		let quoted = quote.flatMap { $0.kind == .reply ? ChatQuote.make(author: $0.name, content: $0.text) : nil } ?? ""
+		let result = (quoted + EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
+		clear()
+		return result
+	}
+
+	/// The edit to save, and the composer cleared. Nil unless an edit is open and has text.
+	public func takeEdit() -> (messageID: String, text: String)? {
+		guard let quote, quote.kind == .edit, let id = quote.messageID, !trimmedText.isEmpty,
+			!isOverLength
+		else { return nil }
+		let result = (id, trimmedText)
 		clear()
 		return result
 	}
 
 	public func clear() {
+		quote = nil
 		text = ""
 		selection = nil
 		selectionRequest = nil
@@ -180,6 +216,30 @@ public final class ChatComposerModel {
 		let end = new.count
 		setText(new, selecting: end..<end)
 		focusRequest += 1
+	}
+
+	/// Reply to a message: a strip above the field names whom, and the quote joins the message on send.
+	public func beginReply(author: String, content: String) {
+		let line = content.split(separator: "\n", omittingEmptySubsequences: true).first
+			.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+		guard !line.isEmpty else { return }
+		quote = Quote(kind: .reply, name: author, text: content, messageID: nil)
+		focusRequest += 1
+	}
+
+	/// Edit your latest message: its words go into the field under an "Editing message" strip.
+	public func beginEdit(messageID: String, text original: String) {
+		quote = Quote(kind: .edit, name: "", text: original, messageID: messageID)
+		let end = original.count
+		setText(original, selecting: end..<end)
+		focusRequest += 1
+	}
+
+	/// Close the reply or edit strip. Cancelling an edit puts back nothing: the field is emptied.
+	public func cancelQuote() {
+		guard let current = quote else { return }
+		quote = nil
+		if current.kind == .edit { setText("", selecting: 0..<0) }
 	}
 
 	// MARK: Mentions

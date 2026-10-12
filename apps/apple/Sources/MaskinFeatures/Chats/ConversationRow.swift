@@ -11,6 +11,8 @@ struct ConversationRow: View {
 	let currentActorID: String?
 	/// "Now" for the time label; fixed in snapshot tests.
 	var now = Date()
+	/// Unsent text in this conversation: shown as "Draft: ..." in place of the last message.
+	var draft: String?
 
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s7) {
@@ -36,6 +38,9 @@ struct ConversationRow: View {
 							// fg55 in the handoff's names: the quiet end of the ink scale.
 							.foregroundStyle(MaskinColor.inkPlaceholder)
 					}
+				}
+				if let members = groupLine {
+					Text(members).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(1)
 				}
 				HStack(alignment: .top, spacing: MaskinSpace.s4) {
 					previewLine
@@ -70,8 +75,20 @@ struct ConversationRow: View {
 		return text
 	}
 
-	/// "**Relay** · Done, the PR is up"; just the name when the server sent no snippet.
+	/// A group chat (three or more members, you included): "3 people · Ida, Forge" under the title.
+	private var groupLine: String? {
+		let rest = others
+		guard rest.count >= 2 else { return nil }
+		let names = rest.map { $0.name.split(separator: " ").first.map(String.init) ?? $0.name }
+		return "\(rest.count + 1) people · " + names.joined(separator: ", ")
+	}
+
+	/// "**Relay** · Done, the PR is up"; just the name when the server sent no snippet. A draft
+	/// replaces it: "Draft: ...".
 	private var previewLine: Text {
+		if let draft = draft.map(ChatPreviewText.plain), !draft.isEmpty {
+			return Text("\(Text("Draft:").fontWeight(.semibold).foregroundStyle(MaskinColor.sigInk)) \(draft)")
+		}
 		guard let previewText else { return Text(previewName) }
 		return Text("\(Text(previewName).fontWeight(.semibold)) · \(previewText)")
 	}

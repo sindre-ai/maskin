@@ -37,6 +37,23 @@ struct GroupHeaderPill: View {
 	}
 }
 
+/// Up to four overlapping 32pt avatars on the right of a group chat's nav bar; opens People.
+struct NavAvatarStack: View {
+	let participants: [ChatParticipant]
+	let selfID: String
+
+	var body: some View {
+		HStack(spacing: -MaskinSpace.s5) {
+			ForEach(GroupChatSummary.avatarParticipants(of: participants, selfID: selfID)) { person in
+				ActorAvatar(
+					name: person.name, kind: person.kind == .agent ? .agent : .human, size: MaskinSpace.s14,
+					seed: person.id)
+			}
+		}
+		.accessibilityHidden(true)
+	}
+}
+
 /// Who is in the conversation, with a role line, and adding more. An agent's role is its own
 /// description; people show as "Human" until member roles are available here.
 struct PeopleSheet: View {

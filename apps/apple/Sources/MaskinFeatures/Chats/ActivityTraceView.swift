@@ -27,7 +27,7 @@ struct ActivityStepRow: View {
 	var emphasized = false
 
 	/// The kind column: wide enough for "THOUGHT".
-	static let labelWidth: CGFloat = MaskinSpace.s14 + MaskinSpace.s11
+	static let labelWidth: CGFloat = MaskinSpace.s14 + MaskinSpace.s11 + MaskinSpace.s5
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
@@ -85,7 +85,8 @@ struct ActivitySteps<Content: View>: View {
 }
 
 /// The agent's working row: avatar, name, pulsing dots and what it is doing, an elapsed time on
-/// the right, then the live steps with the current one in full ink, and Stop. Without step data
+/// the right, then the live steps with the current one in full ink. There is no Stop here: the
+/// composer's Stop button ends the activity (7-Chat §3). Without step data
 /// (older server, first poll) it degrades to the session's one-line activity.
 struct LiveActivityView: View {
 	let agent: ChatParticipant
@@ -94,7 +95,6 @@ struct LiveActivityView: View {
 	var turn: ActivityTurn?
 	/// Where the elapsed timer starts when the turn doesn't say.
 	var startedAt: Date?
-	var onStop: (() -> Void)?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// Steps shown while live: the newest few, so the card doesn't grow without bound.
@@ -121,16 +121,6 @@ struct LiveActivityView: View {
 				} else if let fallbackActivity, !fallbackActivity.isEmpty {
 					Text(fallbackActivity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
 				}
-				if let onStop {
-					Button(action: onStop) {
-						Text("Stop").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-							.padding(.trailing, MaskinSpace.s7)
-							.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
-							.contentShape(Rectangle())
-					}
-					.buttonStyle(.maskinPressed)
-					.accessibilityLabel("Stop \(agent.name)")
-				}
 			}
 			.padding(.leading, Self.stepIndent)
 		}
@@ -150,32 +140,13 @@ struct LiveActivityView: View {
 				working: true)
 			Text(agent.name).maskinText(.subhead).fontWeight(.bold).foregroundStyle(MaskinColor.ink)
 				.lineLimit(1)
-			PulsingDots()
+			WorkingBars()
 			Text(verb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			Spacer(minLength: 0)
 			if let start = turn?.startedAt ?? startedAt { ElapsedLabel(since: start) }
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel("\(agent.name) \(verb)")
-	}
-}
-
-/// Three small dots that pulse in turn (still under Reduce Motion).
-struct PulsingDots: View {
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-	var body: some View {
-		HStack(spacing: MaskinSpace.s1 + MaskinSpace.s1) {
-			ForEach(0..<3, id: \.self) { i in
-				Circle().fill(MaskinColor.ink5).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
-					.phaseAnimator([0.3, 1.0], trigger: reduceMotion) { view, phase in
-						view.opacity(reduceMotion ? 0.7 : phase)
-					} animation: { _ in
-						.easeInOut(duration: 0.6).delay(Double(i) * 0.2)
-					}
-			}
-		}
-		.accessibilityHidden(true)
 	}
 }
 

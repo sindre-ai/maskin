@@ -20,7 +20,7 @@ struct ThreadSearchBar: View {
 				.maskinText(.body)
 				.focused($focused)
 				.submitLabel(.search)
-				.onSubmit { onStep(1) }
+				.onSubmit { onStep(-1) }  // Return steps to the next older match
 				.autocorrectionDisabled()
 			if !text.isEmpty {
 				Text(summary).maskinText(.caption).foregroundStyle(MaskinColor.ink4)

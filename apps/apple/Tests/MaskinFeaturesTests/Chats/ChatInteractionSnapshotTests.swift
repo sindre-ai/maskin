@@ -185,8 +185,8 @@ struct ChatInteractionSnapshotTests {
 	func agentActivity(dark: Bool) throws {
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-				WorkingIndicator(agent: relay, activity: "Reading the Q4 pipeline brief", onStop: {})
-				WorkingIndicator(agent: forge)
+				TypingBubble(agent: relay)
+				TypingBubble(agent: forge)
 				ResumeBanner(agent: forge, onResume: {})
 			}
 			try render(view, width: width, dark: dark, name: "agent-activity")

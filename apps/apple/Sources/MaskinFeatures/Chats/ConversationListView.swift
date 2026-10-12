@@ -13,20 +13,28 @@ struct ConversationListView: View {
 	let currentActorID: String?
 	var isLive = true
 	let onNewChat: () -> Void
+	/// Where the dragged order of the pinned tiles is kept (per user); nil keeps the server order.
+	var pinnedOrder: PinnedOrderStore?
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
+	/// The row whose "More" was swiped open: its menu shows as a dialog.
+	@State private var moreFor: ConversationSummary?
+	@State private var savedPinnedOrder: [String] = []
+
+	/// The filter chips are off until the Display menu turns them on.
+	@AppStorage(ChatsDisplayMenu.chipsKey) private var showsChips = false
 
 	/// People with several conversations whose rows are open, keyed by section and person.
 	@State private var expanded: Set<String> = []
 
-	@AppStorage(ChatsDisplayMenu.groupByKey) private var storedGroupBy = ConversationGroupBy.person.rawValue
+	@AppStorage(ChatsDisplayMenu.groupByKey) private var storedGroupBy = ConversationGroupBy.time.rawValue
 
 	var body: some View {
 		let sections = store.sections(query: search)
 		// Selecting works on single conversations, so it shows the one-list layout.
 		let team =
-			store.groupBy == .person && !picking.isActive
+			store.groupBy != .recent && !picking.isActive
 			? store.teamSections(query: search, currentActorID: currentActorID) : nil
 		let allIDs = sections.pinned.map(\.id) + sections.groups.flatMap { $0.items.map(\.id) }
 		// While selecting, a tap toggles the row instead of opening it.
@@ -46,19 +54,20 @@ struct ConversationListView: View {
 					.listRowBackground(Color.clear)
 					.listRowSeparator(.hidden)
 			}
+			if showsChips {
+				ConversationChipRow(selected: Binding(get: { store.chip }, set: { store.chip = $0 }), unread: store.conversations.filter(\.isUnread).count)
+					.listRowInsets(EdgeInsets())
+					.listRowBackground(Color.clear)
+					.listRowSeparator(.hidden)
+			}
 			if let team {
 				teamContent(team, groups: sections.groups, selection: rowSelection)
 			} else {
 				pinnedTiles(sections.pinned, selection: rowSelection)
 				flatGroups(sections.groups)
 			}
-			if search.isEmpty, !store.conversations.isEmpty || store.scope == .archived {
-				Button(store.scope == .archived ? "Back to chats" : "Archived") {
-					store.scope = store.scope == .archived ? .active : .archived
-				}
-				.buttonStyle(.maskinPressed)
-				.foregroundStyle(MaskinColor.ink4)
-				.listRowBackground(Color.clear)
+			if search.isEmpty, store.chip == .all, !store.conversations.isEmpty || store.scope == .archived {
+				archivedRow
 			}
 		}
 		#if os(iOS)
@@ -76,7 +85,39 @@ struct ConversationListView: View {
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
 		.chatSearch(store: store, text: $search)
-		.onAppear { store.groupBy = ConversationGroupBy(rawValue: storedGroupBy) ?? .person }
+		.onAppear {
+			store.groupBy = ConversationGroupBy(rawValue: storedGroupBy) ?? .time
+			store.currentActorID = currentActorID
+			savedPinnedOrder = pinnedOrder?.ids ?? []
+		}
+		// Turning the chips off also clears any filter they set.
+		.onChange(of: showsChips) { _, on in if !on { store.chip = .all } }
+		.confirmationDialog(
+			moreFor.map { ChatPreviewText.plain($0.title) } ?? "", isPresented: Binding(get: { moreFor != nil }, set: { if !$0 { moreFor = nil } }),
+			titleVisibility: .visible, presenting: moreFor
+		) { conversation in
+			menu(for: conversation)
+		}
+	}
+
+	/// "Archived" at the bottom of the list: tapping swaps the list for the archived chats.
+	private var archivedRow: some View {
+		Button {
+			store.scope = store.scope == .archived ? .active : .archived
+		} label: {
+			HStack(spacing: MaskinSpace.s5) {
+				Image(systemName: "archivebox").foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
+				Text(store.scope == .archived ? "Back to chats" : "Archived")
+					.maskinText(.body).fontWeight(.semibold).foregroundStyle(MaskinColor.ink2)
+				Spacer(minLength: 0)
+				Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+					.foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
+			}
+			.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s14 - MaskinSpace.s11)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.listRowBackground(MaskinSurface.card)
 	}
 
 	@ViewBuilder
@@ -89,20 +130,31 @@ struct ConversationListView: View {
 				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:
-			if isEmpty {
-				if search.isEmpty {
-					EmptyState(
-						symbol: "bubble.left.and.bubble.right",
-						title: store.scope == .archived ? "Nothing archived" : "A quiet inbox",
-						message: store.scope == .archived ? nil : "Start a chat with a teammate or an agent."
-					) {
-						if store.scope == .active {
-							Button("New chat", action: onNewChat).buttonStyle(.primaryAction)
-						}
-					}
-				} else {
-					ContentUnavailableView.search(text: search)
-				}
+			if isEmpty { emptyState }
+		}
+	}
+
+	/// Nothing to show: a quiet inbox, no results, all caught up, or a filter with nothing in it.
+	@ViewBuilder
+	private var emptyState: some View {
+		if !search.isEmpty {
+			EmptyState(symbol: "magnifyingglass", title: "No results for “\(search)”")
+		} else if store.scope == .archived {
+			EmptyState(symbol: "archivebox", title: "Nothing archived")
+		} else if store.chip == .unread {
+			EmptyState(symbol: "checkmark.circle", title: "You're all caught up") {
+				Button("Show all") { store.chip = .all }.buttonStyle(.primaryAction)
+			}
+		} else if store.chip != .all {
+			EmptyState(symbol: "bubble.left.and.bubble.right", title: "No \(store.chip.title.lowercased()) here yet") {
+				Button("Show all") { store.chip = .all }.buttonStyle(.primaryAction)
+			}
+		} else {
+			EmptyState(
+				symbol: "bubble.left.and.bubble.right", title: "Nothing here yet",
+				message: "Start a chat with a teammate or an agent."
+			) {
+				Button("New conversation", action: onNewChat).buttonStyle(.primaryAction)
 			}
 		}
 	}
@@ -113,9 +165,15 @@ struct ConversationListView: View {
 		Group {
 			if !pinned.isEmpty {
 				PinnedTiles(
-					conversations: pinned, currentActorID: currentActorID, selection: selection,
+					conversations: PinnedOrder.apply(savedPinnedOrder, to: pinned), currentActorID: currentActorID, selection: selection,
 					picking: picking.isActive ? picking : nil,
-					onUnpin: { id in Task { await store.setPinned(id, false) } }
+					onUnpin: { id in Task { await store.setPinned(id, false) } },
+					onSwap: { moved, target in
+						let current = PinnedOrder.apply(savedPinnedOrder, to: pinned).map(\.id)
+						savedPinnedOrder = PinnedOrder.swap(current, moving: moved, onto: target)
+						pinnedOrder?.save(savedPinnedOrder)
+						MaskinHaptics.play(.selection)
+					}
 				)
 				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				.listRowBackground(Color.clear)
@@ -135,13 +193,15 @@ struct ConversationListView: View {
 							SelectionCheckbox(isPicked: picking.contains(conversation.id))
 								.transition(.move(edge: .leading).combined(with: .opacity))
 						}
-						ConversationRow(conversation: conversation, currentActorID: currentActorID)
+						ConversationRow(
+							conversation: conversation, currentActorID: currentActorID,
+							draft: ChatDraftStore.text(for: conversation.id))
 					}
 					.selectionRowAccessibility(
 						isActive: picking.isActive, isPicked: picking.contains(conversation.id))
 					.tag(conversation.id)
 					.rowChrome()
-					.rowActions(for: conversation, store: store, enabled: !picking.isActive)
+					.rowActions(for: conversation, store: store, enabled: !picking.isActive, onMore: { moreFor = $0 })
 					.contextMenu { if !picking.isActive { menu(for: conversation) } }
 					.onAppear { loadMoreIfLast(conversation.id) }
 				}
@@ -170,7 +230,17 @@ struct ConversationListView: View {
 				}
 			}
 		}
-		flatGroups(groups, showCounts: true)
+		if store.groupBy == .person {
+			if !team.people.isEmpty {
+				Section {
+					personRows(team.people, section: "people")
+				} header: {
+					TeamSectionHeader(label: "People", count: team.people.count)
+				}
+			}
+		} else {
+			flatGroups(groups, showCounts: true)
+		}
 	}
 
 	@ViewBuilder
@@ -179,23 +249,28 @@ struct ConversationListView: View {
 			let key = "\(section)-\(person.id)"
 			let isOpen = expanded.contains(key)
 			if person.hasSeveral {
-				Button {
-					withAnimation(.snappy) {
-						if isOpen { expanded.remove(key) } else { expanded.insert(key) }
-					}
-				} label: {
-					HStack(spacing: MaskinSpace.s4) {
-						ConversationRow(conversation: person.rowSummary, currentActorID: currentActorID)
+				// Tapping the row opens the latest conversation; the chevron (44 x 36) expands the rest.
+				HStack(spacing: MaskinSpace.s1) {
+					ConversationRow(
+						conversation: person.rowSummary, currentActorID: currentActorID,
+						draft: ChatDraftStore.text(for: person.latest.id))
+					Button {
+						MaskinHaptics.play(.selection)
+						withAnimation(.snappy) {
+							if isOpen { expanded.remove(key) } else { expanded.insert(key) }
+						}
+					} label: {
 						Image(systemName: "chevron.right")
 							.font(.footnote.weight(.semibold))
 							.foregroundStyle(MaskinColor.ink5)
 							.rotationEffect(.degrees(isOpen ? 90 : 0))
-							.accessibilityHidden(true)
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.s14 + MaskinSpace.s2)
+							.contentShape(Rectangle())
 					}
-					.contentShape(Rectangle())
+					.buttonStyle(.borderless)
+					.accessibilityLabel(isOpen ? "Collapse conversations" : "Show \(person.conversations.count) conversations")
 				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityHint("\(person.conversations.count) conversations. \(isOpen ? "Collapse" : "Expand")")
+				.tag(person.latest.id)
 				.rowChrome()
 				.rowActions(archiving: person.conversations.map(\.id), store: store)
 				.onAppear { loadMoreIfLast(person.conversations.map(\.id)) }
@@ -204,7 +279,7 @@ struct ConversationListView: View {
 						TeamConversationRow(conversation: conversation)
 							.tag(conversation.id)
 							.rowChrome()
-							.rowActions(for: conversation, store: store, enabled: true)
+							.rowActions(for: conversation, store: store, enabled: true, onMore: { moreFor = $0 })
 							.contextMenu { menu(for: conversation) }
 					}
 					Button(action: onNewChat) {
@@ -219,10 +294,12 @@ struct ConversationListView: View {
 					.rowChrome()
 				}
 			} else {
-				ConversationRow(conversation: person.rowSummary, currentActorID: currentActorID)
+				ConversationRow(
+					conversation: person.rowSummary, currentActorID: currentActorID,
+					draft: ChatDraftStore.text(for: person.latest.id))
 					.tag(person.latest.id)
 					.rowChrome()
-					.rowActions(for: person.latest, store: store, enabled: true)
+					.rowActions(for: person.latest, store: store, enabled: true, onMore: { moreFor = $0 })
 					.contextMenu { menu(for: person.latest) }
 					.onAppear { loadMoreIfLast(person.latest.id) }
 			}
@@ -279,8 +356,14 @@ struct ConversationListView: View {
 		Button(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin") {
 			Task { await store.setPinned(conversation.id, !conversation.pinned) }
 		}
-		Button("Mark as unread", systemImage: "envelope.badge") {
-			Task { await store.markUnread(conversation.id) }
+		if conversation.isUnread {
+			Button("Mark as read", systemImage: "envelope.open") {
+				Task { await store.markRead(conversation.id) }
+			}
+		} else {
+			Button("Mark as unread", systemImage: "envelope.badge") {
+				Task { await store.markUnread(conversation.id) }
+			}
 		}
 		Button("Select", systemImage: "checkmark.circle") { picking.enter(selecting: conversation.id) }
 		Button(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox") {
@@ -349,6 +432,8 @@ struct PinnedTiles: View {
 	/// Non-nil while the list is in selection mode: tiles show their checkmark.
 	var picking: SelectionModel?
 	let onUnpin: (String) -> Void
+	/// A tile dropped on another: they trade places (the order is kept per user).
+	var onSwap: ((_ moved: String, _ target: String) -> Void)?
 
 	private let columns = Array(
 		repeating: GridItem(.flexible(), spacing: MaskinSpace.s5, alignment: .top), count: 3)
@@ -371,6 +456,12 @@ struct PinnedTiles: View {
 					if picking == nil {
 						Button("Unpin", systemImage: "pin.slash") { onUnpin(conversation.id) }
 					}
+				}
+				.draggable(conversation.id)
+				.dropDestination(for: String.self) { moved, _ in
+					guard let moved = moved.first, let onSwap else { return false }
+					onSwap(moved, conversation.id)
+					return true
 				}
 			}
 		}
@@ -423,9 +514,13 @@ struct PinnedTile: View {
 struct ChatsDisplayMenu: View {
 	static let groupByKey = "chats.groupBy"
 	let store: ConversationsStore
-	@AppStorage(Self.groupByKey) private var storedGroupBy = ConversationGroupBy.person.rawValue
+	/// Whether the All · Unread · People · Agents · Groups chips show above the list (off by default).
+	static let chipsKey = "chats.showFilterChips"
+	@AppStorage(Self.groupByKey) private var storedGroupBy = ConversationGroupBy.time.rawValue
+	@AppStorage(Self.chipsKey) private var showsChips = false
 
 	var body: some View {
+		Toggle(isOn: $showsChips) { Label("Filter chips", systemImage: "line.3.horizontal.decrease") }
 		Picker(
 			"Conversations",
 			selection: Binding(
@@ -451,22 +546,50 @@ extension View {
 					trailing: MaskinSpace.s9))
 	}
 
-	/// Swipe right pins, swipe left archives one conversation.
-	fileprivate func rowActions(for conversation: ConversationSummary, store: ConversationsStore, enabled: Bool)
-		-> some View
-	{
+	/// Swipe right toggles read / unread (past the threshold it commits); swipe left reveals Archive,
+	/// More and Pin, Archive at the edge.
+	fileprivate func rowActions(
+		for conversation: ConversationSummary, store: ConversationsStore, enabled: Bool,
+		onMore: @escaping (ConversationSummary) -> Void
+	) -> some View {
 		swipeActions(edge: .leading, allowsFullSwipe: true) {
 			if enabled {
+				Button {
+					MaskinHaptics.play(.selection)
+					Task {
+						if conversation.isUnread { await store.markRead(conversation.id) } else { await store.markUnread(conversation.id) }
+					}
+				} label: {
+					Label(conversation.isUnread ? "Read" : "Unread", systemImage: conversation.isUnread ? "envelope.open" : "envelope.badge")
+				}
+				.tint(MaskinColor.sig)
+			}
+		}
+		.swipeActions(edge: .trailing, allowsFullSwipe: false) {
+			if enabled {
+				Button {
+					MaskinHaptics.play(.selection)
+					Task { await store.setArchived([conversation.id], !conversation.archived) }
+				} label: {
+					Label(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
+				}
+				.tint(MaskinColor.ink)
+				Button {
+					MaskinHaptics.play(.selection)
+					onMore(conversation)
+				} label: {
+					Label("More", systemImage: "ellipsis")
+				}
+				.tint(MaskinColor.ruleStrong)
 				Button {
 					MaskinHaptics.play(.selection)
 					Task { await store.setPinned(conversation.id, !conversation.pinned) }
 				} label: {
 					Label(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin")
 				}
-				.tint(MaskinColor.ink)
+				.tint(MaskinColor.ink4)
 			}
 		}
-		.rowActions(archiving: enabled ? [conversation.id] : [], archived: conversation.archived, store: store)
 	}
 
 	/// Swipe left archives (or unarchives) these conversations.
@@ -544,5 +667,37 @@ struct TeamConversationRow: View {
 		.contentShape(Rectangle())
 		.maskinHover()
 		.accessibilityElement(children: .combine)
+	}
+}
+
+/// The filter chips above the Team list: All · Unread n · People · Agents · Groups. 34pt pills,
+/// filled `inverse` when selected.
+struct ConversationChipRow: View {
+	@Binding var selected: ConversationChip
+	let unread: Int
+
+	var body: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s4) {
+				ForEach(ConversationChip.allCases) { chip in
+					let on = chip == selected
+					Button {
+						MaskinHaptics.play(.selection)
+						selected = chip
+					} label: {
+						Text(chip == .unread && unread > 0 ? "Unread \(unread)" : chip.title)
+							.maskinText(.subhead).fontWeight(.semibold)
+							.foregroundStyle(on ? MaskinSurface.onInverse : MaskinColor.ink2)
+							.padding(.horizontal, MaskinSpace.s8)
+							.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s1)
+							.background(on ? MaskinSurface.inverse : MaskinSurface.fill, in: Capsule())
+							.contentShape(Capsule())
+					}
+					.buttonStyle(.maskinPressed(.shrink))
+					.accessibilityAddTraits(on ? .isSelected : [])
+				}
+			}
+			.padding(.horizontal, MaskinSpace.s9)
+		}
 	}
 }

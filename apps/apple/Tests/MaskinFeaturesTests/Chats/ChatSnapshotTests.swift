@@ -315,7 +315,7 @@ struct ChatSnapshotTests {
 				HandoffRow(session: handoff)
 				HandoffRow(session: done)
 				HandoffRow(session: failed)
-				LiveActivityView(agent: relay, turn: turn, startedAt: base.addingTimeInterval(-42), onStop: {})
+				LiveActivityView(agent: relay, turn: turn, startedAt: base.addingTimeInterval(-42))
 				FinishedTraceView(turn: ActivityTurn(sessionID: "s3", messageID: 3, status: .failed, result: ActivityResult(text: "x", isError: true), steps: [ActivityStep(id: "9", kind: .error, label: "Credit balance too low", status: .failed)]))
 			}
 			.padding(MaskinSpace.s9)

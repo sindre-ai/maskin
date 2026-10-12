@@ -25,7 +25,13 @@ struct ChatThreadView: View {
 	@State private var isAtBottom = true
 	/// Messages that arrived while the reader was scrolled up; the jump pill says how many.
 	@State private var unseenCount = 0
-	@State private var editing: ChatMessage?
+	/// Set when the reader taps the jump button; the thread scrolls to its newest message.
+	@State private var jumpRequest = 0
+	/// More than 420pt above the newest message (iOS 18+ measures it): shows the jump button and
+	/// stops auto-scrolling for new messages.
+	@State private var isFarFromBottom = false
+	/// The message whose quick replies were already used; they come back on the next question.
+	@State private var quickRepliesUsedFor: String?
 	/// False from opening the thread until it has settled at the newest message. The thread is
 	/// drawn but hidden behind a skeleton meanwhile, so the reader never watches it hunt for its
 	/// position (the first layout estimates row heights and corrects them as rows render).
@@ -34,7 +40,6 @@ struct ChatThreadView: View {
 	/// the newest message: a cached page that is topped up by a fresh one, or rows that settle
 	/// their height late, must not leave the reader somewhere above what the agent just said.
 	@State private var followingOpen = true
-	@State private var stopTarget: ChatAgentSession?
 	@State private var renaming = false
 	@State private var newTitle = ""
 	@State private var searching = false
@@ -54,11 +59,18 @@ struct ChatThreadView: View {
 	}
 
 	private static let bottomID = "thread-bottom"
+	/// Within this distance of the newest message the thread follows new ones; further, it offers a jump.
+	private static let nearBottomDistance: CGFloat = 420
+	/// A search match lands about 170pt below the top.
+	private static let matchAnchor = UnitPoint(x: 0.5, y: 0.2)
+	/// The NEW divider lands about 150pt below the top when a chat opens on unread messages.
+	private static let unreadAnchor = UnitPoint(x: 0.5, y: 0.17)
 	private static let maxReadableWidth: CGFloat = 760
 
 	var body: some View {
 		observedContent
-			.background(MaskinSurface.card)
+			// The grouped canvas, so agent bubbles (a `card` fill) read against it.
+			.background(MaskinSurface.grouped)
 			.safeAreaInset(edge: .bottom, spacing: 0) { composerBar }
 			.navigationTitle(store.title)
 			#if os(iOS)
@@ -67,21 +79,18 @@ struct ChatThreadView: View {
 			.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 			#endif
 			.toolbar {
-				// The other person's avatar tile in the centre of a direct chat; a group keeps its pill below.
-				ToolbarItem(placement: .principal) {
-					if let counterpart {
-						ActorAvatar(
-							name: counterpart.name, kind: counterpart.kind == .agent ? .agent : .human,
-							size: MaskinSpace.s14, seed: counterpart.id
-						)
-						.accessibilityLabel(counterpart.name)
-					} else {
-						Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
-					}
-				}
+				// A centred title (the lead's name, or up to three members) with a status line under it.
+				ToolbarItem(placement: .principal) { navTitle }
 				// The menu first, then Live (when an agent is in the chat) at the far right, in one
 				// group so they share a capsule and iOS keeps both in the bar instead of a "More" overflow.
 				ToolbarItemGroup(placement: .primaryAction) {
+					if isGroup {
+						Button(action: onShowParticipants) {
+							NavAvatarStack(participants: store.participants, selfID: store.currentActorID)
+						}
+						.buttonStyle(.plain)
+						.accessibilityLabel("People in this chat")
+					}
 					Menu {
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
@@ -161,14 +170,6 @@ struct ChatThreadView: View {
 				Button("Cancel", role: .cancel) {}
 				Button("Save") { Task { await store.rename(to: newTitle) } }
 			}
-			.confirmationDialog(
-				"Stop this agent?", isPresented: Binding(get: { stopTarget != nil }, set: { if !$0 { stopTarget = nil } }),
-				titleVisibility: .visible, presenting: stopTarget
-			) { session in
-				Button("Stop", role: .destructive) { Task { await store.stopSession(session.id) } }
-			} message: { _ in
-				Text("It will stop what it's doing. You can ask it to continue afterwards.")
-			}
 	}
 
 	/// The web link to this conversation, for Copy link.
@@ -192,48 +193,76 @@ struct ChatThreadView: View {
 		return others.count == 1 ? others.first : nil
 	}
 
-	/// "WITH IDA" in mono above the title. An agent's opens its page; a person has no page to
-	/// open yet. (A "THREAD IN {FLOW}" link needs a flow on the conversation, which the API lacks.)
+	private var isGroup: Bool { store.participants.filter { $0.id != store.currentActorID }.count > 1 }
+
+	/// The nav bar's name: the people you are talking to, up to three; the topic when it is just you.
+	private var navName: String {
+		let others = store.participants.filter { $0.id != store.currentActorID }
+		guard !others.isEmpty else { return store.title }
+		let names = others.prefix(3).map(\.name).joined(separator: ", ")
+		return others.count > 3 ? names + " +\(others.count - 3)" : names
+	}
+
+	/// What the agents are doing: working on a task (equalizer bars), or composing a reply. Nothing
+	/// otherwise: a direct chat has no label.
+	private var navStatus: (text: String, working: Bool)? {
+		if store.liveSessions().contains(where: { $0.status == .running }) { return ("working", true) }
+		if !store.workingAgents().isEmpty { return (isGroup ? "replying…" : "typing…", false) }
+		return nil
+	}
+
 	@ViewBuilder
-	private var contextLink: some View {
-		if let counterpart {
-			if counterpart.kind == .agent, let runtime {
-				Button {
-					runtime.openAgent(counterpart.id)
-				} label: {
-					MonoLabel("With \(counterpart.name)", color: MaskinColor.sigInk)
-				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityLabel("With \(counterpart.name), open agent")
-			} else {
-				MonoLabel("With \(counterpart.name)")
-			}
+	private var navTitle: some View {
+		if let agent = counterpartAgent, let runtime {
+			Button { runtime.openAgent(agent.id) } label: { navTitleLabel }
+				.buttonStyle(.plain)
+				.accessibilityHint("Opens \(agent.name)'s profile")
+		} else {
+			navTitleLabel
 		}
 	}
 
-	/// The large title: a mono context link over the conversation's name. The back button and ···
-	/// menu stay in the bar; the agent's page opens from the avatar or name on its messages.
-	private var titleView: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			contextLink
-			Text(store.title)
-				.font(MaskinTypeface.threadTitle)
+	/// The other side of a direct chat, when it is an agent: tapping the title opens its profile.
+	private var counterpartAgent: ChatParticipant? {
+		let others = store.participants.filter { $0.id != store.currentActorID }
+		return others.count == 1 && others[0].kind == .agent ? others[0] : nil
+	}
+
+	private var navTitleLabel: some View {
+		VStack(spacing: 0) {
+			Text(navName)
+				.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: MaskinFontWeight.bold))
 				.foregroundStyle(MaskinColor.ink)
-				.lineLimit(2)
-				.accessibilityAddTraits(.isHeader)
+				.lineLimit(1)
+			if let status = navStatus {
+				HStack(spacing: MaskinSpace.s2) {
+					if status.working { WorkingBars().scaleEffect(0.6).frame(width: MaskinSpace.s8, height: MaskinSpace.s7) }
+					Text(status.text).maskinText(.caption).foregroundStyle(MaskinColor.sigInk)
+				}
+				.transition(.opacity)
+			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.horizontal, MaskinSpace.s9)
-		.padding(.top, MaskinSpace.s3)
+		.animation(MaskinMotion.quick, value: navStatus?.text)
+		.accessibilityElement(children: .combine)
+		.accessibilityAddTraits(.isHeader)
+	}
+
+	/// The topic as a 24pt heading at the top of the scrolling content, so it scrolls away while the
+	/// name stays in the nav bar.
+	private var titleView: some View {
+		Text(store.title)
+			.font(MaskinTypeface.threadTitle)
+			.foregroundStyle(MaskinColor.ink)
+			.lineLimit(2)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.bottom, MaskinSpace.s3)
+			.accessibilityAddTraits(.isHeader)
 	}
 
 	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
 	/// type-checks quickly).
 	private var observedContent: some View {
-		VStack(spacing: 0) {
-			titleView
-			content
-		}
+		content
 			.onChange(of: searchText) { _, _ in
 				refreshMatches()
 				matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1
@@ -251,37 +280,27 @@ struct ChatThreadView: View {
 			.onChange(of: failedCount) { old, new in
 				if new > old { MaskinHaptics.play(.error) }
 			}
-			.sheet(item: $editing) { message in
-				EditMessageSheet(original: message.content) { text in
-					Task { await store.edit(message.id, to: text) }
-				}
-			}
 	}
 
 	@ViewBuilder
 	private var content: some View {
 		switch store.phase {
 		case .idle, .loading:
-			ThreadSkeleton()
+			// A skeleton only if loading takes longer than 300ms; before that the card stays blank.
+			DelayedSkeleton()
 		case .failed(let message):
 			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't open this chat", message: message) {
 				Button("Try again") { Task { await store.load() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:
 			if store.messages.isEmpty {
-				EmptyState(
-					symbol: "bubble.left.and.text.bubble.right", title: "Say hello",
-					message: "Messages here reach everyone in the conversation, including agents.")
+				Text(emptyHint)
+					.maskinText(.body).foregroundStyle(MaskinColor.ink4)
+					.multilineTextAlignment(.center)
+					.padding(.horizontal, MaskinSpace.s13 + MaskinSpace.s9)
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
 			} else {
 				VStack(spacing: 0) {
-					if store.participants.filter({ $0.id != store.currentActorID }).count > 1 {
-						GroupHeaderPill(
-							participants: store.participants, selfID: store.currentActorID, action: onShowParticipants
-						)
-						.padding(.top, MaskinSpace.s3)
-						.padding(.horizontal, MaskinSpace.s9)
-						.frame(maxWidth: .infinity, alignment: .leading)
-					}
 					if let problem = store.syncProblem {
 						StaleThreadBanner(problem: problem) { Task { await store.refresh() } }
 							.padding(.horizontal, MaskinSpace.s9)
@@ -308,16 +327,22 @@ struct ChatThreadView: View {
 		}
 	}
 
+	/// "Ask Forge anything. Type @ to bring someone else in, or + to attach a file."
+	private var emptyHint: String {
+		let name = store.participants.first { $0.id != store.currentActorID }?.name ?? store.title
+		return "Ask \(name) anything. Type @ to bring someone else in, or + to attach a file."
+	}
+
 	/// The thread's rows. Short threads in a plain stack (see `ThreadRendering`; its day headers
 	/// scroll with the text, only a lazy stack can pin them), long ones in a lazy stack that pins them.
 	@ViewBuilder
 	private func threadRows(_ proxy: ScrollViewProxy) -> some View {
 		if ThreadRendering.usesLazyStack(rowCount: store.messages.count) {
-			LazyVStack(alignment: .leading, spacing: MaskinSpace.s5, pinnedViews: [.sectionHeaders]) {
+			LazyVStack(alignment: .leading, spacing: MaskinSpace.s9, pinnedViews: [.sectionHeaders]) {
 				threadContent(proxy, lazy: true)
 			}
 		} else {
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 				threadContent(proxy, lazy: false)
 			}
 		}
@@ -333,9 +358,13 @@ struct ChatThreadView: View {
 				// a jump to the old boundary, leaving the newest messages below the fold.
 				.onAppear { if !followingOpen { loadEarlier(proxy) } }
 		}
+		if !store.hasEarlier { titleView }
 		ThreadTranscript(
-			store: store, lazy: lazy, onStop: { stopTarget = $0 }, onEdit: { editing = $0 },
-			onQuote: { composer.quote(author: $0.actorName, content: $0.content) }, matchIDs: matchSet,
+			store: store, lazy: lazy,
+			onEdit: { message in
+				composer.beginEdit(messageID: message.id, text: message.content)
+			},
+			onQuote: { composer.beginReply(author: $0.actorName, content: $0.content) }, matchIDs: matchSet,
 			currentMatchID: currentMatchID)
 		Color.clear.frame(height: 1).id(Self.bottomID)
 			.onAppear { if !usesGeometryTracking { reachedBottom() } }
@@ -368,13 +397,15 @@ struct ChatThreadView: View {
 			.trackingBottom { atBottom in
 				if atBottom { reachedBottom() } else { isAtBottom = false }
 			}
+			.trackingBottom(within: Self.nearBottomDistance) { near in isFarFromBottom = !near }
+			.onChange(of: jumpRequest) { _, _ in scrollToBottom(proxy) }
 			.refreshable { await store.refresh() }
 			.scrollDismissesKeyboard(.interactively)
 			.onChange(of: store.messages.last?.id) { _, _ in
 				// Follow new messages only while the reader is at the bottom (or just sent one);
 				// otherwise leave them where they are and offer a jump.
 				switch ThreadScrollPolicy.onNewestChanged(
-					followingOpen: followingOpen, isAtBottom: isAtBottom,
+					followingOpen: followingOpen, isAtBottom: isNearBottom,
 					newestIsMine: store.messages.last?.actorID == store.currentActorID)
 				{
 				case .jump: jumpToBottom(proxy)
@@ -382,33 +413,39 @@ struct ChatThreadView: View {
 				case .countUnseen: unseenCount += 1
 				}
 			}
-			.overlay(alignment: .bottom) {
-				if !isAtBottom {
-					Button {
-						scrollToBottom(proxy)
-					} label: {
-						Label(Self.pillTitle(unseen: unseenCount), systemImage: "arrow.down")
-							.maskinText(.subhead)
-							.padding(.horizontal, MaskinSpace.s8)
-							.padding(.vertical, MaskinSpace.s4)
-							.foregroundStyle(MaskinColor.ink)
-							.maskinGlassCapsule(interactive: true)
-					}
-					.buttonStyle(.maskinPressed(.shrink))
-					.padding(.bottom, MaskinSpace.s5)
-					.transition(.opacity.combined(with: .scale(scale: 0.9)))
-				}
-			}
-			.animation(MaskinMotion.standard, value: isAtBottom)
 			.onChange(of: currentMatchID) { _, id in
 				guard let id else { return }
-				withAnimation(MaskinMotion.standard) { proxy.scrollTo(id, anchor: .center) }
+				withAnimation(MaskinMotion.standard) { proxy.scrollTo(id, anchor: Self.matchAnchor) }
 			}
 		}
 	}
 
+	/// Newer messages are within reach: new ones are followed. Before iOS 18 only "at the bottom" is known.
+	private var isNearBottom: Bool { usesGeometryTracking ? !isFarFromBottom : isAtBottom }
+
+	private var quickReplies: [String] {
+		let last = store.messages.last { !$0.isSystem }
+		guard last?.id != quickRepliesUsedFor else { return [] }
+		return QuickReplies.options(
+			after: last, currentActorID: store.currentActorID,
+			composerIsEmpty: !composer.hasContent, someoneIsTyping: !store.workingAgents().isEmpty)
+	}
+
+	/// The jump button, quick replies, search and composer, stacked so the first two ride up as the
+	/// composer grows (7-Chat §4).
 	private var composerBar: some View {
-		VStack(spacing: MaskinSpace.s2) {
+		VStack(alignment: .trailing, spacing: MaskinSpace.s4) {
+			if !isNearBottom {
+				JumpToLatestButton(unseen: unseenCount) { jumpRequest += 1 }
+					.transition(.opacity.combined(with: .scale(scale: 0.9)))
+			}
+			if !searching, !quickReplies.isEmpty {
+				QuickReplyChips(options: quickReplies) { reply in
+					quickRepliesUsedFor = store.messages.last { !$0.isSystem }?.id
+					if store.send(reply) != nil { MaskinHaptics.play(.light) }
+				}
+				.transition(.opacity)
+			}
 			if searching {
 				ThreadSearchBar(
 					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
@@ -420,6 +457,8 @@ struct ChatThreadView: View {
 			}
 			composerField
 		}
+		.animation(MaskinMotion.quick, value: isNearBottom)
+		.animation(MaskinMotion.quick, value: quickReplies)
 		.frame(maxWidth: Self.maxReadableWidth)
 		.padding(.horizontal, MaskinSpace.s7)
 		.padding(.bottom, MaskinSpace.s3)
@@ -455,7 +494,7 @@ struct ChatThreadView: View {
 
 	private var composerField: some View {
 		ChatComposer(
-			model: composer, placeholder: "Message \(store.title)",
+			model: composer, placeholder: placeholder,
 			suggestions: { query in
 				MentionTrigger.candidates(
 					query: query, participants: store.participants, workspace: store.workspaceActors,
@@ -464,11 +503,38 @@ struct ChatThreadView: View {
 			inConversation: Set(store.participants.map(\.id)), onSend: send,
 			agentName: store.participants.first { $0.kind == .agent }?.name ?? "Agent",
 			replies: Array(store.messages.suffix(12)),
-			roster: runtime?.mentionRoster()?.roster
+			roster: runtime?.mentionRoster()?.roster,
+			isBusy: runningSessions.isEmpty == false, onStop: stopRunning
 		)
 	}
 
+	/// "Message Forge": who is on the other side. "Type your answer…" while a flow waits on you.
+	private var placeholder: String {
+		if let ask = store.messages.last(where: { !$0.questions.isEmpty }), ask.actorID != store.currentActorID,
+			let id = ask.serverID, !store.answeredQuestionIDs.contains(id)
+		{
+			return ComposerPlaceholder.answering
+		}
+		return ComposerPlaceholder.message(to: store.participants, selfID: store.currentActorID)
+	}
+
+	/// Sessions the composer's Stop can end: a run that has not started its container can't be
+	/// stopped (the server 400s), so it keeps the mic.
+	private var runningSessions: [ChatAgentSession] {
+		store.liveSessions().filter { $0.status == .running }
+	}
+
+	private func stopRunning() {
+		let ids = runningSessions.map(\.id)
+		Task { for id in ids { await store.stopSession(id) } }
+	}
+
 	private func send() {
+		if let edit = composer.takeEdit() {
+			MaskinHaptics.play(.light)
+			Task { await store.edit(edit.messageID, to: edit.text) }
+			return
+		}
 		guard let (text, metadata) = composer.take() else { return }
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
@@ -488,22 +554,30 @@ struct ChatThreadView: View {
 		unseenCount = 0
 	}
 
-	static func pillTitle(unseen: Int) -> String {
-		switch unseen {
-		case 0: "Latest"
-		case 1: "1 new message"
-		default: "\(unseen) new messages"
-		}
-	}
-
 	/// Pin to the newest message, again after the rows have measured, then show the thread.
 	private func settleOpen(_ proxy: ScrollViewProxy) {
 		jumpToBottom(proxy)
 		Task {
 			try? await Task.sleep(for: .milliseconds(320))
-			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+			if followingOpen {
+				// Unread messages: open with the NEW divider about 150pt below the top instead.
+				if hasUnreadDivider {
+					followingOpen = false
+					proxy.scrollTo("unread-divider", anchor: Self.unreadAnchor)
+				} else {
+					proxy.scrollTo(Self.bottomID, anchor: .bottom)
+				}
+			}
 			revealed = true
 		}
+	}
+
+	/// The thread opened with messages the reader had not seen (the divider is captured on open,
+	/// before they are marked read).
+	private var hasUnreadDivider: Bool {
+		ThreadLayout.items(
+			for: store.messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID
+		).contains { if case .unreadDivider = $0 { return true } else { return false } }
 	}
 
 	/// Pin to the newest message without animating, then once more after the rows have measured.
@@ -538,7 +612,6 @@ struct ThreadTranscript: View {
 	let store: ChatStore
 	var lazy = true
 	var now = Date()
-	var onStop: (ChatAgentSession) -> Void = { _ in }
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onQuote: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
@@ -550,7 +623,7 @@ struct ThreadTranscript: View {
 			// mis-measures under `defaultScrollAnchor(.bottom)` (blank gaps, jumping content).
 			rows
 		} else {
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) { rows }
+			VStack(alignment: .leading, spacing: MaskinSpace.s9) { rows }
 		}
 	}
 
@@ -564,13 +637,14 @@ struct ThreadTranscript: View {
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID)
 		let sections = ThreadLayout.sections(for: items)
 		let runs = ThreadLayout.runs(in: items)
+		let latestOwnID = OutgoingStatus.latestOwnID(in: messages, currentActorID: store.currentActorID)
 		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 		// One section per day: its header stays pinned at the top while that day scrolls by (the thread's
 		// LazyVStack asks for pinned section headers).
 		ForEach(sections) { section in
 			Section {
 				ForEach(section.items) { item in
-					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID)
+					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID, latestOwnID: latestOwnID)
 				}
 			} header: {
 				if let day = section.day { DayHeader(label: ThreadLayout.dayLabel(day, now: now)) }
@@ -588,11 +662,11 @@ struct ThreadTranscript: View {
 		for message: ChatMessage, showsAuthor: Bool, run: ThreadLayout.Run, anchors: ActivityAnchors,
 		byID: [String: ChatMessage]
 	) -> CGFloat {
-		if showsAuthor { return MaskinSpace.s4 }
+		if showsAuthor { return 0 }
 		guard let previous = run.previousID.flatMap({ byID[$0] }) else { return 0 }
 		let traceAbove = message.serverID.flatMap { anchors.aboveReply[$0] } != nil
 		let traceBetween = previous.serverID.flatMap { anchors.afterTrigger[$0] } != nil
-		return traceAbove || traceBetween ? 0 : -(MaskinSpace.s5 - MaskinSpace.s2)
+		return traceAbove || traceBetween ? 0 : -MaskinSpace.s6
 	}
 
 	@ViewBuilder
@@ -600,7 +674,7 @@ struct ThreadTranscript: View {
 		let live = store.liveSessions(at: date)
 		if live.isEmpty {
 			ForEach(store.workingAgents(at: date)) { agent in
-				WorkingIndicator(agent: agent).transition(.opacity)
+				TypingBubble(agent: agent).transition(.opacity)
 			}
 			if let stalled = store.stalledSession() {
 				ResumeBanner(agent: store.participant(for: stalled.actorID)) {
@@ -611,28 +685,38 @@ struct ThreadTranscript: View {
 			ForEach(live) { session in
 				LiveActivityView(
 					agent: store.participant(for: session.actorID), fallbackActivity: session.currentActivity,
-					turn: store.trace?.liveTurn(sessionID: session.id), startedAt: session.startedAt,
-					// A run that has not started its container yet can't be stopped (the server 400s).
-					onStop: session.status == .running ? { onStop(session) } : nil
+					turn: store.trace?.liveTurn(sessionID: session.id), startedAt: session.startedAt
 				)
 				.transition(.opacity)
 			}
 		}
 	}
 
+	/// The status line sits under your latest message; an earlier one only speaks up if it never went
+	/// through.
+	private func outgoingStatus(of message: ChatMessage, latestOwnID: String?) -> OutgoingStatus? {
+		guard message.actorID == store.currentActorID, message.kind == "message" else { return nil }
+		let state = OutgoingStatus.state(of: message.id, in: store.messages, currentActorID: store.currentActorID)
+		if message.id == latestOwnID { return state }
+		switch state {
+		case .sending?, .queued?, .failed?: return state
+		default: return nil
+		}
+	}
+
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
-		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage]
+		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage], latestOwnID: String?
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
-			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
+			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now).uppercased(), mono: true)
 		case .system(let message):
 			ThreadDivider(label: message.content, ruled: false)
 		case .unreadDivider(let count):
-			ThreadDivider(
-				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.sigInk)
+			ThreadDivider(label: "NEW", tint: MaskinColor.sigInk, ruleTint: MaskinColor.sigHi, mono: true)
+				.accessibilityLabel(count == 1 ? "1 new message" : "\(count) new messages")
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
@@ -647,18 +731,27 @@ struct ThreadTranscript: View {
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
+				outgoing: outgoingStatus(of: message, latestOwnID: latestOwnID),
 				onRetrySend: { store.retrySend(message.id) },
 				onDiscard: { store.discard(message.id) },
 				onRetryAgent: { Task { await store.retryAgent(for: message) } },
-				onEdit: message.canEdit(by: store.currentActorID) ? { onEdit(message) } : nil,
+				// Edit is for your latest message only; it re-opens in the composer.
+				onEdit: message.id == latestOwnID && message.canEdit(by: store.currentActorID) ? { onEdit(message) } : nil,
 				onQuote: message.content.isEmpty ? nil : { onQuote(message) },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
+			.swipeToReply(message.content.isEmpty || message.isFailed ? nil : { onQuote(message) })
 			.padding(.top, Self.topPadding(for: message, showsAuthor: showsAuthor, run: run, anchors: anchors, byID: byID))
-			.background(
-				matchIDs.contains(message.id)
-					? (message.id == currentMatchID ? MaskinSurface.fillStrong : MaskinSurface.fill) : Color.clear,
-				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+			// Search: every match gets a 2pt ring, the current one a 2.5pt signal ring.
+			.overlay {
+				if matchIDs.contains(message.id) {
+					let current = message.id == currentMatchID
+					RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
+						.strokeBorder(current ? MaskinColor.sig : MaskinColor.sigHi, lineWidth: current ? 2.5 : 2)
+						.padding(-MaskinSpace.s1)
+						.allowsHitTesting(false)
+				}
+			}
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
 			}
@@ -670,13 +763,13 @@ extension View {
 	/// Reports whether a scroll view sits within a few points of its end. Lazy-stack sentinels
 	/// fire `onAppear`/`onDisappear` unreliably, so iOS 18+ reads the real geometry; iOS 17 keeps
 	/// the sentinel.
-	fileprivate func trackingBottom(_ action: @escaping (Bool) -> Void) -> some View {
+	fileprivate func trackingBottom(within distance: CGFloat = 48, _ action: @escaping (Bool) -> Void) -> some View {
 		if #available(iOS 18, macOS 15, *) {
 			return AnyView(
 				onScrollGeometryChange(for: Bool.self) { geometry in
 					// The visible rect is in content coordinates, so insets (the composer bar)
 					// can't skew it. Short threads show everything, which counts as the bottom.
-					geometry.visibleRect.maxY >= geometry.contentSize.height - 48
+					geometry.visibleRect.maxY >= geometry.contentSize.height - distance
 				} action: { _, atBottom in
 					action(atBottom)
 				})
@@ -767,20 +860,86 @@ struct ThreadSkeleton: View {
 	}
 }
 
-/// A day's header: a small pill, centred, that stays at the top while the day's messages scroll.
+/// A day's header, pinned while the day scrolls by: the day in mono between two rules.
 struct DayHeader: View {
 	let label: String
 
 	var body: some View {
-		Text(label)
-			.maskinText(.caption).fontWeight(.semibold)
-			.foregroundStyle(MaskinColor.ink3)
-			.padding(.horizontal, MaskinSpace.s7)
-			.padding(.vertical, MaskinSpace.s3)
-			.background(MaskinSurface.card, in: Capsule())
-			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
-			.frame(maxWidth: .infinity)
-			.padding(.vertical, MaskinSpace.s2)
-			.accessibilityAddTraits(.isHeader)
+		ThreadDivider(label: label.uppercased(), mono: true)
+			.background(MaskinSurface.card)
+	}
+}
+
+/// The floating "jump to latest" button: a 44pt glass circle with a down arrow, and a badge with
+/// the number of messages that arrived since the reader scrolled away.
+struct JumpToLatestButton: View {
+	let unseen: Int
+	let action: () -> Void
+
+	var body: some View {
+		Button(action: action) {
+			Image(systemName: "arrow.down")
+				.maskinSymbol(MaskinFontSize.t16, weight: .semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.maskinGlass(in: Circle(), interactive: true)
+				.overlay(alignment: .topTrailing) {
+					if unseen > 0 {
+						Text(unseen > 99 ? "99+" : "\(unseen)")
+							.maskinText(.caption).fontWeight(.bold)
+							.foregroundStyle(MaskinColor.badgeFg)
+							.padding(.horizontal, MaskinSpace.s2)
+							.frame(minWidth: MaskinSpace.s11, minHeight: MaskinSpace.s11)
+							.background(MaskinGradient.badge, in: Capsule())
+							.offset(x: MaskinSpace.s2, y: -MaskinSpace.s2)
+					}
+				}
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(unseen > 0 ? "Jump to latest, \(unseen) new" : "Jump to latest")
+	}
+}
+
+/// Smart replies above the composer, right-aligned: 40pt pills that send on tap.
+struct QuickReplyChips: View {
+	let options: [String]
+	let onPick: (String) -> Void
+
+	var body: some View {
+		ChipFlow(spacing: MaskinSpace.s4) {
+			ForEach(options, id: \.self) { option in
+				Button {
+					onPick(option)
+				} label: {
+					Text(option)
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink)
+						.padding(.horizontal, MaskinSpace.s9)
+						.frame(minHeight: ComposerToolLabel.size)
+						.background(MaskinSurface.card, in: Capsule())
+						.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+						.contentShape(Capsule())
+				}
+				.buttonStyle(.maskinPressed(.shrink))
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .trailing)
+		.accessibilityElement(children: .contain)
+	}
+}
+
+/// The thread skeleton, drawn only once loading has taken more than 300ms (7-Chat §2).
+struct DelayedSkeleton: View {
+	@State private var visible = false
+
+	var body: some View {
+		ZStack {
+			MaskinSurface.grouped
+			if visible { ThreadSkeleton().transition(.opacity) }
+		}
+		.task {
+			try? await Task.sleep(for: .milliseconds(300))
+			withAnimation(MaskinMotion.fade) { visible = true }
+		}
 	}
 }

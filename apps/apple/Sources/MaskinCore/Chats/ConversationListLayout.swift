@@ -1,13 +1,15 @@
 import Foundation
 
-/// How the Team list is laid out (the Display menu): one row per person or agent under UNREAD and
-/// PEOPLE & AGENTS, or every conversation on its own row, newest first, in day groups.
+/// How the Team list is laid out (the Display menu): Sections with the conversations in day groups,
+/// Sections with one row per person or agent under PEOPLE, or "One list": every conversation on its
+/// own row, newest first, in day groups.
 public enum ConversationGroupBy: String, CaseIterable, Sendable, Identifiable {
-	case person, recent
+	case time, person, recent
 
 	public var id: String { rawValue }
 	public var title: String {
 		switch self {
+		case .time: "By time period"
 		case .person: "By person"
 		case .recent: "One list"
 		}

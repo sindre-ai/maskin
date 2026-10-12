@@ -84,10 +84,10 @@ struct ActivityTraceSnapshotTests {
 		for width in Self.widths {
 			for dark in [false, true] {
 				try render(
-					LiveActivityView(agent: relay, turn: runningTurn, startedAt: start, onStop: {}),
+					LiveActivityView(agent: relay, turn: runningTurn, startedAt: start),
 					width: width, dark: dark, name: "live")
 				try render(
-					LiveActivityView(agent: relay, fallbackActivity: "Reading the brief", onStop: nil),
+					LiveActivityView(agent: relay, fallbackActivity: "Reading the brief"),
 					width: width, dark: dark, name: "live-fallback")
 				try render(FinishedTraceView(turn: doneTurn), width: width, dark: dark, name: "done-collapsed")
 				try render(
