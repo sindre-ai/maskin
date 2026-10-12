@@ -82,7 +82,7 @@ private struct ChatsContainer: View {
 					new: { showNewChat = true }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
                     displaySymbol: ShellActions.slidersSymbol))
-			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
+			.navigationSplitViewColumnWidth(min: 300, ideal: 430, max: 440)
 		} detail: {
 			if let selection {
 				ChatThreadHost(

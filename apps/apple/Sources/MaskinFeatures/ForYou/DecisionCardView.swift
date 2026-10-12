@@ -36,6 +36,9 @@ struct DecisionCardView: View {
 	var chief: ChiefOfStaffDesk?
 	/// iPad split view: the thread opens in the detail column, so an open thread never expands the card.
 	var threadInDetail = false
+	/// Wide feed with a keyboard: the card takes focus and Return accepts its recommended option.
+	var acceptsReturnKey = false
+	@FocusState private var cardFocused: Bool
 
 	@State private var draft = ""
 	@State private var composerFocused = false
@@ -66,6 +69,34 @@ struct DecisionCardView: View {
 		fullCard
 			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
 			.accessibilityElement(children: .contain)
+			.modifier(ReturnKeyAccept(enabled: acceptsReturnKey && record == nil, focus: $cardFocused) {
+				returnKey()
+			})
+	}
+
+	/// What Return does on a focused card (4-iPad.md: "accepts the recommended option, confirm sheet
+	/// still shown where it confirms").
+	enum ReturnKeyAction: Equatable {
+		case choose, confirmFirst, askReason, nothing
+
+		static func resolve(for decision: DecisionPrompt?) -> (ReturnKeyAction, DecisionOption?) {
+			guard let option = decision?.recommended else { return (.nothing, nil) }
+			if option.destructive { return (.confirmFirst, option) }
+			if HoldReason.isHold(option.label) { return (.askReason, option) }
+			return (.choose, option)
+		}
+	}
+
+	private func returnKey() {
+		let (action, option) = ReturnKeyAction.resolve(for: card.decision)
+		guard let option else { return }
+		switch action {
+		case .choose: actions.choose(option)
+		case .confirmFirst: pendingDestructive = option
+		case .askReason:
+			if actions.hold != nil { pendingHold = option } else { actions.choose(option) }
+		case .nothing: break
+		}
 	}
 
 	// MARK: Full
@@ -651,5 +682,28 @@ extension DecisionCardView.Actions {
 		actions.retry = { store.decisions.clear(card.id) }
 		if let open = openObject { actions.open = { open(card.id) } }
 		return actions
+	}
+}
+
+
+/// Makes a card keyboard focusable and maps Return to `action`. A no-op when disabled, and below
+/// iOS 17 / macOS 14 there is no `onKeyPress`, so it does nothing there either.
+private struct ReturnKeyAccept: ViewModifier {
+	let enabled: Bool
+	var focus: FocusState<Bool>.Binding
+	let action: () -> Void
+
+	func body(content: Content) -> some View {
+		if enabled {
+			content
+				.focusable()
+				.focused(focus)
+				.onKeyPress(.return) {
+					action()
+					return .handled
+				}
+		} else {
+			content
+		}
 	}
 }

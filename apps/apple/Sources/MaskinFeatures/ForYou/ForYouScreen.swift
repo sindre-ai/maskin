@@ -112,7 +112,7 @@ struct ForYouFeedView: View {
 	/// The briefing cards above the feed; nil in snapshots.
 	var stories: StoriesStore?
 	/// Regular width: the wide feed (two columns of decision cards, wide briefing row, no swipe
-	/// rows). Compact width is the one-column list.
+	/// rows; ↩ takes the focused card's recommended option). Compact width is the one-column list.
 	var wide = false
 	@State private var openStory: StoryCard?
 	/// Which cards the reader opened with Ask; the rest stay compact.
@@ -125,15 +125,22 @@ struct ForYouFeedView: View {
 	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
+	/// Compact width reads as a 680 pt column; the wide feed uses the full width (4-iPad.md).
+	private var rowWidth: CGFloat { wide ? .infinity : readableWidth }
+	/// Row side padding: 16 on iPhone, 36 in the wide feed (spec: 36 to 40).
+	private var rowInset: CGFloat { wide ? MaskinSpace.s14 + MaskinSpace.s2 : MaskinSpace.s9 }
 
 	var body: some View {
 		let entries = store.entries
 		List {
 			if let stories, !stories.cards.isEmpty {
-				StoryRow(stories: stories) { card in openStory = card }
+				StoryRow(
+					stories: stories, open: { card in openStory = card },
+					metrics: wide ? .regular : .compact
+				)
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
-				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: rowInset, bottom: MaskinSpace.s3, trailing: rowInset))
 			}
 			headerRows(entries: entries)
 			feedRows(entries: entries)
@@ -193,7 +200,7 @@ struct ForYouFeedView: View {
 				}
 			}
 		}
-		.modifier(ReadableRow(width: readableWidth))
+		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 	}
 
 	// MARK: Rows
@@ -202,18 +209,19 @@ struct ForYouFeedView: View {
 	private func feedRows(entries: [FeedEntry]) -> some View {
 		switch store.phase {
 		case .idle, .loading:
-			LoadingSkeleton(rows: 3).modifier(ReadableRow(width: readableWidth))
+			LoadingSkeleton(rows: 3).modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .failed(let message):
 			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load your feed", message: message) {
 				Button("Try again") { Task { await store.load() } }.buttonStyle(.secondaryAction)
 			}
-			.modifier(ReadableRow(width: readableWidth))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .loaded:
 			if entries.isEmpty {
 				CaughtUp(filtered: store.options.typeFilter != nil)
-					.modifier(ReadableRow(width: readableWidth))
+					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			} else {
-				swipeHint
+				// The wide feed decides inline (pills, Return); there are no swipe rows to explain.
+				if !wide { swipeHint }
 				ForEach(groups(of: entries), id: \.bucket) { group in
 					// The primary group is the feed itself: the design shows no header above it.
 					if group.bucket != .needs {
@@ -221,9 +229,13 @@ struct ForYouFeedView: View {
 							title: title(for: group.bucket), count: group.entries.count,
 							action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
 						)
-						.modifier(ReadableRow(width: readableWidth))
+						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					}
-					ForEach(group.entries) { entry in feedRow(entry) }
+					if wide {
+						decisionGrid(group.entries)
+					} else {
+						ForEach(group.entries) { entry in feedRow(entry) }
+					}
 				}
 			}
 		}
@@ -258,13 +270,13 @@ struct ForYouFeedView: View {
 					.frame(minHeight: MaskinSpace.touchMin)
 			}
 			.foregroundStyle(MaskinColor.ink4)
-			.modifier(ReadableRow(width: readableWidth))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		}
 	}
 
 	private func feedRow(_ entry: FeedEntry) -> some View {
 		card(entry)
-			.modifier(ReadableRow(width: readableWidth))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			.swipeActions(edge: .leading, allowsFullSwipe: true) {
 				// Swipe right to take the agent's recommendation. Options that can't be undone
 				// are never one swipe away: they keep their confirmation on the card.
@@ -292,6 +304,20 @@ struct ForYouFeedView: View {
 			}
 	}
 
+	/// Wide feed: two columns of cards, top aligned, one row per bucket. (width - gap) / 2 each.
+	private func decisionGrid(_ entries: [FeedEntry]) -> some View {
+		LazyVGrid(
+			columns: Array(
+				repeating: GridItem(.flexible(), spacing: MaskinSpace.s12, alignment: .top), count: 2),
+			alignment: .center, spacing: MaskinSpace.s12
+		) {
+			ForEach(entries) { entry in
+				card(entry).frame(maxWidth: .infinity, alignment: .top)
+			}
+		}
+		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+	}
+
 	private func card(_ entry: FeedEntry) -> some View {
 		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
 		let id = entry.card.id
@@ -305,7 +331,7 @@ struct ForYouFeedView: View {
 		return DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card),
 			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
-			actions: actions, chief: chief, threadInDetail: wide)
+			actions: actions, chief: chief, threadInDetail: wide, acceptsReturnKey: wide)
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 	}
 
@@ -353,6 +379,7 @@ private struct SectionHeader: View {
 
 private struct ReadableRow: ViewModifier {
 	let width: CGFloat
+	var inset: CGFloat = MaskinSpace.s9
 
 	func body(content: Content) -> some View {
 		content
@@ -360,7 +387,7 @@ private struct ReadableRow: ViewModifier {
 			.frame(maxWidth: .infinity)
 			.listRowSeparator(.hidden)
 			.listRowBackground(Color.clear)
-			.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+			.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: inset, bottom: MaskinSpace.s3, trailing: inset))
 	}
 }
 
