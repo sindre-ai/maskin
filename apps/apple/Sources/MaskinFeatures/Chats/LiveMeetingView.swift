@@ -148,15 +148,34 @@ private struct LiveMeetingContent: View {
 		.task {
 			if ownsChat { await session.chat.start() }
 			session.begin()
+			announceCall()
 		}
+		.onChange(of: session.voice.isMuted) { _, muted in MeetingActivityController.shared?.muteChanged(muted) }
 		.onChange(of: session.chat.messages.map(\.id)) { _, _ in session.messagesChanged() }
 		.onChange(of: session.chat.participants.map(\.id)) { _, _ in session.messagesChanged() }
 		.onDisappear {
 			session.end()
+			MeetingActivityController.shared?.callEnded()
+			MeetingCallControl.shared.clear()
 			if ownsChat { session.chat.stop() }
 		}
 		.sheet(isPresented: $showInvite) { invitePicker }
 		.sheet(isPresented: $showPullUp) { pullUpPicker }
+	}
+
+	/// Put the call on the Lock Screen and Dynamic Island, with Mute and End acting on this call.
+	private func announceCall() {
+		MeetingCallControl.shared.register(
+			toggleMute: { [session] in session.voice.toggleMute() },
+			hangUp: { [session, onClose] in
+				session.end()
+				onClose()
+			})
+		guard let workspaceId = environment.workspaceId, let startedAt = session.startedAt else { return }
+		MeetingActivityController.shared?.callStarted(
+			meetingId: session.chat.conversationID, workspaceId: workspaceId,
+			conversationId: session.chat.conversationID, name: session.lead.name, startedAt: startedAt,
+			kind: session.kind == .dailyBriefing ? .dailyBriefing : .adHoc)
 	}
 
 	// MARK: Stage

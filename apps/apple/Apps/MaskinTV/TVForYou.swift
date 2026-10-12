@@ -11,8 +11,11 @@ struct TVForYou: View {
 	let stories: StoriesStore?
 	@Binding var openDecision: String?
 	@Binding var chromeHidden: Bool
-	@State private var path: [String] = []
+	/// A flow the briefing player asked to open; Flows picks it up.
+	@Binding var openFlow: String?
+	@State private var path = NavigationPath()
 	@State private var playing: BriefSequence?
+	@State private var askFailed = false
 
 	private var store: ForYouStore? { forYou?.store }
 
@@ -40,12 +43,14 @@ struct TVForYou: View {
 			.navigationDestination(for: String.self) { id in
 				if let store { TVDecision(environment: environment, store: store, chief: forYou?.chief, id: id) }
 			}
+			.navigationDestination(for: TVThreadRoute.self) { TVThread(environment: environment, conversationID: $0.id) }
 		}
+		.alert("Can't open the thread", isPresented: $askFailed) { Button("OK", role: .cancel) {} }
 		#if DEBUG
 		.task(id: entries.first?.id) {
 			// MASKIN_DEMO_SCREEN=decision | briefing opens that screen once the data is in.
 			let demo = ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"]
-			if demo == "decision" || demo == "thread", let id = entries.first?.id, path.isEmpty { path = [id] }
+			if demo == "decision" || demo == "thread", let id = entries.first?.id, path.isEmpty { path.append(id) }
 		}
 		.task(id: stories?.cards.first?.id) {
 			if ProcessInfo.processInfo.environment["MASKIN_DEMO_SCREEN"] == "briefing", let stories,
@@ -53,17 +58,48 @@ struct TVForYou: View {
 			{ playing = BriefSequence.make(cards: stories.cards, opening: card) }
 		}
 		#endif
-		.onChange(of: path) { _, path in chromeHidden = !path.isEmpty }
+		.onChange(of: path.count) { _, count in chromeHidden = count > 0 }
 		.onChange(of: openDecision) { _, id in
 			guard let id else { return }
-			path = [id]
+			path = NavigationPath([id])
 			openDecision = nil
 		}
 		.fullScreenCover(item: Binding(get: { playing.map(PlayingSequence.init) }, set: { if $0 == nil { playing = nil } })) { item in
 			if let stories {
 				TVBriefingPlayer(
-					environment: environment, stories: stories, chief: forYou?.chief, sequence: item.sequence
+					environment: environment, stories: stories, chief: forYou?.chief, sequence: item.sequence,
+					action: { briefingAction(for: $0) }, onAction: perform
 				) { playing = nil }
+			}
+		}
+	}
+
+	/// What the last briefing slide offers: review the first thing that needs you, or open the flow
+	/// a page came from. Nil when there is nothing specific to open.
+	private func briefingAction(for card: StoryCard) -> TVBriefingAction? {
+		if let loopID = card.loopID { return TVBriefingAction(title: "Open \(card.unit) flow", target: .flow(loopID)) }
+		guard let first = entries.first(where: { $0.record == nil }) else { return nil }
+		let name = first.card.objectTitle ?? first.card.headline
+		return TVBriefingAction(title: "Review \(name)", target: .decision(first.id))
+	}
+
+	private func perform(_ action: TVBriefingAction) {
+		playing = nil
+		switch action.target {
+		case .decision(let id): path.append(id)
+		case .flow(let id): openFlow = id
+		}
+	}
+
+	/// Asking the Chief of Staff about a card opens its conversation without leaving For you.
+	private func ask(about card: ForYouCard) {
+		guard let chief = forYou?.chief else { return }
+		Task {
+			do {
+				let outcome = try await ChiefOfStaffThreads.open(about: card, conversations: chief.conversations)
+				path.append(TVThreadRoute(id: outcome.conversation.id))
+			} catch {
+				askFailed = true
 			}
 		}
 	}
@@ -75,8 +111,16 @@ struct TVForYou: View {
 				.foregroundStyle(MaskinColor.ink4)
 			LazyVGrid(columns: [GridItem(.flexible(), spacing: 40), GridItem(.flexible())], spacing: 40) {
 				ForEach(entries) { entry in
-					NavigationLink(value: entry.id) { TVDecisionCard(store: store, entry: entry) }
-						.buttonStyle(TVFocusStyle())
+					ZStack(alignment: .bottomTrailing) {
+						NavigationLink(value: entry.id) { TVDecisionCard(store: store, entry: entry) }
+							.buttonStyle(TVFocusStyle(scale: 1.03, cornerRadius: 40))
+						// Ask is its own focus stop on the card's footer, to the right of the card.
+						if forYou?.chief != nil, entry.record == nil {
+							Button { ask(about: entry.card) } label: { TVAskPill() }
+								.buttonStyle(TVFocusStyle(scale: 1.08, cornerRadius: 28))
+								.padding(.trailing, 40).padding(.bottom, 36)
+						}
+					}
 				}
 			}
 			.padding(.vertical, 20)
@@ -128,6 +172,10 @@ struct TVDecisionCard: View {
 			Text(sender).font(.system(size: 30, weight: .semibold)).lineLimit(1)
 			Spacer(minLength: 0)
 			if let when = card.latestActivityAt {
+				if entry.record == nil, let held = TVDecisionAge.heldTag(since: when) {
+					Text(held).font(.system(size: 24, weight: .semibold, design: .monospaced))
+						.foregroundStyle(MaskinColor.ink4)
+				}
 				Text(when.formatted(date: .omitted, time: .shortened))
 					.font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
 			}
@@ -136,12 +184,19 @@ struct TVDecisionCard: View {
 
 	@ViewBuilder private var answer: some View {
 		if let record = entry.record, case .option(let label) = record.kind {
-			Label("You chose \(label)", systemImage: "checkmark.circle.fill")
-				.font(.system(size: 30, weight: .semibold))
+			// The done block: what was chosen, then the agent's own lines about what happens next.
+			VStack(alignment: .leading, spacing: 10) {
+				Label("You chose \(label)", systemImage: "checkmark.circle.fill")
+					.font(.system(size: 30, weight: .semibold))
+				ForEach(card.decision?.options.first(where: { $0.label == label })?.consequences ?? [], id: \.self) {
+					Text($0).font(.system(size: 26)).foregroundStyle(MaskinColor.ink3).lineLimit(2)
+				}
+			}
 		} else if let options = card.decision?.options {
-			HStack(spacing: 14) {
+			// Every option, wrapping onto a second line rather than clipping.
+			TVWrapLayout(spacing: 14) {
 				ForEach(options) { option in
-					Text(option.label).font(.system(size: 28, weight: .semibold)).lineLimit(1).fixedSize()
+					Text(option.label).font(.system(size: 28, weight: .semibold)).lineLimit(1)
 						.padding(.horizontal, 26).frame(height: 64)
 						.foregroundStyle(option.recommended ? MaskinSurface.onInverse : MaskinColor.ink)
 						.background(option.recommended ? MaskinSurface.inverse : MaskinSurface.fillStrong, in: Capsule())
@@ -154,13 +209,25 @@ struct TVDecisionCard: View {
 		HStack(spacing: 14) {
 			Circle().fill(MaskinPatina.dotWatch).frame(width: 16, height: 16)
 			Text((card.objectType ?? "object").uppercased())
-				.font(.system(size: 24, weight: .medium, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
+				.font(.system(size: 24, weight: .semibold, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
 			Text(card.objectTitle ?? card.headline).font(.system(size: 30, weight: .semibold)).lineLimit(1)
 			Spacer(minLength: 0)
-			Text("Ask").font(.system(size: 28, weight: .semibold))
-				.padding(.horizontal, 28).frame(height: 56)
-				.background(MaskinSurface.fillStrong, in: Capsule())
+			// Room for the focusable Ask pill laid over this corner by the grid.
+			Color.clear.frame(width: TVAskPill.width, height: 56)
 		}
+	}
+}
+
+/// The Ask pill on a decision card's footer.
+struct TVAskPill: View {
+	static let width: CGFloat = 110
+
+	var body: some View {
+		Text("Ask").font(.system(size: 28, weight: .semibold))
+			.foregroundStyle(MaskinColor.ink)
+			.frame(width: Self.width, height: 56)
+			.background(MaskinSurface.fillStrong, in: Capsule())
+			.accessibilityLabel("Ask Chief of Staff")
 	}
 }
 

@@ -32,11 +32,10 @@ public enum MaskinTypeface {
 	}
 }
 
-/// The v4 weight scale (400, 500, 600, 650, 700, 750) on the weights the platform has.
+/// The v4 weight scale (400, 600, 650, 700, 750; 500 is not used) on the weights the platform has.
 /// 650 rounds down to semibold and 750 to bold; titles get their extra punch from tracking.
 public enum MaskinFontWeight {
 	public static let regular = Font.Weight.regular  // 400
-	public static let medium = Font.Weight.medium  // 500
 	public static let semibold = Font.Weight.semibold  // 600
 	public static let w650 = Font.Weight.semibold  // 650
 	public static let bold = Font.Weight.bold  // 700
@@ -45,7 +44,6 @@ public enum MaskinFontWeight {
 	/// The CSS weight each native weight stands in for, for tests and docs.
 	public static func css(_ weight: Font.Weight) -> Int {
 		switch weight {
-		case .medium: 500
 		case .semibold: 600
 		case .bold: 700
 		default: 400
@@ -69,13 +67,13 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 	case subhead
 	/// Small supporting text.
 	case caption
-	/// Uppercase mono micro-label (10 / semibold, +0.08em).
+	/// Uppercase mono micro-label (11 / semibold, +0.08em).
 	case microLabel
 	/// The larger uppercase mono micro-label (12 / semibold, +0.07em). Only for a label that stands
 	/// alone in a header (the story player's unit, a thread's context link); chips, row type labels and
 	/// section labels use `.microLabel`. 9pt exists only inside briefing cards.
 	case microLabelLarge
-	/// The smallest uppercase mono micro-label (9 / semibold, +0.08em), inside briefing cards.
+	/// The smallest uppercase mono micro-label (11 / semibold, +0.08em; same size as microLabel, kept as a name), inside briefing cards.
 	case microLabelMicro
 	/// Machine-shaped text: ids, counts, cron.
 	case mono
@@ -88,10 +86,10 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		case .headline: MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold, relativeTo: .headline)
 		case .body: MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body)
 		case .subhead: MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline)
-		case .caption: MaskinTypeface.sans(MaskinFontSize.t12, weight: .medium, relativeTo: .caption)
-		case .microLabel: MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold, relativeTo: .caption2)
+		case .caption: MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption)
+		case .microLabel: MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2)
 		case .microLabelLarge: MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold, relativeTo: .caption)
-		case .microLabelMicro: MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold, relativeTo: .caption2)
+		case .microLabelMicro: MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2)
 		case .mono: MaskinTypeface.mono(MaskinFontSize.t13, relativeTo: .footnote)
 		}
 	}
@@ -120,9 +118,9 @@ public enum MaskinTextRole: CaseIterable, Sendable {
 		case .body: MaskinFontSize.t16
 		case .subhead: MaskinFontSize.t14
 		case .caption: MaskinFontSize.t12
-		case .microLabel: MaskinFontSize.t10
+		case .microLabel: MaskinFontSize.t11
 		case .microLabelLarge: MaskinFontSize.t12
-		case .microLabelMicro: MaskinFontSize.t9
+		case .microLabelMicro: MaskinFontSize.t11
 		case .mono: MaskinFontSize.t13
 		}
 	}

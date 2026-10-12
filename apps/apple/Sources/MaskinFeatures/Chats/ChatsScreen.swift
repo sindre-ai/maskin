@@ -93,14 +93,16 @@ private struct ChatsContainer: View {
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
 					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault))
-			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
+			// iPad spec: the Team column is 430 wide.
+			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {
 			if let selection, let flowID = Self.flowID(from: selection) {
 				FlowRoomHost(environment: environment, store: store, flowID: flowID)
 					.id(selection)
 			} else if let selection {
 				ChatThreadHost(
-					environment: environment, conversations: store, conversationID: selection
+					environment: environment, conversations: store, conversationID: selection,
+					onLeft: { self.selection = nil }
 				)
 				.id(selection)
 			} else {
@@ -212,23 +214,15 @@ struct LoopFlowRoomsSource: FlowRoomsSource {
 	}
 }
 
-/// A flow opened from the Team list: the flow's own screen in the detail column.
+/// A flow opened from the Team list: its channel, which is the flow's timeline.
 private struct FlowRoomHost: View {
 	let environment: AppEnvironment
 	let store: ConversationsStore
 	let flowID: String
-	@State private var detail: LoopDetailStore?
 
 	var body: some View {
-		if let detail {
-			LoopDetailView(store: detail)
-		} else if let loop = store.flowRooms.first(where: { $0.id == flowID })?.loop {
-			Color.clear.onAppear {
-				detail = LoopDetailStore(
-					loop: loop,
-					api: APILoopsSource(client: environment.client, workspaceID: environment.workspaceId ?? ""),
-					events: environment.events)
-			}
+		if let room = store.flowRooms.first(where: { $0.id == flowID }) {
+			FlowChannelScreen(environment: environment, store: store, room: room)
 		} else {
 			EmptyState(symbol: "arrow.triangle.2.circlepath", title: "This flow isn't here any more")
 		}
@@ -240,6 +234,7 @@ private struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
 	let conversationID: String
+	var onLeft: () -> Void = {}
 	/// The store and composer are built once, on first render. They were `@State(initialValue:)`
 	/// built in `init`, which runs on every parent re-render (each list update) and paid for a
 	/// disk-cache decode and a store each time before SwiftUI discarded the result.
@@ -248,7 +243,11 @@ private struct ChatThreadHost: View {
 	/// Opens the People sheet straight on its picker ("Invite people").
 	@State private var inviting = false
 
-	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
+	init(
+		environment: AppEnvironment, conversations: ConversationsStore, conversationID: String,
+		onLeft: @escaping () -> Void = {}
+	) {
+		self.onLeft = onLeft
 		self.environment = environment
 		self.conversations = conversations
 		self.conversationID = conversationID
@@ -302,7 +301,7 @@ private struct ChatThreadHost: View {
 				showParticipants = true
 			})
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
-				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting)
+				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting, onLeft: onLeft)
 				.presentationDetents([.medium, .large])
 			}
 	}

@@ -76,7 +76,7 @@ struct TVDecision: View {
 					Text(when.formatted(date: .omitted, time: .shortened))
 						.font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
 					if let held = TVDecisionAge.heldTag(since: when) {
-						Text(held).font(.system(size: 24, weight: .medium, design: .monospaced))
+						Text(held).font(.system(size: 24, weight: .semibold, design: .monospaced))
 							.foregroundStyle(MaskinColor.ink4)
 					}
 				}
@@ -90,7 +90,7 @@ struct TVDecision: View {
 			HStack(spacing: 14) {
 				Circle().fill(MaskinPatina.dotWatch).frame(width: 18, height: 18)
 				Text((card.objectType ?? "object").uppercased())
-					.font(.system(size: 24, weight: .medium, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
+					.font(.system(size: 24, weight: .semibold, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
 				Text(card.objectTitle ?? card.headline).font(.system(size: 34, weight: .semibold))
 			}
 		}
@@ -161,6 +161,15 @@ struct TVDecision: View {
 		VStack(alignment: .leading, spacing: 24) {
 			Label(receiptTitle(record), systemImage: "checkmark.circle.fill")
 				.font(.system(size: 40, weight: .bold))
+			// The agent's own lines about what the choice does, as on the iPhone card.
+			if case .option(let label) = record.kind {
+				ForEach(entry.card.decision?.options.first(where: { $0.label == label })?.consequences ?? [], id: \.self) {
+					Text($0).font(.system(size: 30)).foregroundStyle(MaskinColor.ink3)
+				}
+				if HoldReason.isHold(label), let reason = HoldReason.normalized(record.note) {
+					Text(HoldReason.note(for: reason)).font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)
+				}
+			}
 			switch record.phase {
 			case .held:
 				Text("Undo any time in the next hour.").font(.system(size: 28)).foregroundStyle(MaskinColor.ink4)

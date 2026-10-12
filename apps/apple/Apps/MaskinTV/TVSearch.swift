@@ -16,6 +16,7 @@ struct TVSearch: View {
 		NavigationStack {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 32) {
+					searchField
 					if let store {
 						results(store)
 					} else {
@@ -26,7 +27,6 @@ struct TVSearch: View {
 				.padding(.top, 24)
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
-			.navigationTitle("Search")
 			.navigationDestination(for: TVSearchRoute.self) { route in
 				switch route {
 				case .chat(let id):
@@ -42,7 +42,6 @@ struct TVSearch: View {
 				}
 			}
 		}
-		.searchable(text: $text, prompt: "Hold the mic and speak")
 		.onChange(of: text) { _, new in store?.setQuery(new) }
 		.task(id: environment.workspaceId) {
 			guard environment.auth.session != nil else {
@@ -55,6 +54,22 @@ struct TVSearch: View {
 				recents: SearchRecents(actorId: auth.session?.actorId ?? ""),
 				workspaceId: { auth.session?.workspaceId })
 		}
+	}
+
+	/// The voice-first field: 112 pt tall, a mic glyph, and the prompt. Selecting it opens the tvOS
+	/// entry sheet, whose mic button on the Siri Remote dictates into it.
+	private var searchField: some View {
+		HStack(spacing: 28) {
+			Image(systemName: "mic.fill").font(.system(size: 44, weight: .semibold))
+				.foregroundStyle(MaskinColor.ink3)
+				.accessibilityHidden(true)
+			TextField("Hold the mic and speak", text: $text)
+				.font(.system(size: 44, weight: .semibold))
+				.submitLabel(.search)
+		}
+		.padding(.horizontal, 44)
+		.frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+		.background(MaskinSurface.card, in: Capsule())
 	}
 
 	@ViewBuilder private func results(_ store: SearchStore) -> some View {

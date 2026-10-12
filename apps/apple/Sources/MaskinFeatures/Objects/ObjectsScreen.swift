@@ -6,6 +6,7 @@ import SwiftUI
 /// The Objects tab: every object the workspace's people and agents share, by type and status.
 /// A wide single column on every device; a row pushes its detail. Owns its navigation.
 public struct ObjectsScreen: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	private let environment: AppEnvironment
 	private let services: ObjectsServices
 	@State private var store: ObjectsStore
@@ -68,7 +69,7 @@ public struct ObjectsScreen: View {
 		var actions = ObjectAskActions()
 		actions.approve = { ask in
 			guard let feed, let entry = feed.entries.first(where: { $0.id == ask.objectId }) else { return }
-			withAnimation(MaskinMotion.standard) {
+			withAnimation(reduceMotion ? nil : MaskinMotion.standard) {
 				if let option = ask.approveOption {
 					feed.choose(option, on: entry.card)
 				} else {
@@ -78,7 +79,7 @@ public struct ObjectsScreen: View {
 		}
 		actions.hold = { ask, reason in
 			guard let feed, let entry = feed.entries.first(where: { $0.id == ask.objectId }) else { return }
-			withAnimation(MaskinMotion.standard) {
+			withAnimation(reduceMotion ? nil : MaskinMotion.standard) {
 				if let reason, !reason.isEmpty {
 					feed.reply("Hold: \(reason)", on: entry.card)
 				} else if let option = ask.holdOption {
@@ -90,7 +91,7 @@ public struct ObjectsScreen: View {
 		}
 		actions.undo = { ask in
 			guard let feed, let entry = feed.entries.first(where: { $0.id == ask.objectId }) else { return }
-			withAnimation(MaskinMotion.standard) { _ = feed.undo(entry.card) }
+			withAnimation(reduceMotion ? nil : MaskinMotion.standard) { _ = feed.undo(entry.card) }
 		}
 		return actions
 	}

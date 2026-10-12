@@ -22,6 +22,7 @@ final class ObjectsListIntents {
 /// inset cards (or the board), Select mode and the Undo toast. Rows link by value in a stack, or
 /// drive `selection` in a split view (when `selection` is non-nil).
 struct ObjectsListView: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Bindable var store: ObjectsStore
 	@Bindable var board: ObjectsBoardStore
 	let selection: Binding<String?>?
@@ -52,7 +53,7 @@ struct ObjectsListView: View {
 		}
 		.ambientBackground()
 		.animation(.snappy, value: picking.isActive)
-		// Selection belongs to the list; leaving it for the board ends it.
+		// Select mode ends when the layout or scope changes.
 		.onChange(of: store.display.layout) { picking.exit() }
 		.onChange(of: store.scope) { picking.exit() }
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
@@ -164,7 +165,13 @@ struct ObjectsListView: View {
 
 	// MARK: Selection
 
-	private var allIDs: [String] { store.groups.flatMap { $0.objects.map(\.id) } }
+	private var allIDs: [String] {
+		if store.display.layout == .board {
+			let needsYouOnly = store.needsYouOnly
+			return board.shownColumns.flatMap { board.cards(in: $0, needsYouOnly: needsYouOnly).map(\.id) }
+		}
+		return store.groups.flatMap { $0.objects.map(\.id) }
+	}
 
 	/// Set status, Assign and Archive (primary) over the picked objects. Actions that don't apply
 	/// to every picked type are disabled.
@@ -218,6 +225,7 @@ struct ObjectsListView: View {
 		picking.exit()
 		Task {
 			let outcome = await action()
+			if store.display.layout == .board { await board.refresh() }
 			offerUndo(outcome.undo, message: "\(verb) \(outcome.undo.count). Undo.")
 		}
 	}
@@ -380,7 +388,7 @@ struct ObjectsListView: View {
 		Section {
 			if hasHeader {
 				ObjectGroupHeader(group: group, collapsed: collapsed) {
-					withAnimation(MaskinMotion.standard) { store.toggleGroup(group.id) }
+					withAnimation(reduceMotion ? nil : MaskinMotion.standard) { store.toggleGroup(group.id) }
 				}
 				.padding(.horizontal, MaskinSpace.s11 - MaskinSpace.s4)
 				.listRowInsets(EdgeInsets())
@@ -515,7 +523,7 @@ struct ObjectsListView: View {
 		ScrollView {
 			header
 			ObjectsBoardView(
-				store: store, board: board, selection: selection, zoomNamespace: zoomNamespace,
+				store: store, board: board, selection: selection, picking: picking, zoomNamespace: zoomNamespace,
 				offerUndo: { message, undo in
 					undoOffer = UndoOffer(message: message) { await undo() }
 				},
@@ -633,9 +641,7 @@ struct ObjectsDisplayMenu: View {
 			}
 		}
 		Section {
-			if store.display.layout == .list {
-				Button("Select", systemImage: "checkmark.circle") { picking.enter() }
-			}
+			Button("Select", systemImage: "checkmark.circle") { picking.enter() }
 			Button("New object", systemImage: "plus") { intents.create() }
 		}
 		if store.statusFilter != nil || store.display.needsYouOnly || store.display.isCustomised {

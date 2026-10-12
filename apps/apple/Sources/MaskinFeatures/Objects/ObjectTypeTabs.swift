@@ -55,7 +55,7 @@ struct ObjectTypeTabs: View {
 				if reduceMotion {
 					proxy.scrollTo(scope, anchor: .center)
 				} else {
-					withAnimation(MaskinMotion.standard) { proxy.scrollTo(scope, anchor: .center) }
+					withAnimation(reduceMotion ? nil : MaskinMotion.standard) { proxy.scrollTo(scope, anchor: .center) }
 				}
 			}
 		}

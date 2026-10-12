@@ -50,6 +50,12 @@ struct FirstUseView: View {
 	var onOpenWelcome: () -> Void
 	var onContinue: () -> Void
 	var onRetry: () -> Void
+	/// Asks the system for notification permission. Non-nil adds the step between the beats and the
+	/// app ("So decisions reach you when they matter"); nil skips it (previews, snapshots).
+	var onEnableNotifications: (() async -> Void)?
+
+	/// What to do once the notification step is answered.
+	@State private var afterNotifications: (() -> Void)?
 
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -58,7 +64,58 @@ struct FirstUseView: View {
 		return first.isEmpty ? "Welcome." : "Welcome, \(first)."
 	}
 
+	/// Leave the beats: through the notification step when there is one and the workspace is ready.
+	private func leave(then next: @escaping () -> Void) {
+		if onEnableNotifications != nil, readiness == .ready {
+			afterNotifications = next
+		} else {
+			next()
+		}
+	}
+
 	var body: some View {
+		if let next = afterNotifications {
+			notificationStep(next: next)
+		} else {
+			beats
+		}
+	}
+
+	/// The reason first, then the system prompt: a denial there is permanent, so it is asked once the
+	/// person knows what it is for. "Not now" never prompts.
+	private func notificationStep(next: @escaping () -> Void) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+			Image(systemName: "bell")
+				.maskinSymbol(MaskinFontSize.t24, weight: .semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.accessibilityHidden(true)
+			Text("Turn on notifications")
+				.maskinText(.largeTitle)
+				.foregroundStyle(MaskinColor.ink)
+				.accessibilityAddTraits(.isHeader)
+			Text("So decisions reach you when they matter. Only what needs you, never noise.")
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink4)
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				Button("Turn on notifications") {
+					Task {
+						await onEnableNotifications?()
+						next()
+					}
+				}
+				.buttonStyle(PrimaryActionButtonStyle())
+				textButton("Not now", action: next)
+			}
+			.padding(.top, MaskinSpace.s9)
+		}
+		.padding(.horizontal, MaskinSpace.s12)
+		.padding(.vertical, MaskinSpace.s14)
+		.frame(maxWidth: 440)
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+		.ambientBackground()
+	}
+
+	private var beats: some View {
 		GeometryReader { proxy in
 			ScrollView {
 				VStack(alignment: .leading, spacing: MaskinSpace.s14) {
@@ -121,11 +178,11 @@ struct FirstUseView: View {
 			switch readiness {
 			case .ready:
 				if hasWelcomeChat {
-					Button("Open the welcome chat", action: onOpenWelcome)
+					Button("Open the welcome chat") { leave(then: onOpenWelcome) }
 						.buttonStyle(PrimaryActionButtonStyle())
-					textButton("Go to For You", action: onContinue)
+					textButton("Go to For You") { leave(then: onContinue) }
 				} else {
-					Button("Go to For You", action: onContinue)
+					Button("Go to For You") { leave(then: onContinue) }
 						.buttonStyle(PrimaryActionButtonStyle())
 				}
 			case .settingUp, .retrying:

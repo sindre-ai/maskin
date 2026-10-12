@@ -115,10 +115,15 @@ private struct AgentDetailHost: View {
 	let environment: AppEnvironment
 	var onDeleted: () -> Void = {}
 	@State private var store: AgentDetailStore
+	@State private var flows: [LoopSummary] = []
+	private let loopsAPI: APILoopsSource?
+	private let agentID: String
 
 	init(environment: AppEnvironment, agentID: String, onDeleted: @escaping () -> Void = {}) {
 		self.environment = environment
 		self.onDeleted = onDeleted
+		self.agentID = agentID
+		loopsAPI = environment.workspaceId.map { APILoopsSource(client: environment.client, workspaceID: $0) }
 		_store = State(
 			initialValue: AgentDetailStore(
 				agentID: agentID,
@@ -127,8 +132,13 @@ private struct AgentDetailHost: View {
 	}
 
 	var body: some View {
-		AgentDetailView(store: store, onDeleted: onDeleted)
+		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows)
 			.task { await store.start() }
+			.task {
+				// Flows the agent works in: a best-effort read, so a failure just hides the card.
+				guard let all = try? await loopsAPI?.loops() else { return }
+				flows = all.filter { $0.agentIDs.contains(agentID) }
+			}
 			.onDisappear { store.stop() }
 	}
 }

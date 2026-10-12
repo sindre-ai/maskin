@@ -17,6 +17,7 @@ struct SwipeToReply: ViewModifier {
 	@State private var offset: CGFloat = 0
 	@State private var ticked = false
 	@State private var cancelled = false
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// Pure mapping from finger travel to row travel, so the rule is testable.
 	static func offset(for translation: CGFloat) -> CGFloat {
@@ -33,7 +34,7 @@ struct SwipeToReply: ViewModifier {
 					.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
 					.background(MaskinSurface.fill, in: Circle())
 					.opacity(min(offset / Self.threshold, 1))
-					.scaleEffect(ticked ? 1 : 0.85)
+					.scaleEffect(ticked || reduceMotion ? 1 : 0.85)
 					.offset(x: -(MaskinSpace.s14 + MaskinSpace.s4))
 					.accessibilityHidden(true)
 			}
@@ -57,7 +58,7 @@ struct SwipeToReply: ViewModifier {
 					}
 					.onEnded { _ in
 						let fire = !cancelled && offset >= Self.threshold
-						withAnimation(Self.springBack) { offset = 0 }
+						withAnimation(reduceMotion ? nil : Self.springBack) { offset = 0 }
 						cancelled = false
 						ticked = false
 						if fire { onReply() }

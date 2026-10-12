@@ -8,6 +8,7 @@ import SwiftUI
 public struct RootView: View {
 	private let environment: AppEnvironment
 	@Environment(\.scenePhase) private var scenePhase
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var runtime: AppRuntime
 	/// Names and kinds for the in-app links that appear in markdown (chat messages, comments).
 	@State private var links: InternalLinkDirectory
@@ -57,7 +58,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 				AuthView(environment: environment)
 			}
 		}
-		.animation(.default, value: auth.session != nil)
+		.animation(reduceMotion ? nil : .default, value: auth.session != nil)
 		.onChange(of: auth.session?.actorId, initial: true) { _, id in
 			firstUseActorId = id.flatMap { auth.firstUse.isPending(actorId: $0) ? $0 : nil }
 		}
@@ -120,7 +121,8 @@ extension RootView {
 					await workspaces.refresh()
 					isRetryingWorkspace = false
 				}
-			})
+			},
+			onEnableNotifications: { [runtime] in await runtime.requestPushPermission() })
 	}
 
 	fileprivate func finishFirstUse(session: StoredSession) {

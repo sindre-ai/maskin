@@ -52,8 +52,20 @@ public struct ForYouScreen: View {
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()
 			async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
-			_ = await (feed, stories)
+			async let names: Void = loadTypeNames()
+			_ = await (feed, stories, names)
 		}
+	}
+
+	/// The workspace schema's type names, so footers read "Flow" or a custom type's own name.
+	private func loadTypeNames() async {
+		guard environment.auth.session != nil else { return }
+		let auth = environment.auth
+		let directory = ObjectsDirectory(
+			remote: APIObjectsRemote(client: environment.client, credentials: auth.credentialsProvider),
+			workspaceId: { auth.session?.workspaceId })
+		await directory.load()
+		runtime.store.typeDisplayNames = directory.schema.displayNames
 	}
 
 	/// The Display menu: which kind of card to show, and taking every suggested option. That acts on
@@ -68,7 +80,7 @@ public struct ForYouScreen: View {
 			) {
 				Text("Everything").tag(String?.none)
 				ForEach(store.typeCounts, id: \.type) { item in
-					Text("\(item.type.capitalized)s \(item.count)").tag(String?.some(item.type))
+					Text("\(ObjectTypeCatalog.pluralLabel(for: item.type, displayName: store.typeLabel(for: item.type))) \(item.count)").tag(String?.some(item.type))
 				}
 			}
 		}
@@ -115,6 +127,12 @@ struct ForYouFeedView: View {
 	/// rows). Compact width is the one-column list.
 	var wide = false
 	@State private var openStory: StoryCard?
+	/// The card holding keyboard focus on iPad; mirrored to `AppRuntime.forYouSelection` so Return
+	/// (and the Go menu item) can accept its recommended option.
+	@FocusState private var focusedCard: String?
+	@Environment(AppRuntime.self) private var shellRuntime: AppRuntime?
+	/// Width of the feed, to pick the briefing card size with or without the sidebar open.
+	@State private var feedWidth: CGFloat = 0
 	/// Which cards the reader opened with Ask; the rest stay compact.
 	@State private var expansion = CardExpansion()
 	/// Frozen "now" for snapshots; live screens pass nil.
@@ -125,15 +143,44 @@ struct ForYouFeedView: View {
 	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
+	/// Feed side padding on the wide feed (4-iPad.md: 36 to 40).
+	private let wideInset: CGFloat = MaskinSpace.s13 + MaskinSpace.s4
+	private var rowWidth: CGFloat { wide ? wideMaxWidth : readableWidth }
+	private var rowInset: CGFloat { wide ? wideInset : MaskinSpace.s9 }
+	/// Gap between the two columns of decision cards on the wide feed.
+	private let columnGap: CGFloat = MaskinSpace.s12
+	/// The wide feed fills the window up to this width (the cards must not stretch past reading size).
+	private let wideMaxWidth: CGFloat = 1200
+	/// Below this feed width the sidebar is taking room: briefing cards shrink to 150.
+	private let sidebarFeedWidth: CGFloat = 780
 
 	var body: some View {
 		let entries = store.entries
+		let animationKey = entries.map { "\($0.id)-\($0.bucket.rawValue)" }
+		let cardIDs = entries.map { $0.card.id }
+		presentations(
+			feedList(entries: entries)
+			.onChange(of: focusedCard) { _, id in if wide { shellRuntime?.forYouSelection = id } }
+			.refreshable { await store.refresh() }
+			.animation(store.isFetching ? nil : MaskinMotion.standard, value: animationKey)
+			.onChange(of: cardIDs) { _, ids in expansion.prune(keeping: Set(ids)) }
+			.onChange(of: scenePhase) { _, phase in
+				switch phase {
+				case .active: outbox.appDidBecomeActive()
+				case .background: store.decisions.commitHeld()
+				default: break
+				}
+			}
+		)
+	}
+
+	private func feedList(entries: [FeedEntry]) -> some View {
 		List {
 			if let stories, !stories.cards.isEmpty {
-				StoryRow(stories: stories) { card in openStory = card }
+				StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
-				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: rowInset, bottom: MaskinSpace.s3, trailing: rowInset))
 			}
 			headerRows(entries: entries)
 			feedRows(entries: entries)
@@ -141,24 +188,23 @@ struct ForYouFeedView: View {
 		.listStyle(.plain)
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
-		.refreshable { await store.refresh() }
-		.animation(store.isFetching ? nil : MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
-		.onChange(of: entries.map { $0.card.id }) { _, ids in expansion.prune(keeping: Set(ids)) }
-		.onChange(of: scenePhase) { _, phase in
-			switch phase {
-			case .active: outbox.appDidBecomeActive()
-			case .background: store.decisions.commitHeld()
-			default: break
+		.background(
+			GeometryReader { proxy in
+				Color.clear.onChange(of: proxy.size.width, initial: true) { _, width in feedWidth = width }
 			}
-		}
+		)
+	}
+
+	/// The sheet, the briefing cover and the notice alert over the feed.
+	private func presentations<Content: View>(_ content: Content) -> some View {
+		content
 		.sheet(item: presentedBinding) { presented in
 			if let chief, let environment {
 				ChiefOfStaffSheet(
 					environment: environment, desk: chief, presented: presented,
 					card: wide ? sheetCard(for: presented.card.id) : nil
 				)
-					.presentationDetents([.medium, .large])
-					.presentationDragIndicator(.visible)
+				.askSheetSizing(wide: wide)
 			}
 		}
 		.storyCover(item: $openStory) { card in
@@ -178,6 +224,12 @@ struct ForYouFeedView: View {
 		}
 	}
 
+	/// Briefing cards: 124 wide on compact, 204 on iPad, 150 when the sidebar takes room (4-iPad.md).
+	private var storyMetrics: StoryCardMetrics {
+		guard wide else { return .compact }
+		return feedWidth > 0 && feedWidth < sidebarFeedWidth ? .regularWithSidebar : .regular
+	}
+
 	private var presentedBinding: Binding<ChiefOfStaffDesk.Presented?> {
 		Binding(get: { chief?.presented }, set: { if $0 == nil { chief?.dismiss() } })
 	}
@@ -193,7 +245,7 @@ struct ForYouFeedView: View {
 				}
 			}
 		}
-		.modifier(ReadableRow(width: readableWidth))
+		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 	}
 
 	// MARK: Rows
@@ -202,18 +254,18 @@ struct ForYouFeedView: View {
 	private func feedRows(entries: [FeedEntry]) -> some View {
 		switch store.phase {
 		case .idle, .loading:
-			LoadingSkeleton(rows: 3).modifier(ReadableRow(width: readableWidth))
+			LoadingSkeleton(rows: 3).modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .failed(let message):
 			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load your feed", message: message) {
 				Button("Try again") { Task { await store.load() } }.buttonStyle(.secondaryAction)
 			}
-			.modifier(ReadableRow(width: readableWidth))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .loaded:
 			if entries.isEmpty {
 				CaughtUp(filtered: store.options.typeFilter != nil)
-					.modifier(ReadableRow(width: readableWidth))
+					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			} else {
-				swipeHint
+				if !wide { swipeHint }
 				ForEach(groups(of: entries), id: \.bucket) { group in
 					// The primary group is the feed itself: the design shows no header above it.
 					if group.bucket != .needs {
@@ -221,9 +273,13 @@ struct ForYouFeedView: View {
 							title: title(for: group.bucket), count: group.entries.count,
 							action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
 						)
-						.modifier(ReadableRow(width: readableWidth))
+						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					}
-					ForEach(group.entries) { entry in feedRow(entry) }
+					if wide {
+						ForEach(pairs(of: group.entries)) { pair in wideRow(pair) }
+					} else {
+						ForEach(group.entries) { entry in feedRow(entry) }
+					}
 				}
 			}
 		}
@@ -258,13 +314,54 @@ struct ForYouFeedView: View {
 					.frame(minHeight: MaskinSpace.touchMin)
 			}
 			.foregroundStyle(MaskinColor.ink4)
-			.modifier(ReadableRow(width: readableWidth))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+		}
+	}
+
+	/// Two decision cards side by side, each (feed - gap) / 2 wide, tops aligned.
+	private func wideRow(_ pair: EntryPair) -> some View {
+		HStack(alignment: .top, spacing: columnGap) {
+			wideCell(pair.first)
+			if let second = pair.second {
+				wideCell(second)
+			} else {
+				Color.clear.frame(maxWidth: .infinity).accessibilityHidden(true)
+			}
+		}
+		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+	}
+
+	/// One card in the grid. It takes keyboard focus; Return takes the recommended option when that
+	/// can be undone (a card that needs a confirmation keeps it on the card).
+	private func wideCell(_ entry: FeedEntry) -> some View {
+		card(entry)
+			.frame(maxWidth: .infinity, alignment: .top)
+			.focusable()
+			.focused($focusedCard, equals: entry.id)
+			.onKeyPress(.return) {
+				guard entry.record == nil, let option = entry.card.decision?.recommended,
+					!option.destructive
+				else { return .ignored }
+				DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+					.choose(option)
+				return .handled
+			}
+			.contextMenu {
+				if entry.record == nil {
+					Button("Mark read", systemImage: "checkmark") { dismiss(entry) }
+				}
+			}
+	}
+
+	private func pairs(of entries: [FeedEntry]) -> [EntryPair] {
+		stride(from: 0, to: entries.count, by: 2).map {
+			EntryPair(first: entries[$0], second: $0 + 1 < entries.count ? entries[$0 + 1] : nil)
 		}
 	}
 
 	private func feedRow(_ entry: FeedEntry) -> some View {
 		card(entry)
-			.modifier(ReadableRow(width: readableWidth))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			.swipeActions(edge: .leading, allowsFullSwipe: true) {
 				// Swipe right to take the agent's recommendation. Options that can't be undone
 				// are never one swipe away: they keep their confirmation on the card.
@@ -305,7 +402,8 @@ struct ForYouFeedView: View {
 		return DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card),
 			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
-			actions: actions, chief: chief, threadInDetail: wide)
+			actions: actions, chief: chief, threadInDetail: wide,
+			typeLabel: store.typeLabel(for:))
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 	}
 
@@ -318,7 +416,8 @@ struct ForYouFeedView: View {
 		return AnyView(
 			DecisionCardView(
 				entry: entry, sender: store.senderName(of: entry.card), expanded: false,
-				now: fixedNow ?? Date(), actions: actions, chief: nil, threadInDetail: true))
+				now: fixedNow ?? Date(), actions: actions, chief: nil, threadInDetail: true,
+				typeLabel: store.typeLabel(for:)))
 	}
 
 	private func dismiss(_ entry: FeedEntry) {
@@ -328,6 +427,13 @@ struct ForYouFeedView: View {
 }
 
 // MARK: - Pieces
+
+/// A row of the wide feed: one or two decision cards.
+private struct EntryPair: Identifiable {
+	let first: FeedEntry
+	let second: FeedEntry?
+	var id: String { first.id }
+}
 
 /// A quiet label above each group of cards, with its count and an optional bulk action.
 private struct SectionHeader: View {
@@ -353,6 +459,7 @@ private struct SectionHeader: View {
 
 private struct ReadableRow: ViewModifier {
 	let width: CGFloat
+	var inset: CGFloat = MaskinSpace.s9
 
 	func body(content: Content) -> some View {
 		content
@@ -360,7 +467,7 @@ private struct ReadableRow: ViewModifier {
 			.frame(maxWidth: .infinity)
 			.listRowSeparator(.hidden)
 			.listRowBackground(Color.clear)
-			.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+			.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: inset, bottom: MaskinSpace.s3, trailing: inset))
 	}
 }
 
@@ -464,7 +571,8 @@ extension View {
 				self.presentationDetents([.large])
 			}
 		} else {
-			self.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+			// The Chief of Staff sheet opens at the large detent only (spec 7).
+			self.presentationDetents([.large]).presentationDragIndicator(.visible)
 		}
 	}
 }

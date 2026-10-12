@@ -814,14 +814,17 @@ public final class ChatStore {
 		}
 	}
 
-	public func removeParticipant(_ actorID: String) async {
+	@discardableResult
+	public func removeParticipant(_ actorID: String) async -> Bool {
 		let before = detail
 		detail?.participants.removeAll { $0.id == actorID }
 		do {
 			try await api.removeParticipant(conversationID: conversationID, actorID: actorID)
+			return true
 		} catch {
 			detail = before
 			notice = Self.message(error)
+			return false
 		}
 	}
 

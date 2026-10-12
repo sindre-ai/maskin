@@ -239,6 +239,7 @@ public final class LoopsStore {
 				freshness.refreshed(at: cache?.now() ?? Date())
 				SyncLog.revalidated(Self.cacheName, ok: true, since: started)
 				persist()
+				CycleActivityController.shared?.sync(loops: loops, needsYou: { [self] in needsYou($0) })
 				Task { await loadLatestUpdates() }
 			} catch {
 				freshness.revalidateFailed()

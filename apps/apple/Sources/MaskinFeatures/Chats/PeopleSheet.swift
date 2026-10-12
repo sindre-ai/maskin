@@ -38,22 +38,30 @@ struct GroupHeaderPill: View {
 }
 
 /// Who is in the conversation, with a role line, and adding more. An agent's role is its own
-/// description; people show as "Human" until member roles are available here.
+/// description; people show as "Human · Owner" once their workspace role is read.
 struct PeopleSheet: View {
 	let chat: ChatStore
 	let conversations: ConversationsStore
+	/// Called after the reader leaves, so the host can close the conversation.
+	var onLeft: () -> Void = {}
 
 	@Environment(\.dismiss) private var dismiss
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	/// Workspace roles for the role line ("Human · Owner"); empty until read.
+	@State private var memberRoles: [String: String] = [:]
+	@State private var confirmingLeave = false
 	@State private var adding: Bool
 	@State private var selection: Set<String> = []
 	@State private var query = ""
 	@State private var removeTarget: ChatParticipant?
 
 	init(
-		chat: ChatStore, conversations: ConversationsStore, startAdding: Bool = false
+		chat: ChatStore, conversations: ConversationsStore, startAdding: Bool = false,
+		onLeft: @escaping () -> Void = {}
 	) {
 		self.chat = chat
 		self.conversations = conversations
+		self.onLeft = onLeft
 		_adding = State(initialValue: startAdding)
 	}
 
@@ -73,6 +81,15 @@ struct PeopleSheet: View {
 							Label("Add someone", systemImage: "person.badge.plus")
 						}
 					}
+					if canLeave {
+						Section {
+							Button(role: .destructive) {
+								confirmingLeave = true
+							} label: {
+								Text("Leave chat").frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin - MaskinSpace.s5)
+							}
+						}
+					}
 				}
 			}
 			.confirmationDialog(
@@ -85,6 +102,19 @@ struct PeopleSheet: View {
 				}
 			} message: { person in
 				Text("\(person.name) will no longer see new messages here.")
+			}
+			.confirmationDialog("Leave this chat?", isPresented: $confirmingLeave, titleVisibility: .visible) {
+				Button("Leave chat", role: .destructive) {
+					Task {
+						guard await chat.removeParticipant(chat.currentActorID) else { return }
+						MaskinHaptics.play(.warning)
+						conversations.hideAfterLeaving(chat.conversationID)
+						dismiss()
+						onLeft()
+					}
+				}
+			} message: {
+				Text("You will stop getting new messages here.")
 			}
 			.searchable(text: $query, isPresented: .constant(adding), prompt: "Search people and agents")
 			.scrollContentBackground(.hidden)
@@ -110,8 +140,25 @@ struct PeopleSheet: View {
 					}
 				}
 			}
-			.task { await conversations.loadActors() }
+			.task {
+				await conversations.loadActors()
+				await loadRoles()
+			}
 		}
+	}
+
+	/// A chat that includes a system agent (the Chief of Staff) is not one to leave.
+	private var canLeave: Bool {
+		chat.participants.contains { $0.id == chat.currentActorID }
+			&& !chat.participants.contains { p in chat.workspaceActors.first { $0.id == p.id }?.isSystem == true }
+			&& chat.flowContext == nil
+	}
+
+	private func loadRoles() async {
+		guard let environment = runtime?.environment, let workspaceID = environment.workspaceId else { return }
+		let api: any MembersAPI = APISettingsSource(client: environment.client, workspaceID: workspaceID)
+		guard let members = try? await api.list(workspaceId: workspaceID) else { return }
+		memberRoles = Dictionary(members.map { ($0.actorId, $0.role.label) }, uniquingKeysWith: { first, _ in first })
 	}
 
 	private func row(_ person: ChatParticipant) -> some View {
@@ -136,7 +183,7 @@ struct PeopleSheet: View {
 
 	private func roleLine(_ person: ChatParticipant) -> String {
 		PersonRoleLabel.label(
-			for: person, memberRole: nil,
+			for: person, memberRole: memberRoles[person.id],
 			agentSummary: chat.workspaceActors.first { $0.id == person.id }?.summary)
 	}
 }

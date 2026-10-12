@@ -429,7 +429,7 @@ struct StatusBurst: View {
 			progress = 0
 			Task { @MainActor in
 				try? await Task.sleep(for: .milliseconds(30))
-				withAnimation(.easeOut(duration: MaskinDuration.slide * 3)) { progress = 1 }
+				withAnimation(reduceMotion ? nil : .easeOut(duration: MaskinDuration.slide * 3)) { progress = 1 }
 			}
 		}
 	}

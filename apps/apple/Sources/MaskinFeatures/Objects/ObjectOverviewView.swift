@@ -76,6 +76,7 @@ struct LatestRow: View {
 /// Internal keys (leading underscore, bookkeeping) stay hidden, and an actor id reads as the
 /// person's or agent's name, never the id.
 struct ObjectPropertiesCard: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let store: ObjectDetailStore
 	let object: WorkObject
 	@State private var showAll = false
@@ -107,7 +108,7 @@ struct ObjectPropertiesCard: View {
 					}
 					if all.count > Self.preview {
 						Button(showAll ? "Show fewer" : "Show all \(all.count)") {
-							withAnimation(MaskinMotion.standard) { showAll.toggle() }
+							withAnimation(reduceMotion ? nil : MaskinMotion.standard) { showAll.toggle() }
 						}
 						.maskinText(.subhead)
 						.foregroundStyle(MaskinColor.ink4)

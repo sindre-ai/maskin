@@ -10,6 +10,8 @@ struct AgentDetailView: View {
 	let store: AgentDetailStore
 	/// Called once the agent is deleted so the host can leave the screen.
 	var onDeleted: () -> Void = {}
+	/// The flows this agent works in, by name. Empty while loading or when it is in none.
+	var flows: [LoopSummary] = []
 	@State private var showRun = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmReset = false
@@ -27,7 +29,7 @@ struct AgentDetailView: View {
 			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				if let profile = store.profile {
 					AgentDetailContent(
-						profile: profile, store: store,
+						profile: profile, store: store, flows: flows,
 						onRun: { runTapped() },
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
@@ -136,6 +138,7 @@ struct AgentDetailView: View {
 struct AgentDetailContent: View {
 	let profile: AgentProfile
 	let store: AgentDetailStore
+	var flows: [LoopSummary] = []
 	var onRun: () -> Void = {}
 	var onPause: () -> Void = {}
 	var onReset: () -> Void = {}
@@ -146,6 +149,21 @@ struct AgentDetailContent: View {
 		hero
 		if let live = store.liveSession {
 			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
+		}
+		if !flows.isEmpty {
+			card("Flows") {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(flows) { flow in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: "arrow.triangle.2.circlepath")
+								.foregroundStyle(MaskinColor.ink4)
+								.accessibilityHidden(true)
+							Text(flow.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink2).lineLimit(1)
+							Spacer(minLength: 0)
+						}
+					}
+				}
+			}
 		}
 		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat)) {
 			if let prompt = profile.systemPrompt, !prompt.isEmpty {
@@ -202,7 +220,7 @@ struct AgentDetailContent: View {
 	private var hero: some View {
 		VStack(spacing: MaskinSpace.s9) {
 			ActorAvatar(
-				name: profile.name, kind: .agent, size: MaskinSpace.s14 * 3, seed: profile.id,
+				name: profile.name, kind: .agent, size: MaskinSpace.s14 * 2 - MaskinSpace.s2, seed: profile.id,
 				mood: AgentMood(store.status))
 			VStack(spacing: MaskinSpace.s2) {
 				Text(profile.name)

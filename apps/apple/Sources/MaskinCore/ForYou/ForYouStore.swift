@@ -94,6 +94,14 @@ public final class ForYouStore {
 
 	public let decisions: DecisionService
 
+	/// The workspace schema's display names by object type key, for card footers and the filter.
+	public var typeDisplayNames: [String: String] = [:]
+
+	/// "Bet", "Flow", "Meeting note": the schema's name for a type, never the raw key.
+	public func typeLabel(for type: String) -> String {
+		ForYouTypeLabel.label(for: type, displayNames: typeDisplayNames)
+	}
+
 	/// Cards the reader has acted on this sitting. The server drops them from the feed once the
 	/// thread is read, but the receipt stays in place until the next workspace change.
 	@ObservationIgnored private var retained: [String: ForYouCard] = [:]

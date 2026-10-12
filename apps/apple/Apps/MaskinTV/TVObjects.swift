@@ -117,8 +117,14 @@ private struct TVObjectCard: View {
 				}
 			}
 			Text(object.title ?? "Untitled").font(.system(size: 32, weight: .bold)).lineLimit(2)
-			Text(object.status.replacingOccurrences(of: "_", with: " "))
-				.font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
+			HStack(spacing: 8) {
+				Text(object.status.replacingOccurrences(of: "_", with: " "))
+				if let updated = object.updatedAt {
+					Text("\u{00B7}")
+					RelativeTime(updated, style: .compact)
+				}
+			}
+			.font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
 		}
 		.padding(32)
 		.frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)

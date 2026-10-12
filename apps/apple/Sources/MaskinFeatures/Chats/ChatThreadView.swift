@@ -107,6 +107,9 @@ struct ChatThreadView: View {
 			composerEmpty: composer.text.isEmpty && composer.attachments.isEmpty, somebodyTyping: busy)
 	}
 
+	/// A flow channel or a group: the Team room. Its composer has Go live in place of the mic.
+	private var isRoom: Bool { flow != nil || store.participants.count >= 3 }
+
 	/// Who a live call from this thread is with: its first agent. Nil (no Live button) without one.
 	private var liveLead: ChatParticipant? { store.participants.first { $0.kind == .agent } }
 
@@ -122,6 +125,8 @@ struct ChatThreadView: View {
 				.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 				#endif
 				.toolbar { toolbarContent }
+				// Arrow-only back button (user decision). The thread pushes the flow and the agent page.
+				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
@@ -227,7 +232,7 @@ struct ChatThreadView: View {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
 			}
-			if let lead = liveLead {
+			if let lead = liveLead, !isRoom {
 				Button {
 					liveMeeting.present(.thread(chat: store, lead: lead))
 				} label: {
@@ -405,6 +410,39 @@ struct ChatThreadView: View {
 
 	/// The conversation's title as the 24pt heading at the top of the scrolling content.
 	private var topicHeading: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			contextLink
+			topicTitle
+		}
+	}
+
+	/// The mono line above the title (spec 7 §4): `THREAD IN {FLOW}` or `WITH {NAME}`. It opens the
+	/// room, so it appears only when there is a room to open.
+	@ViewBuilder
+	private var contextLink: some View {
+		if let titleAction, let label = contextLabel {
+			Button(action: titleAction) {
+				HStack(spacing: MaskinSpace.s2) {
+					Text(label).font(ChatType.mono11).tracking(ChatType.mono11Tracking)
+					Image(systemName: "chevron.right").maskinSymbol(MaskinFontSize.t11, weight: .semibold)
+				}
+				.foregroundStyle(MaskinColor.ink5)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed)
+			.padding(.horizontal, MaskinSpace.s2)
+			.accessibilityLabel(label.capitalized)
+		}
+	}
+
+	private var contextLabel: String? {
+		if let flow { return "THREAD IN \(flow.name.uppercased())" }
+		if let counterpart { return "WITH \(counterpart.name.uppercased())" }
+		return nil
+	}
+
+	private var topicTitle: some View {
 		Text(flow?.name ?? store.title)
 			.maskinText(.sheetTitle)
 			.foregroundStyle(MaskinColor.ink)
@@ -470,7 +508,8 @@ struct ChatThreadView: View {
 		MaskinComposer(
 			model: composer,
 			config: MaskinComposerConfig(
-				variant: .floating, placeholder: placeholder,
+				variant: .floating, placeholder: placeholder, showsMic: !isRoom,
+				goLive: isRoom ? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
 				suggestions: { query in
 					MentionTrigger.candidates(
 						query: query, participants: store.participants, workspace: store.workspaceActors,
@@ -622,6 +661,19 @@ struct ThreadTranscript: View {
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 
+	/// Each tagged person under your message with where they stand (Working, Replied, Waiting for X).
+	private func mentionChips(for message: ChatMessage) -> [MentionStateChip] {
+		message.mentionIDs.compactMap { id -> MentionStateChip? in
+			guard let name = store.displayName(for: id) else { return nil }
+			let kind = store.participants.first { $0.id == id }?.kind
+				?? store.workspaceActors.first { $0.id == id }?.participant.kind
+			let state = MentionChipState.resolve(
+				mentionedID: id, kind: kind, after: message, in: store.messages,
+				working: store.presence(of: id) != nil)
+			return MentionStateChip(id: id, name: name, state: state)
+		}
+	}
+
 	/// Spacing between rows: 16 between senders, 5 within a run (16 minus the 11 bubble padding).
 	static let listGap: CGFloat = MaskinSpace.s9
 	static let groupedGap: CGFloat = MaskinSpace.s9 - MaskinSpace.s6
@@ -765,6 +817,7 @@ struct ThreadTranscript: View {
 			MessageRow(
 				message: message, isOwn: isOwn, showsAuthor: showsAuthor,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
+				mentionChips: isOwn ? mentionChips(for: message) : [],
 				mentions: message.mentionIDs.compactMap { id in
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},

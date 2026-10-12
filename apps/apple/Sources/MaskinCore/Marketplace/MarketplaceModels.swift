@@ -137,3 +137,34 @@ public enum MarketplaceInstallState: Equatable, Sendable {
 	case installing
 	case installed(InstalledLoop)
 }
+
+/// The marketplace's kind chips: All, Agents, Flows, Integrations (`1-iPhone.md`). Main's API
+/// serves only flows (`/api/marketplace/loops`), so Agents and Integrations have no catalog yet;
+/// they stay as chips with an honest empty state rather than being hidden or faked.
+public enum MarketplaceKind: String, CaseIterable, Hashable, Sendable {
+	case all, agents, flows, integrations
+
+	public var title: String {
+		switch self {
+		case .all: "All"
+		case .agents: "Agents"
+		case .flows: "Flows"
+		case .integrations: "Integrations"
+		}
+	}
+
+	/// The tag on a card of this kind, in the neutral tint.
+	public static let flowTag = "Flow"
+
+	/// Whether the flows catalog belongs under this chip.
+	public var showsFlows: Bool { self == .all || self == .flows }
+
+	/// What the empty state says for a kind with no catalog.
+	public var emptyMessage: String? {
+		switch self {
+		case .agents: "No agents are listed in the marketplace yet. Flows bring their own agents."
+		case .integrations: "Integrations are connected from your profile, under Integrations."
+		default: nil
+		}
+	}
+}

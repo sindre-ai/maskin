@@ -12,6 +12,7 @@ import SwiftUI
 /// hold card in there. Tapping a related object calls `onOpenObject` (omit it to make the
 /// relationships list read-only).
 public struct ObjectDetailScreen<Decision: View>: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var store: ObjectDetailStore
 	private let environment: AppEnvironment
 	private let onOpenObject: ((String) -> Void)?
@@ -98,7 +99,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// Hold → Reply: the composer quotes the event and the next comment threads under it.
 	private func startReply(to item: TimelineItem) {
 		MaskinHaptics.play(.light)
-		withAnimation(MaskinMotion.quick) { replyingTo = item }
+		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { replyingTo = item }
 		composer.reply(to: store.authorName(for: item), text: ActivityGrouping.summary(of: item))
 	}
 
@@ -115,7 +116,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		linked = []
 		replyingTo = nil
 		followNextItem = parent == nil
-		withAnimation(MaskinMotion.quick) { page = .activity }
+		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity }
 		Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files, parentEventId: parent) }
 	}
 
@@ -259,7 +260,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 					let selected = (page ?? .overview) == item.part
 					Button {
 						MaskinHaptics.play(.selection)
-						withAnimation(MaskinMotion.quick) { page = item.part }
+						withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = item.part }
 					} label: {
 						HStack(spacing: MaskinSpace.s3) {
 							Text(item.title)
@@ -317,7 +318,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						ObjectDetailContent(
 							store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
 							onReply: startReply,
-							onShowActivity: { withAnimation(MaskinMotion.quick) { page = .activity } }
+							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } }
 						) { decision }
 						.padding(.horizontal, MaskinSpace.s9)
 						.padding(.top, MaskinSpace.s5)
@@ -341,7 +342,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			.onChange(of: store.latest?.id) { old, id in
 				guard part == .activity, let id, followNextItem || (old != nil && atTop) else { return }
 				followNextItem = false
-				withAnimation(.easeOut(duration: MaskinDuration.slide)) { proxy.scrollTo(id, anchor: .top) }
+				withAnimation(reduceMotion ? nil : .easeOut(duration: MaskinDuration.slide)) { proxy.scrollTo(id, anchor: .top) }
 			}
 		}
 	}

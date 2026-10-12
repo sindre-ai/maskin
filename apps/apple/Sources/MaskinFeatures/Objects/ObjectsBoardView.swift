@@ -11,6 +11,8 @@ struct ObjectsBoardView: View {
 	@Bindable var board: ObjectsBoardStore
 	/// Set in a split view, where a card drives the selection instead of pushing.
 	let selection: Binding<String?>?
+	/// Select mode (owned by the screen); a tap on a card toggles it instead of opening it.
+	var picking: SelectionModel = SelectionModel()
 	var zoomNamespace: Namespace.ID?
 	/// Called after a card moved column, with the toast text and the way back.
 	var offerUndo: (String, @escaping @MainActor () async -> Void) -> Void = { _, _ in }
@@ -80,7 +82,7 @@ struct ObjectsBoardView: View {
 						ObjectsBoardColumnView(
 							column: column, cards: board.cards(in: column, needsYouOnly: needsYouOnly),
 							count: board.count(in: column, needsYouOnly: needsYouOnly), store: store,
-							selection: selection, zoomNamespace: zoomNamespace,
+							selection: selection, picking: picking, zoomNamespace: zoomNamespace,
 							isLoadingMore: board.loadingMore.contains(column.id),
 							showsMore: column.hasMore && !needsYouOnly,
 							onMore: { Task { await board.loadMore(column: column.id) } },
@@ -115,6 +117,7 @@ struct ObjectsBoardColumnView: View {
 	let count: Int
 	let store: ObjectsStore
 	var selection: Binding<String?>? = nil
+	var picking = SelectionModel()
 	var zoomNamespace: Namespace.ID? = nil
 	var isLoadingMore = false
 	var showsMore = false
@@ -130,7 +133,7 @@ struct ObjectsBoardColumnView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			header
 			if cards.isEmpty {
-				Text("Drop a card here")
+				Text("No \(MaskinStatus.label(for: column.value).lowercased()) items")
 					.maskinText(.caption)
 					.foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity)
@@ -222,7 +225,16 @@ struct ObjectsBoardColumnView: View {
 			showsStatus: store.display.shows(.status), showsDriver: store.display.shows(.driver),
 			showsUpdated: store.display.shows(.updated))
 		Group {
-			if let selection {
+			if picking.isActive {
+				HStack(spacing: MaskinSpace.s5) {
+					SelectionCheckbox(isPicked: picking.contains(object.id))
+					content
+				}
+				.contentShape(Rectangle())
+				.onTapGesture { picking.toggle(object.id) }
+				.selectionRowAccessibility(isActive: true, isPicked: picking.contains(object.id))
+				.accessibilityAddTraits(.isButton)
+			} else if let selection {
 				Button { selection.wrappedValue = object.id } label: { content }
 					.buttonStyle(.maskinPressed(.shrink))
 			} else {
