@@ -18,6 +18,7 @@ export type DriveErrorCode =
 	| 'QUOTA_EXCEEDED_PROJECT'
 	| 'UPLOAD_FAILED'
 	| 'EXPORT_FORMAT_UNSUPPORTED'
+	| 'DOCUMENT_TOO_LARGE'
 	| 'LARGE_FILE_STREAMED_TO_STORAGE'
 	// Not Google-originated: no live grant for this workspace, or the grant
 	// was revoked. The agent should ask a human to reconnect.
@@ -152,7 +153,12 @@ export function classifyDriveError(params: {
 		})
 	}
 
-	if (status === 400 && /invalid value|invalid query|invalid_query/i.test(providerMessage)) {
+	if (
+		status === 400 &&
+		/invalid value|invalid query|invalid_query|unable to parse range|not supported for this document/i.test(
+			providerMessage,
+		)
+	) {
 		return new DriveError({
 			code: 'INVALID_INPUT',
 			message: `Drive rejected the request: ${providerMessage.slice(0, 200)}`,

@@ -20,6 +20,13 @@ describe('classifyDriveError', () => {
 		[403, body('rateLimitExceeded'), undefined, 'RATE_LIMIT_EXCEEDED'],
 		[429, '', undefined, 'RATE_LIMIT_EXCEEDED'],
 		[400, body('invalid', 'Invalid Value'), undefined, 'INVALID_INPUT'],
+		[400, body('badRequest', 'Unable to parse range: Foo!A1'), undefined, 'INVALID_INPUT'],
+		[
+			400,
+			body('failedPrecondition', 'This operation is not supported for this document'),
+			undefined,
+			'INVALID_INPUT',
+		],
 		[500, '<html>oops</html>', undefined, 'PROVIDER_ERROR'],
 		[418, '', undefined, 'PROVIDER_ERROR'],
 	])('status %s -> %s', (status, bodyText, retryAfterHeader, expected) => {
