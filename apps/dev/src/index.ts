@@ -8,6 +8,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
@@ -244,6 +245,12 @@ const rotateDeksJob = new RotateDeksJob(db)
 rotateDeksJob.start()
 logger.info('DEK rotation job scheduled')
 
+// Keychain: daily audit-chain snapshot into the write-once bucket, plus the verifier.
+// Inert until KEYCHAIN_WORM_BUCKET is set.
+const chainSnapshotJob = new ChainSnapshotJob(db)
+chainSnapshotJob.start()
+logger.info('Chain snapshot job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -377,6 +384,7 @@ const shutdown = async (signal: string) => {
 	keychainUndoSweeperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()
+	chainSnapshotJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
