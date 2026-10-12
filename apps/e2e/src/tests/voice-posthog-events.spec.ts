@@ -109,17 +109,23 @@ async function makeCall() {
 }
 
 test.describe('Voice PostHog events: end to end', () => {
-	test('the spec walk fires call_initiated, call_answered, call_completed and meeting_booked with exact properties', async () => {
+	// meeting_booked has its positive case in the integration test next to this suite
+	// (apps/dev/src/__tests__/integration/voice-posthog-events.test.ts): a booking needs a
+	// confirm_meeting_slot that succeeded against a connected Google Calendar, which this suite
+	// does not have, and voice_tool_trace cannot be seeded through the objects API.
+	test('the spec walk fires call_initiated, call_answered and call_completed with exact properties, and no meeting_booked without a booking', async () => {
 		const c = await makeCall()
 		await c.send('call.initiated')
 		await c.send('call.answered')
-		await c.tool('confirm_meeting_slot', { slot: '2026-10-08T09:00:00Z' })
-		await c.tool('request_followup_email', { prospect_quote: 'yes, send it' })
+		await c.tool('request_followup_email', {
+			prospect_quote: 'yes, send it',
+			agent_line: 'Just to confirm, one email from Maskin, and you can opt out any time. Okay?',
+		})
 		const hangup = await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 187 })
 		expect(hangup.status).toBe(200)
 
 		// No post_call_email_sent: this workspace has no Resend integration (see top).
-		expect(await c.events(4)).toEqual([
+		expect(await c.events(3)).toEqual([
 			{ event: 'call_answered', distinct_id: c.contactId, properties: {} },
 			{
 				event: 'call_completed',
@@ -127,11 +133,6 @@ test.describe('Voice PostHog events: end to end', () => {
 				properties: { outcome: 'answered', duration_seconds: 187, channel: 'voice_agent' },
 			},
 			{ event: 'call_initiated', distinct_id: c.contactId, properties: {} },
-			{
-				event: 'meeting_booked',
-				distinct_id: c.contactId,
-				properties: { source: 'voice_agent', contact_id: c.contactId },
-			},
 		])
 	})
 
