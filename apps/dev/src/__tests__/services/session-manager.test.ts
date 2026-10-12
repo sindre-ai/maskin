@@ -81,10 +81,6 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	loadSenderLine: vi.fn().mockResolvedValue(''),
-	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
-	appendToLedger: vi.fn().mockResolvedValue(undefined),
-	readLedgerTail: vi.fn().mockResolvedValue([]),
-	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
 const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({

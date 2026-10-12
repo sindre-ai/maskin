@@ -232,7 +232,7 @@ export async function evaluateAndRespond(ctx: {
 							newMessageContent: messageForPrompt.content,
 							isDirectConversation,
 						})
-			if (!shouldRespond) return
+			if (!shouldRespond) return undefined
 
 			const turnPayload = {
 				type: 'user' as const,
@@ -273,12 +273,12 @@ export async function evaluateAndRespond(ctx: {
 					agent.id,
 				)
 				if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
-				return
+				return undefined
 			}
 			if (existing) {
 				try {
 					await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
-					return
+					return undefined
 				} catch (err) {
 					logger.warn(
 						'writeInput to existing interactive conversation session failed — spawning a fresh one',

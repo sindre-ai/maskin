@@ -1,19 +1,15 @@
 import type { Database } from '@maskin/db'
 import { actors, objects, relationships, workspaces } from '@maskin/db/schema'
 import { buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
-import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm'
-import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
 const MAX_ACTIVE_BETS = 10
 const MAX_PAUSED_BETS = 5
 const MAX_CLOSED_BETS = 5
 const MAX_OPEN_INSIGHTS = 10
-const MAX_LEDGER_LINES = 20
 
 const CLOSED_BETS_DAYS = 30
-const LEDGER_MAX_LINES = 1000
 const TITLE_MAX = 120
 const EXCERPT_MAX = 180
 
@@ -32,12 +28,6 @@ Done means checked. Before you say done, compare the result with what was asked 
 Ask a person first before you do anything outside the company or that costs money, or delete anything. For everything else that's reversible, go ahead and note what you did.`
 
 /**
- * Wording for chats with a person. Approved word for word.
- */
-const CHAT_GUIDANCE =
-	'If they ask a question, think out loud or describe a problem, give your assessment and stop. Make changes when they ask for one.'
-
-/**
  * Wording for runs nobody is watching (triggers, loops, background). Approved
  * word for word — do not paraphrase or add emphasis.
  */
@@ -47,8 +37,7 @@ const UNWATCHED_RUN_GUIDANCE = `Nobody is watching this run and nobody can answe
  * Briefing block for every session: prepended to the ACTION_PROMPT of
  * non-interactive runs, added to the system prompt of interactive (chat)
  * sessions. Describes the workspace terrain, then the guidance for every
- * session, then the guidance for the kind of session it is — chats with a
- * person (`interactive`) or runs nobody is watching.
+ * session, then — for runs nobody is watching — the guidance for those.
  *
  * Parameterised on the live `workspaceId` + `frontendUrl` so the agent sees
  * the exact host + workspace-scoped path it should emit when referencing an
@@ -67,11 +56,9 @@ export function buildWorkspaceStartupBlock(args: {
 
 This workspace works through bets — shaped, time-boxed outcomes.
 
-- \`/agent/workspace/WORKSPACE.md\` holds the current snapshot (auto-generated from the object graph).
 - Active bets are where in-flight work lives; closed bets carry verdicts that teach the next cycle.
 - Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
-- A one-line note in \`/agent/workspace/SESSION_LEARNING.md\` rolls up into the next session's briefing.
 
 When you reference an object in a comment, notification, or description, emit a markdown link with this exact format — do not guess the host or drop the workspace segment:
 
@@ -79,9 +66,13 @@ When you reference an object in a comment, notification, or description, emit a 
 
 ${EVERY_SESSION_GUIDANCE}
 
-${args.interactive ? CHAT_GUIDANCE : UNWATCHED_RUN_GUIDANCE}
+${
+	args.interactive
+		? ''
+		: `${UNWATCHED_RUN_GUIDANCE}
 
----
+`
+}---
 
 `
 }
@@ -115,84 +106,6 @@ export async function loadSenderLine(db: Database, senderActorId: string): Promi
 		.where(eq(actors.id, senderActorId))
 		.limit(1)
 	return sender ? buildSenderLine(sender) : ''
-}
-
-export function workspaceLedgerKey(workspaceId: string): string {
-	return `agents/${workspaceId}/_workspace/learnings.md`
-}
-
-/**
- * Read the last `maxLines` entries from the workspace-scoped learnings ledger.
- * Returns an empty array if the ledger does not exist or cannot be read.
- */
-export async function readLedgerTail(
-	storage: StorageProvider,
-	workspaceId: string,
-	maxLines: number,
-): Promise<string[]> {
-	const key = workspaceLedgerKey(workspaceId)
-	try {
-		if (!(await storage.exists(key))) return []
-		const buf = await storage.get(key)
-		const lines = buf
-			.toString('utf-8')
-			.split('\n')
-			.filter((l) => l.length > 0)
-		return lines.slice(-maxLines)
-	} catch (err) {
-		logger.warn('Failed to read workspace ledger', { workspaceId, error: String(err) })
-		return []
-	}
-}
-
-/**
- * Append a single-line entry to the workspace ledger. Caps the ledger at
- * LEDGER_MAX_LINES (oldest entries drop). No-op if `line` is empty after trim.
- *
- * Skips the append (rather than proceeding with an empty baseline) if the
- * current ledger cannot be read. Without this guard, a transient S3 error
- * followed by a successful `put` would silently wipe all prior entries.
- *
- * Note: read-modify-write is not atomic. If two sessions in the same workspace
- * complete within milliseconds of each other, one entry may be lost. V2 should
- * move to per-session files concatenated at read time to eliminate this race.
- */
-export async function appendToLedger(
-	storage: StorageProvider,
-	workspaceId: string,
-	line: string,
-): Promise<void> {
-	const trimmed = line.replace(/[\r\n]+/g, ' ').trim()
-	if (!trimmed) return
-	const key = workspaceLedgerKey(workspaceId)
-
-	let exists: boolean
-	try {
-		exists = await storage.exists(key)
-	} catch (err) {
-		logger.warn('Failed to check ledger existence — skipping append', {
-			workspaceId,
-			error: String(err),
-		})
-		return
-	}
-
-	let existing = ''
-	if (exists) {
-		try {
-			existing = (await storage.get(key)).toString('utf-8')
-		} catch (err) {
-			logger.warn('Failed to read ledger before append — skipping to avoid wipe', {
-				workspaceId,
-				error: String(err),
-			})
-			return
-		}
-	}
-
-	const existingLines = existing.split('\n').filter((l) => l.length > 0)
-	const nextLines = [...existingLines, trimmed].slice(-LEDGER_MAX_LINES)
-	await storage.put(key, Buffer.from(`${nextLines.join('\n')}\n`, 'utf-8'))
 }
 
 function truncate(s: string | null | undefined, max: number): string {
@@ -252,7 +165,6 @@ export interface BriefingFacts {
 	pausedBets: BriefingBetFact[]
 	closedBets: BriefingBetFact[]
 	openInsights: BriefingInsightFact[]
-	ledgerLines: string[]
 	closedBetsDays: number
 }
 
@@ -278,7 +190,6 @@ function objectMeta(row: { metadata: unknown }): Record<string, unknown> {
  */
 export async function collectBriefingFacts(
 	db: Database,
-	storage: StorageProvider,
 	workspaceId: string,
 ): Promise<BriefingFacts> {
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
@@ -292,7 +203,6 @@ export async function collectBriefingFacts(
 			pausedBets: [],
 			closedBets: [],
 			openInsights: [],
-			ledgerLines: [],
 			closedBetsDays: CLOSED_BETS_DAYS,
 		}
 	}
@@ -390,8 +300,6 @@ export async function collectBriefingFacts(
 		progressByBet.set(rel.sourceId, entry)
 	}
 
-	const ledgerLines = await readLedgerTail(storage, workspaceId, MAX_LEDGER_LINES)
-
 	type ObjectRow = (typeof activeBets)[number]
 	const toBet = (row: ObjectRow, withProgress: boolean): BriefingBetFact => {
 		const meta = objectMeta(row)
@@ -418,14 +326,12 @@ export async function collectBriefingFacts(
 			id: row.id,
 			title: truncate(row.title, TITLE_MAX),
 		})),
-		ledgerLines,
 		closedBetsDays: CLOSED_BETS_DAYS,
 	}
 }
 
 /**
- * Render the agent-facing briefing markdown — the document written to
- * `/agent/workspace/WORKSPACE.md` at session start and returned by
+ * Render the agent-facing briefing markdown returned by
  * `GET /api/briefing`. Addressed to an agent, not a person: it carries object
  * ids and closes with the MCP tools to dig further.
  */
@@ -442,7 +348,7 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 	out.push(`# ${facts.workspaceName} — workspace briefing`)
 	out.push('')
 	out.push(
-		"This file is auto-generated at session start from the workspace's current state. It is your map — read it first, then use MCP tools to go deeper.",
+		"This briefing is auto-generated from the workspace's current state. It is your map — read it first, then use MCP tools to go deeper.",
 	)
 	out.push('')
 
@@ -506,17 +412,6 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 	}
 	out.push('')
 
-	out.push('## Recent workspace learnings')
-	out.push('')
-	if (facts.ledgerLines.length === 0) {
-		out.push('_No prior session learnings yet._')
-	} else {
-		for (const line of facts.ledgerLines) {
-			out.push(`- ${line}`)
-		}
-	}
-	out.push('')
-
 	out.push('## Digging deeper')
 	out.push('')
 	out.push('This briefing is a summary. Use the Maskin MCP tools to explore further:')
@@ -534,17 +429,13 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 
 /**
  * Generate the agent-facing briefing for a workspace. Queries the object graph
- * for active/closed bets, open insights, child-task progress, and the recent
- * workspace learnings ledger, then renders a stable markdown document.
+ * for active/closed bets, open insights and child-task progress, then renders
+ * a stable markdown document.
  *
  * This is the `feature_list.json` + `claude-progress.txt` equivalent from
  * Anthropic's Ralph Loop, adapted for knowledge work: always auto-generated,
  * never hand-edited, so it cannot rot.
  */
-export async function renderWorkspaceBriefing(
-	db: Database,
-	storage: StorageProvider,
-	workspaceId: string,
-): Promise<string> {
-	return formatAgentBriefing(await collectBriefingFacts(db, storage, workspaceId))
+export async function renderWorkspaceBriefing(db: Database, workspaceId: string): Promise<string> {
+	return formatAgentBriefing(await collectBriefingFacts(db, workspaceId))
 }
