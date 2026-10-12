@@ -50,11 +50,13 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('google-drive MCP server: tool surface and Zod contracts', () => {
-	it('registers exactly the search, list, download and watch tools', async () => {
+	it('registers the search, list, download, watch and structured read tools', async () => {
 		const client = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
+			'google_drive__get_document_structured',
 			'google_drive__get_file_bytes',
+			'google_drive__get_sheet_range',
 			'google_drive__list_folder',
 			'google_drive__search_files',
 			'google_drive__watch_folder',
@@ -118,6 +120,42 @@ describe('google-drive MCP server: tool surface and Zod contracts', () => {
 		])
 	})
 
+	it('get_document_structured schema: documentId required; startIndex and endIndex optional integers', async () => {
+		const client = await connect()
+		const tool = (await client.listTools()).tools.find(
+			(t) => t.name === 'google_drive__get_document_structured',
+		)
+		const schema = tool?.inputSchema as {
+			required?: string[]
+			properties: Record<string, { type?: string }>
+		}
+		expect(schema.required).toEqual(['documentId'])
+		expect(Object.keys(schema.properties).sort()).toEqual(['documentId', 'endIndex', 'startIndex'])
+		expect(schema.properties.startIndex?.type).toBe('integer')
+		expect(tool?.description).toContain('DOCUMENT_TOO_LARGE')
+	})
+
+	it('get_sheet_range schema: spreadsheetId and range required; majorDimension is ROWS or COLUMNS', async () => {
+		const client = await connect()
+		const tool = (await client.listTools()).tools.find(
+			(t) => t.name === 'google_drive__get_sheet_range',
+		)
+		const schema = tool?.inputSchema as {
+			required?: string[]
+			properties: Record<string, { type?: string; enum?: string[] }>
+		}
+		expect([...(schema.required ?? [])].sort()).toEqual(['range', 'spreadsheetId'])
+		expect(Object.keys(schema.properties).sort()).toEqual([
+			'majorDimension',
+			'pageSize',
+			'pageToken',
+			'range',
+			'spreadsheetId',
+		])
+		expect(schema.properties.majorDimension?.enum).toEqual(['ROWS', 'COLUMNS'])
+		expect(tool?.description).toContain('RATE_LIMIT_EXCEEDED')
+	})
+
 	it('rejects invalid input at the Zod layer without touching Drive or the token', async () => {
 		const client = await connect()
 		const fetchSpy = vi.spyOn(globalThis, 'fetch')
@@ -129,8 +167,18 @@ describe('google-drive MCP server: tool surface and Zod contracts', () => {
 			name: 'google_drive__search_files',
 			arguments: { query: 'x', pageSize: 0 },
 		})
+		const bad3 = await client.callTool({
+			name: 'google_drive__get_document_structured',
+			arguments: { documentId: 'd', startIndex: -1 },
+		})
+		const bad4 = await client.callTool({
+			name: 'google_drive__get_sheet_range',
+			arguments: { spreadsheetId: 's', range: 'A1', majorDimension: 'DIAGONAL' },
+		})
 		expect(bad.isError).toBe(true)
 		expect(bad2.isError).toBe(true)
+		expect(bad3.isError).toBe(true)
+		expect(bad4.isError).toBe(true)
 		expect(fetchSpy).not.toHaveBeenCalled()
 		expect(getToken).not.toHaveBeenCalled()
 	})
@@ -169,6 +217,79 @@ describe('google-drive MCP server: calls, errors, telemetry', () => {
 		expect(typeof trace.responseBytes).toBe('number')
 		expect(JSON.stringify(trace)).not.toContain('secret-term')
 		expect(capturePosthog).toHaveBeenCalledWith('drive_search_ran', 'actor-1', expect.any(Object))
+	})
+
+	it('get_document_structured returns the typed body and emits drive_doc_read next to the mcp_tool_call trace', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					documentId: 'd1',
+					title: 'T',
+					revisionId: 'r1',
+					body: {
+						content: [
+							{
+								startIndex: 1,
+								endIndex: 6,
+								paragraph: {
+									paragraphStyle: { namedStyleType: 'HEADING_1' },
+									elements: [{ textRun: { content: 'Hello\n' } }],
+								},
+							},
+						],
+					},
+				}),
+				{ status: 200 },
+			),
+		)
+		const client = await connect('sess-3')
+
+		const res = await client.callTool({
+			name: 'google_drive__get_document_structured',
+			arguments: { documentId: 'd1' },
+		})
+
+		expect(res.isError).toBeFalsy()
+		expect(textOf(res)).toEqual({
+			documentId: 'd1',
+			title: 'T',
+			revisionId: 'r1',
+			truncated: false,
+			body: [{ type: 'heading', startIndex: 1, endIndex: 6, level: 1, text: 'Hello' }],
+		})
+		expect(capturePosthog).toHaveBeenCalledWith('drive_doc_read', 'actor-1', expect.any(Object))
+		const trace = (captureTrace.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+		expect(trace).toMatchObject({
+			toolName: 'google_drive__get_document_structured',
+			argKeys: ['documentId'],
+			ok: true,
+		})
+	})
+
+	it('get_sheet_range returns values and a nextPageToken, and records drive_sheet_read', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+			String(input).includes('/values/')
+				? new Response(JSON.stringify({ range: "'Data'!A1:B1", values: [['a', 'b']] }), {
+						status: 200,
+					})
+				: new Response(
+						JSON.stringify({
+							sheets: [{ properties: { title: 'Data', gridProperties: { rowCount: 50 } } }],
+						}),
+						{ status: 200 },
+					),
+		)
+		const client = await connect()
+
+		const res = await client.callTool({
+			name: 'google_drive__get_sheet_range',
+			arguments: { spreadsheetId: 'sp1', range: 'Data!A:B', pageSize: 1 },
+		})
+
+		expect(res.isError).toBeFalsy()
+		expect(textOf(res).values).toEqual([['a', 'b']])
+		expect(typeof textOf(res).nextPageToken).toBe('string')
+		expect(capturePosthog).toHaveBeenCalledWith('drive_sheet_read', 'actor-1', expect.any(Object))
 	})
 
 	it('a DriveError becomes an isError envelope and an ok:false trace with the code as error_class', async () => {
