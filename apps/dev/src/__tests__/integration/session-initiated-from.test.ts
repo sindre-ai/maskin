@@ -36,7 +36,9 @@ function stubTelemetry(): { telemetry: RuntimeTelemetry; captured: CapturedPaylo
 		},
 		shutdown: async () => {},
 	}
-	return { telemetry: new RuntimeTelemetry({ client }), captured }
+	// Guard off so the "no second runtime_session_ended" test below checks
+	// SessionManager, not the telemetry duplicate guard.
+	return { telemetry: new RuntimeTelemetry({ client, endedDedupLimit: 0 }), captured }
 }
 
 /**
