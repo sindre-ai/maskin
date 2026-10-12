@@ -6118,7 +6118,10 @@ export function createMcpServer(config: McpConfig) {
 						`/api/sessions/${sessionId}`,
 						{ notify_on_complete: true },
 						wsOpts,
-					)) as { notify_on_complete?: 'registered' | 'delivered' | 'skipped'; notify_skip_reason?: string }
+					)) as {
+						notify_on_complete?: 'registered' | 'delivered' | 'skipped'
+						notify_skip_reason?: string
+					}
 					notifyOnComplete = {
 						state: patched.notify_on_complete ?? 'registered',
 						...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),

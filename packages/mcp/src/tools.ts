@@ -1590,7 +1590,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					"This call already waits and returns the result, so the flag only matters if the wait times out: then it is set on the helper, and its final message is sent back to you later where you started the work (your own chat, else the object you were started from). Omit it and a timed-out wait gets nothing more.",
+					'This call already waits and returns the result, so the flag only matters if the wait times out: then it is set on the helper, and its final message is sent back to you later where you started the work (your own chat, else the object you were started from). Omit it and a timed-out wait gets nothing more.',
 				),
 		}),
 	},

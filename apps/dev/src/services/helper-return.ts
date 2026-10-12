@@ -9,11 +9,7 @@ import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
-import {
-	MENTION_GUARD_LIMITS,
-	isNotifyOnComplete,
-	resolveReturnObjectId,
-} from './mention-guards'
+import { MENTION_GUARD_LIMITS, isNotifyOnComplete, resolveReturnObjectId } from './mention-guards'
 import type { SessionManager } from './session-manager'
 
 /**
