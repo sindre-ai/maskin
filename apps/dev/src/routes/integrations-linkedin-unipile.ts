@@ -1016,19 +1016,27 @@ app.post('/webhook', async (c) => {
 
 	const envelope = readUnipileEnvelope(payload)
 
+	const mapRow = getEventMapRow(envelope.type)
+
 	if (envelope.type && RE_ENUMERATE_EVENTS.has(envelope.type) && envelope.accountId) {
 		const db = c.get('db')
+		// The account event commits BEFORE the inline re-enumeration, which calls
+		// Unipile with no timeout and can outlive the 5 second delivery window; a
+		// slow or hung re-enumeration must not lose the event. A transient failure
+		// to record it answers 503 after the re-enumeration, so Unipile's retry
+		// gets another go at the event.
+		const recorded = mapRow ? await ingestUnipileEnvelope(db, mapRow, envelope) : null
 		const client = buildLinkedInClientForWebhook()
 		const result = await handleUnipileAccountReconnect(db, client, envelope.accountId)
+		if (recorded?.status === 503) return c.json(recorded.body, recorded.status)
 		return c.json({ ok: true, ...result })
 	}
 
-	const mapRow = getEventMapRow(envelope.type)
 	if (!mapRow) {
 		// Unknown or unhandled Unipile event type: acknowledge so Unipile does not
 		// retry. The delivery line carries the event type so an unhandled event kind
 		// surfaces in the dev log rather than staying invisible. Common expected
-		// arrivals here: `account.status.*`, `chat.*`. To react to one, add a row to
+		// arrivals here: `chat.*`. To react to one, add a row to
 		// event-map.ts. No integration row is resolved here, so no PostHog event.
 		recordWebhookDelivery(envelope, false, null, { outcome: 'dropped', reason: 'unknown_type' })
 		return c.json({ ok: true, skipped: 'unknown_type' })

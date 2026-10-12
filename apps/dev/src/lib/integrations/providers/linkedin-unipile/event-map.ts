@@ -69,7 +69,55 @@ export function resourceId(envelope: UnipileEnvelope): string | null {
 	return str(envelope.resource?.id)
 }
 
+/**
+ * Account events (reconnect and the account.status.* family) are event only in
+ * v1: the integration row is never written and nothing wakes. The state is the
+ * last segment of the Unipile type (reconnect, disconnected, errored, degraded,
+ * locked, running) under data.account_status. Ids and codes only: the payload
+ * is not copied.
+ */
+function accountRow(): EventMapRow {
+	return {
+		entityType: 'linkedin.account',
+		actions: ['status_changed'],
+		accountId: (envelope) => envelope.accountId,
+		// A redelivery of the same state change under a new envelope id shares its
+		// created_at; a later change to the same state does not.
+		deliveryKey: (envelope) =>
+			envelope.type && envelope.accountId && envelope.createdAt
+				? `acct:${envelope.type}:${envelope.accountId}:${envelope.createdAt}`
+				: null,
+		classify: async ({ envelope, integration }) => {
+			const accountStatus = envelope.type?.split('.').pop()
+			if (!accountStatus) return { kind: 'drop', reason: 'malformed_payload' }
+			return {
+				kind: 'emit',
+				action: 'status_changed',
+				entityId: integration.id,
+				data: {
+					provider: PROVIDER,
+					unipile_event_type: envelope.type,
+					integration_id: integration.id,
+					unipile_account_id: envelope.accountId,
+					external_id: envelope.accountId,
+					envelope_id: envelope.envelopeId,
+					provider_timestamp: envelope.createdAt,
+					account_status: accountStatus,
+				},
+				log: { account_status: accountStatus },
+			}
+		},
+		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,
+	}
+}
+
 export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
+	'account.reconnect': accountRow(),
+	'account.status.disconnected': accountRow(),
+	'account.status.errored': accountRow(),
+	'account.status.degraded': accountRow(),
+	'account.status.locked': accountRow(),
+	'account.status.running': accountRow(),
 	'message.new': {
 		entityType: 'linkedin.message',
 		actions: ['received', 'received_cold', 'received_unresolved'],

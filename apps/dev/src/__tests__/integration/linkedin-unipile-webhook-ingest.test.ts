@@ -171,6 +171,21 @@ function messageNew(
 	}
 }
 
+function accountEvent(
+	type: string,
+	overrides: { envelopeId?: string; createdAt?: string; accountId?: string } = {},
+) {
+	return {
+		id: overrides.envelopeId ?? `evt_${randomUUID()}`,
+		created_at: overrides.createdAt ?? '2026-10-04T11:00:00.000Z',
+		account_id: overrides.accountId ?? ACCOUNT_ID,
+		account_provider: 'LINKEDIN',
+		account_name: 'Test Member',
+		type,
+		payload: { note: 'must never reach an events row' },
+	}
+}
+
 function signedHeader(rawBody: string, tSec = Math.floor(Date.now() / 1000)) {
 	const v0 = createHmac('sha256', SECRET).update(`${tSec}.${rawBody}`).digest('hex')
 	return `t=${tSec},v0=${v0}`
@@ -193,6 +208,13 @@ async function messageEvents() {
 		.select()
 		.from(events)
 		.where(and(eq(events.workspaceId, workspaceId), eq(events.entityType, 'linkedin.message')))
+}
+
+async function accountEvents() {
+	return db
+		.select()
+		.from(events)
+		.where(and(eq(events.workspaceId, workspaceId), eq(events.entityType, 'linkedin.account')))
 }
 
 async function deliveries() {
@@ -444,6 +466,194 @@ describe('POST /webhook: account resolution and flag', () => {
 	})
 })
 
+// ── Account events ─────────────────────────────────────────────────────────
+
+const ACCOUNT_EVENT_TYPES = [
+	'account.reconnect',
+	'account.status.disconnected',
+	'account.status.errored',
+	'account.status.degraded',
+	'account.status.locked',
+	'account.status.running',
+] as const
+
+describe('POST /webhook: account events become linkedin.account status_changed rows', () => {
+	it.each(ACCOUNT_EVENT_TYPES)('%s writes one row and both claims', async (type) => {
+		const res = await deliver(
+			accountEvent(type, { envelopeId: 'evt_acct', createdAt: '2026-10-04T11:00:00.000Z' }),
+		)
+		expect(res.status).toBe(200)
+
+		const rows = await accountEvents()
+		expect(rows).toHaveLength(1)
+		const row = rows[0]
+		expect(row?.action).toBe('status_changed')
+		expect(row?.entityId).toBe(integrationId)
+		expect(row?.actorId).toBe(ownerActorId)
+		expect(row?.data).toEqual({
+			provider: 'linkedin-unipile',
+			unipile_event_type: type,
+			integration_id: integrationId,
+			unipile_account_id: ACCOUNT_ID,
+			external_id: ACCOUNT_ID,
+			envelope_id: 'evt_acct',
+			provider_timestamp: '2026-10-04T11:00:00.000Z',
+			account_status: type.split('.').pop(),
+		})
+		expect(JSON.stringify(row?.data)).not.toContain('must never reach')
+
+		const claims = await deliveries()
+		expect(claims.map((c) => c.externalId).sort()).toEqual(
+			[`evt:${ACCOUNT_ID}:evt_acct`, `acct:${type}:${ACCOUNT_ID}:2026-10-04T11:00:00.000Z`].sort(),
+		)
+		expect(claims.every((c) => c.processedAt !== null)).toBe(true)
+	})
+
+	it.each(ACCOUNT_EVENT_TYPES)('%s leaves the integration row untouched', async (type) => {
+		const [before] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+		await deliver(accountEvent(type))
+		const [after] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+
+		expect(after).toEqual(before)
+		expect(after?.status).toBe(INTEGRATION_STATUS_ACTIVE)
+	})
+
+	it('answers a replay with 200 skipped duplicate and writes one row', async () => {
+		const body = accountEvent('account.status.errored', { envelopeId: 'evt_replay_acct' })
+		expect((await deliver(body)).status).toBe(200)
+
+		const replay = await deliver(body)
+		expect(replay.status).toBe(200)
+		expect(await replay.json()).toEqual({ ok: true, skipped: 'duplicate' })
+		expect(await accountEvents()).toHaveLength(1)
+		expect(await deliveries()).toHaveLength(2)
+	})
+
+	it('dedupes the same state change redelivered under a new envelope id', async () => {
+		await deliver(accountEvent('account.status.locked', { envelopeId: 'evt_a' }))
+		const second = await deliver(accountEvent('account.status.locked', { envelopeId: 'evt_b' }))
+
+		expect(await second.json()).toEqual({ ok: true, skipped: 'duplicate' })
+		expect(await accountEvents()).toHaveLength(1)
+		expect((await deliveries()).map((c) => c.externalId)).not.toContain(`evt:${ACCOUNT_ID}:evt_b`)
+	})
+
+	it('records a later change to the same state as a new event', async () => {
+		const type = 'account.status.degraded'
+		await deliver(accountEvent(type, { createdAt: '2026-10-04T11:00:00.000Z' }))
+		await deliver(accountEvent(type, { createdAt: '2026-10-04T12:00:00.000Z' }))
+
+		expect(await accountEvents()).toHaveLength(2)
+	})
+
+	it.each(['revoked', 'pending'])(
+		'answers 200 skipped no_active_integration for a %s integration and writes no row',
+		async (status) => {
+			await db.update(integrations).set({ status }).where(eq(integrations.id, integrationId))
+
+			const res = await deliver(accountEvent('account.status.disconnected'))
+			expect(await res.json()).toEqual({ ok: true, skipped: 'no_active_integration' })
+			expect(await accountEvents()).toHaveLength(0)
+			expect(await deliveries()).toHaveLength(0)
+		},
+	)
+
+	it('writes nothing and claims nothing when the flag is off', async () => {
+		process.env.FF_TESTER_FEATURES = ''
+		_resetFeatureFlagConfig()
+
+		const res = await deliver(accountEvent('account.status.running'))
+		expect(await res.json()).toEqual({ ok: true, skipped: 'flag_off' })
+		expect(await accountEvents()).toHaveLength(0)
+		expect(await deliveries()).toHaveLength(0)
+	})
+
+	it('writes one event and claim pair per workspace for an account in two workspaces', async () => {
+		const otherOwner = await insertActor(db)
+		const otherWs = await insertWorkspace(db, getTestActorId())
+		await db.insert(integrations).values({
+			workspaceId: otherWs.id,
+			provider: 'linkedin-unipile',
+			status: INTEGRATION_STATUS_ACTIVE,
+			externalId: ACCOUNT_ID,
+			credentials: encrypt(JSON.stringify({ account_id: ACCOUNT_ID })),
+			actorId: otherOwner.id,
+			createdBy: otherOwner.id,
+		})
+		process.env.FF_TESTER_ACTOR_IDS = `${ownerActorId},${otherOwner.id}`
+		_resetFeatureFlagConfig()
+
+		const res = await deliver(accountEvent('account.status.disconnected'))
+		expect(await res.json()).toEqual({ ok: true, count: 2 })
+		expect(await accountEvents()).toHaveLength(1)
+		const other = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, otherWs.id), eq(events.entityType, 'linkedin.account')))
+		expect(other).toHaveLength(1)
+		const otherClaims = await db
+			.select()
+			.from(webhookDeliveries)
+			.where(eq(webhookDeliveries.workspaceId, otherWs.id))
+		expect(otherClaims).toHaveLength(2)
+	})
+})
+
+describe('POST /webhook: account.reconnect commits the event before re-enumeration', () => {
+	it('still commits the event when the re-enumeration never resolves', async () => {
+		await db
+			.update(integrations)
+			.set({ unipileAccSlug: 'own-slug' })
+			.where(eq(integrations.id, integrationId))
+		let reachedUpstream = false
+		__setLinkedInWebhookClientForTests(
+			() =>
+				({
+					getProfile: () => {
+						reachedUpstream = true
+						return new Promise(() => {})
+					},
+				}) as unknown as LinkedInClient,
+		)
+
+		// Never awaited: the request hangs inside the re-enumeration, which is the point.
+		void deliver(accountEvent('account.reconnect', { envelopeId: 'evt_hang' }))
+
+		await vi.waitFor(async () => expect(reachedUpstream).toBe(true), { timeout: 5000 })
+		const rows = await accountEvents()
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.data).toMatchObject({ account_status: 'reconnect', envelope_id: 'evt_hang' })
+		expect((await deliveries()).every((c) => c.processedAt !== null)).toBe(true)
+	})
+
+	it('keeps the re-enumeration body unchanged when the flag is off', async () => {
+		process.env.FF_TESTER_FEATURES = ''
+		_resetFeatureFlagConfig()
+
+		const res = await deliver(accountEvent('account.reconnect'))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			ok: true,
+			appliedTo: [{ integrationId, workspaceId, diff: { error: 'MISSING_UNIPILE_ACC_SLUG' } }],
+		})
+		expect(await accountEvents()).toHaveLength(0)
+		expect(await deliveries()).toHaveLength(0)
+	})
+
+	it('answers 503 after re-enumeration when the event cannot be recorded', async () => {
+		vi.mocked(commitWebhookDelivery).mockRejectedValueOnce(new Error('db blip'))
+
+		const res = await deliver(accountEvent('account.reconnect', { envelopeId: 'evt_blip' }))
+		expect(res.status).toBe(503)
+		expect(await accountEvents()).toHaveLength(0)
+		// Claims were released, so the retry records it.
+		expect(await deliveries()).toHaveLength(0)
+		const retry = await deliver(accountEvent('account.reconnect', { envelopeId: 'evt_blip' }))
+		expect(retry.status).toBe(200)
+		expect(await accountEvents()).toHaveLength(1)
+	})
+})
+
 // ── Direction ──────────────────────────────────────────────────────────────
 
 describe('POST /webhook: direction', () => {
@@ -576,8 +786,9 @@ describe('POST /webhook: transport', () => {
 				diff: { error: 'MISSING_UNIPILE_ACC_SLUG' },
 			},
 		])
-		// account.reconnect is not an ingest row: no claims, no events.
-		expect(await deliveries()).toHaveLength(0)
+		// The response is unchanged; the account event is recorded alongside it (see
+		// the account events block below).
+		expect(await accountEvents()).toHaveLength(1)
 	})
 
 	it('still reads the event kind from body.event for account.reconnect', async () => {

@@ -68,6 +68,11 @@ export const config: ProviderConfig = {
 				actions: ['accepted', 'new'],
 				label: 'LinkedIn connection',
 			},
+			{
+				entityType: 'linkedin.account',
+				actions: ['status_changed'],
+				label: 'LinkedIn account status',
+			},
 		],
 	},
 
