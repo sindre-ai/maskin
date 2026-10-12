@@ -23,13 +23,14 @@ import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	sessionLogResponseSchema,
+	sessionNotifyResponseSchema,
 	sessionResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
-import { returnToSender } from '../services/helper-return'
+import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
@@ -474,14 +475,16 @@ app.openapi(getSessionRoute, (async (c) => {
  * the helper can finish in the gap). Nothing else will fire the return, so do it
  * here. If the end-of-session return already ran and was skipped only because the
  * sender was live, give the one-shot claim back so the flag gets its turn.
+ * Returns null while the helper is still running (the end-of-session return picks
+ * the flag up), otherwise what the return did.
  */
 async function returnIfAlreadyEnded(
 	db: Database,
 	session: typeof sessions.$inferSelect,
 	sessionManager: SessionManager,
-) {
-	if (!session.spawnedBySessionId) return
-	if (!(TERMINAL_STATUSES as readonly string[]).includes(session.status)) return
+): Promise<HelperReturnOutcome | null> {
+	if (!session.spawnedBySessionId) return { returned: false, reason: 'no_link' }
+	if (!(TERMINAL_STATUSES as readonly string[]).includes(session.status)) return null
 	if (session.helperReturnedAt) {
 		const [skipped] = await db
 			.select({ id: events.id })
@@ -495,10 +498,10 @@ async function returnIfAlreadyEnded(
 				),
 			)
 			.limit(1)
-		if (!skipped) return
+		if (!skipped) return { returned: false, reason: 'already_returned' }
 		await db.update(sessions).set({ helperReturnedAt: null }).where(eq(sessions.id, session.id))
 	}
-	await returnToSender(db, session.id, { sessionManager })
+	return returnToSender(db, session.id, { sessionManager })
 }
 
 // PATCH /:id - Update mutable session fields (agents call this to record active step)
@@ -527,7 +530,7 @@ const patchSessionRoute = createRoute({
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: sessionResponseSchema } },
+			content: { 'application/json': { schema: sessionNotifyResponseSchema } },
 			description: 'Session updated',
 		},
 		400: {
@@ -556,6 +559,18 @@ app.openapi(patchSessionRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 	}
 
+	// With no spawn link there is nobody to send the result to. Saying so beats
+	// storing a flag that can never fire and answering OK (create drops it too).
+	if (body.notify_on_complete && !session.spawnedBySessionId) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'Session has no spawn link, so there is no sender to return its result to',
+			),
+			400,
+		)
+	}
+
 	const [updated] = await db
 		.update(sessions)
 		.set({
@@ -572,7 +587,9 @@ app.openapi(patchSessionRoute, (async (c) => {
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	if (body.notify_on_complete) await returnIfAlreadyEnded(db, updated, c.get('sessionManager'))
+	const notifyOutcome = body.notify_on_complete
+		? await returnIfAlreadyEnded(db, updated, c.get('sessionManager'))
+		: undefined
 
 	await recordEvent(db, {
 		workspaceId,
@@ -585,7 +602,20 @@ app.openapi(patchSessionRoute, (async (c) => {
 
 	logger.info('Session current_activity updated', { sessionId: id })
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	// What happened to the return, so the caller knows whether to keep waiting.
+	// null/undefined outcome with the flag set = helper still running: registered.
+	const notify = !body.notify_on_complete
+		? {}
+		: !notifyOutcome
+			? { notify_on_complete: 'registered' as const }
+			: notifyOutcome.returned
+				? { notify_on_complete: 'delivered' as const }
+				: { notify_on_complete: 'skipped' as const, notify_skip_reason: notifyOutcome.reason }
+
+	return c.json({
+		...serialize(updated),
+		...notify,
+	} as z.infer<typeof sessionNotifyResponseSchema>)
 }) as RouteHandler<typeof patchSessionRoute, Env>)
 
 // POST /:id/stop - Stop a running session

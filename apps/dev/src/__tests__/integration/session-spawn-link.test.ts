@@ -238,6 +238,30 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 				const [row] = await db.select().from(sessions).where(eq(sessions.id, helper.id))
 				expect(flagOf(row)).toBe(true)
 				expect(row.helperReturnedAt).toBeNull()
+				expect((await res.json()).notify_on_complete).toBe('registered')
+			})
+
+			it('refuses a helper with no spawn link with 400 and does not store the flag', async () => {
+				const helper = await insertSession(db, workspaceId, target.id, caller.id, {
+					status: 'running',
+				})
+				const res = await patch(helper.id, { notify_on_complete: true })
+				expect(res.status).toBe(400)
+				const [row] = await db.select().from(sessions).where(eq(sessions.id, helper.id))
+				expect(flagOf(row)).toBeUndefined()
+			})
+
+			it('says skipped, with the reason, when an ended helper could not be returned', async () => {
+				// No originating object and no chat: nowhere to land.
+				const sender = await insertSession(db, workspaceId, caller.id, caller.id, {
+					status: 'completed',
+				})
+				const helper = await helperOf(sender, { status: 'completed' })
+				const res = await patch(helper.id, { notify_on_complete: true })
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.notify_on_complete).toBe('skipped')
+				expect(body.notify_skip_reason).toBe('no_destination')
 			})
 
 			it('refuses another actor with 403 and leaves the flag off', async () => {
@@ -257,7 +281,9 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 
 			it('a helper that already ended sends its return right away', async () => {
 				const helper = await helperOf(await endedSender(), { status: 'completed' })
-				expect((await patch(helper.id, { notify_on_complete: true })).status).toBe(200)
+				const res = await patch(helper.id, { notify_on_complete: true })
+				expect(res.status).toBe(200)
+				expect((await res.json()).notify_on_complete).toBe('delivered')
 				expect(await returnComments()).toHaveLength(1)
 			})
 

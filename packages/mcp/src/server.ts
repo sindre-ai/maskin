@@ -6104,19 +6104,31 @@ export function createMcpServer(config: McpConfig) {
 			// The wait ran out with the helper still going: ask for its result to be sent
 			// back later. Never on the blocking path, where the caller gets it inline.
 			// If the helper ended in the gap, the PATCH sends the return itself.
-			let notifyOnComplete: 'registered' | 'failed' | undefined
+			// The server says what became of it: 'registered' (still running, it will
+			// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
+			// could not be sent, with the reason) or 'failed' (not registered at all).
+			let notifyOnComplete:
+				| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
+				| undefined
 			if (args.notify_on_complete && !settled) {
 				try {
-					await apiCall(
+					const patched = (await apiCall(
 						config,
 						'PATCH',
 						`/api/sessions/${sessionId}`,
 						{ notify_on_complete: true },
 						wsOpts,
-					)
-					notifyOnComplete = 'registered'
-				} catch {
-					notifyOnComplete = 'failed'
+					)) as { notify_on_complete?: 'registered' | 'delivered' | 'skipped'; notify_skip_reason?: string }
+					notifyOnComplete = {
+						state: patched.notify_on_complete ?? 'registered',
+						...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
+					}
+				} catch (err) {
+					console.error('run_agent: could not register notify_on_complete', err)
+					notifyOnComplete = {
+						state: 'failed',
+						reason: err instanceof Error ? err.message : String(err),
+					}
 				}
 			}
 
@@ -6153,7 +6165,14 @@ export function createMcpServer(config: McpConfig) {
 						text: JSON.stringify({
 							session: currentWithRetryMeta,
 							logs,
-							...(notifyOnComplete ? { notify_on_complete: notifyOnComplete } : {}),
+							...(notifyOnComplete
+								? {
+										notify_on_complete: notifyOnComplete.state,
+										...(notifyOnComplete.reason
+											? { notify_on_complete_reason: notifyOnComplete.reason }
+											: {}),
+									}
+								: {}),
 						}),
 					},
 				],

@@ -2433,7 +2433,43 @@ describe('tool handlers', () => {
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.notify_on_complete).toBe('failed')
+			expect(parsed.notify_on_complete_reason).toEqual(expect.any(String))
 			expect(parsed.session.status).toBe('running')
+		})
+
+		it('passes on what the server did with an already-ended helper: skipped, with the reason', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'PATCH'
+					? ({
+							ok: true,
+							json: () =>
+								Promise.resolve({
+									id: 'sess-n5',
+									status: 'completed',
+									notify_on_complete: 'skipped',
+									notify_skip_reason: 'return_cap',
+								}),
+						} as Response)
+					: ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n5', status: 'running' }),
+						} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('run_agent')({
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				poll_interval_seconds: 5,
+				timeout_seconds: 10,
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(15000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('skipped')
+			expect(parsed.notify_on_complete_reason).toBe('return_cap')
 		})
 	})
 
