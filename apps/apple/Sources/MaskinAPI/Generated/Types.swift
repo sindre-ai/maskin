@@ -94,7 +94,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/actors`.
     /// - Remark: Generated from `#/paths//api/actors/get`.
     func get_sol_api_sol_actors(_ input: Operations.get_sol_api_sol_actors.Input) async throws -> Operations.get_sol_api_sol_actors.Output
-    /// Create actor (signup)
+    /// Create actor (human signup, or an agent created by an authenticated caller)
     ///
     /// - Remark: HTTP `POST /api/actors`.
     /// - Remark: Generated from `#/paths//api/actors/post`.
@@ -770,7 +770,7 @@ extension APIProtocol {
             headers: headers
         ))
     }
-    /// Create actor (signup)
+    /// Create actor (human signup, or an agent created by an authenticated caller)
     ///
     /// - Remark: HTTP `POST /api/actors`.
     /// - Remark: Generated from `#/paths//api/actors/post`.
