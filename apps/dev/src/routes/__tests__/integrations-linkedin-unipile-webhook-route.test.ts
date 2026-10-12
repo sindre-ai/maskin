@@ -145,8 +145,8 @@ describe('POST /api/integrations/linkedin-unipile/webhook — auth', () => {
 describe('POST /api/integrations/linkedin-unipile/webhook — event handling', () => {
 	it('acknowledges (200 skipped) unhandled event kinds without re-enumerating', async () => {
 		const app = buildApp()
-		// message.new is a mapped event now (ingested, not skipped); relation.new has no map row yet.
-		const body = '{"type":"relation.new","account_id":"acc_1"}'
+		// message.new and relation.new are mapped events (ingested, not skipped); chat.new has no map row.
+		const body = '{"type":"chat.new","account_id":"acc_1"}'
 		const res = await app.request(ROUTE, {
 			method: 'POST',
 			headers: { 'unipile-signature': sign(body, SECRET), 'content-type': 'application/json' },

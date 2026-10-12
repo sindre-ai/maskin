@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { FLAGS } from '../../../../../lib/feature-flags'
 import { config } from '../../../../../lib/integrations/providers/linkedin-unipile/config'
 import { readUnipileEnvelope } from '../../../../../lib/integrations/providers/linkedin-unipile/envelope'
 import {
@@ -19,8 +20,9 @@ function loadFixture(type: string): unknown {
 }
 
 describe('EVENT_MAP table', () => {
-	it('has at least the message.new row', () => {
+	it('has the message.new and relation.new rows', () => {
 		expect(Object.keys(EVENT_MAP)).toContain('message.new')
+		expect(Object.keys(EVENT_MAP)).toContain('relation.new')
 	})
 
 	describe.each(Object.entries(EVENT_MAP))('row %s', (type, row) => {
@@ -79,9 +81,57 @@ describe('message.new deliveryKey', () => {
 	})
 })
 
+describe('relation.new actions', () => {
+	it('lists accepted and new in the map and in config definitions, gated by the events flag', () => {
+		const expected = ['accepted', 'new']
+		const row = getEventMapRow('relation.new')
+		expect(row?.entityType).toBe('linkedin.connection')
+		expect([...(row?.actions ?? [])].sort()).toEqual(expected)
+		expect(row?.flag).toBe(FLAGS.LINKEDIN_UNIPILE_EVENTS)
+		const definition = config.events?.definitions.find(
+			(d) => d.entityType === 'linkedin.connection',
+		)
+		expect([...(definition?.actions ?? [])].sort()).toEqual(expected)
+	})
+})
+
+describe('relation.new deliveryKey', () => {
+	it('is rel:[account_id]:[the other person provider id]', () => {
+		const row = getEventMapRow('relation.new')
+		const envelope = readUnipileEnvelope(loadFixture('relation.new'))
+		expect(row?.deliveryKey(envelope)).toBe(
+			`rel:${envelope.accountId}:${(envelope.resource as { id: string }).id}`,
+		)
+	})
+
+	it('is null when the relation has no id', () => {
+		const row = getEventMapRow('relation.new')
+		expect(
+			row?.deliveryKey(readUnipileEnvelope({ type: 'relation.new', account_id: 'a', payload: {} })),
+		).toBeNull()
+	})
+
+	it('is null when the envelope has no account id', () => {
+		const row = getEventMapRow('relation.new')
+		expect(
+			row?.deliveryKey(readUnipileEnvelope({ type: 'relation.new', payload: { id: 'ACoAAx' } })),
+		).toBeNull()
+	})
+})
+
+describe('relation.new fixture', () => {
+	it('carries id and public_identifier in the payload', () => {
+		const envelope = readUnipileEnvelope(loadFixture('relation.new'))
+		expect(envelope.resource).toMatchObject({
+			id: expect.any(String),
+			public_identifier: expect.any(String),
+		})
+	})
+})
+
 describe('getEventMapRow', () => {
 	it('returns null for unknown types and prototype members', () => {
-		expect(getEventMapRow('relation.new')).toBeNull()
+		expect(getEventMapRow('chat.new')).toBeNull()
 		expect(getEventMapRow('constructor')).toBeNull()
 		expect(getEventMapRow('toString')).toBeNull()
 		expect(getEventMapRow(null)).toBeNull()
