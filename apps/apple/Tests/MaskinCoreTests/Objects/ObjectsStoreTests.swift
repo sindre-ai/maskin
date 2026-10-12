@@ -41,14 +41,12 @@ struct ObjectsStoreTests {
 		#expect(store.groups.allSatisfy { $0.isType })
 	}
 
-	@Test("groups by attention by default: processing, then needs you, never empty buckets")
-	func groupsByAttention() async {
+	@Test("groups by status by default, one group per status, none empty")
+	func groupsByStatusByDefault() async {
 		let (store, _) = makeStore()
 		await store.load()
-		#expect(store.grouping == .attention)
-		let ids = store.groups.map(\.id)
-		#expect(ids == ids.filter { ["processing", "needs_you", "other"].contains($0) })
-		#expect(ids == ["processing", "needs_you", "other"].filter(ids.contains))
+		#expect(store.grouping == .status)
+		#expect(store.groups.allSatisfy { !$0.objects.isEmpty && !$0.isAttention && !$0.isType })
 		#expect(store.groups.flatMap(\.objects).count == store.objects.count)
 	}
 
@@ -70,7 +68,7 @@ struct ObjectsStoreTests {
 	func presentTypes() async {
 		let remote = FakeObjectsRemote(objects: Fixtures.objects.filter { $0.type != "bet" })
 		let (store, _) = makeStore(remote)
-		#expect(store.presentTypes == ["insight", "bet", "task"])  // nothing loaded yet
+		#expect(store.presentTypes == ["bet", "insight", "task"])  // nothing loaded yet, handoff order
 		await store.load()
 		#expect(store.presentTypes == ["insight", "task"])
 		await store.setType("task")

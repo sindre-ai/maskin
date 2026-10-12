@@ -7,5 +7,6 @@ struct MaskinLiveActivityBundle: WidgetBundle {
 		TurnLiveActivity()
 		CycleLiveActivity()
 		MeetingLiveActivity()
+		AgentsWorkingLiveActivity()
 	}
 }
