@@ -178,7 +178,7 @@ export class SessionRetryScheduler {
 			return
 		}
 
-		// Link the original to the retry so MCP run_agent's polling loop and
+		// Link the original to the retry so MCP create_session's wait:true polling loop and
 		// get_session responses can follow the chain (§17.6).
 		try {
 			await this.db

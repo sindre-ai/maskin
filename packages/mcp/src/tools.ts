@@ -1350,7 +1350,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status; pass `include_logs: true` on the same call to read the container output. For a blocking alternative that waits for completion, use run_agent instead.',
+			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. By default this returns immediately with the new session row; use get_session to check status and pass `include_logs: true` on the same call to read the container output. Pass `wait: true` when you need the answer in this run: the call then starts the session, polls until it reaches a terminal state (completed/failed/timeout), and returns `{ session, logs }` instead of the bare row (it implies `auto_start`). Otherwise prefer non-blocking execution, or @mention the agent in a comment on the object, which does not block or hold a container.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
@@ -1407,7 +1407,43 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					"Set true to get the helper's final message back when it ends. It lands where you started the work: a new turn in your own chat if you are in one (even while you are still running), else a comment on the object you were started from. Omit it and the helper's end behaves as before.",
+					"Set true to get the helper's final message back when it ends. It lands where you started the work: a new turn in your own chat if you are in one (even while you are still running), else a comment on the object you were started from. Omit it and the helper's end behaves as before. With `wait: true` the call already returns the result, so the flag only matters if the wait times out: then it is set on the helper, and its final message is sent back to you later. Omit it and a timed-out wait gets nothing more.",
+				),
+			spawned_by_message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'The assistant message that triggered this sub-agent spawn. Persisted onto the session so the UI can anchor a handed-off strip to that bubble; omit for a spawn with no strip.',
+				),
+			depends_on_session_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe(
+					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
+				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Block until the session reaches a terminal state (completed/failed/timeout) and return `{ session, logs }` with the first 500 log lines, instead of the bare session row. Implies auto_start. Follows the retry session when a subscription limit triggers one. Omit for the default non-blocking behaviour.',
+				),
+			poll_interval_seconds: z
+				.number()
+				.int()
+				.min(2)
+				.max(30)
+				.optional()
+				.describe('Only with `wait: true`: how often to check session status. Default 5.'),
+			wait_timeout_seconds: z
+				.number()
+				.int()
+				.min(30)
+				.max(3700)
+				.optional()
+				.describe(
+					'Only with `wait: true`: maximum time to wait before giving up and returning the still-running session. Should exceed config.timeout_seconds. Default 660.',
 				),
 		}),
 	},
@@ -1542,56 +1578,6 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
-		}),
-	},
-	run_agent: {
-		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block or hold a container.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),
-			action_prompt: z.string().min(1).describe('The instruction for the agent'),
-			config: z
-				.object({
-					runtime: z.enum(['claude-code', 'codex', 'custom']).optional(),
-					timeout_seconds: z.number().int().min(30).max(3600).optional(),
-				})
-				.optional()
-				.describe('Container configuration overrides'),
-			poll_interval_seconds: z
-				.number()
-				.int()
-				.min(2)
-				.max(30)
-				.default(5)
-				.describe('How often to check session status'),
-			timeout_seconds: z
-				.number()
-				.int()
-				.min(30)
-				.max(3700)
-				.default(660)
-				.describe('Maximum time to wait before giving up (should exceed session timeout)'),
-			spawned_by_message_id: z
-				.number()
-				.int()
-				.positive()
-				.optional()
-				.describe(
-					'The assistant message that triggered this sub-agent spawn. Persisted onto the session so the UI can anchor a handed-off strip to that bubble; omit for a spawn with no strip.',
-				),
-			depends_on_session_ids: z
-				.array(z.string().uuid())
-				.optional()
-				.describe(
-					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
-				),
-			notify_on_complete: z
-				.boolean()
-				.optional()
-				.describe(
-					"This call already waits and returns the result, so the flag only matters if the wait times out: then it is set on the helper, and its final message is sent back to you later where you started the work (your own chat, else the object you were started from). Omit it and a timed-out wait gets nothing more.",
-				),
 		}),
 	},
 

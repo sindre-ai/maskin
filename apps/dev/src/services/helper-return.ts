@@ -147,7 +147,7 @@ async function doReturn(
 
 	const notify = isNotifyOnComplete(helper.config)
 
-	// run_agent callers still waiting inline already get the result there.
+	// create_session wait:true callers still waiting inline already get the result there.
 	// Accepted loss: a sender that is live now and finishes later without ever
 	// hearing back. That is today's behaviour, not a regression.
 	// A flagged helper may still return to a live chat session: it stays running

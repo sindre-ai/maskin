@@ -90,7 +90,7 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).toContain('run_agent')
+		expect(registeredNames).not.toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -2321,9 +2321,72 @@ describe('tool handlers', () => {
 				expect.objectContaining({ method: 'POST' }),
 			)
 		})
+
+		it('forwards spawned_by_message_id and depends_on_session_ids to the create route', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = vi.mocked(fetch)
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				spawned_by_message_id: 42,
+				depends_on_session_ids: ['sess-a'],
+			})
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body.spawned_by_message_id).toBe(42)
+			expect(body.depends_on_session_ids).toEqual(['sess-a'])
+		})
+
+		it('without wait: returns the bare session row and keeps the wait knobs off the wire', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = vi.mocked(fetch)
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				poll_interval_seconds: 5,
+				wait_timeout_seconds: 60,
+			})) as { content: Array<{ text: string }> }
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body).not.toHaveProperty('wait')
+			expect(body).not.toHaveProperty('poll_interval_seconds')
+			expect(body).not.toHaveProperty('wait_timeout_seconds')
+			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('logs')
+			expect(fetchSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('with wait: forces auto_start and keeps the wait knobs off the create route', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-w', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-w', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+				auto_start: false,
+				wait: true,
+				poll_interval_seconds: 5,
+				wait_timeout_seconds: 60,
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+			await resultPromise
+
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body.auto_start).toBe(true)
+			expect(body).not.toHaveProperty('wait')
+			expect(body).not.toHaveProperty('poll_interval_seconds')
+			expect(body).not.toHaveProperty('wait_timeout_seconds')
+		})
 	})
 
-	describe('run_agent handler: notify_on_complete', () => {
+	describe('create_session handler (wait: true): notify_on_complete', () => {
 		type Call = [string, { method?: string; body?: string }]
 		const callsWith = (spy: { mock: { calls: unknown[][] } }, method: string) =>
 			(spy.mock.calls as Call[]).filter(([, init]) => init?.method === method)
@@ -2344,11 +2407,12 @@ describe('tool handlers', () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n1')
 
-			const resultPromise = getHandler('run_agent')({
+			const resultPromise = getHandler('create_session')({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				poll_interval_seconds: 5,
-				timeout_seconds: 10,
+				wait_timeout_seconds: 10,
 				notify_on_complete: true,
 			})
 			await vi.advanceTimersByTimeAsync(15000)
@@ -2379,7 +2443,8 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 
-			const resultPromise = getHandler('run_agent')({
+			const resultPromise = getHandler('create_session')({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
 				notify_on_complete: true,
@@ -2397,11 +2462,12 @@ describe('tool handlers', () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')
 
-			const resultPromise = getHandler('run_agent')({
+			const resultPromise = getHandler('create_session')({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				poll_interval_seconds: 5,
-				timeout_seconds: 10,
+				wait_timeout_seconds: 10,
 			})
 			await vi.advanceTimersByTimeAsync(15000)
 
@@ -2421,11 +2487,12 @@ describe('tool handlers', () => {
 						} as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
-			const resultPromise = getHandler('run_agent')({
+			const resultPromise = getHandler('create_session')({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				poll_interval_seconds: 5,
-				timeout_seconds: 10,
+				wait_timeout_seconds: 10,
 				notify_on_complete: true,
 			})
 			await vi.advanceTimersByTimeAsync(15000)
@@ -2457,11 +2524,12 @@ describe('tool handlers', () => {
 						} as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
-			const resultPromise = getHandler('run_agent')({
+			const resultPromise = getHandler('create_session')({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				poll_interval_seconds: 5,
-				timeout_seconds: 10,
+				wait_timeout_seconds: 10,
 				notify_on_complete: true,
 			})
 			await vi.advanceTimersByTimeAsync(15000)
@@ -2473,7 +2541,7 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('run_agent handler', () => {
+	describe('create_session handler (wait: true)', () => {
 		it('creates session, polls until completed, fetches logs', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -2499,12 +2567,13 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([{ message: 'Done' }]),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
 				poll_interval_seconds: 5,
-				timeout_seconds: 60,
+				wait_timeout_seconds: 60,
 			})
 
 			// Advance through the two polling intervals
@@ -2542,13 +2611,14 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id: 'sess-2', status: 'running' }),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			// Very short timeout (10s) with 5s poll interval = at most 2 polls before deadline
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				poll_interval_seconds: 5,
-				timeout_seconds: 10,
+				wait_timeout_seconds: 10,
 			})
 
 			// Advance past deadline
@@ -2582,8 +2652,9 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
 			})
@@ -6191,7 +6262,7 @@ describe('url field injection', () => {
 			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
 		})
 
-		it('run_agent — url added to session in response', async () => {
+		it('create_session (wait: true) — url added to session in response', async () => {
 			vi.useFakeTimers()
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
@@ -6210,12 +6281,13 @@ describe('url field injection', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getUrlHandler('run_agent')
+			const handler = getUrlHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: testUuid,
 				action_prompt: 'Deploy',
 				poll_interval_seconds: 5,
-				timeout_seconds: 60,
+				wait_timeout_seconds: 60,
 			})
 
 			await vi.advanceTimersByTimeAsync(5000)

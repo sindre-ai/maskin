@@ -76,7 +76,6 @@ const ALL_TOOL_NAMES = [
 	'stop_session',
 	'pause_session',
 	'resume_session',
-	'run_agent',
 	'create_notification',
 	'list_notifications',
 	'get_notification',
@@ -771,30 +770,51 @@ describe('list_sessions schema', () => {
 	})
 })
 
-describe('run_agent schema', () => {
-	const schema = tools.run_agent.inputSchema
+describe('create_session wait schema', () => {
+	const schema = tools.create_session.inputSchema
+	const base = { actor_id: uuid, action_prompt: 'Do task' }
 
-	it('requires actor_id and action_prompt', () => {
-		const result = schema.parse({ actor_id: uuid, action_prompt: 'Do task' })
-		expect(result.poll_interval_seconds).toBe(5)
-		expect(result.timeout_seconds).toBe(660)
+	it('leaves the wait knobs undefined when omitted, so the default stays non-blocking', () => {
+		const result = schema.parse(base)
+		expect(result.wait).toBeUndefined()
+		expect(result.poll_interval_seconds).toBeUndefined()
+		expect(result.wait_timeout_seconds).toBeUndefined()
 	})
 
-	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
-		const base = { actor_id: uuid, action_prompt: 'Do task' }
+	it('accepts wait with its poll interval and timeout', () => {
+		const result = schema.parse({
+			...base,
+			wait: true,
+			poll_interval_seconds: 10,
+			wait_timeout_seconds: 120,
+		})
+		expect(result.wait).toBe(true)
+		expect(result.poll_interval_seconds).toBe(10)
+		expect(result.wait_timeout_seconds).toBe(120)
+	})
+
+	it('accepts notify_on_complete', () => {
 		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
-		expect(schema.parse(base).notify_on_complete).toBeUndefined()
 		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
 	})
 
+	it('accepts spawned_by_message_id and depends_on_session_ids', () => {
+		const result = schema.parse({
+			...base,
+			spawned_by_message_id: 42,
+			depends_on_session_ids: [uuid],
+		})
+		expect(result.spawned_by_message_id).toBe(42)
+		expect(result.depends_on_session_ids).toEqual([uuid])
+		expect(() => schema.parse({ ...base, depends_on_session_ids: ['nope'] })).toThrow()
+	})
+
 	it('rejects poll_interval below 2', () => {
-		expect(() =>
-			schema.parse({
-				actor_id: uuid,
-				action_prompt: 'Do',
-				poll_interval_seconds: 1,
-			}),
-		).toThrow()
+		expect(() => schema.parse({ ...base, poll_interval_seconds: 1 })).toThrow()
+	})
+
+	it('rejects wait_timeout below 30', () => {
+		expect(() => schema.parse({ ...base, wait_timeout_seconds: 10 })).toThrow()
 	})
 })
 
