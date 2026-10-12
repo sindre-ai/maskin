@@ -51,6 +51,13 @@ struct ChatComposer: View {
 	var allowsLive = true
 	/// Told when the field gains or loses focus (For you hides its quick-question chips while typing).
 	var onFocusChange: ((Bool) -> Void)?
+	/// An agent is typing, streaming or running a live activity. With an empty field the last slot
+	/// then shows Stop instead of the mic (7-Chat §1: the slot is mutually exclusive).
+	var isBusy = false
+	/// Ends the busy agent's activity. Stop only shows when this is set.
+	var onStop: (() -> Void)?
+	/// The Team room's waveform button, shown only while the field is empty; a room has no mic.
+	var onGoLive: (() -> Void)?
 
 	/// Set once the reader acts; until then the preview state (idle in real use) stands.
 	@State var voiceChoice: ComposerVoiceState?
@@ -80,7 +87,9 @@ struct ChatComposer: View {
 
 	/// 26pt, the pill's corner (shared with `ComposerSurface`).
 	private let shape = RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous)
-	private let buttonSize = MaskinSpace.s14 + MaskinSpace.s3
+	/// 40pt circles; each gets a 44pt hit area (see `hitShape`).
+	private let buttonSize = ComposerToolLabel.size
+	private var hitShape: some InsettableShape { Circle().inset(by: -MaskinSpace.s1) }
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s4) {
@@ -103,6 +112,7 @@ struct ChatComposer: View {
 		.animation(MaskinMotion.quick, value: MentionTrigger.find(in: model.text) != nil)
 		.animation(MaskinMotion.quick, value: EmojiTrigger.find(in: model.text) != nil)
 		.animation(MaskinMotion.quick, value: showsFormatting)
+		.animation(MaskinMotion.quick, value: model.quote)
 		.animation(MaskinMotion.standard, value: voice)
 		.onChange(of: model.focusRequest) { _, _ in focused = true }
 		.onChange(of: focused) { _, now in onFocusChange?(now) }
@@ -178,6 +188,12 @@ struct ChatComposer: View {
 
 	private var pill: some View {
 		VStack(alignment: .leading, spacing: 0) {
+			if let quote = model.quote {
+				ComposerQuoteStrip(quote: quote) { model.cancelQuote() }
+					.padding(.leading, MaskinSpace.s5)
+					.padding(.top, MaskinSpace.s3)
+					.transition(.opacity.combined(with: .move(edge: .bottom)))
+			}
 			if !model.attachments.isEmpty || !model.mentions.isEmpty {
 				ComposerChips(model: model)
 					.padding(.horizontal, MaskinSpace.s4)
@@ -203,7 +219,7 @@ struct ChatComposer: View {
 	private var field: some View {
 		HStack(spacing: MaskinSpace.s5) {
 			if voice == .dictating {
-				VoiceWaveform(bars: 5, height: 22, tint: MaskinColor.dangerMic)
+				VoiceWaveform(bars: 3, height: MaskinSpace.s10, barWidth: MaskinSpace.s1 + MaskinSpace.s1 / 2, tint: MaskinColor.dangerMic)
 			}
 			ComposerTextField(model: model, placeholder: voice == .dictating ? "Listening…" : placeholder, focused: $focused)
 				.maskinText(.body)
@@ -216,10 +232,10 @@ struct ChatComposer: View {
 	private var plusMenu: some View {
 		Menu {
 			if allowsAttach {
-				Button { showPhotos = true } label: { Label("Photo library", systemImage: "photo") }
+				Button { showPhotos = true } label: { Label("Photo", systemImage: "photo") }
 				#if os(iOS)
 				if CameraPicker.isAvailable {
-					Button { showCamera = true } label: { Label("Take photo", systemImage: "camera") }
+					Button { showCamera = true } label: { Label("Camera", systemImage: "camera") }
 				}
 				if UIPasteboard.general.hasImages {
 					Button(action: pasteImage) { Label("Paste image", systemImage: "doc.on.clipboard") }
@@ -232,7 +248,7 @@ struct ChatComposer: View {
 				let needsSpace = !(model.text.isEmpty || model.text.last?.isWhitespace == true)
 				model.insert(needsSpace ? " @" : "@")
 				focused = true
-			} label: { Label("Mention an agent or person", systemImage: "at") }
+			} label: { Label("Person or agent", systemImage: "at") }
 			Button { showEmojis = true } label: { Label("Emoji", systemImage: "face.smiling") }
 			Toggle(isOn: $showsFormatting) { Label("Formatting", systemImage: "textformat") }
 			if allowsLive && showsVoiceControls {
@@ -247,7 +263,7 @@ struct ChatComposer: View {
 		}
 		.menuIndicator(.hidden)
 		.buttonStyle(.maskinPressed)
-		.accessibilityLabel(allowsAttach ? "Add a file, mention or emoji" : "Add a mention or emoji")
+		.accessibilityLabel(allowsAttach ? "Attach a file or mention someone" : "Mention someone")
 		.popover(isPresented: $showEmojis) {
 			EmojiPickerGrid { emoji in
 				model.insert(emoji)
@@ -263,33 +279,82 @@ struct ChatComposer: View {
 		DictationDiscardButton(size: buttonSize) { discardDictation() }
 	}
 
-	/// The right-hand side: Done while dictating; otherwise a mic and Send, which turns dark once
-	/// there is something to send.
+	/// The last slot is mutually exclusive: Done while dictating; otherwise the mic when the field is
+	/// empty, Send once there is text or an attachment, and Stop while an agent is busy and the field
+	/// is empty. A Team room swaps the mic for Go live. The swap fades over 150ms.
 	@ViewBuilder
 	private var trailing: some View {
 		if voice == .dictating {
 			DictationDoneButton(size: buttonSize) { finishDictation() }
 			.transition(.opacity)
 		} else {
-			HStack(spacing: MaskinSpace.s5) {
-				if showsVoiceControls {
-					Button {
-						MaskinHaptics.play(.selection)
-						toggleDictation()
-					} label: {
-						Image(systemName: "mic")
-							.maskinSymbol(MaskinFontSize.t16, weight: .medium)
-							.foregroundStyle(MaskinColor.ink3)
-							.frame(width: buttonSize, height: buttonSize)
-							.background(MaskinSurface.fill, in: Circle())
-							.contentShape(Circle())
+			HStack(spacing: MaskinSpace.s2) {
+				if let onGoLive, !model.hasContent, !(isBusy && onStop != nil) {
+					goLiveButton(onGoLive)
+				} else {
+					switch slot {
+					case .mic: micButton.transition(.opacity)
+					case .send: sendButton.transition(.opacity)
+					case .stop: stopButton.transition(.opacity)
 					}
-					.buttonStyle(.maskinPressed)
-					.accessibilityLabel("Dictate")
 				}
-				sendButton
 			}
+			.animation(MaskinMotion.quick, value: slot)
 		}
+	}
+
+	private var slot: ComposerTrailingSlot {
+		ComposerTrailingSlot.resolve(
+			hasContent: model.hasContent, isBusy: isBusy && onStop != nil,
+			canDictate: showsVoiceControls && onGoLive == nil)
+	}
+
+	private var micButton: some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			toggleDictation()
+		} label: {
+			Image(systemName: "mic")
+				.maskinSymbol(MaskinFontSize.t16, weight: .medium)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(width: buttonSize, height: buttonSize)
+				.background(MaskinSurface.fill, in: Circle())
+				.contentShape(hitShape)
+		}
+		.buttonStyle(.maskinPressed)
+		.accessibilityLabel("Dictate")
+	}
+
+	private func goLiveButton(_ action: @escaping () -> Void) -> some View {
+		Button {
+			MaskinHaptics.play(.medium)
+			action()
+		} label: {
+			Image(systemName: "waveform")
+				.maskinSymbol(MaskinFontSize.t16, weight: .medium)
+				.foregroundStyle(MaskinColor.ink2)
+				.frame(width: buttonSize, height: buttonSize)
+				.background(MaskinSurface.fill, in: Circle())
+				.contentShape(hitShape)
+		}
+		.buttonStyle(.maskinPressed)
+		.accessibilityLabel("Go live")
+	}
+
+	private var stopButton: some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			onStop?()
+		} label: {
+			RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+				.fill(MaskinSurface.onInverse)
+				.frame(width: MaskinSpace.s7, height: MaskinSpace.s7)
+				.frame(width: buttonSize, height: buttonSize)
+				.background(MaskinSurface.inverse, in: Circle())
+				.contentShape(hitShape)
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel("Stop")
 	}
 
 	private var sendButton: some View {
@@ -298,10 +363,11 @@ struct ChatComposer: View {
 			onSend()
 		} label: {
 			Image(systemName: "arrow.up")
-				.maskinSymbol(MaskinFontSize.t15, weight: .bold)
+				.maskinSymbol(MaskinFontSize.t15, weight: .heavy)
 				.foregroundStyle(model.canSend ? MaskinSurface.onInverse : MaskinColor.ink5)
 				.frame(width: buttonSize, height: buttonSize)
 				.background(model.canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
+				.contentShape(hitShape)
 		}
 		.buttonStyle(.maskinPressed(.shrink))
 		.disabled(!model.canSend)
@@ -490,6 +556,9 @@ struct ComposerToolLabel: View {
 	var active = false
 	var outlined = false
 
+	/// 40pt: every composer button is this circle.
+	static let size: CGFloat = MaskinSpace.s14 + MaskinSpace.s4
+
 	init(_ symbol: String, active: Bool = false, outlined: Bool = false) {
 		self.symbol = symbol
 		self.active = active
@@ -500,7 +569,7 @@ struct ComposerToolLabel: View {
 		Image(systemName: symbol)
 			.maskinSymbol(MaskinFontSize.t16, weight: .medium)
 			.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink3)
-			.frame(width: MaskinSpace.s14 + MaskinSpace.s3, height: MaskinSpace.s14 + MaskinSpace.s3)
+			.frame(width: Self.size, height: Self.size)
 			.background(active ? MaskinSurface.fillStrong : (outlined ? MaskinSurface.fill : Color.clear), in: Circle())
 			.contentShape(Circle())
 	}
@@ -563,7 +632,7 @@ struct ComposerTextField: View {
 		} else {
 			TextField(placeholder, text: $model.text, axis: .vertical)
 				.textFieldStyle(.plain)
-				.lineLimit(1...8)
+				.lineLimit(1...6)
 				.accessibilityLabel("Message")
 				.focused(focused)
 		}
@@ -580,7 +649,7 @@ private struct SelectionTextField: View {
 	var body: some View {
 		TextField(placeholder, text: $model.text, selection: $selection, axis: .vertical)
 			.textFieldStyle(.plain)
-			.lineLimit(1...8)
+			.lineLimit(1...6)
 			.accessibilityLabel("Message")
 			.focused(focused)
 			.onChange(of: selection) { _, new in model.selection = offsets(of: new) }
@@ -600,5 +669,40 @@ private struct SelectionTextField: View {
 		let lower = text.index(text.startIndex, offsetBy: min(range.lowerBound, text.count))
 		let upper = text.index(text.startIndex, offsetBy: min(range.upperBound, text.count))
 		return TextSelection(range: lower..<upper)
+	}
+}
+
+/// The reply or edit strip inside the bar: a 3pt signal bar, "Replying to Forge" / "Editing message"
+/// in bold signal ink, the quoted text on one line, and a close button.
+struct ComposerQuoteStrip: View {
+	let quote: ChatComposerModel.Quote
+	let onClose: () -> Void
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			Capsule().fill(MaskinColor.sig).frame(width: MaskinSpace.s1 + MaskinSpace.s1 / 2)
+			VStack(alignment: .leading, spacing: 0) {
+				Text(quote.label)
+					.maskinText(.caption).fontWeight(.bold).foregroundStyle(MaskinColor.sigInk)
+				Text(Self.oneLine(quote.text))
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+			}
+			Spacer(minLength: 0)
+			Button(action: onClose) {
+				Image(systemName: "xmark")
+					.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(width: ComposerToolLabel.size, height: ComposerToolLabel.size)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed)
+			.accessibilityLabel(quote.kind == .edit ? "Cancel editing" : "Cancel reply")
+		}
+		.frame(minHeight: ComposerToolLabel.size)
+		.accessibilityElement(children: .contain)
+	}
+
+	static func oneLine(_ text: String) -> String {
+		text.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? text
 	}
 }

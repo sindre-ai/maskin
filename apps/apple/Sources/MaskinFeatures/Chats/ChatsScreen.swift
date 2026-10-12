@@ -74,7 +74,10 @@ private struct ChatsContainer: View {
 				store: store, selection: $selection, search: $search,
 				currentActorID: environment.auth.session?.actorId,
 				isLive: environment.events.connection != .failed,
-				onNewChat: { showNewChat = true }
+				onNewChat: { showNewChat = true },
+				pinnedOrder: environment.workspaceId.flatMap { workspace in
+					environment.auth.session.map { PinnedOrderStore(workspaceID: workspace, actorID: $0.actorId) }
+				}
 			)
 			.shellToolbar(
 				environment: environment, title: store.scope == .archived ? "Archived" : "Team",
@@ -216,6 +219,8 @@ private struct ChatThreadHost: View {
 				inviting = true
 				showParticipants = true
 			})
+			// Drafts are saved on every keystroke and come back when the chat opens.
+			.onChange(of: composer.text) { _, text in ChatDraftStore.set(text, for: chat.conversationID) }
 			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
 				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting)

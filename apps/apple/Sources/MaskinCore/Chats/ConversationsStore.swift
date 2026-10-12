@@ -30,7 +30,13 @@ public final class ConversationsStore {
 	/// Narrows the loaded list to conversations an agent takes part in (client-side).
 	public var agentFilterID: String?
 	/// The Display menu's layout: by person, or one list (the screen remembers the choice).
-	public var groupBy: ConversationGroupBy = .person
+	public var groupBy: ConversationGroupBy = .time
+	/// The filter chip (All · Unread · People · Agents · Groups), applied on the loaded list. The
+	/// screen only offers the chips when the Display menu has them on, and resets this to `.all` when
+	/// they are turned off.
+	public var chip: ConversationChip = .all
+	/// Who is signed in, so People, Agents and Groups can tell a chat from a group. Set by the screen.
+	public var currentActorID: String?
 	public var filter: Filter = .all {
 		didSet {
 			guard filter != oldValue else { return }
@@ -81,8 +87,7 @@ public final class ConversationsStore {
 	public var totalUnread: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
 
 	public func groups(query: String = "", now: Date = Date()) -> [ConversationGroup] {
-		let filtered = ConversationGrouping.filter(
-			ConversationGrouping.filter(conversations, agentID: agentFilterID), query: query)
+		let filtered = ConversationGrouping.filter(narrowed, query: query)
 		if scope == .archived {
 			return filtered.isEmpty
 				? [] : [ConversationGroup(key: .earlier, label: "Archived", items: filtered)]
@@ -100,17 +105,22 @@ public final class ConversationsStore {
 	public func sections(query: String = "", now: Date = Date()) -> ConversationListSections {
 		let flat = groups(query: query, now: now)
 		if scope == .archived || isSearching(query) { return ConversationListSections(pinned: [], groups: flat) }
-		return ConversationGrouping.sections(
-			ConversationGrouping.filter(conversations, agentID: agentFilterID), now: now)
+		// A chip other than All shows one time-grouped list (Groups always does), never the person view.
+		return ConversationGrouping.sections(narrowed, now: now)
 	}
 
 	/// The person view: pinned tiles, UNREAD, PEOPLE & AGENTS. Nil in the archive and while
 	/// searching, which show one flat list (`sections`).
 	public func teamSections(query: String = "", currentActorID: String?) -> TeamSections? {
-		guard scope == .active, !isSearching(query) else { return nil }
-		return ConversationGrouping.teamSections(
-			ConversationGrouping.filter(conversations, agentID: agentFilterID),
-			currentActorID: currentActorID)
+		guard scope == .active, !isSearching(query), chip == .all || chip == .people || chip == .agents
+		else { return nil }
+		return ConversationGrouping.teamSections(narrowed, currentActorID: currentActorID)
+	}
+
+	/// The loaded list after the agent token and the filter chip.
+	private var narrowed: [ConversationSummary] {
+		chip.apply(
+			to: ConversationGrouping.filter(conversations, agentID: agentFilterID), currentActorID: currentActorID)
 	}
 
 	private func isSearching(_ query: String) -> Bool {
