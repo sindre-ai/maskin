@@ -436,6 +436,59 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('sets notify_on_complete for the actor who started the session', async () => {
+			const session = buildSession({
+				workspaceId: wsId,
+				createdBy: 'test-actor-id',
+				spawnedBySessionId: 'parent-session-id',
+			})
+			const updated = { ...session, config: { notify_on_complete: true } }
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [session]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/sessions/${session.id}`,
+					{ notify_on_complete: true },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).config).toEqual({ notify_on_complete: true })
+		})
+
+		it('refuses notify_on_complete from an actor who did not start the session', async () => {
+			const session = buildSession({ workspaceId: wsId, createdBy: 'someone-else' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [session]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/sessions/${session.id}`,
+					{ notify_on_complete: true },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('rejects a body with neither current_activity nor notify_on_complete', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [session]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/sessions/${session.id}`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('POST /api/sessions/:id/stop', () => {

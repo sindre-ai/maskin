@@ -117,7 +117,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ### Public (no auth)
 - `GET /api/health` — health check
 - `GET /api/openapi.json` — OpenAPI spec
-- `POST /api/actors` — signup, returns API key
+- `POST /api/actors` — signup, returns API key (agents: caller API key + workspace_id, born as a member)
 
 ### Account (`/api/account`, signed-in humans only)
 - `GET /api/account/deletion-preview` — the workspaces you would leave and anything blocking deletion

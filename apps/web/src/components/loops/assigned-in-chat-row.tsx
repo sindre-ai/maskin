@@ -48,7 +48,7 @@ export function AssignedInChatRow({
 			<div className="min-w-0 flex-1 leading-[1.4]">
 				<p className="truncate text-[13px] font-bold text-foreground">{conversation.title}</p>
 				<div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-					<span className="shrink-0 text-[11.5px] font-semibold text-muted-foreground">
+					<span className="min-w-0 truncate text-[11.5px] font-semibold text-muted-foreground">
 						{agentName}
 					</span>
 					{when && (
