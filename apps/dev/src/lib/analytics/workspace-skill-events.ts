@@ -20,6 +20,11 @@ interface WorkspaceSkillAttachedProps {
 	agentActorId: string
 	skillName: string
 	via: SkillAttachSource
+	// Whether the SKILL.md parsed cleanly and will be pulled into agent sessions.
+	// Optional so the emitter stays backwards-compatible with any caller that
+	// hasn't loaded the row's `isValid` yet — the Overhaul Skills UX bet segments
+	// on this to see "attached but not usable" outcomes.
+	skillVisible?: boolean
 }
 
 interface WorkspaceSkillLoadedProps {
@@ -43,6 +48,7 @@ export async function trackWorkspaceSkillAttached(p: WorkspaceSkillAttachedProps
 			agent_actor_id: p.agentActorId,
 			skill_name: p.skillName,
 			via: p.via,
+			...(p.skillVisible !== undefined && { skill_visible: p.skillVisible }),
 		})
 	} catch (err) {
 		logger.warn('workspace_skill_attached capture failed', {
