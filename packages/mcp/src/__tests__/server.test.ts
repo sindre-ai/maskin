@@ -90,7 +90,7 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).toContain('run_agent')
+		expect(registeredNames).not.toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -2284,6 +2284,27 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('create_session handler: notify_on_complete', () => {
+		const postedBody = (spy: { mock: { calls: unknown[][] } }) =>
+			JSON.parse(((spy.mock.calls[0] as [string, { body: string }])[1] as { body: string }).body)
+
+		it('flag on: sent to the create route', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				notify_on_complete: true,
+			})
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
+		})
+
+		it('flag off: not in the body, so the create route sees what it saw before', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
+			expect(postedBody(vi.mocked(fetch))).not.toHaveProperty('notify_on_complete')
+		})
+	})
+
 	describe('create_session handler', () => {
 		it('POSTs to /api/sessions', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
@@ -2292,7 +2313,6 @@ describe('tool handlers', () => {
 			await handler({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
-				auto_start: true,
 			})
 
 			expect(fetch).toHaveBeenCalledWith(
@@ -2300,9 +2320,287 @@ describe('tool handlers', () => {
 				expect.objectContaining({ method: 'POST' }),
 			)
 		})
+
+		it('forwards spawned_by_message_id to the create route', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = vi.mocked(fetch)
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				spawned_by_message_id: 42,
+			})
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body.spawned_by_message_id).toBe(42)
+		})
+
+		it('without wait: returns the bare session row and keeps wait off the wire', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = vi.mocked(fetch)
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body).not.toHaveProperty('wait')
+			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('logs')
+			expect(fetchSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('with wait: keeps wait off the create route', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-w', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-w', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+				wait: true,
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+			await resultPromise
+
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body).not.toHaveProperty('wait')
+		})
 	})
 
-	describe('run_agent handler', () => {
+	describe('create_session handler (wait: true): notify_on_complete', () => {
+		type Call = [string, { method?: string; body?: string }]
+		const callsWith = (spy: { mock: { calls: unknown[][] } }, method: string) =>
+			(spy.mock.calls as Call[]).filter(([, init]) => init?.method === method)
+
+		const neverFinishes = (id: string) =>
+			vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'pending' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'running' }),
+				} as Response)
+
+		it('flag on and the wait times out: asks for the return with one PATCH, nothing on the create call', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n1')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('registered')
+
+			const [create] = callsWith(fetchSpy, 'POST')
+			expect(JSON.parse(create[1].body as string)).not.toHaveProperty('notify_on_complete')
+			const patches = callsWith(fetchSpy, 'PATCH')
+			expect(patches).toHaveLength(1)
+			expect(patches[0][0]).toBe('http://localhost:3000/api/sessions/sess-n1')
+			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
+		})
+
+		it('flag on and the helper finishes inside the wait: no PATCH, the caller has the result inline', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n2', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n2', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed).not.toHaveProperty('notify_on_complete')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+		})
+
+		it('the wait stops at the 660s limit, still registering the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n5')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(659_000)
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.settled).toBe(false)
+			expect(parsed.session_id).toBe('sess-n5')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
+		it('survives a failed status check and still returns the result', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n6', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 502,
+					text: () => Promise.resolve('bad gateway'),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n6', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+			})
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed.settled).toBe(true)
+			expect(parsed).not.toHaveProperty('poll_error')
+		})
+
+		it('gives up after repeated failed status checks but still returns the session id', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'POST'
+					? ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n7', status: 'running' }),
+						} as Response)
+					: ({ ok: false, status: 503, text: () => Promise.resolve('down') } as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(60_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session_id).toBe('sess-n7')
+			expect(parsed.settled).toBe(false)
+			expect(parsed.poll_error).toEqual(expect.any(String))
+			expect(parsed.logs).toBeNull()
+			expect(parsed.logs_error).toEqual(expect.any(String))
+		})
+
+		it('flag off and the wait times out: no PATCH, as before', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n3')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('notify_on_complete')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+		})
+
+		it('a failed PATCH does not fail the call; it says the return was not registered', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'PATCH'
+					? ({ ok: false, status: 500, text: () => Promise.resolve('boom') } as Response)
+					: ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n4', status: 'running' }),
+						} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('failed')
+			expect(parsed.notify_on_complete_reason).toEqual(expect.any(String))
+			expect(parsed.session.status).toBe('running')
+		})
+
+		it('passes on what the server did with an already-ended helper: skipped, with the reason', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'PATCH'
+					? ({
+							ok: true,
+							json: () =>
+								Promise.resolve({
+									id: 'sess-n5',
+									status: 'completed',
+									notify_on_complete: 'skipped',
+									notify_skip_reason: 'return_cap',
+								}),
+						} as Response)
+					: ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n5', status: 'running' }),
+						} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('skipped')
+			expect(parsed.notify_on_complete_reason).toBe('return_cap')
+		})
+	})
+
+	describe('create_session handler (wait: true)', () => {
 		it('creates session, polls until completed, fetches logs', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -2328,12 +2626,11 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([{ message: 'Done' }]),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
-				poll_interval_seconds: 5,
-				timeout_seconds: 60,
 			})
 
 			// Advance through the two polling intervals
@@ -2371,19 +2668,16 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id: 'sess-2', status: 'running' }),
 				} as Response)
 
-			const handler = getHandler('run_agent')
-			// Very short timeout (10s) with 5s poll interval = at most 2 polls before deadline
+			const handler = getHandler('create_session')
+			// Never reaches a terminal state, so the call gives up at the backstop limit
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
-				poll_interval_seconds: 5,
-				timeout_seconds: 10,
 			})
 
-			// Advance past deadline
-			await vi.advanceTimersByTimeAsync(5000) // first poll
-			await vi.advanceTimersByTimeAsync(5000) // second poll
-			await vi.advanceTimersByTimeAsync(5000) // past deadline
+			// Advance past the backstop limit
+			await vi.advanceTimersByTimeAsync(3_800_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -2411,8 +2705,9 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
 			})
@@ -6020,7 +6315,7 @@ describe('url field injection', () => {
 			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
 		})
 
-		it('run_agent — url added to session in response', async () => {
+		it('create_session (wait: true) — url added to session in response', async () => {
 			vi.useFakeTimers()
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
@@ -6039,12 +6334,11 @@ describe('url field injection', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getUrlHandler('run_agent')
+			const handler = getUrlHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: testUuid,
 				action_prompt: 'Deploy',
-				poll_interval_seconds: 5,
-				timeout_seconds: 60,
 			})
 
 			await vi.advanceTimersByTimeAsync(5000)

@@ -221,7 +221,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -237,7 +236,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toThrow('Failed to create session')
@@ -259,7 +257,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Reply to the comment',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: 9001,
@@ -288,7 +285,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Run the cron job',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerId: 'trig-1',
 				triggerType: 'cron',
@@ -327,7 +323,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({
@@ -367,7 +362,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
@@ -399,7 +393,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -418,7 +411,6 @@ describe('SessionManager', () => {
 				config: { interactive: true },
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -434,7 +426,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -455,7 +446,6 @@ describe('SessionManager', () => {
 				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -471,7 +461,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 

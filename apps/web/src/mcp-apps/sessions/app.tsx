@@ -174,8 +174,8 @@ function SessionsApp() {
 		)
 	}
 
-	// create_session, get_session, pause_session, resume_session, stop_session,
-	// run_agent — all return either { session, logs? } or a raw session.
+	// create_session (including wait: true), get_session, pause_session, resume_session,
+	// stop_session — all return either { session, logs? } or a raw session.
 	const parsed = parseSessionFromResult(toolResult.result)
 	if (parsed) return <SessionDetailView session={parsed.session} logs={parsed.logs} />
 	return <div className="p-4 text-sm text-foreground">{text}</div>

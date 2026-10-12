@@ -157,7 +157,7 @@ describe('buildWorkspaceStartupBlock', () => {
 				'Do the work, don\'t describe it. If your next step is something your tools can do, do it in this turn. Don\'t end with "I\'ll..." or "next I would...".',
 			)
 			expect(block).toContain(
-				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use run_agent if you need the answer now. Ask a person only for the cases below.',
+				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_session with wait: true if you need the answer now. Ask a person only for the cases below.',
 			)
 			expect(block).toContain(
 				"Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.",

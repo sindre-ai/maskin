@@ -679,7 +679,6 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 					// Onboarding kickoff — spawned on workspace flip, not on
 					// any originating object. Explicit null/null.
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 				})
 				.catch((err) =>
 					logger.error('Failed to create onboarding session', { workspaceId: id, err }),

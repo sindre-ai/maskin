@@ -1586,7 +1586,6 @@ app.openapi(runAgentRoute, (async (c) => {
 					createdBy: actorId,
 					// Ad-hoc actor run: no originating object.
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					await: 'none',
 				})
 			}

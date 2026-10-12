@@ -83,15 +83,15 @@ export interface StartSessionInput {
 	/**
 	 * The object this session was started for (bet, task, insight, or any
 	 * first-class object). Required-optional shape: every call site MUST pass
-	 * both fields, either as real values or as explicit null, so tsc catches a
-	 * missed site. NULL is still a valid value (direct API creates, onboarding,
-	 * cron triggers, conversation-only spawns). Persisted on the sessions row,
-	 * read back by settleSession() for the session_failed event's
-	 * data.initiated_from block, and by every terminal runtime_session_ended
-	 * emit as context_object_id / context_object_type.
+	 * it, either as a real value or as explicit null, so tsc catches a missed
+	 * site. NULL is still a valid value (direct API creates, onboarding, cron
+	 * triggers, conversation-only spawns). Persisted on the sessions row, read
+	 * back by settleSession() for the session_failed event's
+	 * data.initiated_from block (the object's type is looked up from this id
+	 * there), and by every terminal runtime_session_ended emit as
+	 * context_object_id.
 	 */
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }
 
 export interface StartSessionHandle {
@@ -223,7 +223,6 @@ export async function startSession(
 		sourceSessionId: input.parentSessionId,
 		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
-		initiatedFromObjectType: input.initiatedFromObjectType,
 		spawnedByMessageId: input.spawnedByMessageId,
 		dependsOnSessionIds: input.dependsOnSessionIds,
 	}
@@ -851,7 +850,6 @@ export async function settleSession(
 			triggerId: sessions.triggerId,
 			conversationId: sessions.conversationId,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
-			initiatedFromObjectType: sessions.initiatedFromObjectType,
 			startedAt: sessions.startedAt,
 			inputTokens: sessions.inputTokens,
 			outputTokens: sessions.outputTokens,
@@ -1191,7 +1189,7 @@ interface InitiatedFromBlock {
 
 /**
  * Build the data.initiated_from block for a session_failed event from the
- * session row's two initiated_from_object_* columns. Returns null (not an
+ * session row's initiated_from_object_id column. Returns null (not an
  * object with null members) when the session has no originating object, and
  * also null if the object was deleted between spawn and settle: the FK's
  * ON DELETE SET NULL cascade would normally have already nulled the id
@@ -1199,18 +1197,18 @@ interface InitiatedFromBlock {
  */
 async function resolveInitiatedFromBlock(
 	db: Database,
-	session: { initiatedFromObjectId: string | null; initiatedFromObjectType: string | null },
+	session: { initiatedFromObjectId: string | null },
 ): Promise<InitiatedFromBlock | null> {
 	if (!session.initiatedFromObjectId) return null
 	const [obj] = await db
-		.select({ title: objects.title })
+		.select({ type: objects.type, title: objects.title })
 		.from(objects)
 		.where(eq(objects.id, session.initiatedFromObjectId))
 		.limit(1)
 	if (!obj) return null
 	return {
 		object_id: session.initiatedFromObjectId,
-		object_type: session.initiatedFromObjectType ?? '',
+		object_type: obj.type,
 		// objects.title is nullable in the schema; coalesce so the failure card
 		// renderer never has to guard against a null title.
 		object_title: obj.title ?? '',
