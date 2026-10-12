@@ -220,7 +220,7 @@ export async function fetchRows(
 		}
 		const rows = body.rows ?? []
 		for (const r of rows) {
-			const [date, pageUrl, query, country, device] = r.keys
+			const [date = '', pageUrl = '', query = '', country = '', device = ''] = r.keys
 			out.push([date, pageUrl, query, country, device, r.impressions, r.clicks, r.ctr, r.position])
 		}
 		if (rows.length < ROW_LIMIT) return out
