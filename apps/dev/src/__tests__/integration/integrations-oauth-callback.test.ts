@@ -116,4 +116,141 @@ describe('GET /api/integrations/:provider/callback — reconnect against a stabl
 		expect(rows[0].status).toBe('active')
 		expect(rows[0].externalId).toBe(stableExternalId)
 	})
+
+	// Drive stamps config.first_tool_call_at on its first successful tool call and
+	// the customer UI reads has-ingested from it. A disconnect leaves the row
+	// revoked, and the reconnect refresh used to rewrite config from scratch, which
+	// dropped the stamp and sent a connected workspace back to the first-call state.
+	it('keeps config.first_tool_call_at when a revoked row is reconnected', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+
+		const providerName = `test-stamped-provider-${randomBytes(4).toString('hex')}`
+		const stableExternalId = 'stamped@example.com'
+		const stamp = '2026-10-05T10:00:00.000Z'
+
+		vi.mocked(getProvider).mockReturnValue({
+			config: {
+				name: providerName,
+				displayName: `Test Stamped Provider ${providerName}`,
+				auth: {
+					type: 'oauth2',
+					config: {
+						authorizationUrl: 'http://example.test/auth',
+						tokenUrl: 'http://example.test/token',
+						scopes: [],
+						clientIdEnv: 'TEST_CLIENT_ID',
+						clientSecretEnv: 'TEST_CLIENT_SECRET',
+					},
+				},
+			},
+			customAuth: {
+				getInstallUrl: () => 'http://example.test/auth',
+				handleCallback: async () => ({ accessToken: 'fresh-token' }),
+				getAccessToken: async () => 'fresh-token',
+			},
+			resolveExternalId: async () => stableExternalId,
+		} satisfies ResolvedProvider)
+
+		const [revoked] = await db
+			.insert(integrations)
+			.values({
+				workspaceId: ws.id,
+				provider: providerName,
+				status: 'revoked',
+				externalId: stableExternalId,
+				credentials: encrypt(JSON.stringify({ accessToken: 'stale-token' })),
+				config: { system_actor_id: 'old-system-actor', first_tool_call_at: stamp },
+				createdBy: actorId,
+			})
+			.returning()
+
+		const nonce = randomBytes(16).toString('hex')
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: providerName,
+			status: 'pending',
+			externalId: nonce,
+			credentials: '',
+			createdBy: actorId,
+		})
+		const state = encrypt(JSON.stringify({ workspaceId: ws.id, actorId, ts: Date.now(), nonce }))
+
+		const res = await buildApp().request(
+			`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}&code=irrelevant`,
+			{ headers: { cookie: `maskin_oauth_nonce_${providerName}=${nonce}` } },
+		)
+		expect(res.status).toBe(302)
+
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, revoked.id))
+		expect(row.status).toBe('active')
+		expect((row.config as Record<string, unknown>).first_tool_call_at).toBe(stamp)
+		// The callback still owns the rest of config: the stale actor id is replaced.
+		expect((row.config as Record<string, unknown>).system_actor_id).not.toBe('old-system-actor')
+	})
+
+	it('does not invent first_tool_call_at on a reconnect of a row that never had one', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+
+		const providerName = `test-unstamped-provider-${randomBytes(4).toString('hex')}`
+		const stableExternalId = 'unstamped@example.com'
+
+		vi.mocked(getProvider).mockReturnValue({
+			config: {
+				name: providerName,
+				displayName: `Test Unstamped Provider ${providerName}`,
+				auth: {
+					type: 'oauth2',
+					config: {
+						authorizationUrl: 'http://example.test/auth',
+						tokenUrl: 'http://example.test/token',
+						scopes: [],
+						clientIdEnv: 'TEST_CLIENT_ID',
+						clientSecretEnv: 'TEST_CLIENT_SECRET',
+					},
+				},
+			},
+			customAuth: {
+				getInstallUrl: () => 'http://example.test/auth',
+				handleCallback: async () => ({ accessToken: 'fresh-token' }),
+				getAccessToken: async () => 'fresh-token',
+			},
+			resolveExternalId: async () => stableExternalId,
+		} satisfies ResolvedProvider)
+
+		const [revoked] = await db
+			.insert(integrations)
+			.values({
+				workspaceId: ws.id,
+				provider: providerName,
+				status: 'revoked',
+				externalId: stableExternalId,
+				credentials: encrypt(JSON.stringify({ accessToken: 'stale-token' })),
+				config: { system_actor_id: 'old-system-actor' },
+				createdBy: actorId,
+			})
+			.returning()
+
+		const nonce = randomBytes(16).toString('hex')
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: providerName,
+			status: 'pending',
+			externalId: nonce,
+			credentials: '',
+			createdBy: actorId,
+		})
+		const state = encrypt(JSON.stringify({ workspaceId: ws.id, actorId, ts: Date.now(), nonce }))
+
+		const res = await buildApp().request(
+			`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}&code=irrelevant`,
+			{ headers: { cookie: `maskin_oauth_nonce_${providerName}=${nonce}` } },
+		)
+		expect(res.status).toBe(302)
+
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, revoked.id))
+		expect(row.status).toBe('active')
+		expect(row.config as Record<string, unknown>).not.toHaveProperty('first_tool_call_at')
+	})
 })

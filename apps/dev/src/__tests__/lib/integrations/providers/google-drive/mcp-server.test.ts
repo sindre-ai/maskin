@@ -24,6 +24,7 @@ vi.mock('../../../../../lib/analytics/mcp-tool-calls', async (orig) => ({
 
 import { DriveError } from '../../../../../lib/integrations/providers/google-drive/errors'
 import { createGoogleDriveMcpServer } from '../../../../../lib/integrations/providers/google-drive/mcp-server'
+import { logger } from '../../../../../lib/logger'
 
 async function connect(sessionId?: string) {
 	const server = createGoogleDriveMcpServer({
@@ -171,6 +172,59 @@ describe('google-drive MCP server: calls, errors, telemetry', () => {
 			sessionSource: 'unknown',
 		})
 		expect(capturePosthog).not.toHaveBeenCalled()
+	})
+
+	it('a failing first_tool_call_at stamp is logged and never fails the tool call', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify({ files: [] }), { status: 200 }),
+		)
+		const update = vi.fn(() => {
+			throw new Error('db is down')
+		})
+		const server = createGoogleDriveMcpServer({
+			db: { update } as never,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+		const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+		const client = new Client({ name: 'test', version: '0.0.0' })
+		await Promise.all([server.connect(serverT), client.connect(clientT)])
+
+		const res = await client.callTool({
+			name: 'google_drive__search_files',
+			arguments: { query: 'x' },
+		})
+
+		expect(res.isError).toBeFalsy()
+		expect(textOf(res).files).toEqual([])
+		expect(update).toHaveBeenCalledTimes(1)
+		expect(logger.warn).toHaveBeenCalledWith(
+			'Google Drive first_tool_call_at stamp failed',
+			expect.objectContaining({ workspaceId: 'ws-1', error: 'db is down' }),
+		)
+	})
+
+	it('an errored call does not attempt the stamp', async () => {
+		getToken.mockRejectedValueOnce(
+			new DriveError({ code: 'INTEGRATION_MISSING', message: 'No Drive connected.' }),
+		)
+		const update = vi.fn()
+		const server = createGoogleDriveMcpServer({
+			db: { update } as never,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+		const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+		const client = new Client({ name: 'test', version: '0.0.0' })
+		await Promise.all([server.connect(serverT), client.connect(clientT)])
+
+		const res = await client.callTool({
+			name: 'google_drive__list_folder',
+			arguments: { folderId: 'f1' },
+		})
+
+		expect(res.isError).toBe(true)
+		expect(update).not.toHaveBeenCalled()
 	})
 
 	it('an unexpected throw is reported as a generic PROVIDER_ERROR, not the raw message', async () => {
