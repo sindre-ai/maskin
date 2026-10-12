@@ -130,6 +130,10 @@ struct TVDecisionCard: View {
 			if let when = card.latestActivityAt {
 				Text(when.formatted(date: .omitted, time: .shortened))
 					.font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
+				if let held = TVDecisionAge.heldTag(since: when) {
+					Text(held).font(.system(size: 22, weight: .medium, design: .monospaced))
+						.foregroundStyle(MaskinColor.ink4)
+				}
 			}
 		}
 	}
@@ -139,12 +143,17 @@ struct TVDecisionCard: View {
 			Label("You chose \(label)", systemImage: "checkmark.circle.fill")
 				.font(.system(size: 30, weight: .semibold))
 		} else if let options = card.decision?.options {
+			// Mockup: the recommended option as a light capsule, the rest as "+ n more".
+			let summary = TVCardOptions.summary(labels: options.map(\.label), recommended: options.first(where: \.recommended)?.label)
 			HStack(spacing: 14) {
-				ForEach(options) { option in
-					Text(option.label).font(.system(size: 28, weight: .semibold)).lineLimit(1).fixedSize()
+				if let primary = summary.primary {
+					Text(primary).font(.system(size: 28, weight: .semibold)).lineLimit(1).fixedSize()
 						.padding(.horizontal, 26).frame(height: 64)
-						.foregroundStyle(option.recommended ? MaskinSurface.onInverse : MaskinColor.ink)
-						.background(option.recommended ? MaskinSurface.inverse : MaskinSurface.fillStrong, in: Capsule())
+						.foregroundStyle(MaskinSurface.onInverse)
+						.background(MaskinSurface.inverse, in: Capsule())
+				}
+				if summary.more > 0 {
+					Text("+ \(summary.more) more").font(.system(size: 26, weight: .medium)).foregroundStyle(MaskinColor.ink4)
 				}
 			}
 		}
