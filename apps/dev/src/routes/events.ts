@@ -669,12 +669,11 @@ async function spawnThreadReplySessions(ctx: {
 	// `commented` event's entity_type is 'object'), so a single PK read
 	// per commented event is cheap even for a big fanout.
 	const [obj] = await ctx.db
-		.select({ type: objects.type })
+		.select({ id: objects.id })
 		.from(objects)
 		.where(eq(objects.id, ctx.objectId))
 		.limit(1)
 	const initiatedFromObjectId = obj ? ctx.objectId : null
-	const initiatedFromObjectType = obj?.type ?? null
 
 	const senderLine = threadReplyAgentIds.length > 0 ? await loadSenderLine(ctx.db, ctx.actorId) : ''
 
@@ -700,7 +699,6 @@ async function spawnThreadReplySessions(ctx: {
 			},
 			createdBy: ctx.actorId,
 			initiatedFromObjectId,
-			initiatedFromObjectType,
 			await: 'none',
 		}).catch((err) =>
 			logger.error('Failed to create thread-reply session', {

@@ -19,6 +19,7 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
+import type { z } from 'zod'
 import {
 	type CursorState,
 	decodeCursor,
@@ -1040,6 +1041,179 @@ async function enrichSessionActorName<T extends SessionRow>(
 		if (actor?.name) return { ...session, actorName: actor.name }
 	} catch {}
 	return session
+}
+
+// A waiting create_session checks every few seconds until the session ends. The
+// limit is kept short enough to finish before MCP clients give up on the tool
+// call, so the notify_on_complete fallback below is actually reachable. A session
+// still running at the limit is left running and reported as not settled.
+const WAIT_POLL_MS = 5_000
+const WAIT_LIMIT_MS = 660_000
+// Consecutive failed status checks tolerated before the wait gives up. A blip
+// (deploy restart, 502, dropped socket) must not orphan a session that is
+// already running.
+const MAX_POLL_FAILURES = 5
+
+/**
+ * The `wait: true` path of `create_session`: start the session, poll until it
+ * reaches a terminal state (or the wait runs out), and return `{ session, logs }`.
+ */
+async function createSessionAndWait(
+	config: McpConfig,
+	args: z.infer<typeof tools.create_session.inputSchema>,
+) {
+	const { workspace_id, wait: _wait, notify_on_complete, ...createBody } = args
+	const wsOpts = { workspaceId: workspace_id }
+
+	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
+	// call returns the result inline, so it is only registered (below) if the
+	// wait runs out.
+	const session = (await apiCall(config, 'POST', '/api/sessions', createBody, wsOpts)) as {
+		id: string
+		status: string
+	}
+
+	let sessionId = session.id
+	const deadline = Date.now() + WAIT_LIMIT_MS
+	const terminalStatuses = ['completed', 'failed', 'timeout']
+	// §17.6: when a session hits a subscription limit its terminal report
+	// carries retried_session_id — the id of the retry the scheduler
+	// enqueued. Follow the redirect so a caller waiting here sees the retry's
+	// outcome instead of an intermediate "failed", with the same cap (5) the
+	// scheduler enforces so a broken chain can't hold the polling loop for the
+	// full timeout.
+	const MAX_RETRY_FOLLOWS = 5
+	let retryFollows = 0
+
+	// 2. Poll until terminal, following retried_session_id redirects
+	let current = session as typeof session & { retriedSessionId?: string | null }
+	let settled = false
+	let pollFailures = 0
+	let pollError: string | undefined
+	while (Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS))
+		try {
+			current = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${sessionId}`,
+				undefined,
+				wsOpts,
+			)) as typeof current
+			pollFailures = 0
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) {
+				console.error(`create_session: gave up polling session ${sessionId}`, err)
+				break
+			}
+			continue
+		}
+		pollError = undefined
+		if (terminalStatuses.includes(current.status)) {
+			const retryId = current.retriedSessionId
+			if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
+				retryFollows += 1
+				sessionId = retryId
+				continue
+			}
+			settled = true
+			break
+		}
+	}
+
+	// The wait ran out with the helper still going: ask for its result to be sent
+	// back later. Never on the settled path, where the caller gets it inline.
+	// If the helper ended in the gap, the PATCH sends the return itself.
+	// The server says what became of it: 'registered' (still running, it will
+	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
+	// could not be sent, with the reason) or 'failed' (not registered at all).
+	let notifyOnComplete:
+		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
+		| undefined
+	if (notify_on_complete && !settled) {
+		try {
+			const patched = (await apiCall(
+				config,
+				'PATCH',
+				`/api/sessions/${sessionId}`,
+				{ notify_on_complete: true },
+				wsOpts,
+			)) as {
+				notify_on_complete?: 'registered' | 'delivered' | 'skipped'
+				notify_skip_reason?: string
+			}
+			notifyOnComplete = {
+				state: patched.notify_on_complete ?? 'registered',
+				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
+			}
+		} catch (err) {
+			console.error('create_session: could not register notify_on_complete', err)
+			notifyOnComplete = {
+				state: 'failed',
+				reason: err instanceof Error ? err.message : String(err),
+			}
+		}
+	}
+
+	// 3. Fetch logs. A failure here must not discard the session outcome.
+	let logs: unknown = null
+	let logsError: string | undefined
+	try {
+		logs = await apiCall(
+			config,
+			'GET',
+			`/api/sessions/${sessionId}/logs?limit=500`,
+			undefined,
+			wsOpts,
+		)
+	} catch (err) {
+		logsError = err instanceof Error ? err.message : String(err)
+	}
+
+	const wsId = workspace_id ?? config.defaultWorkspaceId
+	const currentWithUrl = wsId
+		? addUrl(current as Record<string, unknown>, config, wsId, {
+				kind: 'session',
+				id: (current as { id?: string }).id ?? sessionId,
+				actorId: (current as { actorId?: string }).actorId,
+			})
+		: current
+	// Surface how many retry redirects the poll followed so callers can
+	// distinguish a straight-through completion from one that rode the
+	// subscription-limit retry chain.
+	const currentWithRetryMeta =
+		retryFollows > 0
+			? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
+			: currentWithUrl
+
+	return {
+		_meta: meta('create_session', config, workspace_id),
+		content: [
+			{
+				type: 'text' as const,
+				text: JSON.stringify({
+					session: currentWithRetryMeta,
+					logs,
+					// Lets the caller find the session again, and says whether the result
+					// above is final or just where the wait stopped.
+					session_id: sessionId,
+					settled,
+					...(pollError ? { poll_error: pollError } : {}),
+					...(logsError ? { logs_error: logsError } : {}),
+					...(notifyOnComplete
+						? {
+								notify_on_complete: notifyOnComplete.state,
+								...(notifyOnComplete.reason
+									? { notify_on_complete_reason: notifyOnComplete.reason }
+									: {}),
+							}
+						: {}),
+				}),
+			},
+		],
+	}
 }
 
 /**
@@ -3329,12 +3503,21 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
+			// An agent is created by an authenticated caller and born as a member of
+			// workspace_id in the same request (the server rejects an agent create with
+			// no key). Humans sign up without a key and are added in a second call below.
+			const isAgent = createBody.type === 'agent'
+			const bornInWorkspace = isAgent && !willAutoCreateWorkspace ? resolvedWorkspace : undefined
 			const rawResult = (await apiCall(
 				config,
 				'POST',
 				'/api/actors',
-				{ ...createBody, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
-				{ skipAuth: true, skipWorkspace: true },
+				{
+					...createBody,
+					...splitLlmConfig(llm_config as Record<string, unknown> | undefined),
+					...(bornInWorkspace ? { workspace_id: bornInWorkspace } : {}),
+				},
+				{ skipAuth: !isAgent, skipWorkspace: true },
 			)) as { id: string; [key: string]: unknown }
 			const result = mergeLlmConfig(rawResult) as { id: string; [key: string]: unknown }
 			// These fields can't be meaningful on a just-created actor: installedLoopId
@@ -3348,9 +3531,13 @@ export function createMcpServer(config: McpConfig) {
 			result.agentState = undefined
 			result.agentStateUpdatedAt = undefined
 
-			// If workspace_id provided, add the new actor as a member
 			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
-			if (targetWorkspace && !createBody.auto_create_workspace) {
+			if (bornInWorkspace) {
+				// Already a member (role member) from the create call above.
+				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
+				;(result as Record<string, unknown>).role = 'member'
+			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
+				// Humans only: add the new actor as a member
 				try {
 					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
 						actor_id: result.id,
@@ -5790,8 +5977,12 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
+			if (args.wait) return createSessionAndWait(config, args)
+
+			// `wait` never goes to the create route.
+			const { workspace_id, wait, ...createBody } = args
+
+			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
 				workspaceId: workspace_id,
 			})) as SessionRow
 			const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -6018,107 +6209,6 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'run_agent',
-		{
-			description: tools.run_agent.description,
-			inputSchema: tools.run_agent.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-		},
-		async (args) => {
-			const { workspace_id } = args
-			const wsOpts = { workspaceId: workspace_id }
-
-			// 1. Create session
-			const session = (await apiCall(
-				config,
-				'POST',
-				'/api/sessions',
-				{
-					actor_id: args.actor_id,
-					action_prompt: args.action_prompt,
-					config: args.config,
-					auto_start: true,
-					spawned_by_message_id: args.spawned_by_message_id,
-					depends_on_session_ids: args.depends_on_session_ids,
-				},
-				wsOpts,
-			)) as { id: string; status: string }
-
-			let sessionId = session.id
-			const pollMs = (args.poll_interval_seconds ?? 5) * 1000
-			const timeoutMs = (args.timeout_seconds ?? 660) * 1000
-			const deadline = Date.now() + timeoutMs
-			const terminalStatuses = ['completed', 'failed', 'timeout']
-			// §17.6: when a session hits a subscription limit its terminal report
-			// carries retried_session_id — the id of the retry the scheduler
-			// enqueued. Follow the redirect so a caller waiting on run_agent
-			// sees the retry's outcome instead of an intermediate "failed",
-			// with the same cap (5) the scheduler enforces so a broken chain
-			// can't hold the polling loop for the full timeout.
-			const MAX_RETRY_FOLLOWS = 5
-			let retryFollows = 0
-
-			// 2. Poll until terminal, following retried_session_id redirects
-			let current = session as typeof session & { retriedSessionId?: string | null }
-			while (Date.now() < deadline) {
-				await new Promise((resolve) => setTimeout(resolve, pollMs))
-				current = (await apiCall(
-					config,
-					'GET',
-					`/api/sessions/${sessionId}`,
-					undefined,
-					wsOpts,
-				)) as typeof current
-				if (terminalStatuses.includes(current.status)) {
-					const retryId = current.retriedSessionId
-					if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
-						retryFollows += 1
-						sessionId = retryId
-						continue
-					}
-					break
-				}
-			}
-
-			// 3. Fetch logs
-			const logs = await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${sessionId}/logs?limit=500`,
-				undefined,
-				wsOpts,
-			)
-
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const currentWithUrl = wsId
-				? addUrl(current as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: (current as { id?: string }).id ?? sessionId,
-						actorId: (current as { actorId?: string }).actorId,
-					})
-				: current
-			// Surface how many retry redirects the poll followed so callers can
-			// distinguish a straight-through completion from one that rode the
-			// subscription-limit retry chain.
-			const currentWithRetryMeta =
-				retryFollows > 0
-					? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
-					: currentWithUrl
-
-			return {
-				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithRetryMeta, logs }),
-					},
-				],
 			}
 		},
 	)

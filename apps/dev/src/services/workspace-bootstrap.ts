@@ -704,7 +704,6 @@ export async function bootstrapDefaultAgents(
 			createdBy,
 			// Welcome kickoff has no originating object.
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'none',
 		}).catch((err) =>
 			logger.error('Failed to kick off Chief of Staff welcome session during workspace bootstrap', {
@@ -878,7 +877,6 @@ export async function provisionWorkspace(params: {
 			createdBy: ownerActorId,
 			// Welcome kickoff has no originating object.
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'none',
 		}).catch((err) =>
 			logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),

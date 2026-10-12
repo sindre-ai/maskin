@@ -136,12 +136,6 @@ const ROUTES: RouteSpec[] = [
 		path: (ctx) => `/${ctx.workspaceId}/marketplace`,
 	},
 	{
-		label: 'briefing',
-		// Pre-existing: the markdown body scrolls but takes no keyboard focus.
-		disableRules: ['scrollable-region-focusable'],
-		path: (ctx) => `/${ctx.workspaceId}/briefing`,
-	},
-	{
 		label: 'settings index',
 		// Pre-existing: icon-only controls and an unlabelled input.
 		disableRules: ['button-name', 'label'],
