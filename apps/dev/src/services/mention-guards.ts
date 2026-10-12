@@ -225,6 +225,7 @@ export async function verifyHelperReturn(
 			workspaceId: sessions.workspaceId,
 			actorId: sessions.actorId,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
+			conversationId: sessions.conversationId,
 		})
 		.from(sessions)
 		.where(eq(sessions.id, helper.spawnedBySessionId))
@@ -232,9 +233,14 @@ export async function verifyHelperReturn(
 	if (!sender || sender.workspaceId !== helper.workspaceId) return null
 	if (sender.actorId !== ctx.mentionedActorId) return null
 
+	// A flagged helper never returns to its own object, and returns into the
+	// sender's chat when it has one: no object comment carries a genuine marker then.
+	const flagged = isNotifyOnComplete(helper.config)
+	if (flagged && sender.conversationId) return null
+
 	const destinationId = await resolveReturnObjectId(db, {
 		workspaceId: helper.workspaceId,
-		helperObjectId: helper.initiatedFromObjectId,
+		helperObjectId: flagged ? null : helper.initiatedFromObjectId,
 		senderObjectId: sender.initiatedFromObjectId,
 	})
 	if (destinationId !== ctx.objectId) return null
@@ -260,6 +266,11 @@ export async function verifyHelperReturn(
 	if (used) return null
 
 	return { hopDepth: readHopDepth(helper.config) }
+}
+
+/** True when the helper was started with notify_on_complete (sessions.config.notify_on_complete). */
+export function isNotifyOnComplete(config: unknown): boolean {
+	return (config as { notify_on_complete?: unknown } | null)?.notify_on_complete === true
 }
 
 /** Depth stored in sessions.config.hop_depth; anything unreadable counts as 0. */

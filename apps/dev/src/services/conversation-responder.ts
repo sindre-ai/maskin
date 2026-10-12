@@ -51,6 +51,10 @@ const RESPOND_DECISION_TOOL: LLMTool = {
  * first-ever reply and recovery after the previous session died (timeout,
  * crash, manual stop). Never throws; every failure mode degrades to "stay
  * silent" so a broken relevance check can't spam a conversation.
+ *
+ * Returns 'agent_cap' when the turn is dropped because the conversation already
+ * ends in 5 agent messages in a row, so a caller that cannot afford a silent
+ * drop can record it. Every other path returns nothing.
  */
 export async function evaluateAndRespond(ctx: {
 	db: Database
@@ -78,7 +82,7 @@ export async function evaluateAndRespond(ctx: {
 		 */
 		targetAgentId?: string
 	}
-}): Promise<void> {
+}): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
 
 	const [message] = await db
@@ -94,7 +98,7 @@ export async function evaluateAndRespond(ctx: {
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(eq(messages.id, messageId))
 		.limit(1)
-	if (!message) return
+	if (!message) return undefined
 
 	const candidates = await db
 		.select({
@@ -118,7 +122,7 @@ export async function evaluateAndRespond(ctx: {
 					: undefined,
 			),
 		)
-	if (candidates.length === 0) return
+	if (candidates.length === 0) return undefined
 
 	// A conversation with exactly two active participants total (the author
 	// + this one agent) is a direct 1:1 — the user has nobody else to expect
@@ -167,7 +171,7 @@ export async function evaluateAndRespond(ctx: {
 			conversationId,
 			consecutiveAgents,
 		})
-		return
+		return 'agent_cap'
 	}
 
 	const metadata = message.metadata as {
@@ -228,7 +232,7 @@ export async function evaluateAndRespond(ctx: {
 							newMessageContent: messageForPrompt.content,
 							isDirectConversation,
 						})
-			if (!shouldRespond) return
+			if (!shouldRespond) return undefined
 
 			const turnPayload = {
 				type: 'user' as const,
@@ -269,12 +273,12 @@ export async function evaluateAndRespond(ctx: {
 					agent.id,
 				)
 				if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
-				return
+				return undefined
 			}
 			if (existing) {
 				try {
 					await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
-					return
+					return undefined
 				} catch (err) {
 					logger.warn(
 						'writeInput to existing interactive conversation session failed — spawning a fresh one',
@@ -312,6 +316,7 @@ export async function evaluateAndRespond(ctx: {
 			})
 		}),
 	)
+	return undefined
 }
 
 /**
@@ -373,7 +378,6 @@ async function spawnOrJoinConversationSession(params: {
 			// already carries the linkage a UI needs. Explicit null/null per spec
 			// §3.3 (conversation responder branch).
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'first-response',
 		})
 		// The seed prompt above inlines recent history up to and including this

@@ -52,7 +52,6 @@ function buildFacts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
 		pausedBets: [],
 		closedBets: [],
 		openInsights: [{ id: INSIGHT_ID, title: 'Support tickets spike on Mondays' }],
-		ledgerLines: [],
 		closedBetsDays: 30,
 		...overrides,
 	}
