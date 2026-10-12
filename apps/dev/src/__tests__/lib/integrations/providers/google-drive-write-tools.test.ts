@@ -12,8 +12,9 @@ vi.mock('../../../../lib/analytics/posthog', () => ({
 vi.mock('../../../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
+const { getTokenMock } = vi.hoisted(() => ({ getTokenMock: vi.fn() }))
 vi.mock('../../../../lib/integrations/providers/google-drive/token', () => ({
-	getGoogleDriveAccessToken: async () => ({ accessToken: 'ya29.test', integrationId: 'int-1' }),
+	getGoogleDriveAccessToken: (...args: unknown[]) => getTokenMock(...args),
 }))
 const captureTrace = vi.fn()
 vi.mock('../../../../lib/analytics/mcp-tool-calls', async (orig) => ({
@@ -21,6 +22,7 @@ vi.mock('../../../../lib/analytics/mcp-tool-calls', async (orig) => ({
 	captureMcpToolCall: (...args: unknown[]) => captureTrace(...args),
 }))
 
+import { DriveError } from '../../../../lib/integrations/providers/google-drive/errors'
 import { createGoogleDriveMcpServer } from '../../../../lib/integrations/providers/google-drive/mcp-server'
 import {
 	commentInputShape,
@@ -53,6 +55,7 @@ async function setup(fetchImpl: () => Promise<Response>, storage?: unknown) {
 }
 
 beforeEach(() => {
+	getTokenMock.mockReset().mockResolvedValue({ accessToken: 'ya29.test', integrationId: 'int-1' })
 	capturePosthogEventMock.mockClear()
 	captureTrace.mockClear()
 })
@@ -190,6 +193,25 @@ describe('tool calls through the Drive MCP server', () => {
 			ok: false,
 			errorClass: 'PERMISSION_DENIED',
 		})
+	})
+
+	it('write_file reports INTEGRATION_MISSING, not a network failure, when no Drive is connected', async () => {
+		getTokenMock.mockRejectedValue(
+			new DriveError({
+				code: 'INTEGRATION_MISSING',
+				message: 'No active Google Drive integration.',
+			}),
+		)
+		const fetchSpy = vi.fn()
+		const { call } = await setup(fetchSpy as never)
+		const res = await call('google_drive__write_file', {
+			name: 'a.txt',
+			mimeType: 'text/plain',
+			content: 'hi',
+		})
+		expect(res.isError).toBe(true)
+		expect(res.body.error.code).toBe('INTEGRATION_MISSING')
+		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 
 	it('write_file with a storageUrl outside this workspace is INVALID_INPUT and never reads storage', async () => {

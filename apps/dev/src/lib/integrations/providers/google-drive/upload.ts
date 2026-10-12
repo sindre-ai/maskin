@@ -70,12 +70,15 @@ export async function multipartUpload(
 		Buffer.from(`\r\n--${boundary}--`),
 	])
 	const url = `${DRIVE_UPLOAD_API}/files?uploadType=multipart&supportsAllDrives=true&fields=${DRIVE_FILE_FIELDS}`
+	// Resolved outside the try below: a token failure (no integration, revoked grant) must reach
+	// the caller as itself, not as a network failure.
+	const token = await http.getAccessToken()
 	let res: Response
 	try {
 		res = await http.fetchImpl(url, {
 			method: 'POST',
 			headers: {
-				Authorization: `Bearer ${await http.getAccessToken()}`,
+				Authorization: `Bearer ${token}`,
 				'Content-Type': `multipart/related; boundary=${boundary}`,
 			},
 			body,
@@ -207,12 +210,13 @@ async function startSession(
 	totalSize: number | undefined,
 ): Promise<string> {
 	const url = `${DRIVE_UPLOAD_API}/files?uploadType=resumable&supportsAllDrives=true&fields=${DRIVE_FILE_FIELDS}`
+	const token = await http.getAccessToken()
 	let res: Response
 	try {
 		res = await http.fetchImpl(url, {
 			method: 'POST',
 			headers: {
-				Authorization: `Bearer ${await http.getAccessToken()}`,
+				Authorization: `Bearer ${token}`,
 				'Content-Type': 'application/json; charset=UTF-8',
 				'X-Upload-Content-Type': meta.mimeType,
 				...(totalSize !== undefined && { 'X-Upload-Content-Length': String(totalSize) }),
@@ -246,10 +250,11 @@ async function sendChunk(
 	let failures = 0
 
 	const put = async (headers: Record<string, string>, body?: Buffer): Promise<ChunkOutcome> => {
+		const token = await http.getAccessToken()
 		try {
 			const res = await http.fetchImpl(sessionUri, {
 				method: 'PUT',
-				headers: { Authorization: `Bearer ${await http.getAccessToken()}`, ...headers },
+				headers: { Authorization: `Bearer ${token}`, ...headers },
 				body: body as BodyInit | undefined,
 				redirect: 'manual',
 			})
