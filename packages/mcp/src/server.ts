@@ -3329,12 +3329,21 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
+			// An agent is created by an authenticated caller and born as a member of
+			// workspace_id in the same request (the server rejects an agent create with
+			// no key). Humans sign up without a key and are added in a second call below.
+			const isAgent = createBody.type === 'agent'
+			const bornInWorkspace = isAgent && !willAutoCreateWorkspace ? resolvedWorkspace : undefined
 			const rawResult = (await apiCall(
 				config,
 				'POST',
 				'/api/actors',
-				{ ...createBody, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
-				{ skipAuth: true, skipWorkspace: true },
+				{
+					...createBody,
+					...splitLlmConfig(llm_config as Record<string, unknown> | undefined),
+					...(bornInWorkspace ? { workspace_id: bornInWorkspace } : {}),
+				},
+				{ skipAuth: !isAgent, skipWorkspace: true },
 			)) as { id: string; [key: string]: unknown }
 			const result = mergeLlmConfig(rawResult) as { id: string; [key: string]: unknown }
 			// These fields can't be meaningful on a just-created actor: installedLoopId
@@ -3348,9 +3357,13 @@ export function createMcpServer(config: McpConfig) {
 			result.agentState = undefined
 			result.agentStateUpdatedAt = undefined
 
-			// If workspace_id provided, add the new actor as a member
 			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
-			if (targetWorkspace && !createBody.auto_create_workspace) {
+			if (bornInWorkspace) {
+				// Already a member (role member) from the create call above.
+				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
+				;(result as Record<string, unknown>).role = 'member'
+			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
+				// Humans only: add the new actor as a member
 				try {
 					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
 						actor_id: result.id,
