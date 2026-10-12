@@ -1,5 +1,4 @@
-import type { S3Client } from '@aws-sdk/client-s3'
-import { WormSnapshotStore } from '@maskin/storage'
+import { WormSnapshotStore, type WormSnapshotStoreConfig } from '@maskin/storage'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const captureMock = vi.hoisted(() => vi.fn(async () => {}))
@@ -53,7 +52,7 @@ function fakeBucket(opts: { denyList?: boolean } = {}) {
 			}
 		},
 	}
-	const store = new WormSnapshotStore({ bucket: 'worm', client: client as unknown as S3Client })
+	const store = new WormSnapshotStore({ bucket: 'worm', client: client as unknown as WormSnapshotStoreConfig['client'] })
 	return { store, objects, sent, puts: () => sent.filter((n) => n === 'PutObjectCommand').length }
 }
 

@@ -1,8 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { KMSClient } from '@aws-sdk/client-kms'
-import { AwsKmsProvider, LocalFileKmsProvider } from '@maskin/auth/kms'
+import { AwsKmsProvider, type AwsKmsProviderOptions, LocalFileKmsProvider } from '@maskin/auth/kms'
 import { workspaceKmsAliases } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -52,7 +51,7 @@ function fakeKms(opts: { deniedEncrypts?: number } = {}) {
 			}
 		},
 	}
-	return { client: client as unknown as KMSClient, sent, aliases }
+	return { client: client as unknown as AwsKmsProviderOptions['client'], sent, aliases }
 }
 
 const baseAlias = (workspaceId: string) => `alias/maskin-keychain-staging-${workspaceId}`
