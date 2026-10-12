@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events'
 import {
+	events,
 	conversationParticipants,
 	conversations,
-	events,
 	messages,
 	sessions,
 } from '@maskin/db/schema'

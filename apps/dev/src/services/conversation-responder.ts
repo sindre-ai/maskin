@@ -82,7 +82,7 @@ export async function evaluateAndRespond(ctx: {
 		 */
 		targetAgentId?: string
 	}
-}): Promise<'agent_cap' | void> {
+}): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
 
 	const [message] = await db
@@ -98,7 +98,7 @@ export async function evaluateAndRespond(ctx: {
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(eq(messages.id, messageId))
 		.limit(1)
-	if (!message) return
+	if (!message) return undefined
 
 	const candidates = await db
 		.select({
@@ -122,7 +122,7 @@ export async function evaluateAndRespond(ctx: {
 					: undefined,
 			),
 		)
-	if (candidates.length === 0) return
+	if (candidates.length === 0) return undefined
 
 	// A conversation with exactly two active participants total (the author
 	// + this one agent) is a direct 1:1 — the user has nobody else to expect
@@ -316,6 +316,7 @@ export async function evaluateAndRespond(ctx: {
 			})
 		}),
 	)
+	return undefined
 }
 
 /**

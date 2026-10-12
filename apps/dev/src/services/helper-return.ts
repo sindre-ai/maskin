@@ -9,11 +9,7 @@ import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
-import {
-	MENTION_GUARD_LIMITS,
-	isNotifyOnComplete,
-	resolveReturnObjectId,
-} from './mention-guards'
+import { MENTION_GUARD_LIMITS, isNotifyOnComplete, resolveReturnObjectId } from './mention-guards'
 import type { SessionManager } from './session-manager'
 
 /**
@@ -321,7 +317,7 @@ async function readFinalMessage(db: Database, sessionId: string): Promise<FinalM
 	for (const row of rows) {
 		const lines = row.content.split('\n')
 		for (let i = lines.length - 1; i >= 0; i--) {
-			const result = parseResultLine(lines[i])
+			const result = parseResultLine(lines[i] ?? '')
 			const text = result && !result.isError ? result.text.trim() : ''
 			if (!text) continue
 			const quoted = text

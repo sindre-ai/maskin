@@ -438,7 +438,11 @@ describe('Sessions Routes', () => {
 		})
 
 		it('sets notify_on_complete for the actor who started the session', async () => {
-			const session = buildSession({ workspaceId: wsId, createdBy: 'test-actor-id' })
+			const session = buildSession({
+				workspaceId: wsId,
+				createdBy: 'test-actor-id',
+				spawnedBySessionId: 'parent-session-id',
+			})
 			const updated = { ...session, config: { notify_on_complete: true } }
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
