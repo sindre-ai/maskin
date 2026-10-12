@@ -1,4 +1,4 @@
-import { liveSessions, workspaces } from '@maskin/db/schema'
+import { liveSessions, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { PlanCapExceededError, checkPlanCap } from '../../lib/llm-routing'
@@ -90,6 +90,8 @@ describe('live_sessions (Integration)', () => {
 
 	it('cascades when the workspace is deleted', async () => {
 		const row = await liveRow(workspaceId, humanId, agentId)
+		// workspace_members does not cascade, so it goes first.
+		await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId))
 		await db.delete(workspaces).where(eq(workspaces.id, workspaceId))
 		const left = await db.select().from(liveSessions).where(eq(liveSessions.id, row.id))
 		expect(left).toHaveLength(0)

@@ -4,6 +4,7 @@ import { createNodeWebSocket } from '@hono/node-ws'
 import { decodeLiveAudioFrame } from '@maskin/shared'
 import { Hono } from 'hono'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import WebSocket from 'ws'
 import { createTestContext } from '../setup'
 
 vi.mock('../../services/live-transcript', () => ({
@@ -144,18 +145,20 @@ beforeEach(() => {
 
 function connect(path = `/api/live-sessions/${SESSION_ID}/stream`) {
 	const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`)
-	ws.binaryType = 'arraybuffer'
 	const json: Array<Record<string, unknown>> = []
 	const binary: ArrayBuffer[] = []
-	ws.addEventListener('message', (e) => {
-		if (typeof e.data === 'string') json.push(JSON.parse(e.data))
-		else binary.push(e.data as ArrayBuffer)
+	ws.on('message', (data: Buffer, isBinary: boolean) => {
+		if (!isBinary) json.push(JSON.parse(data.toString()))
+		else
+			binary.push(
+				data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
+			)
 	})
 	const opened = new Promise<void>((resolve, reject) => {
-		ws.addEventListener('open', () => resolve())
-		ws.addEventListener('error', () => reject(new Error('socket error')))
+		ws.on('open', () => resolve())
+		ws.on('error', () => reject(new Error('socket error')))
 	})
-	const closed = new Promise<void>((resolve) => ws.addEventListener('close', () => resolve()))
+	const closed = new Promise<void>((resolve) => ws.on('close', () => resolve()))
 	return { ws, json, binary, opened, closed }
 }
 
