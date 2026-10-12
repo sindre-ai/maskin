@@ -95,10 +95,8 @@ describe('spoken briefing', () => {
 				title: 'Support tickets spike on Mondays',
 			})
 
-			const facts = await collectBriefingFacts(db, storage, workspaceId)
-			expect(formatAgentBriefing(facts)).toBe(
-				await renderWorkspaceBriefing(db, storage, workspaceId),
-			)
+			const facts = await collectBriefingFacts(db, workspaceId)
+			expect(formatAgentBriefing(facts)).toBe(await renderWorkspaceBriefing(db, workspaceId))
 		})
 
 		it('carries child-task progress only on active bets', async () => {
@@ -136,13 +134,13 @@ describe('spoken briefing', () => {
 				type: 'breaks_into',
 			})
 
-			const facts = await collectBriefingFacts(db, storage, workspaceId)
+			const facts = await collectBriefingFacts(db, workspaceId)
 			expect(facts.activeBets[0]?.progress).toEqual({ done: 1, total: 2 })
 			expect(facts.pausedBets[0]?.progress).toBeNull()
 		})
 
 		it('degrades rather than throwing for a workspace that does not exist', async () => {
-			const facts = await collectBriefingFacts(db, storage, '00000000-0000-4000-8000-000000000000')
+			const facts = await collectBriefingFacts(db, '00000000-0000-4000-8000-000000000000')
 			expect(facts.found).toBe(false)
 			expect(formatAgentBriefing(facts)).toContain('Workspace not found.')
 		})
