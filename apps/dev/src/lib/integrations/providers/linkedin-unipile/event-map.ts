@@ -18,7 +18,7 @@ import type { integrations } from '@maskin/db/schema'
 import { FLAGS, type FlagId } from '../../../feature-flags'
 import { decideDirection, readOwnLinkedinIds } from './direction'
 import type { UnipileEnvelope } from './envelope'
-import { resolveSender } from './sender-resolution'
+import { findContactsBySlug, resolveSender } from './sender-resolution'
 
 export type IntegrationRow = typeof integrations.$inferSelect
 
@@ -163,6 +163,71 @@ export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 				entityId: integration.id,
 				data,
 				log: { ...log, resolution: 'unresolved', unresolved_reason: resolution.reason },
+			}
+		},
+		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,
+	},
+	'relation.new': {
+		entityType: 'linkedin.connection',
+		actions: ['accepted', 'new'],
+		accountId: (envelope) => envelope.accountId,
+		deliveryKey: (envelope) => {
+			const otherId = resourceId(envelope)
+			return envelope.accountId && otherId ? `rel:${envelope.accountId}:${otherId}` : null
+		},
+		// The payload is a User Relation (the other person), so the slug comes from
+		// payload.public_identifier and no getProfile call is made. Ids and status only:
+		// no names, headline or profile data. This handler writes nothing to contacts;
+		// the owning rep moves the contact later.
+		//   accepted  slug matches a contact in connection_requested; entityId is the contact id
+		//   new       anything else (no match, another status, no public identifier); entityId is
+		//             the integration id
+		classify: async ({ db, envelope, integration }) => {
+			const relation = envelope.resource ?? {}
+			const otherId = str(relation.id)
+			if (!otherId) return { kind: 'drop', reason: 'malformed_payload' }
+
+			const publicIdentifier = str(relation.public_identifier)?.trim() || null
+			const data: Record<string, unknown> = {
+				provider: PROVIDER,
+				unipile_event_type: envelope.type,
+				integration_id: integration.id,
+				unipile_account_id: envelope.accountId,
+				external_id: otherId,
+				envelope_id: envelope.envelopeId,
+				provider_timestamp: str(relation.created_at),
+				other_provider_id: otherId,
+				other_public_identifier: publicIdentifier,
+			}
+
+			const matches = publicIdentifier
+				? await findContactsBySlug(db, integration.workspaceId, publicIdentifier)
+				: []
+			const ownerId = integration.actorId ?? integration.createdBy
+			const contact = matches.find((m) => m.driverId === ownerId) ?? matches[0]
+			const contactData = contact
+				? {
+						contact_id: contact.id,
+						contact_status: contact.status,
+						contact_driver_id: contact.driverId,
+					}
+				: {}
+
+			if (contact?.status === 'connection_requested') {
+				return {
+					kind: 'emit',
+					action: 'accepted',
+					entityId: contact.id,
+					data: { ...data, ...contactData },
+					log: { resolution: 'accepted', contact_id: contact.id },
+				}
+			}
+			return {
+				kind: 'emit',
+				action: 'new',
+				entityId: integration.id,
+				data: { ...data, ...contactData },
+				log: { resolution: contact ? 'matched_not_pending' : 'no_match' },
 			}
 		},
 		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,
