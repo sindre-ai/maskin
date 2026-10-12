@@ -5,6 +5,7 @@ import { type ScopeGrant, integrations } from '@maskin/db/schema'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { insertCredentialAccessLog } from './credential-audit'
+import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 
 /** Provider id stored on a key pasted in the Keychain, where no service was detected. */
 export const BYO_APIKEY_PROVIDER = 'custom'
@@ -37,11 +38,17 @@ export async function createByoApiKey(
 	input: ByoApiKeyInput,
 ): Promise<ByoApiKeyResult> {
 	const { workspaceId, actorId } = input
+	// The same name rule and uniqueness as a chat capture, so one name means one env var.
+	// A taken name is refused before the KMS call; the check repeats under the lock below.
+	assertValidCredentialName(input.displayName)
+	await assertSlugFree(db, workspaceId, input.displayName)
 	const grants: ScopeGrant[] = [{ kind: 'actor', actorId }]
 	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, input.rawSecret)
 	const integrationId = randomUUID()
 
 	await db.transaction(async (tx) => {
+		await lockCredentialSlug(tx, workspaceId, input.displayName)
+		await assertSlugFree(tx, workspaceId, input.displayName)
 		await tx.insert(integrations).values({
 			id: integrationId,
 			workspaceId,
