@@ -28,7 +28,7 @@ struct MeetingLiveActivity: Widget {
 					}
 				}
 				DynamicIslandExpandedRegion(.trailing) {
-					MeetingTimer(state: state).maskinText(.subhead)
+					MeetingTimer(state: state).font(MaskinTypeface.mono(MaskinFontSize.t20, weight: .semibold, relativeTo: .title3))
 				}
 				DynamicIslandExpandedRegion(.bottom) {
 					Link(destination: context.attributes.openURL) {
@@ -39,7 +39,7 @@ struct MeetingLiveActivity: Widget {
 			} compactLeading: {
 				LiveActivityAgentTile(name: state.name, size: 20)
 			} compactTrailing: {
-				MeetingTimer(state: state).maskinText(.mono).frame(maxWidth: 48)
+				MeetingTimer(state: state).font(MaskinTypeface.mono(MaskinFontSize.t14, weight: .semibold, relativeTo: .footnote)).frame(maxWidth: 52)
 			} minimal: {
 				LiveActivityAgentTile(name: state.name, size: 20)
 			}
@@ -63,14 +63,19 @@ private struct MeetingLockScreenView: View {
 	let state: MeetingActivityState
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s7) {
-			LiveActivityAgentTile(name: state.name, size: 44)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text(state.kind.eyebrow).maskinText(.microLabel).foregroundStyle(MaskinColor.sigInk).lineLimit(1)
-				Text(state.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
+		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+			HStack(spacing: MaskinSpace.s7) {
+				LiveActivityAgentTile(name: state.name, size: 44)
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text(state.kind.eyebrow).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+					Text(state.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
+				}
+				Spacer(minLength: MaskinSpace.s4)
+				MeetingTimer(state: state).font(MaskinTypeface.mono(MaskinFontSize.t20, weight: .semibold, relativeTo: .title3))
 			}
-			Spacer(minLength: MaskinSpace.s4)
-			MeetingTimer(state: state).maskinText(.headline)
+			// Mute and End sit beside the bars in the mockup. Both need a meeting model and a
+			// hang-up call that do not exist yet, so only the bars are drawn.
+			LiveActivityLevelBars(muted: state.muted)
 		}
 		.accessibilityElement(children: .combine)
 	}
