@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
@@ -237,6 +238,12 @@ const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
 upgradeLegacyCredentialsJob.start()
 logger.info('Legacy credential upgrade job scheduled')
 
+// Keychain: nightly re-wrap of every envelope credential read in the last 24 hours
+// under a fresh DEK and the workspace's current KEK (the lazy half of KEK rotation).
+const rotateDeksJob = new RotateDeksJob(db)
+rotateDeksJob.start()
+logger.info('DEK rotation job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -369,6 +376,7 @@ const shutdown = async (signal: string) => {
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
+	rotateDeksJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
