@@ -41,7 +41,7 @@ struct ObjectDriverAvatar: View {
 }
 
 /// Three pulsing bars: an agent is working on this object right now.
-struct WorkingBars: View {
+struct ObjectWorkingGlyph: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
@@ -145,7 +145,7 @@ struct ObjectRow: View {
 							.lineLimit(1)
 					}
 				}
-				if object.hasActiveSession { WorkingBars() }
+				if object.hasActiveSession { ObjectWorkingGlyph() }
 				if showsStatus {
 					StatusWord(status: object.status, tone: ObjectsStatusTone.of(object).color)
 				}
