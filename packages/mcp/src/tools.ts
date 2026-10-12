@@ -480,7 +480,7 @@ export const tools = {
 	},
 	create_relationship: {
 		description:
-			"Create a relationship (graph edge) between two endpoints. Each endpoint id may point at an object or a file in the workspace — the server derives `sourceType`/`targetType` internally from the id, so callers do NOT supply type labels. Idempotent on (source_id, target_id, type): a second call with identical params returns the existing row. Returns 404 when either id resolves to neither an object nor a file in the caller's workspace. Use this to link a file to a bet from the file-detail page, wire two objects together, or attach any first-class node to any other. For edge deletion, use the UI's DELETE /api/relationships/:id — the MCP surface does not expose delete_relationship for file endpoints on purpose.",
+			"Create a relationship (graph edge) between two endpoints. Each endpoint id may point at an object or a file in the workspace — the server derives `sourceType`/`targetType` internally from the id, so callers do NOT supply type labels. Idempotent on (source_id, target_id, type): a second call with identical params returns the existing row. Returns 404 when either id resolves to neither an object nor a file in the caller's workspace. Use this to link a file to a bet from the file-detail page, wire two objects together, or attach any first-class node to any other. To remove an edge, call delete_relationship with the relationship id. It works for edges whose endpoints are objects or files.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			source_id: z
@@ -534,7 +534,8 @@ export const tools = {
 		}),
 	},
 	delete_relationship: {
-		description: 'Delete a relationship by ID',
+		description:
+			'Delete a relationship (graph edge) by ID. Destructive and permanent: the edge is removed and cannot be restored (call create_relationship to make a new one). The objects or files at either end are not touched.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -1045,7 +1046,7 @@ export const tools = {
 	},
 	get_events: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed). Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration), entity_id and action (created|updated|deleted|status_changed). Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z
@@ -1055,6 +1056,11 @@ export const tools = {
 				.optional()
 				.describe('Numeric event_id. Returns at most one event when set.'),
 			entity_type: z.string().optional(),
+			entity_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Only events for this entity (object, relationship, etc.) id.'),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
 			cursor: z
@@ -1419,10 +1425,12 @@ export const tools = {
 			status: z
 				.enum([
 					'pending',
+					'queued',
 					'starting',
 					'running',
 					'snapshotting',
 					'paused',
+					'waiting_for_input',
 					'completed',
 					'failed',
 					'timeout',
@@ -1546,7 +1554,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block or hold a container.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout) or stops to wait for input (waiting_for_input); in that case it returns right away with the logs, waiting_for_input: true and a message. Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block or hold a container.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),

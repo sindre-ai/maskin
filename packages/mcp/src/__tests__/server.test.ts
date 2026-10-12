@@ -2625,7 +2625,9 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_started')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+			}
 			const text = result.content[0].text
 
 			expect(text).toContain('My Workspace')
@@ -2645,7 +2647,9 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_started')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+			}
 			const text = result.content[0].text
 
 			expect(text).toContain('marketplace')
@@ -2672,6 +2676,7 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_started')
 			const result = (await handler({
+				workspace_id: 'ws-1',
 				loop_id: 'loop-dev-1',
 				confirm: true,
 			})) as { content: Array<{ text: string }> }
@@ -2711,7 +2716,12 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_started')
-			await handler({ loop_id: 'loop-dev-1', confirm: true, workspace_name: 'Acme' })
+			await handler({
+				workspace_id: 'ws-1',
+				loop_id: 'loop-dev-1',
+				confirm: true,
+				workspace_name: 'Acme',
+			})
 
 			const patchCall = fetchSpy.mock.calls.find(
 				([u, opts]) =>
@@ -2732,6 +2742,23 @@ describe('tool handlers', () => {
 
 			expect(text).toContain("can't reach your workspace")
 			expect(text).toContain('create_actor')
+		})
+
+		it('reports an unknown workspace_id instead of using the first workspace', async () => {
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+
+			const handler = getHandler('get_started')
+			const result = (await handler({
+				workspace_id: 'ws-missing',
+				loop_id: 'loop-dev-1',
+				confirm: true,
+			})) as { content: Array<{ text: string }> }
+
+			expect(result.content[0].text).toContain('Workspace not found: ws-missing')
+			// Only the workspace lookup ran: nothing was installed anywhere.
+			expect(fetchSpy).toHaveBeenCalledTimes(1)
 		})
 	})
 
@@ -3133,7 +3160,9 @@ describe('tool handlers', () => {
 			expect(url).toContain('entity_type=object')
 			expect(url).toContain(`entity_id=${objectId}`)
 			expect(url).toContain('action=commented')
-			expect(url).toContain('limit=25')
+			// One extra row beyond the page size, so the handler can tell whether more
+			// history exists.
+			expect(url).toContain('limit=26')
 			expect((call[1] as RequestInit).method).toBe('GET')
 		})
 

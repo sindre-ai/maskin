@@ -264,6 +264,50 @@ function encodeNextCursor<T extends { id: string; createdAt?: string | null }>(
 	return { nextCursor, trimmed }
 }
 
+/** Largest page the event tools serve: the history route caps a request at
+ *  `LIST_ENDPOINT_MAX_LIMIT` rows and a resumed walk needs two spare rows. */
+const EVENT_HISTORY_MAX_PAGE = LIST_ENDPOINT_MAX_LIMIT - 2
+
+/**
+ * One page of /api/events/history. The route has no cursor of its own — it
+ * serves the newest `limit` rows (max 100) filtered by the query — so paging
+ * the response client-side only ever reached the newest window. Push the
+ * cursor down instead: on a resumed walk ask only for rows at or before the
+ * cursor's timestamp (`before` is exclusive, so +1 ms keeps the whole boundary
+ * millisecond) and let the keyset filter drop the rows already served.
+ * Fetches one row past the page so a full extra row signals that more history
+ * exists, plus one more on a resumed walk because the inclusive boundary
+ * millisecond re-serves the cursor row itself.
+ */
+async function fetchEventHistoryPage(
+	config: McpConfig,
+	params: URLSearchParams,
+	pagination: ResolvedPagination,
+	workspaceId: string | undefined,
+) {
+	const query = new URLSearchParams(params)
+	query.set('limit', String(pagination.limit + (pagination.cursor ? 2 : 1)))
+	if (pagination.cursor) {
+		const boundary = Date.parse(pagination.cursor.k.sortValue)
+		if (Number.isFinite(boundary)) query.set('before', new Date(boundary + 1).toISOString())
+	}
+	const result = await apiCall(config, 'GET', `/api/events/history?${query}`, undefined, {
+		workspaceId,
+	})
+	const rows = Array.isArray(result)
+		? (result as Array<{ id: number | string; createdAt?: string | null }>)
+		: []
+	return paginateClientSide({
+		rows,
+		limit: pagination.limit,
+		snapshotAt: pagination.snapshotAt,
+		order: pagination.order,
+		cursor: pagination.cursor,
+		getSortValue: (row) => row.createdAt ?? null,
+		getId: (row) => String(row.id).padStart(20, '0'),
+	})
+}
+
 /** Read `.url` off an enriched row without paying the TS cost each time. */
 function pickUrl(row: unknown): string | undefined {
 	if (!row || typeof row !== 'object') return undefined
@@ -3928,11 +3972,16 @@ export function createMcpServer(config: McpConfig) {
 				settings: Record<string, unknown>
 			}>
 			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-			const workspace =
-				(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
-				workspaces[0]
+			// Only fall back to the first workspace when no id was given at all. An
+			// explicit id that isn't in the list must fail, not return another
+			// workspace's schema.
+			const workspace = effectiveWsId
+				? workspaces.find((w) => w.id === effectiveWsId)
+				: workspaces[0]
 			if (!workspace) {
-				throw new Error('No workspace found')
+				throw new Error(
+					effectiveWsId ? `Workspace not found: ${effectiveWsId}` : 'No workspace found',
+				)
 			}
 
 			const settings = workspace.settings ?? {}
@@ -4585,27 +4634,19 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({
 				limit: args.limit,
 				cursor: (args as { cursor?: string }).cursor,
+				maxLimit: EVENT_HISTORY_MAX_PAGE,
 			})
 			const params = new URLSearchParams()
 			if (args.id) params.set('id', String(args.id))
 			if (args.entity_type) params.set('entity_type', args.entity_type)
+			if (args.entity_id) params.set('entity_id', args.entity_id)
 			if (args.action) params.set('action', args.action)
-			if (args.limit) params.set('limit', String(args.limit))
-			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})
-			const rows = Array.isArray(result)
-				? (result as Array<{ id: number | string; createdAt?: string | null }>)
-				: []
-			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
-				limit: pagination.limit,
-				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
-				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
-				getId: (row) => String(row.id).padStart(20, '0'),
-			})
+			const { page: pagedRows, nextCursor } = await fetchEventHistoryPage(
+				config,
+				params,
+				pagination,
+				args.workspace_id,
+			)
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
@@ -4630,27 +4671,18 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({
 				limit: args.limit,
 				cursor: (args as { cursor?: string }).cursor,
+				maxLimit: EVENT_HISTORY_MAX_PAGE,
 			})
 			const params = new URLSearchParams()
 			params.set('entity_type', 'object')
 			params.set('entity_id', args.entity_id)
 			params.set('action', 'commented')
-			params.set('limit', String(args.limit))
-			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})
-			const rows = Array.isArray(result)
-				? (result as Array<{ id: number | string; createdAt?: string | null }>)
-				: []
-			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
-				limit: pagination.limit,
-				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
-				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
-				getId: (row) => String(row.id).padStart(20, '0'),
-			})
+			const { page: pagedRows, nextCursor } = await fetchEventHistoryPage(
+				config,
+				params,
+				pagination,
+				args.workspace_id,
+			)
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
@@ -6068,6 +6100,10 @@ export function createMcpServer(config: McpConfig) {
 			const timeoutMs = (args.timeout_seconds ?? 660) * 1000
 			const deadline = Date.now() + timeoutMs
 			const terminalStatuses = ['completed', 'failed', 'timeout']
+			// A session parked on waiting_for_input will not progress until someone
+			// answers it, so polling on would only burn the whole timeout. Stop and
+			// hand it back to the caller.
+			const WAITING_STATUS = 'waiting_for_input'
 			// §17.6: when a session hits a subscription limit its terminal report
 			// carries retried_session_id — the id of the retry the scheduler
 			// enqueued. Follow the redirect so a caller waiting on run_agent
@@ -6080,6 +6116,7 @@ export function createMcpServer(config: McpConfig) {
 			// 2. Poll until terminal, following retried_session_id redirects
 			let current = session as typeof session & { retriedSessionId?: string | null }
 			let settled = false
+			let waitingForInput = false
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
 				current = (await apiCall(
@@ -6097,6 +6134,10 @@ export function createMcpServer(config: McpConfig) {
 						continue
 					}
 					settled = true
+					break
+				}
+				if (current.status === WAITING_STATUS) {
+					waitingForInput = true
 					break
 				}
 			}
@@ -6165,6 +6206,12 @@ export function createMcpServer(config: McpConfig) {
 						text: JSON.stringify({
 							session: currentWithRetryMeta,
 							logs,
+							...(waitingForInput
+								? {
+										waiting_for_input: true,
+										message: `Session ${sessionId} is waiting for input and will not finish until it gets a reply. Read the logs for the question and answer it in the Maskin app, or end the session with stop_session.`,
+									}
+								: {}),
 							...(notifyOnComplete
 								? {
 										notify_on_complete: notifyOnComplete.state,
@@ -6932,14 +6979,15 @@ export function createMcpServer(config: McpConfig) {
 
 			// Resolve workspace
 			let workspace: { id: string; name: string } | undefined
+			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
 				})) as Array<{ id: string; name: string }>
-				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-				workspace =
-					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
-					workspaces[0]
+				// Only fall back to the first workspace when no id was given at all —
+				// the install step below writes to this workspace, so a wrong match
+				// must not silently land in another one.
+				workspace = effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]
 			} catch {
 				const setupSteps =
 					config.transport === 'http'
@@ -6947,6 +6995,12 @@ export function createMcpServer(config: McpConfig) {
 						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
 				return textResponse(
 					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+				)
+			}
+
+			if (!workspace && effectiveWsId) {
+				return textResponse(
+					`❌ Workspace not found: ${effectiveWsId}. Check the workspace_id, or call list_workspaces to see the workspaces this key can access.`,
 				)
 			}
 
