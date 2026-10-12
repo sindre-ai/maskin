@@ -41,6 +41,31 @@ export interface DriveIntegrationConfig extends IntegrationConfig {
 	drive?: DriveConfigBlock
 }
 
+/** The config.drive keys that belong to one notification channel, never to the row. */
+const DRIVE_CHANNEL_KEYS = [
+	'channelId',
+	'channelResourceId',
+	'channelExpiresAt',
+	'channelWebhookToken',
+	'startPageToken',
+] as const satisfies readonly (keyof DriveConfigBlock)[]
+
+/**
+ * What a same-account reconnect keeps of the prior row's config.drive: every key
+ * except the channel fields, so keys added to the block later survive without
+ * touching this list. The old channel was stopped at disconnect and postInstall
+ * opens a new one, so the channel fields and the change cursor must not carry.
+ * Returns undefined when nothing is left, so a row that never had a drive block
+ * (or only channel fields) does not gain an empty one.
+ */
+export function carriedDriveConfig(
+	prior: DriveIntegrationConfig | null | undefined,
+): DriveConfigBlock | undefined {
+	const kept: Record<string, unknown> = { ...prior?.drive }
+	for (const key of DRIVE_CHANNEL_KEYS) delete kept[key]
+	return Object.keys(kept).length > 0 ? (kept as DriveConfigBlock) : undefined
+}
+
 /** Path the channel delivers to: the webhook app is mounted at /api/webhooks. */
 export const DRIVE_WEBHOOK_PATH = '/api/webhooks/google-drive'
 
