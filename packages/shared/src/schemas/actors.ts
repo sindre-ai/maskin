@@ -47,6 +47,9 @@ export const createActorSchema = z.object({
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
 	auto_create_workspace: z.boolean().optional(),
+	// Agents only: the workspace the new agent is born into. The caller must be a
+	// member of it. Never accepted for humans (signup mints its own workspace).
+	workspace_id: z.string().uuid().optional(),
 })
 
 export const loginSchema = z.object({

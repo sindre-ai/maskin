@@ -1239,44 +1239,47 @@ describe('tool handlers', () => {
 	})
 
 	describe('create_actor handler', () => {
-		it('POSTs to /api/actors with skipAuth', async () => {
-			mockFetchSuccess({ id: 'actor-new', name: 'Bot', type: 'agent' })
+		// Collects every request the handler makes, answering /api/actors with a
+		// created agent and everything else with an empty object.
+		function recordRequests() {
+			const requests: Array<{
+				url: string
+				method?: string
+				headers: Record<string, string>
+				body: Record<string, unknown> | undefined
+			}> = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const req = init as RequestInit | undefined
+				requests.push({
+					url: String(url),
+					method: req?.method,
+					headers: (req?.headers ?? {}) as Record<string, string>,
+					body: req?.body ? JSON.parse(req.body as string) : undefined,
+				})
+				const isCreate = String(url).endsWith('/api/actors') && req?.method === 'POST'
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(isCreate ? { id: 'actor-new' } : {}),
+				} as Response
+			})
+			return requests
+		}
+
+		it('sends the API key and workspace_id on the agent create call', async () => {
+			const requests = recordRequests()
 
 			const handler = getHandler('create_actor')
-			await handler({ type: 'agent', name: 'Bot' })
+			await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
 
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/actors',
-				expect.objectContaining({ method: 'POST' }),
-			)
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.method).toBe('POST')
+			expect(create?.headers.Authorization).toBe('Bearer ank_testkey123')
+			expect(create?.body).toMatchObject({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
 		})
 
-		it('adds to workspace when workspace_id provided', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/actors')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve({ id: 'actor-new' }),
-					} as Response
-				}
-				if (u.endsWith('/api/workspaces/ws-123/members')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve({}),
-					} as Response
-				}
-				if (u.endsWith('/api/workspaces')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
-					} as Response
-				}
-				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
-			})
+		it('does not add the agent to the workspace in a second call, and reports member', async () => {
+			const requests = recordRequests()
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1285,20 +1288,86 @@ describe('tool handlers', () => {
 				workspace_id: 'ws-123',
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/workspaces/ws-123/members',
-				expect.objectContaining({ method: 'POST' }),
-			)
-
+			const creates = requests.filter((r) => r.url.endsWith('/api/actors') && r.method === 'POST')
+			expect(creates).toHaveLength(1)
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.workspace_id).toBe('ws-123')
 			expect(parsed.role).toBe('member')
 		})
 
+		it('ignores the role argument for agents: no role is sent and member is reported', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				role: 'admin',
+			})) as { content: Array<{ text: string }> }
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).not.toHaveProperty('role')
+			expect(JSON.parse(result.content[0].text).role).toBe('member')
+		})
+
+		it('sends no tools or llm_config unless the caller supplied them', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).not.toHaveProperty('tools')
+			expect(create?.body).not.toHaveProperty('llm_config')
+			expect(create?.body).not.toHaveProperty('llm_provider')
+		})
+
+		it('uses the default workspace when an agent create names none', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot' })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).toMatchObject({ workspace_id: 'ws-default-123' })
+		})
+
+		it('sends auto_create_workspace agents with the key and no workspace_id', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot', auto_create_workspace: true })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.headers.Authorization).toBe('Bearer ank_testkey123')
+			expect(create?.body).not.toHaveProperty('workspace_id')
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
+		})
+
+		it('still signs a human up without a key and adds them with the add-member call', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({
+				type: 'human',
+				name: 'Pat',
+				email: 'pat@example.com',
+				workspace_id: 'ws-123',
+				role: 'admin',
+			})
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).not.toHaveProperty('workspace_id')
+			const add = requests.find((r) => r.url.endsWith('/api/workspaces/ws-123/members'))
+			expect(add?.body).toEqual({ actor_id: 'actor-new', role: 'admin' })
+		})
+
 		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
-			// config.defaultWorkspaceId is set, so create_actor also fires a
-			// members POST — isolate the /api/actors call specifically rather
-			// than assuming it's the only (or last) fetch call.
+			// create_actor also makes follow-up calls (setup block) — isolate the
+			// /api/actors call specifically rather than assuming it's the only
+			// (or last) fetch call.
 			let actorsPostBody: unknown
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				if (String(url) === 'http://localhost:3000/api/actors') {
