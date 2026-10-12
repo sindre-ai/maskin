@@ -156,7 +156,7 @@ public enum ConversationChip: String, CaseIterable, Identifiable, Sendable {
 public enum PinnedOrder {
 	public static func apply(_ saved: [String], to pinned: [ConversationSummary]) -> [ConversationSummary] {
 		let rank = Dictionary(saved.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
-		let known = pinned.filter { rank[$0.id] != nil }.sorted { rank[$0.id]! < rank[$1.id]! }
+		let known = pinned.filter { rank[$0.id] != nil }.sorted { rank[$0.id, default: .max] < rank[$1.id, default: .max] }
 		return known + pinned.filter { rank[$0.id] == nil }
 	}
 
