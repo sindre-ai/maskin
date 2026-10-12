@@ -53,6 +53,15 @@ describe('EVENT_MAP table', () => {
 	})
 })
 
+describe('message.new actions', () => {
+	it('lists received, received_cold and received_unresolved in the map and in config definitions', () => {
+		const expected = ['received', 'received_cold', 'received_unresolved']
+		expect([...(getEventMapRow('message.new')?.actions ?? [])].sort()).toEqual(expected)
+		const definition = config.events?.definitions.find((d) => d.entityType === 'linkedin.message')
+		expect([...(definition?.actions ?? [])].sort()).toEqual(expected)
+	})
+})
+
 describe('message.new deliveryKey', () => {
 	it('is msg:[account_id]:[payload.id]', () => {
 		const row = getEventMapRow('message.new')

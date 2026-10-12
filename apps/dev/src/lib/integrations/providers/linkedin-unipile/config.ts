@@ -60,7 +60,7 @@ export const config: ProviderConfig = {
 		definitions: [
 			{
 				entityType: 'linkedin.message',
-				actions: ['received_unresolved'],
+				actions: ['received', 'received_cold', 'received_unresolved'],
 				label: 'LinkedIn message',
 			},
 		],
