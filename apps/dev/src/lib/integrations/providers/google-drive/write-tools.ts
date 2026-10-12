@@ -1,15 +1,15 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
 	trackDriveCommentCreated,
 	trackDriveFileWritten,
 } from '../../../analytics/drive-write-events'
-import { logger } from '../../../logger'
 import { commentOnDocument } from './comment'
 import { GOOGLE_DOC_MIME, GOOGLE_SHEET_MIME } from './doc-body'
-import { DriveWriteError } from './write-errors'
 import { type StorageSource, writeFile } from './write-file'
 import { type DriveHttp, createDriveHttp } from './write-http'
+
+export const WRITE_FILE_TOOL = 'google_drive__write_file'
+export const COMMENT_ON_DOCUMENT_TOOL = 'google_drive__comment_on_document'
 
 export interface DriveWriteToolsContext {
 	workspaceId: string
@@ -22,7 +22,7 @@ export interface DriveWriteToolsContext {
 	sleep?: (ms: number) => Promise<void>
 }
 
-const WRITE_FILE_DESCRIPTION = `Create a new file in the connected Google Drive. Returns {fileId, name, mimeType, webViewLink, driveFileVersion?}. It never overwrites or updates an existing file.
+export const WRITE_FILE_DESCRIPTION = `Create a new file in the connected Google Drive. Returns {fileId, name, mimeType, webViewLink, driveFileVersion?}. It never overwrites or updates an existing file.
 
 content (for ordinary files) is one of:
 - a utf8 string,
@@ -41,7 +41,7 @@ To create a Google Sheet, set mimeType to ${GOOGLE_SHEET_MIME} and pass docStruc
 
 PERMISSION_DENIED means the connected account cannot write to parentFolderId; SCOPE_INSUFFICIENT means the Drive scope was not granted.`
 
-const COMMENT_DESCRIPTION = `Add a comment to a Google Doc or Sheet (or any Drive file). Returns {commentId, createdTime, htmlContent}.
+export const COMMENT_DESCRIPTION = `Add a comment to a Google Doc or Sheet (or any Drive file). Returns {commentId, createdTime, htmlContent}.
 Without anchor the comment is a top-level file comment. For a Doc, anchor {docStartIndex, docEndIndex} anchors it to that text range (UTF-16 code units, as google_drive__get_document_structured reports them). For a Sheet, anchor {sheetRange} anchors it to a cell or range in A1 notation, optionally with a sheet name ("Sheet1!B2:C4").
 PERMISSION_DENIED means the connected account cannot comment on that file; SCOPE_INSUFFICIENT means the Drive scope was not granted.`
 
@@ -78,87 +78,43 @@ export const commentInputShape = {
 		.optional(),
 }
 
-function jsonResult(payload: unknown) {
-	return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
-}
+export type WriteFileToolInput = z.infer<z.ZodObject<typeof writeFileInputShape>>
+export type CommentToolInput = z.infer<z.ZodObject<typeof commentInputShape>>
 
-function toolError(operation: string, err: unknown) {
-	if (err instanceof DriveWriteError) {
-		logger.info('Google Drive MCP tool returned a normalized error', {
-			operation,
-			code: err.code,
-		})
-		return {
-			isError: true as const,
-			content: [{ type: 'text' as const, text: JSON.stringify(err.toEnvelope()) }],
-		}
-	}
-	logger.error('Google Drive MCP tool unexpected error', {
-		operation,
-		error: err instanceof Error ? err.message : String(err),
-	})
-	return {
-		isError: true as const,
-		content: [
-			{
-				type: 'text' as const,
-				text: JSON.stringify({
-					error: { code: 'PROVIDER_ERROR', message: 'Unexpected upstream error.' },
-				}),
-			},
-		],
-	}
-}
-
-/** Registers google_drive__write_file and google_drive__comment_on_document on `server`. */
-export function registerDriveWriteTools(server: McpServer, ctx: DriveWriteToolsContext): void {
-	const http: DriveHttp = createDriveHttp({
+function httpFor(ctx: DriveWriteToolsContext): DriveHttp {
+	return createDriveHttp({
 		getAccessToken: ctx.getAccessToken,
 		fetchImpl: ctx.fetchImpl,
 		sleep: ctx.sleep,
 	})
+}
 
-	server.registerTool(
-		'google_drive__write_file',
-		{ description: WRITE_FILE_DESCRIPTION, inputSchema: writeFileInputShape },
-		async (input) => {
-			try {
-				const { output, path } = await writeFile(
-					{
-						http,
-						workspaceId: ctx.workspaceId,
-						openStorageObject: ctx.openStorageObject,
-					},
-					input,
-				)
-				void trackDriveFileWritten({
-					workspaceId: ctx.workspaceId,
-					actorId: ctx.actorId,
-					mimeType: output.mimeType,
-					path,
-				})
-				return jsonResult(output)
-			} catch (err) {
-				return toolError('google_drive__write_file', err)
-			}
+/** google_drive__write_file. Throws DriveWriteError; the server's runTool turns it into the error envelope. */
+export async function driveWriteFile(ctx: DriveWriteToolsContext, input: WriteFileToolInput) {
+	const { output, path } = await writeFile(
+		{
+			http: httpFor(ctx),
+			workspaceId: ctx.workspaceId,
+			openStorageObject: ctx.openStorageObject,
 		},
+		input,
 	)
+	void trackDriveFileWritten({
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		mimeType: output.mimeType,
+		path,
+	})
+	return output
+}
 
-	server.registerTool(
-		'google_drive__comment_on_document',
-		{ description: COMMENT_DESCRIPTION, inputSchema: commentInputShape },
-		async (input) => {
-			try {
-				const output = await commentOnDocument(http, input)
-				void trackDriveCommentCreated({
-					workspaceId: ctx.workspaceId,
-					actorId: ctx.actorId,
-					anchor: !input.anchor ? 'none' : 'docStartIndex' in input.anchor ? 'doc' : 'sheet',
-				})
-				return jsonResult(output)
-			} catch (err) {
-				return toolError('google_drive__comment_on_document', err)
-			}
-		},
-	)
+/** google_drive__comment_on_document. Throws DriveWriteError; see driveWriteFile. */
+export async function driveCommentOnDocument(ctx: DriveWriteToolsContext, input: CommentToolInput) {
+	const output = await commentOnDocument(httpFor(ctx), input)
+	void trackDriveCommentCreated({
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		anchor: !input.anchor ? 'none' : 'docStartIndex' in input.anchor ? 'doc' : 'sheet',
+	})
+	return output
 }

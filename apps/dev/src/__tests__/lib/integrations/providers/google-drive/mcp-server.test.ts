@@ -50,16 +50,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('google-drive MCP server: tool surface and Zod contracts', () => {
-	it('registers the search, list, download, watch and structured read tools', async () => {
+	it('registers the search, list, download, watch, structured read, write and comment tools', async () => {
 		const client = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
+			'google_drive__comment_on_document',
 			'google_drive__get_document_structured',
 			'google_drive__get_file_bytes',
 			'google_drive__get_sheet_range',
 			'google_drive__list_folder',
 			'google_drive__search_files',
 			'google_drive__watch_folder',
+			'google_drive__write_file',
 		])
 	})
 

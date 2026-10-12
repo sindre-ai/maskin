@@ -1,5 +1,6 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 const { capturePosthogEventMock } = vi.hoisted(() => ({
@@ -11,49 +12,60 @@ vi.mock('../../../../lib/analytics/posthog', () => ({
 vi.mock('../../../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
+vi.mock('../../../../lib/integrations/providers/google-drive/token', () => ({
+	getGoogleDriveAccessToken: async () => ({ accessToken: 'ya29.test', integrationId: 'int-1' }),
+}))
+const captureTrace = vi.fn()
+vi.mock('../../../../lib/analytics/mcp-tool-calls', async (orig) => ({
+	...(await orig<typeof import('../../../../lib/analytics/mcp-tool-calls')>()),
+	captureMcpToolCall: (...args: unknown[]) => captureTrace(...args),
+}))
 
+import { createGoogleDriveMcpServer } from '../../../../lib/integrations/providers/google-drive/mcp-server'
 import {
 	commentInputShape,
-	registerDriveWriteTools,
 	writeFileInputShape,
 } from '../../../../lib/integrations/providers/google-drive/write-tools'
 import { googleError, jsonResponse } from './google-drive-fakes'
 
-type Handler = (
-	args: unknown,
-	extra: unknown,
-) => Promise<{
-	isError?: boolean
-	content: Array<{ type: string; text: string }>
-}>
-
-function setup(fetchImpl: typeof fetch) {
-	const server = new McpServer({ name: 't', version: '0' }, { capabilities: { tools: {} } })
-	registerDriveWriteTools(server, {
+/** Boots the real Drive MCP server in memory; Google is whatever fetchImpl says. */
+async function setup(fetchImpl: () => Promise<Response>, storage?: unknown) {
+	vi.spyOn(globalThis, 'fetch').mockImplementation(fetchImpl as typeof fetch)
+	const server = createGoogleDriveMcpServer({
+		db: {} as never,
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
-		getAccessToken: async () => 'ya29.test',
-		fetchImpl,
-		sleep: async () => {},
+		storage: storage as never,
 	})
-	const tools = (
-		server as unknown as {
-			_registeredTools: Record<string, { handler: Handler; description?: string }>
-		}
-	)._registeredTools
-	return tools
+	const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+	const client = new Client({ name: 'test', version: '0.0.0' })
+	await Promise.all([server.connect(serverT), client.connect(clientT)])
+	return {
+		client,
+		call: async (name: string, args: Record<string, unknown>) => {
+			const res = (await client.callTool({ name, arguments: args })) as {
+				isError?: boolean
+				content: Array<{ text: string }>
+			}
+			return { isError: res.isError, body: JSON.parse(res.content[0]?.text ?? 'null') }
+		},
+	}
 }
 
-beforeEach(() => capturePosthogEventMock.mockClear())
+beforeEach(() => {
+	capturePosthogEventMock.mockClear()
+	captureTrace.mockClear()
+})
+afterEach(() => vi.restoreAllMocks())
 
 describe('registration', () => {
-	it('registers both tools and documents the Doc and Sheet body shapes', () => {
-		const tools = setup((async () => jsonResponse({})) as unknown as typeof fetch)
-		expect(Object.keys(tools).sort()).toEqual([
-			'google_drive__comment_on_document',
-			'google_drive__write_file',
-		])
-		const description = tools.google_drive__write_file?.description ?? ''
+	it('registers both write tools and documents the Doc and Sheet body shapes', async () => {
+		const { client } = await setup(async () => jsonResponse({}))
+		const { tools } = await client.listTools()
+		const names = tools.map((t) => t.name)
+		expect(names).toContain('google_drive__write_file')
+		expect(names).toContain('google_drive__comment_on_document')
+		const description = tools.find((t) => t.name === 'google_drive__write_file')?.description ?? ''
 		expect(description).toContain('{type: "heading"')
 		expect(description).toContain('{type: "table", cells: string[][]}')
 		expect(description).toContain('{values: string[][]}')
@@ -123,22 +135,24 @@ describe('input contracts', () => {
 	})
 })
 
-describe('tool calls', () => {
-	it('write_file returns the output shape and emits drive_file_written', async () => {
-		const tools = setup((async () =>
+describe('tool calls through the Drive MCP server', () => {
+	it('write_file returns the output shape, emits drive_file_written and records a trace', async () => {
+		const { call } = await setup(async () =>
 			jsonResponse({
 				id: 'f1',
 				name: 'a.txt',
 				mimeType: 'text/plain',
 				webViewLink: 'https://x',
 				version: '2',
-			})) as unknown as typeof fetch)
-		const res = await tools.google_drive__write_file?.handler(
-			{ name: 'a.txt', mimeType: 'text/plain', content: 'hi' },
-			{},
+			}),
 		)
-		expect(res?.isError).toBeUndefined()
-		expect(JSON.parse(res?.content[0]?.text ?? '')).toEqual({
+		const res = await call('google_drive__write_file', {
+			name: 'a.txt',
+			mimeType: 'text/plain',
+			content: 'hi',
+		})
+		expect(res.isError).toBeFalsy()
+		expect(res.body).toEqual({
 			fileId: 'f1',
 			name: 'a.txt',
 			mimeType: 'text/plain',
@@ -151,35 +165,71 @@ describe('tool calls', () => {
 			mime_type: 'text/plain',
 			path: 'multipart',
 		})
+		expect(captureTrace).toHaveBeenCalledTimes(1)
+		expect(captureTrace.mock.calls[0]?.[1]).toMatchObject({
+			toolName: 'google_drive__write_file',
+			ok: true,
+			errorClass: null,
+			argKeys: ['content', 'mimeType', 'name'],
+		})
 	})
 
-	it('write_file surfaces PERMISSION_DENIED as an error envelope and emits nothing', async () => {
-		const tools = setup((async () =>
-			googleError(403, 'nope', 'insufficientFilePermissions')) as unknown as typeof fetch)
-		const res = await tools.google_drive__write_file?.handler(
-			{ name: 'a.txt', mimeType: 'text/plain', content: 'hi' },
-			{},
+	it('write_file surfaces PERMISSION_DENIED as an error envelope and emits no event', async () => {
+		const { call } = await setup(async () =>
+			googleError(403, 'nope', 'insufficientFilePermissions'),
 		)
-		expect(res?.isError).toBe(true)
-		expect(JSON.parse(res?.content[0]?.text ?? '').error).toMatchObject({
-			code: 'PERMISSION_DENIED',
-			provider_status: 403,
+		const res = await call('google_drive__write_file', {
+			name: 'a.txt',
+			mimeType: 'text/plain',
+			content: 'hi',
 		})
+		expect(res.isError).toBe(true)
+		expect(res.body.error).toMatchObject({ code: 'PERMISSION_DENIED', provider_status: 403 })
 		expect(capturePosthogEventMock).not.toHaveBeenCalled()
+		expect(captureTrace.mock.calls[0]?.[1]).toMatchObject({
+			ok: false,
+			errorClass: 'PERMISSION_DENIED',
+		})
+	})
+
+	it('write_file with a storageUrl outside this workspace is INVALID_INPUT and never reads storage', async () => {
+		const storage = { get: vi.fn() }
+		const { call } = await setup(async () => jsonResponse({}), storage)
+		const res = await call('google_drive__write_file', {
+			name: 'a.bin',
+			mimeType: 'application/octet-stream',
+			content: { storageUrl: 'workspaces/ws-2/integrations/google-drive/downloads/x' },
+		})
+		expect(res.isError).toBe(true)
+		expect(res.body.error.code).toBe('INVALID_INPUT')
+		expect(storage.get).not.toHaveBeenCalled()
+	})
+
+	it('write_file reads a storageUrl through the storage provider and uploads it', async () => {
+		const bytes = Buffer.from('from storage')
+		const storage = { get: vi.fn(async () => bytes) }
+		const { call } = await setup(
+			async () => jsonResponse({ id: 'f2', name: 'b.bin', mimeType: 'application/octet-stream' }),
+			storage,
+		)
+		const res = await call('google_drive__write_file', {
+			name: 'b.bin',
+			mimeType: 'application/octet-stream',
+			content: { storageUrl: 'workspaces/ws-1/integrations/google-drive/downloads/abc' },
+		})
+		expect(res.isError).toBeFalsy()
+		expect(res.body.fileId).toBe('f2')
+		expect(storage.get).toHaveBeenCalledWith(
+			'workspaces/ws-1/integrations/google-drive/downloads/abc',
+		)
 	})
 
 	it('comment_on_document returns the output shape and emits drive_comment_created', async () => {
-		const tools = setup((async () =>
-			jsonResponse({
-				id: 'c1',
-				createdTime: '2026-10-05T10:00:00Z',
-				htmlContent: '<p>x</p>',
-			})) as unknown as typeof fetch)
-		const res = await tools.google_drive__comment_on_document?.handler(
-			{ fileId: 'f', content: 'x' },
-			{},
+		const { call } = await setup(async () =>
+			jsonResponse({ id: 'c1', createdTime: '2026-10-05T10:00:00Z', htmlContent: '<p>x</p>' }),
 		)
-		expect(JSON.parse(res?.content[0]?.text ?? '')).toEqual({
+		const res = await call('google_drive__comment_on_document', { fileId: 'f', content: 'x' })
+		expect(res.body).toEqual({
 			commentId: 'c1',
 			createdTime: '2026-10-05T10:00:00Z',
 			htmlContent: '<p>x</p>',
@@ -192,32 +242,28 @@ describe('tool calls', () => {
 	})
 
 	it('comment_on_document returns SCOPE_INSUFFICIENT when the scope is missing', async () => {
-		const tools = setup((async () =>
+		const { call } = await setup(async () =>
 			googleError(
 				403,
 				'Request had insufficient authentication scopes.',
 				'insufficientPermissions',
-				{
-					details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }],
-				},
-			)) as unknown as typeof fetch)
-		const res = await tools.google_drive__comment_on_document?.handler(
-			{ fileId: 'f', content: 'x' },
-			{},
+				{ details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] },
+			),
 		)
-		expect(res?.isError).toBe(true)
-		expect(JSON.parse(res?.content[0]?.text ?? '').error.code).toBe('SCOPE_INSUFFICIENT')
+		const res = await call('google_drive__comment_on_document', { fileId: 'f', content: 'x' })
+		expect(res.isError).toBe(true)
+		expect(res.body.error.code).toBe('SCOPE_INSUFFICIENT')
 	})
 
 	it('does not leak unexpected exceptions', async () => {
-		const tools = setup((async () => {
+		const { client } = await setup(async () => {
 			throw new Error('socket secret=abc')
-		}) as unknown as typeof fetch)
-		const res = await tools.google_drive__comment_on_document?.handler(
-			{ fileId: 'f', content: 'x' },
-			{},
-		)
-		expect(res?.isError).toBe(true)
-		expect(res?.content[0]?.text).not.toContain('secret=abc')
+		})
+		const res = (await client.callTool({
+			name: 'google_drive__comment_on_document',
+			arguments: { fileId: 'f', content: 'x' },
+		})) as { isError?: boolean; content: Array<{ text: string }> }
+		expect(res.isError).toBe(true)
+		expect(res.content[0]?.text).not.toContain('secret=abc')
 	})
 })

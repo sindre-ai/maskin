@@ -12,7 +12,7 @@ import {
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { config as driveConfig } from './config'
-import { isDriveError } from './errors'
+import { DriveError, isDriveError } from './errors'
 import type { DriveToolContext } from './operations'
 import {
 	GET_DOCUMENT_STRUCTURED_DESCRIPTION,
@@ -52,6 +52,21 @@ import {
 	watchFolder,
 } from './tools/watch-folder'
 import { DRIVE_EVENT_TYPES } from './watch'
+import { getGoogleDriveAccessToken } from './token'
+import { isDriveWriteError } from './write-errors'
+import type { StorageSource } from './write-file'
+import {
+	COMMENT_DESCRIPTION,
+	COMMENT_ON_DOCUMENT_TOOL,
+	type CommentToolInput,
+	WRITE_FILE_DESCRIPTION,
+	WRITE_FILE_TOOL,
+	type WriteFileToolInput,
+	commentInputShape,
+	driveCommentOnDocument,
+	driveWriteFile,
+	writeFileInputShape,
+} from './write-tools'
 
 /**
  * In-process MCP server for the Google Drive integration, served over
@@ -68,7 +83,7 @@ export interface DriveMcpContext {
 	actorId: string
 	/** X-Maskin-Session-Id of the calling agent session, when the request carried one. */
 	sessionId?: string
-	/** Where get_file_bytes streams downloads. Absent = that tool answers with a clean error. */
+	/** Where get_file_bytes streams downloads and write_file reads storageUrl sources. Absent = those paths answer with a clean error. */
 	storage?: StorageProvider
 }
 
@@ -208,7 +223,51 @@ export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
 			),
 	)
 
+	const writeCtx = {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		getAccessToken: async () =>
+			(await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)).accessToken,
+		openStorageObject: ctx.storage && openStorageSource(ctx.storage),
+	}
+
+	server.registerTool(
+		WRITE_FILE_TOOL,
+		{ description: WRITE_FILE_DESCRIPTION, inputSchema: writeFileInputShape },
+		async (args) =>
+			runTool(ctx, WRITE_FILE_TOOL, args, () =>
+				driveWriteFile(writeCtx, args as WriteFileToolInput),
+			),
+	)
+
+	server.registerTool(
+		COMMENT_ON_DOCUMENT_TOOL,
+		{ description: COMMENT_DESCRIPTION, inputSchema: commentInputShape },
+		async (args) =>
+			runTool(ctx, COMMENT_ON_DOCUMENT_TOOL, args, () =>
+				driveCommentOnDocument(writeCtx, args as CommentToolInput),
+			),
+	)
+
 	return server
+}
+
+/**
+ * StorageProvider has no streaming read yet (get returns the whole Buffer; the
+ * sibling file-bytes task added a streaming write only), so a storageUrl source
+ * is held in memory for the length of the upload. Swap this for a stream once
+ * StorageProvider grows one.
+ */
+function openStorageSource(storage: StorageProvider) {
+	return async (key: string): Promise<StorageSource> => {
+		const bytes = await storage.get(key)
+		return {
+			stream: (async function* () {
+				yield bytes
+			})(),
+			size: bytes.length,
+		}
+	}
 }
 
 type ToolResult = {
@@ -239,7 +298,8 @@ async function runTool(
 			content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
 			structuredContent: value as Record<string, unknown>,
 		}
-	} catch (err) {
+	} catch (thrown) {
+		const err = fromWriteError(thrown)
 		if (isDriveError(err)) {
 			logger.info('Google Drive MCP tool returned a normalized error', {
 				toolName,
@@ -286,6 +346,18 @@ async function runTool(
 	})
 	if (errorClass === null) void stampFirstToolCall(ctx)
 	return result
+}
+
+/** The write tools keep their own error class; agents see one envelope vocabulary. */
+function fromWriteError(err: unknown): unknown {
+	if (!isDriveWriteError(err)) return err
+	return new DriveError({
+		code: err.code,
+		message: err.message,
+		provider_status: err.providerStatus,
+		retry_after_ms: err.retryAfterMs,
+		hint: err.hint,
+	})
 }
 
 /**
