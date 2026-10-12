@@ -37,7 +37,6 @@ export const config: ProviderConfig = {
 			extraAuthParams: {
 				access_type: 'offline',
 				prompt: 'consent',
-				include_granted_scopes: 'true',
 			},
 			clientIdEnv: 'GOOGLE_SEARCH_CONSOLE_CLIENT_ID',
 			clientSecretEnv: 'GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET',
