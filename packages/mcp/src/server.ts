@@ -1916,6 +1916,24 @@ interface RawWorkspace {
 	role?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
+	onboardingEnabled?: boolean | null
+}
+
+/**
+ * The default list_workspaces row: the five fields the heroCard renders plus
+ * the top-level onboarding flag the workspace-observer-onboarding skill reads
+ * (the API row carries it as `onboardingEnabled`). Always exactly these six
+ * keys, so a missing value is null rather than a dropped key.
+ */
+function slimWorkspaceRow(workspace: RawWorkspace) {
+	return {
+		id: workspace.id,
+		name: workspace.name ?? null,
+		role: workspace.role ?? null,
+		createdAt: workspace.createdAt ?? null,
+		updatedAt: workspace.updatedAt ?? null,
+		onboardingEnabled: workspace.onboardingEnabled ?? null,
+	}
 }
 
 function buildActorHeroCardObject(actor: RawActor, includeDetails = false): HeroCardObject {
@@ -4106,7 +4124,9 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.createdAt ?? null,
 				getId: (row) => row.id,
 			})
-			const safeRows = pagedRows.map(redactWorkspaceSettings)
+			const safeRows = (args as { include_settings?: boolean }).include_settings
+				? pagedRows.map(redactWorkspaceSettings)
+				: pagedRows.map(slimWorkspaceRow)
 			const heroObjects = pagedRows.map(buildWorkspaceHeroCardObject)
 			const webContextWorkspaceId = config.defaultWorkspaceId ?? pagedRows[0]?.id
 			const heroCard: HeroCardPayload =
