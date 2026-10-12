@@ -13,6 +13,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
+import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
@@ -921,6 +922,14 @@ app.openapi(connectRoute, (async (c) => {
 			integrationId,
 		})
 
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId,
+			actorId,
+			integrationId,
+			authType: 'api_key',
+		})
+
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
 	}
@@ -1775,6 +1784,14 @@ app.openapi(callbackRoute, (async (c) => {
 		},
 	})
 
+	void trackIntegrationConnected({
+		provider: providerName,
+		workspaceId: stateData.workspaceId,
+		actorId: stateData.actorId,
+		integrationId,
+		authType: 'oauth',
+	})
+
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 	clearOAuthNonceCookie(c, providerName)
@@ -2112,6 +2129,14 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 			})
 		}
 	}
+
+	void trackIntegrationConnected({
+		provider: existing.provider,
+		workspaceId: existing.workspaceId,
+		actorId,
+		integrationId: id,
+		authType: 'manual',
+	})
 
 	return c.json({ activated: true })
 }) as RouteHandler<typeof completeIntegrationRoute, Env>)
