@@ -6,18 +6,23 @@
 // from our side instead of letting a Google 429 reach the agent.
 //
 // Each key gets its own bucket of `capacity` tokens that refills continuously
-// at `capacity / windowMs`. A full bucket allows a burst of `capacity` calls;
-// after that, calls are admitted at the refill rate. A denied take reports
-// `retryAfterMs` so the caller can hand the agent a concrete backoff.
+// at `refillPerWindow / windowMs` (`refillPerWindow` defaults to `capacity`).
+// A full bucket allows a burst of `capacity` calls; after that, calls are
+// admitted at the refill rate. Any window of `windowMs` therefore admits at
+// most `capacity + refillPerWindow` calls, so a caller with a hard upstream cap
+// sets the two to sum to it. A denied take reports `retryAfterMs` so the caller
+// can hand the agent a concrete backoff.
 //
 // State lives in this process's memory, so the budget is per API process, not
 // shared across replicas. A cross-process limit is out of scope here.
 
 export interface KeyedTokenBucketOptions {
-	/** Tokens a full bucket holds, and the number refilled per `windowMs`. */
+	/** Tokens a full bucket holds: the burst size. */
 	capacity: number
-	/** Time over which an empty bucket refills to `capacity`. */
+	/** Window over which `refillPerWindow` tokens are added. */
 	windowMs: number
+	/** Tokens added per `windowMs`. Defaults to `capacity`. */
+	refillPerWindow?: number
 	/** Clock override for tests. Defaults to Date.now. */
 	now?: () => number
 }
@@ -37,12 +42,14 @@ interface BucketState {
 }
 
 export function createKeyedTokenBucket(options: KeyedTokenBucketOptions): KeyedTokenBucket {
-	const { capacity, windowMs, now = Date.now } = options
-	if (!(capacity > 0) || !(windowMs > 0)) {
-		throw new Error('createKeyedTokenBucket: capacity and windowMs must be positive')
+	const { capacity, windowMs, refillPerWindow = capacity, now = Date.now } = options
+	if (!(capacity > 0) || !(windowMs > 0) || !(refillPerWindow > 0)) {
+		throw new Error(
+			'createKeyedTokenBucket: capacity, windowMs and refillPerWindow must be positive',
+		)
 	}
 
-	const refillPerMs = capacity / windowMs
+	const refillPerMs = refillPerWindow / windowMs
 	const buckets = new Map<string, BucketState>()
 
 	return {
