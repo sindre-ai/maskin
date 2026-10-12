@@ -1350,7 +1350,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished, then give you the session and its output. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object.",
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object.",
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 			actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -1373,7 +1373,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					"Set true to get the agent's final message back when it finishes. It arrives as a new turn in your own chat if you are in one, otherwise as a comment on the object you were started from. Not needed with `wait: true`, since you get the result from the call itself.",
+					"Set true to get the agent's final message back when it finishes. It arrives as a new turn in your own chat if you are in one, otherwise as a comment on the object you were started from. With `wait: true` it only takes effect if the wait runs out before the agent finishes; otherwise you get the result from the call itself.",
 				),
 			spawned_by_message_id: z
 				.number()

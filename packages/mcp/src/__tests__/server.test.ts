@@ -2443,6 +2443,86 @@ describe('tool handlers', () => {
 			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
 		})
 
+		it('the wait stops at the 660s limit, still registering the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n5')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(659_000)
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.settled).toBe(false)
+			expect(parsed.session_id).toBe('sess-n5')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
+		it('survives a failed status check and still returns the result', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n6', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 502,
+					text: () => Promise.resolve('bad gateway'),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n6', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+			})
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed.settled).toBe(true)
+			expect(parsed).not.toHaveProperty('poll_error')
+		})
+
+		it('gives up after repeated failed status checks but still returns the session id', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'POST'
+					? ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n7', status: 'running' }),
+						} as Response)
+					: ({ ok: false, status: 503, text: () => Promise.resolve('down') } as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(60_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session_id).toBe('sess-n7')
+			expect(parsed.settled).toBe(false)
+			expect(parsed.poll_error).toEqual(expect.any(String))
+			expect(parsed.logs).toBeNull()
+			expect(parsed.logs_error).toEqual(expect.any(String))
+		})
+
 		it('flag off and the wait times out: no PATCH, as before', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')

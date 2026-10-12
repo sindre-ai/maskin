@@ -1043,11 +1043,16 @@ async function enrichSessionActorName<T extends SessionRow>(
 	return session
 }
 
-// A waiting create_session checks every few seconds and keeps going until the
-// session ends. The limit is only a backstop just above the longest session
-// timeout (3600s), so a stuck session cannot hold the call forever.
+// A waiting create_session checks every few seconds until the session ends. The
+// limit is kept short enough to finish before MCP clients give up on the tool
+// call, so the notify_on_complete fallback below is actually reachable. A session
+// still running at the limit is left running and reported as not settled.
 const WAIT_POLL_MS = 5_000
-const WAIT_LIMIT_MS = 3_700_000
+const WAIT_LIMIT_MS = 660_000
+// Consecutive failed status checks tolerated before the wait gives up. A blip
+// (deploy restart, 502, dropped socket) must not orphan a session that is
+// already running.
+const MAX_POLL_FAILURES = 5
 
 /**
  * The `wait: true` path of `create_session`: start the session, poll until it
@@ -1083,15 +1088,29 @@ async function createSessionAndWait(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
+	let pollFailures = 0
+	let pollError: string | undefined
 	while (Date.now() < deadline) {
 		await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS))
-		current = (await apiCall(
-			config,
-			'GET',
-			`/api/sessions/${sessionId}`,
-			undefined,
-			wsOpts,
-		)) as typeof current
+		try {
+			current = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${sessionId}`,
+				undefined,
+				wsOpts,
+			)) as typeof current
+			pollFailures = 0
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) {
+				console.error(`create_session: gave up polling session ${sessionId}`, err)
+				break
+			}
+			continue
+		}
+		pollError = undefined
 		if (terminalStatuses.includes(current.status)) {
 			const retryId = current.retriedSessionId
 			if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
@@ -1138,14 +1157,20 @@ async function createSessionAndWait(
 		}
 	}
 
-	// 3. Fetch logs
-	const logs = await apiCall(
-		config,
-		'GET',
-		`/api/sessions/${sessionId}/logs?limit=500`,
-		undefined,
-		wsOpts,
-	)
+	// 3. Fetch logs. A failure here must not discard the session outcome.
+	let logs: unknown = null
+	let logsError: string | undefined
+	try {
+		logs = await apiCall(
+			config,
+			'GET',
+			`/api/sessions/${sessionId}/logs?limit=500`,
+			undefined,
+			wsOpts,
+		)
+	} catch (err) {
+		logsError = err instanceof Error ? err.message : String(err)
+	}
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
@@ -1171,6 +1196,12 @@ async function createSessionAndWait(
 				text: JSON.stringify({
 					session: currentWithRetryMeta,
 					logs,
+					// Lets the caller find the session again, and says whether the result
+					// above is final or just where the wait stopped.
+					session_id: sessionId,
+					settled,
+					...(pollError ? { poll_error: pollError } : {}),
+					...(logsError ? { logs_error: logsError } : {}),
 					...(notifyOnComplete
 						? {
 								notify_on_complete: notifyOnComplete.state,
