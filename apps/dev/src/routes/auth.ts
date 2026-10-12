@@ -4,6 +4,7 @@ import type { Database } from '@maskin/db'
 import { actors } from '@maskin/db/schema'
 import { loginSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { maskLlmConfigSecrets } from '../lib/actor-llm-config-redaction'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { actorWithKeySchema, errorSchema } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -67,7 +68,7 @@ app.openapi(loginRoute, async (c) => {
 			...serialize(actorWithoutSecrets),
 			system_prompt: systemPrompt,
 			llm_provider: llmProvider,
-			llm_config: llmConfig,
+			llm_config: maskLlmConfigSecrets(llmConfig),
 			api_key: actor.apiKey ?? '',
 		} as z.infer<typeof actorWithKeySchema>,
 		200,
