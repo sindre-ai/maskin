@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -230,6 +231,12 @@ const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
 keychainUndoSweeperJob.start()
 logger.info('Keychain undo sweeper started')
 
+// Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
+// unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
+const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
+upgradeLegacyCredentialsJob.start()
+logger.info('Legacy credential upgrade job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -361,6 +368,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
+	upgradeLegacyCredentialsJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
