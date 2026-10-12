@@ -145,11 +145,7 @@ import {
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
-import {
-	buildWorkspaceStartupBlock,
-	loadSenderLine,
-	renderWorkspaceBriefing,
-} from './workspace-briefing'
+import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
 /**
  * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
@@ -1040,7 +1036,6 @@ export class SessionManager extends EventEmitter {
 				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Restore workspace from a prior session if requested. Overwrites
 			// the staged agent files with the prior session's full /agent/ snapshot,
@@ -1850,7 +1845,6 @@ export class SessionManager extends EventEmitter {
 				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -3532,9 +3526,7 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir, {
-						actionPrompt: session.actionPrompt,
-					})
+					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir)
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
@@ -5288,29 +5280,6 @@ export class SessionManager extends EventEmitter {
 				return true
 			}
 			return false
-		}
-	}
-
-	/**
-	 * Generate the workspace briefing and write it to `/agent/workspace/WORKSPACE.md`
-	 * (inside the container) by writing to the mounted tempDir before launch.
-	 * Briefing failures never block session start — the agent can still fall back
-	 * to direct MCP queries.
-	 */
-	private async writeWorkspaceBriefing(
-		workspaceId: string,
-		tempDir: string,
-		sessionId: string,
-	): Promise<void> {
-		try {
-			const briefing = await renderWorkspaceBriefing(this.db, this.storage, workspaceId)
-			await writeFile(join(tempDir, 'workspace', 'WORKSPACE.md'), briefing)
-		} catch (err) {
-			logger.warn('Failed to write workspace briefing', {
-				sessionId,
-				workspaceId,
-				error: String(err),
-			})
 		}
 	}
 

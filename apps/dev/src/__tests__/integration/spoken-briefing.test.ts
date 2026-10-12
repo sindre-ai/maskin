@@ -257,15 +257,15 @@ describe('spoken briefing', () => {
 			expect(storage.files.has(briefCacheKey(workspaceId, today))).toBe(true)
 		})
 
-		it('leaves the workspace learnings ledger untouched', async () => {
-			// The ledger lives under agents/, not briefs/ — a sweep that used a
-			// looser prefix would silently eat every session's learnings.
-			const ledgerKey = `agents/${workspaceId}/_workspace/learnings.md`
-			await storage.put(ledgerKey, Buffer.from('a prior learning\n'))
+		it('leaves agent files untouched', async () => {
+			// Agent files live under agents/, not briefs/ — a sweep that used a
+			// looser prefix would silently eat them.
+			const agentFileKey = `agents/${workspaceId}/some-actor/memory/notes.md`
+			await storage.put(agentFileKey, Buffer.from('a prior note\n'))
 
 			await new BriefCacheCleaner(storage).tick(new Date())
 
-			expect(storage.files.has(ledgerKey)).toBe(true)
+			expect(storage.files.has(agentFileKey)).toBe(true)
 		})
 	})
 })
