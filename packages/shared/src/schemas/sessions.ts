@@ -197,6 +197,10 @@ export const createSessionSchema = z.object({
 	// Both optional — a spawn without them reads as "no strip".
 	spawned_by_message_id: z.number().int().positive().optional(),
 	depends_on_session_ids: z.array(z.string().uuid()).optional(),
+	// Ask for the helper's final message to be sent back to the session that
+	// started it when this one ends. Stored in config only when the spawn link
+	// is accepted; unset keeps the return exactly as it is without the flag.
+	notify_on_complete: z.boolean().optional(),
 })
 
 export const sessionQuerySchema = z.object({
