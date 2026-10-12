@@ -1,7 +1,7 @@
 # Keychain AWS bootstrap for ONE environment. Idempotent: safe to re-run.
 # Creates, in this order: smoke KMS key (tag at create, then alias), CloudTrail with its own log bucket,
 # the runtime IAM user (boundary required at create) and, for staging only, the Governance Object Lock
-# bucket plus the delete-refused lock test.
+# bucket plus the delete-refused lock test, then the runtime identity smoke (mint a runtime key in the job, use it, delete it).
 # The production Object Lock bucket is NOT here. It is keychain-aws-production-bucket.yml, last, own approval.
 # Design and rules: ADR-010 and infra/keychain-aws/README.md. Run keychain-aws-preflight.yml first.
 name: Keychain AWS bootstrap
@@ -224,3 +224,127 @@ jobs:
           test "$(aws s3api get-object-retention --bucket "$WORM" --key "$KEY" --version-id "$VER" --query Retention.Mode --output text)" = "GOVERNANCE"
           echo "delete of the locked version refused with the Object Lock error"
           echo "- Staging Object Lock: Governance, 1 day, delete refused with the Object Lock error (identity allowed to delete)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Staging only, runtime identity smoke (KMS round trip and snapshot call sequence)
+        if: inputs.target == 'staging'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Rows 9 and 19, AWS side (CTO ruling 2026-10-12, no staging app). A runtime key is minted inside this
+          # step, used, deleted, and never leaves it. Everything below the key mint runs AS the runtime user.
+          # Values are masked the moment they are read. Nothing is written to a step output, artifact or argv.
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCT"
+          RUSER="maskin-keychain-runtime-$TARGET"
+          WORM="maskin-keychain-worm-$TARGET-$ACCT"
+          RT_ALIAS="alias/maskin-keychain-$TARGET-rtsmoke"
+          SNAP_KEY="snapshots/smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+
+          # Decide with the bootstrap role whether the runtime smoke key exists. Nobody can delete keys here,
+          # so it is created once and reused on re-runs.
+          NEED_KEY=0
+          if out=$(aws kms describe-key --key-id "$RT_ALIAS" 2>&1 >/dev/null); then
+            echo "runtime smoke key already exists, reusing it"
+          elif grep -q NotFoundException <<<"$out"; then
+            NEED_KEY=1
+          else
+            echo "$out"
+            echo "::error::unexpected error reading the runtime smoke key"
+            exit 1
+          fi
+
+          # The user holds 2 keys at most. Fail before creating one if a stale key is there.
+          KEYS=$(aws iam list-access-keys --user-name "$RUSER" --query 'AccessKeyMetadata[].AccessKeyId' --output text)
+          for k in $KEYS; do echo "::add-mask::$k"; done
+          if [ "$(wc -w <<<"$KEYS")" -ge 2 ]; then
+            echo "::error::The runtime user already has 2 access keys. Resolve by hand, see the runbook section \"Stale second access key\"."
+            exit 1
+          fi
+
+          NEW_AK=""
+          cleanup() {
+            if [ -n "$NEW_AK" ]; then
+              aws iam delete-access-key --user-name "$RUSER" --access-key-id "$NEW_AK" >/dev/null 2>&1 \
+                && echo "runtime smoke key deleted" || echo "::warning::could not delete the runtime smoke key, delete it by hand (break-glass role)"
+            fi
+          }
+          trap cleanup EXIT
+          CREATED=$(aws iam create-access-key --user-name "$RUSER" \
+            --query '[AccessKey.AccessKeyId,AccessKey.SecretAccessKey]' --output text)
+          NEW_AK="${CREATED%%$'\t'*}"
+          NEW_SK="${CREATED##*$'\t'}"
+          echo "::add-mask::$NEW_AK"
+          echo "::add-mask::$NEW_SK"
+          unset CREATED
+
+          # A new key takes a few seconds to propagate.
+          ok=0
+          for i in $(seq 1 12); do
+            if ( unset AWS_SESSION_TOKEN AWS_PROFILE
+                 export AWS_ACCESS_KEY_ID="$NEW_AK" AWS_SECRET_ACCESS_KEY="$NEW_SK"
+                 aws sts get-caller-identity --query Arn --output text 2>/dev/null | grep -q ":user/maskin-keychain/$RUSER\$" ); then
+              ok=1; break
+            fi
+            sleep 5
+          done
+          test "$ok" -eq 1 || { echo "::error::the new runtime key never became usable"; exit 1; }
+
+          # Plain command, not in an if or ||, so errexit applies inside.
+          (
+            unset AWS_SESSION_TOKEN AWS_PROFILE
+            export AWS_ACCESS_KEY_ID="$NEW_AK" AWS_SECRET_ACCESS_KEY="$NEW_SK"
+            retry() { for _ in 1 2 3 4 5 6 7 8; do "$@" && return 0; sleep 4; done; return 1; }
+            refused() { if "$@" >/dev/null 2>&1; then echo "::error::SHOULD HAVE BEEN REFUSED: $1 $2 $3"; return 1; fi; }
+
+            echo "== KMS as the runtime identity: CreateKey with tag, CreateAlias, Encrypt and Decrypt through the alias =="
+            if [ "$NEED_KEY" -eq 1 ]; then
+              KEY_ID=$(aws kms create-key --description "maskin-keychain runtime smoke key ($TARGET)" \
+                --tags TagKey=maskin-keychain,TagValue="$TARGET" --query KeyMetadata.KeyId --output text)
+              echo "::add-mask::$KEY_ID"
+              retry aws kms create-alias --alias-name "$RT_ALIAS" --target-key-id "$KEY_ID"
+            fi
+            PT=$(head -c 32 /dev/urandom | base64 -w0)
+            CT=$(retry aws kms encrypt --key-id "$RT_ALIAS" --plaintext "$PT" --query CiphertextBlob --output text)
+            BACK=$(aws kms decrypt --ciphertext-blob "$CT" --query Plaintext --output text)
+            test "$BACK" = "$PT"
+            echo "KMS round trip through the alias passed"
+
+            echo "== S3 snapshot call sequence on snapshots/ =="
+            aws s3api put-object help 2>/dev/null | grep -q 'if-none-match' \
+              || { echo "::error::this AWS CLI has no --if-none-match, cannot test the conditional write"; exit 1; }
+            aws s3api list-objects-v2 --bucket "$WORM" --prefix snapshots/ --max-keys 5 >/dev/null
+            printf '{"smoke":"run %s"}' "$GITHUB_RUN_ID" > "$RUNNER_TEMP/snap.json"
+            retry aws s3api put-object --bucket "$WORM" --key "$SNAP_KEY" --body "$RUNNER_TEMP/snap.json" --if-none-match '*' >/dev/null
+            echo "conditional PutObject (If-None-Match) accepted on the Object Lock bucket"
+            if out=$(aws s3api put-object --bucket "$WORM" --key "$SNAP_KEY" --body "$RUNNER_TEMP/snap.json" --if-none-match '*' 2>&1); then
+              echo "::error::second conditional PutObject on the same key SUCCEEDED. If-None-Match is not enforced here."; exit 1
+            fi
+            grep -Eq 'PreconditionFailed|412' <<<"$out" \
+              || { echo "$out"; echo "::error::second conditional PutObject failed, but not with PreconditionFailed"; exit 1; }
+            echo "second conditional PutObject on the same key refused with PreconditionFailed"
+            aws s3api get-object --bucket "$WORM" --key "$SNAP_KEY" "$RUNNER_TEMP/snap.back" >/dev/null
+            cmp "$RUNNER_TEMP/snap.json" "$RUNNER_TEMP/snap.back"
+            LISTED=$(aws s3api list-objects-v2 --bucket "$WORM" --prefix "$SNAP_KEY" --query 'Contents[].Key' --output text)
+            test "$LISTED" = "$SNAP_KEY"
+            echo "GetObject returned the same bytes, ListObjectsV2 with the exact key found it"
+
+            echo "== Refusals =="
+            refused aws s3api put-object --bucket "$WORM" --key "smoke/outside-prefix" --body "$RUNNER_TEMP/snap.json"
+            refused aws s3api list-objects-v2 --bucket "$WORM" --prefix smoke/
+            refused aws s3api delete-object --bucket "$WORM" --key "$SNAP_KEY"
+            refused aws iam list-users
+            refused aws kms create-key --description "must be refused (runtime, other environment tag)" \
+              --tags TagKey=maskin-keychain,TagValue=production
+            refused aws kms create-key --region eu-west-1 --description "must be refused (runtime, region)" \
+              --tags TagKey=maskin-keychain,TagValue="$TARGET"
+            echo "PutObject outside snapshots/, List outside snapshots/, DeleteObject, IAM, CreateKey for the other environment and outside eu-central-1 are all refused"
+          )
+
+          aws iam delete-access-key --user-name "$RUSER" --access-key-id "$NEW_AK"
+          NEW_AK=""
+          echo "runtime smoke key deleted"
+          {
+            echo "- Runtime identity (staging): CreateKey with tag, CreateAlias, KMS encrypt and decrypt through the alias passed"
+            echo "- Runtime identity (staging): snapshots/ ListObjectsV2, conditional PutObject (If-None-Match) accepted, repeat refused with PreconditionFailed, GetObject and exact-key lookup passed"
+            echo "- Runtime identity (staging): off-prefix write and list, delete, IAM, other-environment and other-region CreateKey all refused. The smoke key was deleted."
+          } >> "$GITHUB_STEP_SUMMARY"
