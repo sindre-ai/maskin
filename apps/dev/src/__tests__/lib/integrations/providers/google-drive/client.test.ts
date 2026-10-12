@@ -72,3 +72,110 @@ describe('drive client listFiles', () => {
 		await expect(client.listFiles('tok', query)).rejects.toMatchObject({ code: 'PROVIDER_ERROR' })
 	})
 })
+
+describe('drive client watch calls', () => {
+	const sleepless = async () => undefined
+
+	it('getStartPageToken GETs changes/startPageToken with supportsAllDrives and returns the token', async () => {
+		const fetchImpl = vi.fn(async () => json(200, { startPageToken: '777' }))
+		const client = createDefaultDriveClient(fetchImpl as never, sleepless)
+
+		expect(await client.getStartPageToken('tok')).toBe('777')
+
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		const u = new URL(url)
+		expect(u.origin + u.pathname).toBe('https://www.googleapis.com/drive/v3/changes/startPageToken')
+		expect(u.searchParams.get('supportsAllDrives')).toBe('true')
+		expect(init.method).toBe('GET')
+	})
+
+	it('watchChanges POSTs the channel body with the page token and shared-drive flag', async () => {
+		const fetchImpl = vi.fn(async () =>
+			json(200, { resourceId: 'res-1', expiration: '1790000000000' }),
+		)
+		const client = createDefaultDriveClient(fetchImpl as never, sleepless)
+
+		const out = await client.watchChanges('tok', {
+			pageToken: '777',
+			channelId: 'chan-1',
+			address: 'https://api.maskin.test/api/webhooks/google-drive',
+			token: 'hmac',
+			expiration: 1790000000000,
+		})
+
+		expect(out).toEqual({ resourceId: 'res-1', expiration: '1790000000000' })
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		const u = new URL(url)
+		expect(u.origin + u.pathname).toBe('https://www.googleapis.com/drive/v3/changes/watch')
+		expect(u.searchParams.get('pageToken')).toBe('777')
+		expect(u.searchParams.get('supportsAllDrives')).toBe('true')
+		expect(init.method).toBe('POST')
+		expect(JSON.parse(init.body as string)).toEqual({
+			id: 'chan-1',
+			type: 'web_hook',
+			address: 'https://api.maskin.test/api/webhooks/google-drive',
+			token: 'hmac',
+			expiration: '1790000000000',
+		})
+	})
+
+	it('does not re-send a POST after a 5xx: a retry could open a second channel', async () => {
+		const fetchImpl = vi.fn(async () => json(503, {}))
+		const client = createDefaultDriveClient(fetchImpl as never, sleepless)
+
+		await expect(
+			client.watchChanges('tok', {
+				pageToken: '1',
+				channelId: 'c',
+				address: 'https://x.test',
+				token: 't',
+				expiration: 1,
+			}),
+		).rejects.toMatchObject({ code: 'PROVIDER_ERROR', providerStatus: 503 })
+		expect(fetchImpl).toHaveBeenCalledTimes(1)
+	})
+
+	it('stopChannel POSTs id and resourceId and accepts the empty 204', async () => {
+		const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
+		const client = createDefaultDriveClient(fetchImpl as never, sleepless)
+
+		await expect(client.stopChannel('tok', { id: 'chan-1', resourceId: 'res-1' })).resolves.toBe(
+			undefined,
+		)
+
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		expect(url).toBe('https://www.googleapis.com/drive/v3/channels/stop')
+		expect(JSON.parse(init.body as string)).toEqual({ id: 'chan-1', resourceId: 'res-1' })
+	})
+
+	it('listChanges asks for removals and an explicit file mask that includes parents', async () => {
+		const fetchImpl = vi.fn(async () =>
+			json(200, { changes: [{ fileId: 'f1' }], newStartPageToken: '778' }),
+		)
+		const client = createDefaultDriveClient(fetchImpl as never, sleepless)
+
+		const out = await client.listChanges('tok', { pageToken: '777' })
+
+		expect(out.newStartPageToken).toBe('778')
+		const [url] = fetchImpl.mock.calls[0] as unknown as [string]
+		const u = new URL(url)
+		expect(u.origin + u.pathname).toBe('https://www.googleapis.com/drive/v3/changes')
+		expect(u.searchParams.get('pageToken')).toBe('777')
+		expect(u.searchParams.get('includeRemoved')).toBe('true')
+		expect(u.searchParams.get('spaces')).toBe('drive')
+		expect(u.searchParams.get('supportsAllDrives')).toBe('true')
+		expect(u.searchParams.get('fields')).toContain('file(id,name,mimeType,parents,trashed')
+	})
+
+	it('getFile GETs files/{id} with the fields mask', async () => {
+		const fetchImpl = vi.fn(async () => json(200, { id: 'f1', parents: ['p1'] }))
+		const client = createDefaultDriveClient(fetchImpl as never, sleepless)
+
+		expect(await client.getFile('tok', 'f1', 'id,parents')).toEqual({ id: 'f1', parents: ['p1'] })
+
+		const [url] = fetchImpl.mock.calls[0] as unknown as [string]
+		const u = new URL(url)
+		expect(u.pathname).toBe('/drive/v3/files/f1')
+		expect(u.searchParams.get('fields')).toBe('id,parents')
+	})
+})
