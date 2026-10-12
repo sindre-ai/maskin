@@ -81,10 +81,6 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	loadSenderLine: vi.fn().mockResolvedValue(''),
-	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
-	appendToLedger: vi.fn().mockResolvedValue(undefined),
-	readLedgerTail: vi.fn().mockResolvedValue([]),
-	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
 const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
@@ -221,7 +217,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -237,7 +232,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toThrow('Failed to create session')
@@ -259,7 +253,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Reply to the comment',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: 9001,
@@ -288,7 +281,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Run the cron job',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerId: 'trig-1',
 				triggerType: 'cron',
@@ -327,7 +319,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({
@@ -367,7 +358,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
@@ -399,7 +389,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -418,7 +407,6 @@ describe('SessionManager', () => {
 				config: { interactive: true },
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -434,7 +422,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -455,7 +442,6 @@ describe('SessionManager', () => {
 				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -471,7 +457,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 

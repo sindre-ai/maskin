@@ -145,11 +145,7 @@ import {
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
-import {
-	buildWorkspaceStartupBlock,
-	loadSenderLine,
-	renderWorkspaceBriefing,
-} from './workspace-briefing'
+import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
 /**
  * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
@@ -266,15 +262,13 @@ export interface CreateSessionParams {
 	/**
 	 * The object this session was started for (bet, task, insight, or any
 	 * first-class object). Required-optional shape: every call site MUST pass
-	 * both `initiatedFromObjectId` and `initiatedFromObjectType`, either as
-	 * real values or as explicit `null`. tsc catches a missed site; NULL is
-	 * still an acceptable value (direct API creates, onboarding, cron
+	 * `initiatedFromObjectId`, either as a real value or as explicit `null`.
+	 * tsc catches a missed site; NULL is still an acceptable value (direct API creates, onboarding, cron
 	 * triggers, conversation-only spawns). Read back at session_failed emit
 	 * time and at every terminal PostHog `runtime_session_ended` emit; see
 	 * spec §3.3 / §3.5 of the sessions-inspectable bet.
 	 */
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }
 
 /**
@@ -736,7 +730,6 @@ export class SessionManager extends EventEmitter {
 				sourceSessionId: params.sourceSessionId,
 				spawnedBySessionId: params.spawnedBySessionId ?? null,
 				initiatedFromObjectId: params.initiatedFromObjectId,
-				initiatedFromObjectType: params.initiatedFromObjectType,
 				spawnedByMessageId: params.spawnedByMessageId ?? null,
 				dependsOnSessionIds: params.dependsOnSessionIds ?? null,
 			})
@@ -1015,7 +1008,6 @@ export class SessionManager extends EventEmitter {
 					durationMs: elapsedMs(null, session.createdAt),
 					agentServerUrl: LOCAL_RUNTIME_BUCKET,
 					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
 				})
 				throw err
 			}
@@ -1040,7 +1032,6 @@ export class SessionManager extends EventEmitter {
 				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Restore workspace from a prior session if requested. Overwrites
 			// the staged agent files with the prior session's full /agent/ snapshot,
@@ -1218,7 +1209,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: session.initiatedFromObjectId,
-				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1731,7 +1721,6 @@ export class SessionManager extends EventEmitter {
 				// carries the enrichment, so the telemetry payload is the only
 				// place Criterion 3 can see the context on this branch.
 				initiatedFromObjectId: sessions.initiatedFromObjectId,
-				initiatedFromObjectType: sessions.initiatedFromObjectType,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -1775,7 +1764,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: existing.initiatedFromObjectId,
-				contextObjectType: existing.initiatedFromObjectType,
 			})
 		}
 
@@ -1850,7 +1838,6 @@ export class SessionManager extends EventEmitter {
 				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -1921,7 +1908,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: session.initiatedFromObjectId,
-				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -3501,7 +3487,6 @@ export class SessionManager extends EventEmitter {
 			// session that fails over onto a fresh id would drop out of the
 			// numerator.
 			initiatedFromObjectId: session.initiatedFromObjectId,
-			initiatedFromObjectType: session.initiatedFromObjectType,
 			await: 'none',
 		})
 	}
@@ -3532,9 +3517,7 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir, {
-						actionPrompt: session.actionPrompt,
-					})
+					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir)
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
@@ -3761,7 +3744,6 @@ export class SessionManager extends EventEmitter {
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
-			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Clear active session link on object
@@ -4204,7 +4186,6 @@ export class SessionManager extends EventEmitter {
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
-			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
@@ -4432,7 +4413,6 @@ export class SessionManager extends EventEmitter {
 						durationMs: elapsedMs(session.startedAt, session.createdAt),
 						agentServerUrl: LOCAL_RUNTIME_BUCKET,
 						contextObjectId: session.initiatedFromObjectId,
-						contextObjectType: session.initiatedFromObjectType,
 					})
 				}
 
@@ -4861,7 +4841,6 @@ export class SessionManager extends EventEmitter {
 						durationMs: elapsedMs(session.startedAt, session.createdAt),
 						agentServerUrl: LOCAL_RUNTIME_BUCKET,
 						contextObjectId: session.initiatedFromObjectId,
-						contextObjectType: session.initiatedFromObjectType,
 					})
 				}
 
@@ -5288,29 +5267,6 @@ export class SessionManager extends EventEmitter {
 				return true
 			}
 			return false
-		}
-	}
-
-	/**
-	 * Generate the workspace briefing and write it to `/agent/workspace/WORKSPACE.md`
-	 * (inside the container) by writing to the mounted tempDir before launch.
-	 * Briefing failures never block session start — the agent can still fall back
-	 * to direct MCP queries.
-	 */
-	private async writeWorkspaceBriefing(
-		workspaceId: string,
-		tempDir: string,
-		sessionId: string,
-	): Promise<void> {
-		try {
-			const briefing = await renderWorkspaceBriefing(this.db, this.storage, workspaceId)
-			await writeFile(join(tempDir, 'workspace', 'WORKSPACE.md'), briefing)
-		} catch (err) {
-			logger.warn('Failed to write workspace briefing', {
-				sessionId,
-				workspaceId,
-				error: String(err),
-			})
 		}
 	}
 
@@ -5886,7 +5842,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(updated.startedAt, updated.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: updated.initiatedFromObjectId,
-				contextObjectType: updated.initiatedFromObjectType,
 			})
 		} catch (err) {
 			logger.warn('Failed to record runtime_session_ended for remote session', {
