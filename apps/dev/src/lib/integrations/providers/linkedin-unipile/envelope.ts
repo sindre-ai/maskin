@@ -18,6 +18,8 @@ export interface UnipileEnvelope {
 	accountId: string | null
 	/** `body.id`: the envelope id, used for the envelope dedupe claim. */
 	envelopeId: string | null
+	/** `body.created_at`: when Unipile created the envelope (account events key a claim on it). */
+	createdAt: string | null
 	/** `body.payload`: the event resource (a Message for message.new). */
 	resource: Record<string, unknown> | null
 }
@@ -32,12 +34,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function readUnipileEnvelope(body: unknown): UnipileEnvelope {
 	if (!isRecord(body)) {
-		return { type: null, accountId: null, envelopeId: null, resource: null }
+		return { type: null, accountId: null, envelopeId: null, createdAt: null, resource: null }
 	}
 	return {
 		type: nonEmptyString(body.type) ?? nonEmptyString(body.event),
 		accountId: nonEmptyString(body.account_id),
 		envelopeId: nonEmptyString(body.id),
+		createdAt: nonEmptyString(body.created_at),
 		resource: isRecord(body.payload) ? body.payload : null,
 	}
 }

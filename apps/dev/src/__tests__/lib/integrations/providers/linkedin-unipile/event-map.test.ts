@@ -145,3 +145,54 @@ describe('linkedin-unipile config', () => {
 		expect(config).not.toHaveProperty('webhook')
 	})
 })
+
+describe('account event rows', () => {
+	const ACCOUNT_TYPES = [
+		'account.reconnect',
+		'account.status.disconnected',
+		'account.status.errored',
+		'account.status.degraded',
+		'account.status.locked',
+		'account.status.running',
+	]
+
+	it.each(ACCOUNT_TYPES)('%s is linkedin.account status_changed behind the flag', (type) => {
+		const row = getEventMapRow(type)
+		expect(row?.entityType).toBe('linkedin.account')
+		expect(row?.actions).toEqual(['status_changed'])
+		expect(row?.flag).toBe(FLAGS.LINKEDIN_UNIPILE_EVENTS)
+	})
+
+	it('lists status_changed for linkedin.account in config definitions', () => {
+		const definition = config.events?.definitions.find((d) => d.entityType === 'linkedin.account')
+		expect(definition?.actions).toEqual(['status_changed'])
+	})
+
+	it.each(ACCOUNT_TYPES)('%s deliveryKey is acct:[type]:[account_id]:[created_at]', (type) => {
+		const fixture = loadFixture(type) as { account_id: string; created_at: string }
+		const envelope = readUnipileEnvelope(fixture)
+		expect(getEventMapRow(type)?.deliveryKey(envelope)).toBe(
+			`acct:${type}:${fixture.account_id}:${fixture.created_at}`,
+		)
+	})
+
+	it('has no content key without created_at, so only the envelope claim applies', () => {
+		const envelope = readUnipileEnvelope({ type: 'account.status.running', account_id: 'a' })
+		expect(getEventMapRow('account.status.running')?.deliveryKey(envelope)).toBeNull()
+	})
+
+	it('reads top-level type, account_id and created_at with no nested fallback', () => {
+		const envelope = readUnipileEnvelope({
+			type: 'account.status.locked',
+			account_id: 'top',
+			created_at: '2026-10-04T11:00:00.000Z',
+			payload: { account_id: 'nested', created_at: 'nested' },
+		})
+		expect(envelope.accountId).toBe('top')
+		expect(envelope.createdAt).toBe('2026-10-04T11:00:00.000Z')
+		expect(
+			readUnipileEnvelope({ type: 'account.status.locked', payload: { account_id: 'nested' } })
+				.accountId,
+		).toBeNull()
+	})
+})
