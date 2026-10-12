@@ -19,6 +19,7 @@ import {
 	type GscRow,
 	gscFetch,
 	listSites,
+	MAX_PROPERTY_ROWS,
 	mergeRows,
 	nextRange,
 	parseRows,
@@ -356,6 +357,71 @@ describe('syncGscIntegration', () => {
 		const healthy = inserts.find(
 			(i) => (i as { title: string }).title === 'Google Search Console: sc-domain:b.test',
 		) as { metadata: Record<string, unknown> }
+		expect(healthy.metadata).not.toHaveProperty('last_error')
+	})
+
+	it('stops fetching and fails one property at the row cap while the other still syncs', async () => {
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url.endsWith('/sites')) {
+				return jsonResponse({
+					siteEntry: [
+						{ siteUrl: 'sc-domain:a.test', permissionLevel: 'siteOwner' },
+						{ siteUrl: 'sc-domain:b.test', permissionLevel: 'siteOwner' },
+					],
+				})
+			}
+			if (!url.includes(encodeURIComponent('sc-domain:a.test'))) {
+				return jsonResponse({
+					rows: [
+						{
+							keys: ['2026-10-10', '/p', 'q', 'usa', 'MOBILE'],
+							clicks: 2,
+							impressions: 20,
+							ctr: 0.1,
+							position: 4,
+						},
+					],
+				})
+			}
+			// Property a never runs out of full pages of unique rows.
+			const { startRow } = JSON.parse(String(init?.body)) as { startRow: number }
+			return jsonResponse({
+				rows: Array.from({ length: 25_000 }, (_, i) => ({
+					keys: ['2026-10-10', `/p${startRow + i}`, 'q', 'usa', 'MOBILE'],
+					clicks: 1,
+					impressions: 10,
+					ctr: 0.1,
+					position: 4,
+				})),
+			})
+		})
+		vi.stubGlobal('fetch', fetchMock)
+		const { db, inserts } = makeFakeDb()
+
+		await expect(syncGscIntegration(db, integrationRow(), deps)).rejects.toThrow(
+			'sc-domain:a.test: too large',
+		)
+
+		// pagination stopped just past the cap, not at the 2.5M guard
+		const pagesForA = fetchMock.mock.calls.filter(([url]) =>
+			String(url).includes(encodeURIComponent('sc-domain:a.test')),
+		)
+		expect(pagesForA).toHaveLength(MAX_PROPERTY_ROWS / 25_000 + 1)
+
+		const over = inserts.find(
+			(i) => (i as { title: string }).title === 'Google Search Console: sc-domain:a.test',
+		) as { metadata: Record<string, unknown>; content: string }
+		expect(over.metadata).toMatchObject({
+			last_error: 'too large',
+			first_failure_at: NOW.toISOString(),
+			row_count: 0,
+		})
+		expect(parseRows(over.content)).toEqual([])
+
+		const healthy = inserts.find(
+			(i) => (i as { title: string }).title === 'Google Search Console: sc-domain:b.test',
+		) as { metadata: Record<string, unknown> }
+		expect(healthy.metadata).toMatchObject({ row_count: 1, last_synced_date: '2026-10-10' })
 		expect(healthy.metadata).not.toHaveProperty('last_error')
 	})
 

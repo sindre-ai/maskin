@@ -14,6 +14,11 @@ const GSC_API = 'https://www.googleapis.com/webmasters/v3'
 const ROW_LIMIT = 25_000
 // Safety stop for runaway pagination (100 pages = 2.5M rows per request).
 const MAX_PAGES = 100
+// Per-property row cap. Rows live in one knowledge object's content and every
+// daily sync rewrites it whole, so past this size a sync is not safe to write.
+export const MAX_PROPERTY_ROWS = 200_000
+// last_error on a property that would pass the cap.
+export const TOO_LARGE_ERROR = 'too large'
 const BACKFILL_MONTHS = 16
 // Search Console only returns final data up to ~2 days ago.
 const DATA_LAG_DAYS = 2
@@ -146,6 +151,14 @@ export class GscApiError extends Error {
 	}
 }
 
+/** A property's rows would pass MAX_PROPERTY_ROWS. The message is the last_error value. */
+export class GscTooLargeError extends Error {
+	constructor() {
+		super(TOO_LARGE_ERROR)
+		this.name = 'GscTooLargeError'
+	}
+}
+
 function retryDelayMs(res: Response, attempt: number): number {
 	const retryAfter = Number(res.headers.get('retry-after'))
 	if (Number.isFinite(retryAfter) && retryAfter > 0) return retryAfter * 1000
@@ -223,6 +236,8 @@ export async function fetchRows(
 			const [date = '', pageUrl = '', query = '', country = '', device = ''] = r.keys
 			out.push([date, pageUrl, query, country, device, r.impressions, r.clicks, r.ctr, r.position])
 		}
+		// Rows within one request are unique, so the merged total can only be larger.
+		if (out.length > MAX_PROPERTY_ROWS) throw new GscTooLargeError()
 		if (rows.length < ROW_LIMIT) return out
 	}
 	throw new Error(`Search Console returned more than ${MAX_PAGES * ROW_LIMIT} rows for ${siteUrl}`)
@@ -391,6 +406,8 @@ async function syncProperty(
 
 	const windowStart = windowStartDate(now)
 	const { rows, written } = mergeRows(parseRows(existing?.content ?? null), incoming, windowStart)
+	// Checked before any write, so the stored rows stay exactly as they were.
+	if (rows.length > MAX_PROPERTY_ROWS) throw new GscTooLargeError()
 	await savePropertyObject(db, {
 		workspaceId: row.workspaceId,
 		createdBy: row.createdBy,

@@ -187,6 +187,84 @@ describe('Search Console sync against real Postgres', () => {
 		expect(parseRows(property.content)).toHaveLength(1)
 	})
 
+	it('leaves stored rows intact when a property would pass the row cap, and syncs the other property', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const integration = await insertGscIntegration(ws.id)
+		const OTHER = 'sc-domain:gsc-sync-other.test'
+		const sitesResponse = () =>
+			Response.json({
+				siteEntry: [
+					{ siteUrl: SITE, permissionLevel: 'siteOwner' },
+					{ siteUrl: OTHER, permissionLevel: 'siteOwner' },
+				],
+			})
+		const oneRow = (date: string) =>
+			Response.json({
+				rows: [
+					{
+						keys: [date, '/p', 'q', 'usa', 'DESKTOP'],
+						clicks: 2,
+						impressions: 20,
+						ctr: 0.1,
+						position: 4,
+					},
+				],
+			})
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.endsWith('/sites') ? sitesResponse() : oneRow('2026-10-09'),
+			),
+		)
+		await syncGscIntegration(db, integration, {
+			now: () => new Date('2026-10-11T10:00:00Z'),
+			getAccessToken: async () => 't',
+		})
+
+		// Next day: SITE returns full pages of new rows forever, OTHER returns one new row.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				if (url.endsWith('/sites')) return sitesResponse()
+				if (!url.includes(encodeURIComponent(SITE))) return oneRow('2026-10-10')
+				const { startRow } = JSON.parse(String(init?.body)) as { startRow: number }
+				return Response.json({
+					rows: Array.from({ length: 25_000 }, (_, i) => ({
+						keys: ['2026-10-10', `/big${startRow + i}`, 'q', 'usa', 'DESKTOP'],
+						clicks: 1,
+						impressions: 10,
+						ctr: 0.1,
+						position: 4,
+					})),
+				})
+			}),
+		)
+		const fresh = await reloadIntegration(integration.id)
+		await expect(
+			syncGscIntegration(db, fresh, {
+				now: () => new Date('2026-10-12T10:00:00Z'),
+				getAccessToken: async () => 't',
+			}),
+		).rejects.toThrow(/too large/)
+
+		const properties = await propertyObjects(ws.id)
+		const byProperty = (url: string) =>
+			properties.find((p) => (p.metadata as { external_id: string }).external_id === url)
+		const over = byProperty(SITE)
+		const other = byProperty(OTHER)
+		expect(over?.metadata).toMatchObject({
+			last_error: 'too large',
+			first_failure_at: '2026-10-12T10:00:00.000Z',
+			// untouched by the failed run
+			last_synced_date: '2026-10-09',
+			row_count: 1,
+		})
+		expect(parseRows(over?.content ?? null)).toHaveLength(1)
+		expect(other?.metadata).toMatchObject({ last_synced_date: '2026-10-10', row_count: 2 })
+		expect(other?.metadata).not.toHaveProperty('last_error')
+	})
+
 	it('overwrites a stored row when the same key is fetched again', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		const integration = await insertGscIntegration(ws.id)
