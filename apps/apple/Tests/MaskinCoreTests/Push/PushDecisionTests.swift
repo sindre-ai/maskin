@@ -66,25 +66,36 @@ struct NotificationActionPlanTests {
 			options: labels.map { PushDecisionOption(label: $0) })
 	}
 
-	@Test func twoOptionsGetReplyAndOpen() {
+	@Test func twoOptionsGetLaterAndReply() {
 		let plan = NotificationActionPlan(payload(["Ship", "Hold"]))
 		#expect(plan.categoryIdentifier == "decision.n-9")
-		#expect(plan.actions.map(\.title) == ["Ship", "Hold", "Reply", "Open"])
-		#expect(plan.actions.map(\.identifier) == ["maskin.option.0", "maskin.option.1", "maskin.reply", "maskin.open"])
+		#expect(plan.actions.map(\.title) == ["Ship", "Hold", "Later", "Reply"])
+		#expect(
+			plan.actions.map(\.identifier)
+				== ["maskin.option.0", "maskin.option.1", "maskin.later", "maskin.reply"])
 	}
 
-	@Test func neverExceedsFourActionsAndKeepsReply() {
+	@Test func neverExceedsFourActionsAndKeepsLaterAndReply() {
 		let plan = NotificationActionPlan(payload(["A", "B", "C", "D", "E"]))
 		#expect(plan.actions.count == 4)
-		#expect(plan.actions.map(\.title) == ["A", "B", "C", "Reply"])
+		#expect(plan.actions.map(\.title) == ["A", "B", "Later", "Reply"])
 	}
 
-	@Test func destructiveOptionsRequireAuthentication() {
+	@Test func anOptionThatNeedsConfirmationOpensTheCardInsteadOfSending() {
 		var p = payload(["Delete", "Keep"])
 		p.options[0].destructive = true
 		let plan = NotificationActionPlan(p)
-		#expect(plan.actions[0].requiresAuthentication && plan.actions[0].isDestructive)
-		#expect(!plan.actions[1].requiresAuthentication)
+		// Never one tap on a lock screen: the button opens the card, where the confirmation lives.
+		#expect(plan.actions[0].kind == .open)
+		#expect(plan.actions[0].title.contains("Delete"))
+		#expect(!plan.actions[0].requiresAuthentication && !plan.actions[0].isDestructive)
+		#expect(plan.actions[1].kind == .option(label: "Keep"))
+		#expect(NotificationActionPlan.choice(for: "maskin.option.0", in: p) == .open)
+	}
+
+	@Test func laterIsAnActionOfItsOwn() {
+		let p = payload(["Ship", "Hold"])
+		#expect(NotificationActionPlan.choice(for: "maskin.later", in: p) == .later)
 	}
 
 	@Test func categoryIdentifierIsPerNotificationAndStable() {

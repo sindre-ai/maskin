@@ -28,6 +28,8 @@ public struct ForYouScreen: View {
 	private var isWide: Bool { sizeClass == .regular }
 
 	@State private var path: [String] = []
+	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
+	@State private var undoOffer: UndoOffer?
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -42,12 +44,14 @@ public struct ForYouScreen: View {
 		ForYouFeedView(
 			store: runtime.store, outbox: runtime.outbox,
 			openObject: openObject, chief: runtime.chief, environment: environment,
-			stories: appRuntime.storiesStore(), wide: isWide
+			stories: appRuntime.storiesStore(), wide: isWide, undoOffer: $undoOffer,
+			openAgent: { appRuntime.openAgent($0) }
 		)
 		.shellToolbar(
 			environment: environment, title: "For you",
 			actions: ShellActions(
-				live: true, display: ShellDisplayMenu { displayMenu })
+				live: true, display: ShellDisplayMenu { displayMenu },
+				displaySymbol: ShellActions.slidersSymbol)
 		)
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()
@@ -56,24 +60,41 @@ public struct ForYouScreen: View {
 		}
 	}
 
-	/// The Display menu: which kind of card to show, and taking every suggested option. That acts on
-	/// the store's per-card path, so each card stays individually undoable.
+	/// The one For you menu: take every suggested option, filter by kind of ask, show what has been
+	/// handled. Taking acts on the store's per-card path, so each card stays individually
+	/// undoable, and one Undo takes the whole batch back.
 	@ViewBuilder private var displayMenu: some View {
 		let store = runtime.store
-		if !store.typeCounts.isEmpty {
-			Picker(
-				"Show",
-				selection: Binding(
-					get: { store.options.typeFilter }, set: { store.options.typeFilter = $0 })
-			) {
-				Text("Everything").tag(String?.none)
-				ForEach(store.typeCounts, id: \.type) { item in
-					Text("\(item.type.capitalized)s \(item.count)").tag(String?.some(item.type))
-				}
+		let take = store.suggestedOptionCount
+		let skip = store.suggestedSkipCount
+		Button {
+			let batch = store.takeSuggestedOptions()
+			MaskinHaptics.play(.success)
+			undoOffer = UndoOffer(message: batch.summary + ".") {
+				withAnimation(MaskinMotion.standard) { store.undo(batch) }
 			}
+		} label: {
+			Text("Take every suggested")
+			Text(
+				skip > 0
+					? "\(take) now \u{00B7} skips \(skip) that need\(skip == 1 ? "s" : "") a confirmation or a call from you"
+					: "\(take) now \u{00B7} Undo for a few seconds after")
+			Image(systemName: "checkmark.circle")
 		}
-		Button("Take every suggested", systemImage: "checkmark.circle") { store.takeSuggestedOptions() }
-			.disabled(store.suggestedOptionCount == 0)
+		.disabled(take == 0)
+		Divider()
+		Toggle(
+			"Filter",
+			isOn: Binding(
+				get: { store.options.filterBarOn },
+				set: {
+					store.options.filterBarOn = $0
+					if !$0 { store.options.intent = nil }
+				}))
+		Toggle(
+			"Show handled",
+			isOn: Binding(
+				get: { store.options.showsHandled }, set: { store.options.showsHandled = $0 }))
 	}
 }
 
@@ -114,9 +135,15 @@ struct ForYouFeedView: View {
 	/// Regular width: the wide feed (two columns of decision cards, wide briefing row, no swipe
 	/// rows). Compact width is the one-column list.
 	var wide = false
+	/// The Undo toast, owned by the screen so its ⋯ menu can offer one too.
+	var undoOffer: Binding<UndoOffer?> = .constant(nil)
+	/// Opens the agent behind "with {agent}". Nil in snapshots.
+	var openAgent: ((String) -> Void)?
 	@State private var openStory: StoryCard?
-	/// Which cards the reader opened with Ask; the rest stay compact.
+	/// Which cards the reader opened with Discuss; the rest stay compact.
 	@State private var expansion = CardExpansion()
+	/// The card whose Later presets are showing (the Later pill, or a swipe left).
+	@State private var laterOpenId: String?
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
 
@@ -125,28 +152,41 @@ struct ForYouFeedView: View {
 	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
+	private static let topId = "forYou.top"
+	private static let intents: [ForYouIntent?] = [nil] + ForYouIntent.allCases
 
 	var body: some View {
 		let entries = store.entries
-		List {
-			if let stories, !stories.cards.isEmpty {
-				StoryRow(stories: stories) { card in openStory = card }
-				.listRowSeparator(.hidden)
-				.listRowBackground(Color.clear)
-				.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+		let layoutKey: [String] = entries.map { "\($0.id)-\($0.bucket.rawValue)" }
+		let cardIds: [String] = entries.map { $0.card.id }
+		ScrollViewReader { proxy in
+			List {
+				Color.clear.frame(height: 0).id(Self.topId)
+					.listRowSeparator(.hidden).listRowBackground(Color.clear)
+					.listRowInsets(EdgeInsets())
+				if let stories, !stories.cards.isEmpty {
+					StoryRow(stories: stories, open: { card in openStory = card }, metrics: wide ? .compact : .forYou)
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
+					.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+				}
+				if store.options.filterBarOn { intentPills }
+				headerRows(entries: entries)
+				feedRows(entries: entries)
 			}
-			headerRows(entries: entries)
-			feedRows(entries: entries)
+			.listStyle(.plain)
+			.scrollContentBackground(.hidden)
+			.ambientBackground()
+			.refreshable { await store.refresh() }
+			.overlay(alignment: .top) { newAsksPill(proxy: proxy) }
 		}
-		.listStyle(.plain)
-		.scrollContentBackground(.hidden)
-		.ambientBackground()
-		.refreshable { await store.refresh() }
-		.animation(store.isFetching ? nil : MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
-		.onChange(of: entries.map { $0.card.id }) { _, ids in expansion.prune(keeping: Set(ids)) }
+		.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
+		.onChange(of: cardIds) { _, ids in expansion.prune(keeping: Set(ids)) }
 		.onChange(of: scenePhase) { _, phase in
 			switch phase {
-			case .active: outbox.appDidBecomeActive()
+			case .active:
+				outbox.appDidBecomeActive()
+				store.later.reload()
 			case .background: store.decisions.commitHeld()
 			default: break
 			}
@@ -165,7 +205,7 @@ struct ForYouFeedView: View {
 			if let environment, let stories {
 				BriefViewer(
 					environment: environment, stories: stories,
-					sequence: BriefSequence.make(cards: stories.cards, opening: card)
+					sequence: BriefSequence.make(cards: stories.rowCards, opening: card)
 				) { openStory = nil }
 			}
 		}
@@ -176,6 +216,7 @@ struct ForYouFeedView: View {
 		} message: {
 			Text(chief?.notice ?? "")
 		}
+		.undoToast(undoOffer)
 	}
 
 	private var presentedBinding: Binding<ChiefOfStaffDesk.Presented?> {
@@ -196,25 +237,96 @@ struct ForYouFeedView: View {
 		.modifier(ReadableRow(width: readableWidth))
 	}
 
+	/// The intent filter under the briefs: All, Approvals, Questions, Blocking. A kind with
+	/// nothing in it is left out.
+	private var intentPills: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s3 + 1) {
+				ForEach(Self.intents, id: \.self) { intent in
+					let count = store.intentCount(intent)
+					if intent == nil || count > 0 || store.options.intent == intent {
+						let selected = store.options.intent == intent
+						Button {
+							withAnimation(MaskinMotion.standard) { store.options.intent = intent }
+						} label: {
+							HStack(spacing: MaskinSpace.s3) {
+								Text(intent?.label ?? "All").font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+								Text("\(count)").font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .medium)).opacity(0.6)
+							}
+							.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink2)
+							.padding(.horizontal, MaskinSpace.s8 - 1)
+							.frame(height: 34)
+							.background(selected ? MaskinSurface.inverse : MaskinSurface.card, in: Capsule())
+							.frame(minHeight: MaskinSpace.touchMin)
+							.contentShape(Rectangle())
+						}
+						.buttonStyle(.maskinPressed)
+						.accessibilityAddTraits(selected ? .isSelected : [])
+					}
+				}
+			}
+		}
+		.scrollClipDisabled()
+		.listRowSeparator(.hidden)
+		.listRowBackground(Color.clear)
+		.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
+	}
+
+	/// "N new asks": new asks wait here instead of landing above the card under the reader's thumb.
+	@ViewBuilder private func newAsksPill(proxy: ScrollViewProxy) -> some View {
+		let count = store.pendingNewCount
+		if count > 0 {
+			Button {
+				MaskinHaptics.play(.selection)
+				withAnimation(MaskinMotion.standard) {
+					store.showNew()
+					proxy.scrollTo(Self.topId, anchor: .top)
+				}
+			} label: {
+				HStack(spacing: MaskinSpace.s3) {
+					Image(systemName: "arrow.up").maskinSymbol(MaskinFontSize.t13, weight: .bold).accessibilityHidden(true)
+					Text("\(count) new \(count == 1 ? "ask" : "asks") \u{00B7} Show")
+						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+				}
+				.foregroundStyle(MaskinSurface.onInverse)
+				.padding(.horizontal, MaskinSpace.s9)
+				.frame(height: 38)
+				.background(MaskinSurface.inverse, in: Capsule())
+				.shadow(color: MaskinPatina.cardShadow, radius: 10, y: 6)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed(.shrink))
+			.padding(.top, MaskinSpace.s2)
+			.transition(.move(edge: .top).combined(with: .opacity))
+			.accessibilityHint("Shows the new asks at the top of the list")
+		}
+	}
+
 	// MARK: Rows
 
 	@ViewBuilder
 	private func feedRows(entries: [FeedEntry]) -> some View {
 		switch store.phase {
 		case .idle, .loading:
-			LoadingSkeleton(rows: 3).modifier(ReadableRow(width: readableWidth))
+			// Cached cards draw in the first frame, so a skeleton only matters for a cold, empty
+			// feed, and only once it has taken longer than 300ms.
+			DelayedSkeleton(after: .milliseconds(300)).modifier(ReadableRow(width: readableWidth))
 		case .failed(let message):
 			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load your feed", message: message) {
 				Button("Try again") { Task { await store.load() } }.buttonStyle(.secondaryAction)
 			}
 			.modifier(ReadableRow(width: readableWidth))
 		case .loaded:
-			if entries.isEmpty {
-				CaughtUp(filtered: store.options.typeFilter != nil)
-					.modifier(ReadableRow(width: readableWidth))
+			let open = entries.filter { $0.bucket != .done }
+			if open.isEmpty {
+				CaughtUp(
+					filtered: store.options.intent != nil, detail: store.caughtUpDetail
+				)
+				.modifier(ReadableRow(width: readableWidth))
 			} else {
 				swipeHint
-				ForEach(groups(of: entries), id: \.bucket) { group in
+				ForEach(groups(of: open), id: \.bucket) { group in
 					// The primary group is the feed itself: the design shows no header above it.
 					if group.bucket != .needs {
 						SectionHeader(
@@ -226,6 +338,8 @@ struct ForYouFeedView: View {
 					ForEach(group.entries) { entry in feedRow(entry) }
 				}
 			}
+			laterSection
+			handledSection(entries.filter { $0.bucket == .done })
 		}
 	}
 
@@ -241,7 +355,55 @@ struct ForYouFeedView: View {
 		case .needs: "Needs you"
 		case .waiting: "Waiting on an agent"
 		case .fyi: "Updates for you"
-		case .done: "Done just now"
+		case .done: "Handled today"
+		}
+	}
+
+	/// LATER: asks the reader deferred, each with Bring back.
+	@ViewBuilder private var laterSection: some View {
+		let deferred = store.laterEntries
+		if !deferred.isEmpty {
+			SectionHeader(title: "LATER", count: deferred.count, mono: true)
+				.modifier(ReadableRow(width: readableWidth))
+			SummaryList {
+				ForEach(deferred) { entry in
+					SummaryRow(
+						mark: .later, label: Self.objectName(of: entry.card),
+						detail: "Later \u{00B7} \(store.later.entry(for: entry.id)?.label ?? "")",
+						open: openObject.map { open in { open(entry.card.id) } },
+						trailing: .button("Bring back") {
+							MaskinHaptics.play(.selection)
+							withAnimation(MaskinMotion.standard) { store.bringBack(entry.card) }
+						})
+				}
+			}
+			.modifier(ReadableRow(width: readableWidth))
+		}
+	}
+
+	/// HANDLED TODAY: what the reader decided this sitting, one line each, with Undo while it can
+	/// still be taken back.
+	@ViewBuilder private func handledSection(_ handled: [FeedEntry]) -> some View {
+		let rows = handled.compactMap { entry in
+			HandledSummary.make(for: entry, sender: store.senderName(of: entry.card)).map { (entry, $0) }
+		}
+		if store.options.showsHandled, !rows.isEmpty {
+			SectionHeader(title: "HANDLED TODAY", count: rows.count, mono: true)
+				.modifier(ReadableRow(width: readableWidth))
+			SummaryList {
+				ForEach(rows, id: \.0.id) { entry, summary in
+					SummaryRow(
+						mark: summary.mark == .done ? .done : (summary.mark == .held ? .held : .queued),
+						label: summary.label, detail: summary.detail,
+						open: openObject.map { open in { open(entry.card.id) } },
+						trailing: summary.canUndo
+							? .button("Undo") {
+								MaskinHaptics.play(.selection)
+								withAnimation(MaskinMotion.standard) { _ = store.undo(entry.card) }
+							} : .none)
+				}
+			}
+			.modifier(ReadableRow(width: readableWidth))
 		}
 	}
 
@@ -250,7 +412,7 @@ struct ForYouFeedView: View {
 		if !swipeHintSeen {
 			HStack(alignment: .top, spacing: MaskinSpace.s4) {
 				Image(systemName: "hand.draw").accessibilityHidden(true)
-				Text("Swipe right to accept the recommended option, left to mark read.")
+				Text("Swipe right to accept the recommended option, left for Later.")
 					.maskinText(.subhead)
 				Spacer(minLength: 0)
 				Button("Got it") { withAnimation(MaskinMotion.standard) { swipeHintSeen = true } }
@@ -262,39 +424,64 @@ struct ForYouFeedView: View {
 		}
 	}
 
+	private static func objectName(of card: ForYouCard) -> String {
+		let title = card.objectTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return title.isEmpty ? card.headline : title
+	}
+
+	private func offerUndo(_ message: String, _ undo: @escaping @MainActor () async -> Void) {
+		undoOffer.wrappedValue = UndoOffer(message: message, undo: undo)
+	}
+
 	private func feedRow(_ entry: FeedEntry) -> some View {
 		card(entry)
 			.modifier(ReadableRow(width: readableWidth))
 			.swipeActions(edge: .leading, allowsFullSwipe: true) {
-				// Swipe right to take the agent's recommendation. Options that can't be undone
-				// are never one swipe away: they keep their confirmation on the card.
-				if entry.record == nil, let option = entry.card.decision?.recommended,
-					!option.destructive
-				{
-					Button {
-						DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
-							.choose(option)
-					} label: {
-						Label(option.label, systemImage: "checkmark")
+				// Swipe right takes the agent's recommendation (the mockup says Done; the owner
+				// kept "accept recommended"). Options that can't be undone are never one swipe
+				// away: they keep their confirmation on the card. A plain mention has no options,
+				// so there the swipe is Done (mark read).
+				if entry.record == nil {
+					if let option = entry.card.decision?.recommended, !option.destructive {
+						Button {
+							liveActions(entry).choose(option)
+						} label: {
+							Label(option.label, systemImage: "checkmark")
+						}
+						.tint(MaskinColor.doneFg)
+					} else if entry.card.kind == .thread {
+						Button {
+							liveActions(entry).dismiss()
+						} label: {
+							Label("Done", systemImage: "checkmark")
+						}
+						.tint(MaskinColor.doneFg)
 					}
-					.tint(MaskinColor.doneFg)
 				}
 			}
 			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+				// Swipe left opens Later (the mockup's left swipe).
 				if entry.record == nil {
 					Button {
-						dismiss(entry)
+						withAnimation(MaskinMotion.standard) { laterOpenId = entry.id }
+						MaskinHaptics.play(.light)
 					} label: {
-						Label("Mark read", systemImage: "checkmark")
+						Label("Later", systemImage: "clock")
 					}
-					.tint(MaskinColor.doneFg)
+					.tint(MaskinSurface.inverse)
 				}
 			}
 	}
 
+	private func liveActions(_ entry: FeedEntry) -> DecisionCardView.Actions {
+		DecisionCardView.Actions.live(
+			store: store, entry: entry, openObject: openObject, offerUndo: offerUndo)
+	}
+
 	private func card(_ entry: FeedEntry) -> some View {
-		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+		var actions = liveActions(entry)
 		let id = entry.card.id
+		let agent = store.agent(of: entry.card)
 		if wide {
 			// The Chief of Staff thread opens in a form sheet; the card stays compact behind it.
 			actions.expand = { Task { await chief?.openThread(card: entry.card) } }
@@ -302,28 +489,35 @@ struct ForYouFeedView: View {
 			actions.expand = { withAnimation(MaskinMotion.standard) { expansion.expand(id) } }
 			actions.collapse = { withAnimation(MaskinMotion.standard) { expansion.collapse(id) } }
 		}
+		actions.toggleLater = {
+			withAnimation(MaskinMotion.standard) { laterOpenId = laterOpenId == id ? nil : id }
+		}
+		let deferTo = actions.deferTo
+		actions.deferTo = { preset in
+			laterOpenId = nil
+			deferTo?(preset)
+		}
+		if let agent, let openAgent { actions.openAgent = { openAgent(agent.id) } }
 		return DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card),
 			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
-			actions: actions, chief: chief, threadInDetail: wide)
+			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
+			laterOpen: laterOpenId == id)
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 	}
 
-	/// The compact card shown inside the iPad Ask sheet, live from the same store entry.
+	/// The compact card shown inside the iPad Discuss sheet, live from the same store entry.
 	private func sheetCard(for id: String) -> AnyView? {
 		guard let entry = store.entries.first(where: { $0.id == id }) else { return nil }
-		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+		var actions = liveActions(entry)
 		actions.expand = nil
 		actions.collapse = nil
+		actions.toggleLater = nil
 		return AnyView(
 			DecisionCardView(
 				entry: entry, sender: store.senderName(of: entry.card), expanded: false,
-				now: fixedNow ?? Date(), actions: actions, chief: nil, threadInDetail: true))
-	}
-
-	private func dismiss(_ entry: FeedEntry) {
-		MaskinHaptics.play(.selection)
-		withAnimation(MaskinMotion.standard) { store.dismiss(entry.card) }
+				now: fixedNow ?? Date(), actions: actions, chief: nil, threadInDetail: true,
+				agent: store.agent(of: entry.card)))
 	}
 }
 
@@ -333,12 +527,21 @@ struct ForYouFeedView: View {
 private struct SectionHeader: View {
 	let title: String
 	let count: Int
+	/// A mono label (LATER, HANDLED TODAY) rather than a heading.
+	var mono = false
 	var action: (title: String, run: () -> Void)?
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s3) {
-			Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-			Text("\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+			if mono {
+				Text(title).font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold)).tracking(0.96)
+					.foregroundStyle(MaskinColor.ink5)
+				Text("\(count)").font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold))
+					.foregroundStyle(MaskinColor.inkPlaceholder)
+			} else {
+				Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+				Text("\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+			}
 			Spacer(minLength: MaskinSpace.s3)
 			if let action {
 				Button(action.title, action: action.run)
@@ -367,6 +570,8 @@ private struct ReadableRow: ViewModifier {
 /// "You're caught up": the feed is genuinely empty.
 struct CaughtUp: View {
 	var filtered = false
+	/// Under "You're caught up": who is carrying on because of the reader's calls.
+	var detail = "Nothing needs you right now. The flows keep running \u{2014} you\u{2019}ll hear when one does."
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s7) {
@@ -379,11 +584,7 @@ struct CaughtUp: View {
 				.accessibilityHidden(true)
 			Text(filtered ? "Nothing of this kind" : "You're caught up")
 				.maskinText(.title).foregroundStyle(MaskinColor.ink)
-			Text(
-				filtered
-					? "Nothing in your feed matches this filter."
-					: "Nothing needs you right now. The flows keep running \u{2014} you'll hear when one does."
-			)
+			Text(filtered ? "Nothing in your feed matches this filter." : detail)
 			.maskinText(.body).foregroundStyle(MaskinColor.ink4).multilineTextAlignment(.center)
 		}
 		.frame(maxWidth: .infinity)

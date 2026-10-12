@@ -175,10 +175,11 @@ struct NotificationActionOrderTests {
 				PushDecisionOption(label: "Ship it", recommended: true),
 			])
 		let plan = NotificationActionPlan(payload)
-		#expect(plan.actions.prefix(3).map(\.title) == ["Ship it", "Hold a week", "Edit"])
+		#expect(plan.actions.prefix(2).map(\.title) == ["Ship it", "Hold a week"])
 		// The identifier still names the option's index in the payload.
 		#expect(NotificationActionPlan.choice(for: "maskin.option.2", in: payload) == .option(label: "Ship it"))
-		#expect(NotificationActionPlan.choice(for: "maskin.option.0", in: payload) == .option(label: "Edit"))
+		// Only two options fit beside Later and Reply, so the third has no button.
+		#expect(NotificationActionPlan.choice(for: "maskin.option.0", in: payload) == nil)
 	}
 }
 
