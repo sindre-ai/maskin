@@ -93,29 +93,22 @@ async function resolveWorkspaceIdentities(
  * P3-J · Resolve the caller's read-only tag from `actors.metadata.readOnly`
  * on the calling actor row. When true, the fan-out registers only the
  * read-only allowlist per identity — no write verb reaches the tool surface.
- * Fails safe: a lookup miss or a badly-shaped metadata blob is treated as
- * non-read-only, so an actor's full surface never collapses to nothing on a
- * transient DB read; a leak in the OTHER direction (a read-only-tagged actor
- * seeing a write verb) is the only failure mode gap-17 is about — that path
- * requires `metadata.readOnly === true` to be persisted, and that is what we
- * check for exactly.
+ * Fails CLOSED on a lookup error: the query throws and the caller (the
+ * /:instanceSlug route) answers HTTP 503, so the client retries instead of
+ * receiving a tool surface. A read-only agent must never get the write
+ * surface because the database is unhealthy, and an empty or trimmed
+ * tools/list is no answer either (a client can cache it). A lookup that
+ * succeeds but finds no row, or a metadata blob without readOnly === true,
+ * is still treated as non-read-only: that is a real answer, not an error.
  */
 async function resolveCallerReadOnly(db: Database, actorId: string): Promise<boolean> {
-	try {
-		const [row] = await db
-			.select({ metadata: actors.metadata })
-			.from(actors)
-			.where(eq(actors.id, actorId))
-			.limit(1)
-		const meta = (row?.metadata as Record<string, unknown> | null) ?? null
-		return meta?.readOnly === true
-	} catch (err) {
-		logger.warn('LinkedIn MCP: read-only lookup failed, defaulting to false', {
-			actorId,
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return false
-	}
+	const [row] = await db
+		.select({ metadata: actors.metadata })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+	const meta = (row?.metadata as Record<string, unknown> | null) ?? null
+	return meta?.readOnly === true
 }
 
 /**
@@ -162,7 +155,24 @@ app.post('/:instanceSlug', async (c) => {
 	// (one PK read) — the /mcp route already runs a workspace-member check
 	// and self-heal per request, so one more actor lookup does not shift the
 	// path's characteristic.
-	const readOnly = await resolveCallerReadOnly(db, actorId)
+	let readOnly: boolean
+	try {
+		readOnly = await resolveCallerReadOnly(db, actorId)
+	} catch (err) {
+		logger.error('LinkedIn MCP: read-only lookup failed, refusing request (fail closed)', {
+			actorId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'Could not resolve the caller read-only status',
+				undefined,
+				'Temporary database problem. Retry the request shortly.',
+			),
+			503,
+		)
+	}
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId, readOnly }, scoped)
 
