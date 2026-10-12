@@ -37,4 +37,15 @@ public enum WatchDecisionOptions {
 		guard let reason = HoldReason.normalized(reason) else { return "Held" }
 		return "Held \u{00B7} your reason: \(reason)"
 	}
+
+	/// The footer under a decision: how many more wait behind it ("2 MORE \u{00B7} SCROLL"), or
+	/// "LAST ONE" when it is the final one.
+	public static func remainingLabel(_ remaining: Int) -> String {
+		remaining > 0 ? "\(remaining) MORE \u{00B7} SCROLL" : "LAST ONE"
+	}
+
+	/// The confirm screen asks the option as a question: "Approve $2,400?".
+	public static func confirmTitle(for label: String) -> String {
+		label.hasSuffix("?") ? label : label + "?"
+	}
 }
