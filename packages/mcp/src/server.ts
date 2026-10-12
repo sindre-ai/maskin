@@ -20,6 +20,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
+import { TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -2505,8 +2506,25 @@ export function createMcpServer(config: McpConfig) {
 			return finalResponse
 		}
 
+		// Title and annotations come from the table in annotations.ts, so every
+		// tool gets them here and nowhere else. Extension tools have no row and
+		// pass through unannotated.
+		const annotation = TOOL_ANNOTATIONS[name]
+		const annotatedDefinition = annotation
+			? {
+					...definition,
+					title: annotation.title,
+					annotations: {
+						readOnlyHint: annotation.readOnlyHint,
+						destructiveHint: annotation.destructiveHint,
+						idempotentHint: annotation.idempotentHint,
+						openWorldHint: annotation.openWorldHint,
+					},
+				}
+			: definition
+
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
-		return _registerAppTool(s, name, definition, wrappedHandler as any)
+		return _registerAppTool(s, name, annotatedDefinition, wrappedHandler as any)
 		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
 	}) as any as typeof _registerAppTool
 
