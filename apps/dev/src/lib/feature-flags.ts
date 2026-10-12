@@ -38,6 +38,17 @@
 // `bet/d166-loops-v4-polish` for the ship / rollback plan.
 export const FLAGS = {
 	/**
+	 * Live mode: hands-free voice conversation with any workspace agent, served
+	 * by a streamed OpenRouter turn plus OpenRouter TTS. Gates
+	 * POST /api/live-sessions, the stream WebSocket and POST .../end (404 when
+	 * off). Per-actor rollout: add the tester's actor id to FF_TESTER_ACTOR_IDS
+	 * and `live-mode` to FF_TESTER_FEATURES. The per-agent toggle
+	 * (POST /api/actors/:id/live-mode) is deliberately not gated so admins can
+	 * configure ahead of rollout. Retire by deleting this entry when live ships
+	 * to everyone.
+	 */
+	LIVE_MODE: 'live-mode',
+	/**
 	 * LinkedIn Identity add-on visibility on the plan surface
 	 * (Settings > Billing). When off, the $49/connected-identity/month line is
 	 * hidden regardless of how many `linkedin-unipile` credentials the

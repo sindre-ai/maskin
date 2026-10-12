@@ -83,6 +83,18 @@ const jsonbObject = z.record(z.string(), z.unknown()).nullable()
 export const agentStateSchema = z.enum(['idle', 'running', 'paused', 'failed'])
 export type AgentState = z.infer<typeof agentStateSchema>
 
+/** Per-agent live-mode settings, stored in `actors.metadata.live`. */
+export const liveAgentSettingsSchema = z.object({
+	enabled: z.boolean(),
+	voice: z.string().nullable(),
+})
+export type LiveAgentSettings = z.infer<typeof liveAgentSettingsSchema>
+
+export const setLiveModeSchema = z.object({
+	enabled: z.boolean(),
+	voice: z.string().min(1).max(64).nullable().optional(),
+})
+
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
@@ -100,6 +112,8 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
+	/** Live mode (voice) settings for agents; absent for rows that predate it. */
+	live: liveAgentSettingsSchema.optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
@@ -121,6 +135,7 @@ export const actorListItemSchema = z.object({
 	// without a second query, and so the AC-T3 integration test can pull
 	// the seek partner off the response.
 	createdAt: z.string().nullable().optional(),
+	live: liveAgentSettingsSchema.optional(),
 	role: z.string().optional(),
 	workspaces: z
 		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))

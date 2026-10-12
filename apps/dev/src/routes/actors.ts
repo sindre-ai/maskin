@@ -89,6 +89,15 @@ function actorEventData(actor: { id: string; type: string; name: string; isSyste
 	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
 }
 
+/**
+ * Live mode settings, projected off `actors.metadata.live` so the wire shape is
+ * flat and callers never reach into raw metadata. Absent means disabled.
+ */
+const liveProjection = sql<{
+	enabled: boolean
+	voice: string | null
+}>`jsonb_build_object('enabled', COALESCE((${actors.metadata}->'live'->>'enabled')::boolean, false), 'voice', ${actors.metadata}->'live'->>'voice')`
+
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST / - Create actor (signup)
@@ -588,6 +597,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					live: liveProjection,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
@@ -636,6 +646,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					description: actors.description,
 					isSystem: actors.isSystem,
 					agentState: actors.agentState,
+					live: liveProjection,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 				})
@@ -680,6 +691,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				description: actors.description,
 				isSystem: actors.isSystem,
 				agentState: actors.agentState,
+				live: liveProjection,
 				createdAt: actors.createdAt,
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
@@ -748,6 +760,7 @@ interface ActorMembershipRow {
 	description: string | null
 	isSystem: boolean
 	agentState: AgentState
+	live: { enabled: boolean; voice: string | null }
 	createdAt: Date | null
 	workspaceId: string
 	workspaceName: string
@@ -762,6 +775,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	description: string | null
 	isSystem: boolean
 	agentState: AgentState
+	live: { enabled: boolean; voice: string | null }
 	createdAt: Date | null
 	workspaces: { id: string; name: string; role: string }[]
 }> {
@@ -775,6 +789,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			description: string | null
 			isSystem: boolean
 			agentState: AgentState
+			live: { enabled: boolean; voice: string | null }
 			createdAt: Date | null
 			workspaces: { id: string; name: string; role: string }[]
 		}
@@ -793,6 +808,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				description: r.description,
 				isSystem: r.isSystem,
 				agentState: r.agentState,
+				live: r.live,
 				createdAt: r.createdAt,
 				workspaces: [membership],
 			})
@@ -854,6 +870,7 @@ app.openapi(getActorRoute, (async (c) => {
 				llm_config: actors.llmConfig,
 				isSystem: actors.isSystem,
 				agentState: actors.agentState,
+				live: liveProjection,
 				agentStateUpdatedAt: actors.agentStateUpdatedAt,
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
@@ -1357,6 +1374,7 @@ const actorReturningCols = {
 	llm_config: actors.llmConfig,
 	isSystem: actors.isSystem,
 	agentState: actors.agentState,
+	live: liveProjection,
 	agentStateUpdatedAt: actors.agentStateUpdatedAt,
 	createdAt: actors.createdAt,
 	updatedAt: actors.updatedAt,
@@ -1628,5 +1646,112 @@ app.openapi(runAgentRoute, (async (c) => {
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
 	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof runAgentRoute, Env>)
+
+// POST /:id/live-mode - Turn live (voice) calls on or off for an agent, and pick
+// its voice. Deliberately NOT gated on the live-mode feature flag: an admin must
+// be able to configure agents ahead of rollout, and the setting must survive
+// flag flips. Writes merge into the metadata JSONB so installed-loop marker keys
+// (installed_loop_id, source_item_id) survive.
+const liveModeBodySchema = z.object({
+	enabled: z.boolean(),
+	voice: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(/^[A-Za-z0-9_.:-]+$/, 'Voice names use letters, digits and . _ : -')
+		.nullable()
+		.optional(),
+})
+
+const setLiveModeRoute = createRoute({
+	method: 'post',
+	path: '/{id}/live-mode',
+	tags: ['Actors'],
+	summary: 'Turn live calls on or off for an agent',
+	description:
+		'Sets actors.metadata.live ({ enabled, voice }) for an agent in a workspace. Workspace admins only. Omit `voice` to keep the current one; send null to clear it.',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: liveModeBodySchema } } },
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Live mode updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor is not an agent',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Only workspace admins can change live mode',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(setLiveModeRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { enabled, voice } = c.req.valid('json')
+
+	// Any member passes this check; the admin check follows, so a stranger cannot probe existence.
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	const [callerMembership] = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+		)
+		.limit(1)
+	if (!callerMembership || !['owner', 'admin'].includes(callerMembership.role)) {
+		return c.json(createApiError('FORBIDDEN', 'Only workspace admins can change live mode'), 403)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing || !(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
+	// Merge `live` over whatever is there so an omitted voice is kept, and write the whole
+	// key with jsonb concat so sibling metadata keys survive.
+	const priorLive = ((existing.metadata as { live?: { voice?: unknown } } | null)?.live ?? {}) as {
+		voice?: unknown
+	}
+	const nextVoice =
+		voice === undefined ? (typeof priorLive.voice === 'string' ? priorLive.voice : null) : voice
+	const [updated] = await db
+		.update(actors)
+		.set({
+			metadata: sql`COALESCE(${actors.metadata}, '{}'::jsonb) || jsonb_build_object('live', jsonb_build_object('enabled', ${enabled}::boolean, 'voice', ${nextVoice}::text))`,
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning(actorReturningCols)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'agent_live_mode_set',
+		entityType: 'actor',
+		entityId: id,
+		data: { enabled, voice: nextVoice },
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+}) as RouteHandler<typeof setLiveModeRoute, Env>)
 
 export default app

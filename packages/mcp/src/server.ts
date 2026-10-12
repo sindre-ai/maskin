@@ -56,7 +56,7 @@ import {
 } from './telemetry.js'
 import { tools } from './tools.js'
 
-interface McpConfig {
+export interface McpConfig {
 	apiBaseUrl: string
 	apiKey: string
 	defaultWorkspaceId: string
@@ -2115,11 +2115,42 @@ function loadHtml(config: McpConfig, filename: string): string {
 	}
 }
 
+/**
+ * Runtime handler for a registered tool. Same wrapped shape the stdio / HTTP
+ * transports get — a plain function that takes the tool's args plus an
+ * `extra` bag (typically the request context) and returns the MCP tool
+ * response (`{ content, structuredContent?, _meta? }`). Exposed so callers
+ * (voice tool-proxy in Task 3, unit tests here) can dispatch tools without
+ * standing up a transport.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: exported for use across transports; concrete arg shape varies per tool.
+export type McpToolHandler = (args: unknown, extra?: any) => Promise<any>
+
+// Per-server handler registry, populated by createMcpServer as it registers
+// tools. Keyed by the server instance so multiple servers built with
+// different configs each get their own map — no cross-config leakage.
+const serverHandlers = new WeakMap<McpServer, Map<string, McpToolHandler>>()
+
+/**
+ * Retrieve the handler map for a server previously built by `createMcpServer`.
+ * Returns an empty map if the server wasn't built here — never undefined, so
+ * callers don't need to null-check.
+ */
+export function getServerHandlers(server: McpServer): Map<string, McpToolHandler> {
+	return serverHandlers.get(server) ?? new Map()
+}
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
 		version: '0.1.0',
 	})
+
+	// Populated inside the `registerAppTool` wrapper below as each tool is
+	// registered, one entry per tool, keyed by the name the SDK indexes. Attached to the
+	// server via `serverHandlers` so `getServerHandlers` (and `createInvokeTool` in
+	// ./invoke.ts) can dispatch tools directly.
+	const handlers = new Map<string, McpToolHandler>()
 
 	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
 	const telemetryTarget = {
@@ -2255,6 +2286,11 @@ export function createMcpServer(config: McpConfig) {
 
 			return finalResponse
 		}
+
+		// Stash the wrapped handler so `getServerHandlers(server)` and `createInvokeTool(config)`
+		// can dispatch this tool without a transport. Same wrapped shape stdio/HTTP get, so
+		// telemetry, the token cap and mutation classification all apply.
+		handlers.set(name, wrappedHandler)
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
 		return _registerAppTool(s, name, definition, wrappedHandler as any)
@@ -6118,7 +6154,10 @@ export function createMcpServer(config: McpConfig) {
 						`/api/sessions/${sessionId}`,
 						{ notify_on_complete: true },
 						wsOpts,
-					)) as { notify_on_complete?: 'registered' | 'delivered' | 'skipped'; notify_skip_reason?: string }
+					)) as {
+						notify_on_complete?: 'registered' | 'delivered' | 'skipped'
+						notify_skip_reason?: string
+					}
 					notifyOnComplete = {
 						state: patched.notify_on_complete ?? 'registered',
 						...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
@@ -7154,6 +7193,9 @@ ${claudeCredsBlock}`,
 			}
 		}
 	}
+
+	// Expose the collected handlers once every registration is done, so partial builds are invisible.
+	serverHandlers.set(server, handlers)
 
 	return server
 }

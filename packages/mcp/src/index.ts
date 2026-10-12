@@ -1,4 +1,5 @@
-export { createMcpServer } from './server.js'
+export { createMcpServer, getServerHandlers } from './server.js'
+export type { McpConfig, McpToolHandler } from './server.js'
 export { tools } from './tools.js'
 
 // R11-A · LinkedIn fan-out foundation exports.
@@ -67,3 +68,26 @@ export type {
 	PublishPostInput,
 	SendMessageInput,
 } from './lib/linkedin-tool-schemas.js'
+
+// In-process tool dispatch: stdio, HTTP and Live mode all call the same wrapped
+// handlers, so a tool behaves identically whichever transport reaches it.
+export {
+	UnknownToolError,
+	createInvokeTool,
+	invokeTool,
+	_resetInvokeToolForTests,
+} from './invoke.js'
+export type { InvokeContext, InvokeTool } from './invoke.js'
+
+// Live mode (hands-free voice): function tools generated from the catalogue,
+// the risk table that decides what needs a spoken yes, and spoken labels.
+export { LiveToolArgsError, buildLiveFunctionTools, parseLiveToolArgs } from './function-tools.js'
+export type { LiveFunctionTool } from './function-tools.js'
+export {
+	CONFIRM_ONLY_TOOLS,
+	LIVE_EXCLUDED_TOOLS,
+	isClassifiedTool,
+	toolRisk,
+} from './tool-risk.js'
+export type { ToolRisk } from './tool-risk.js'
+export { liveToolLabel } from './tool-labels.js'

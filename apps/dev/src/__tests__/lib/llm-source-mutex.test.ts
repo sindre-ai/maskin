@@ -155,6 +155,11 @@ describe('patchAddsAnyByoCredential', () => {
 		expect(patchAddsAnyByoCredential({ llm_keys: { openai: 'sk-oai' } })).toBe(true)
 	})
 
+	it('true when adding an openrouter key for live mode, without joining the paid-plan mutex', () => {
+		expect(patchAddsAnyByoCredential({ llm_keys: { openrouter: 'sk-or' } })).toBe(true)
+		expect(patchAddsByoSource({ llm_keys: { openrouter: 'sk-or' } })).toBe(false)
+	})
+
 	it('true when enabling custom_llm with an api_key', () => {
 		expect(
 			patchAddsAnyByoCredential({

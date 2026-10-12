@@ -22,6 +22,7 @@ This directory holds one canonical page per Maskin primitive. Each page follows 
 - [loops.md](./loops.md) — the loop primitive: persistent multi-agent processes; triggers as steps, `in_loop` membership edges, open vs closed loops, per-loop `closed_statuses`, and the create_loop/update_loop/list_loops MCP tools.
 - [mcp-tools.md](./mcp-tools.md) — the MCP tool surface: which tools exist, what they return, and when to reach for each.
 - [notifications.md](./notifications.md) — the notification primitive: `needs_input` vs. informational, @mention semantics, and how sessions get spawned from mentions.
+- [live-protocol.md](./live-protocol.md) — the live (voice) conversation protocol: the REST routes, the WebSocket frames, the binary audio header, interrupts and reconnecting.
 - [workspace-schema.md](./workspace-schema.md) — the workspace schema primitive: how to discover valid object types, statuses, metadata fields, and enum values before writing.
 
 ## Frontmatter shape
