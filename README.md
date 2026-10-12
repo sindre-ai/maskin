@@ -203,7 +203,7 @@ All endpoints are under `/api`. Most require `Authorization: Bearer <api-key>` a
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/actors` | Create actor and get API key (no auth) |
+| POST | `/api/actors` | Create actor and get API key (no auth for humans; an agent needs the caller's API key and a workspace_id the caller belongs to) |
 | GET | `/api/actors` | List actors (optionally filtered by workspace) |
 | GET | `/api/actors/:id` | Get actor details |
 | PATCH | `/api/actors/:id` | Update actor |
