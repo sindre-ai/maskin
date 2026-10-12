@@ -15,6 +15,11 @@ export interface RuntimeTelemetryConfig {
 	flushInterval?: number
 	/** Optional override of the underlying client — used by tests. */
 	client?: TelemetryClient
+	/**
+	 * How many session ids the runtime_session_ended duplicate guard remembers.
+	 * 0 turns the guard off, so a test can observe what callers ask to send.
+	 */
+	endedDedupLimit?: number
 }
 
 /**
@@ -69,6 +74,9 @@ interface ConcurrentSessionsGaugeEvent {
 
 const DEFAULT_HOST = 'https://eu.i.posthog.com'
 const DEFAULT_GAUGE_INTERVAL_MS = 60_000
+// Several days of sessions (4k on the busiest day so far). The per-pass loops
+// that ran away re-send within minutes, well inside this window.
+const DEFAULT_ENDED_DEDUP_LIMIT = 50_000
 
 /**
  * Emits the four ship-metric events for agent session telemetry:
@@ -84,8 +92,19 @@ const DEFAULT_GAUGE_INTERVAL_MS = 60_000
 export class RuntimeTelemetry {
 	private client: TelemetryClient | null
 	private gaugeInterval: NodeJS.Timeout | null = null
+	/**
+	 * Session ids already reported as ended, oldest first. A session ends once.
+	 * On 1 to 3 Oct 2026 the reaper re-reported finished sessions every pass:
+	 * ~1.4M runtime_session_ended events for ~6k sessions, which most likely
+	 * tripped the PostHog usage cap. Dropping repeats here stops a future emitter
+	 * with the same bug from burning the quota again.
+	 */
+	private endedSessionIds = new Set<string>()
+	private endedDedupLimit: number
+	private duplicateEndsDropped = 0
 
 	constructor(config: RuntimeTelemetryConfig = {}) {
+		this.endedDedupLimit = config.endedDedupLimit ?? DEFAULT_ENDED_DEDUP_LIMIT
 		if (config.client) {
 			this.client = config.client
 		} else if (config.apiKey) {
@@ -123,6 +142,7 @@ export class RuntimeTelemetry {
 		agentServerUrl,
 		contextObjectId,
 	}: SessionEndedEvent): void {
+		if (!this.claimSessionEnd(sessionId)) return
 		this.capture({
 			distinctId: sessionId,
 			event: 'runtime_session_ended',
@@ -212,6 +232,31 @@ export class RuntimeTelemetry {
 				logger.warn('Runtime telemetry shutdown failed', { error: String(err) })
 			}
 		}
+	}
+
+	/**
+	 * True the first time a session id is reported as ended. A repeat is
+	 * dropped and counted; it is logged on the first drop and every 1000th
+	 * after, so a runaway emitter is visible without flooding the log.
+	 */
+	private claimSessionEnd(sessionId: string): boolean {
+		if (this.endedDedupLimit <= 0) return true
+		if (this.endedSessionIds.has(sessionId)) {
+			this.duplicateEndsDropped++
+			if (this.duplicateEndsDropped === 1 || this.duplicateEndsDropped % 1000 === 0) {
+				logger.warn('Dropped duplicate runtime_session_ended', {
+					sessionId,
+					duplicateEndsDropped: this.duplicateEndsDropped,
+				})
+			}
+			return false
+		}
+		this.endedSessionIds.add(sessionId)
+		if (this.endedSessionIds.size > this.endedDedupLimit) {
+			const oldest = this.endedSessionIds.values().next().value
+			if (oldest !== undefined) this.endedSessionIds.delete(oldest)
+		}
+		return true
 	}
 
 	private capture(payload: {
