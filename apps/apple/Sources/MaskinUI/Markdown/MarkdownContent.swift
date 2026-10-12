@@ -14,10 +14,12 @@ extension EnvironmentValues {
 	@Entry public var markdownInternalLinkHandler: (@MainActor (URL) -> Bool)? = nil
 }
 
-/// How compact the rendered markdown is. `document` is the reading scale used on object pages
-/// and files; `chat` is the tighter scale for a message in a thread (smaller headings, closer
-/// blocks, code with a copy header).
-public enum MarkdownStyle: Sendable { case document, chat }
+/// How compact the rendered markdown is. `document` is the reading scale used on files;
+/// `description` is an object's description (handoff `specs/8-Objects.md` → Description
+/// rendering: every heading 17 / bold, body 16 / 1.5 in the reading grey, paragraph gap 10,
+/// list markers `ink5`); `chat` is the tighter scale for a message in a thread (smaller headings,
+/// closer blocks, code with a copy header).
+public enum MarkdownStyle: Sendable { case document, description, chat }
 
 extension EnvironmentValues {
 	@Entry var markdownStyle: MarkdownStyle = .document
@@ -142,6 +144,7 @@ struct MarkdownBlocksView: View {
 	/// Space between two neighbouring blocks. The reading scale is one even rhythm; in a chat
 	/// message a heading binds to what it introduces and a list sits close under its lead-in.
 	static func gap(after previous: MarkdownBlock, before next: MarkdownBlock, style: MarkdownStyle) -> CGFloat {
+		if style == .description { return MaskinSpace.s5 }
 		guard style == .chat else { return MaskinSpace.s7 }
 		switch (previous, next) {
 		case (.heading, _): return MaskinSpace.s3
@@ -177,7 +180,7 @@ private struct MarkdownBlockView: View {
 					.maskinText(.body)
 					// A message is read, so its body is full ink; documents keep the softer reading grey.
 					.foregroundStyle(onInverse || style == .chat ? primary : MaskinColor.ink2)
-					.lineSpacing(MaskinSpace.s2)
+					.lineSpacing(style == .description ? MaskinSpace.s4 : MaskinSpace.s2)
 			}
 		case .bulletList(let items):
 			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
@@ -209,7 +212,7 @@ private struct MarkdownBlockView: View {
 
 	private func listRow(marker: String, item: [MarkdownBlock], isBullet: Bool = false) -> some View {
 		let task = isBullet ? MarkdownTask.split(item) : nil
-		return HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+		return HStack(alignment: .firstTextBaseline, spacing: style == .description ? MaskinSpace.s5 : MaskinSpace.s4) {
 			if let task {
 				Image(systemName: task.checked ? "checkmark.square.fill" : "square")
 					.maskinText(.body)
@@ -217,7 +220,8 @@ private struct MarkdownBlockView: View {
 					.frame(minWidth: MaskinSpace.s8, alignment: .trailing)
 					.accessibilityLabel(task.checked ? "Done" : "Not done")
 			} else {
-				Text(marker).maskinText(.body).foregroundStyle(onInverse ? primary.opacity(0.7) : MaskinColor.ink4)
+				Text(marker).maskinText(.body)
+					.foregroundStyle(onInverse ? primary.opacity(0.7) : (style == .description ? MaskinColor.ink5 : MaskinColor.ink4))
 					.frame(minWidth: MaskinSpace.s8, alignment: .trailing)
 			}
 			MarkdownBlocksView(blocks: task?.blocks ?? item)
@@ -225,6 +229,10 @@ private struct MarkdownBlockView: View {
 	}
 
 	private func headingFont(_ level: Int) -> Font {
+		if style == .description {
+			// A description's headings are labels inside a card, one size for every level.
+			return MaskinTypeface.sans(MaskinFontSize.t17, weight: .bold, relativeTo: .headline)
+		}
 		if style == .chat {
 			// A heading inside a message is a label, not a page title.
 			switch level {

@@ -36,7 +36,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 						id: row.id, title: row.title, lastMessageAt: ChatDates.parse(row.lastMessageAt),
 						createdAt: ChatDates.parse(row.createdAt), pinned: row.pinned,
 						archived: row.archived, unreadCount: Int(row.unread_count), snippet: row.snippet,
-						snippetActorName: row.snippet_actor_name,
+						snippetActorName: row.snippet_actor_name, snippetActorID: row.snippet_actor_id,
 						participants: row.participants.map {
 							ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
 						})

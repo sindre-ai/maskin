@@ -5,7 +5,7 @@ import Foundation
 /// One fake for every Settings API. State sits behind a lock because the protocols are async and
 /// nonisolated; `failure` makes the next-and-every call throw.
 final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, IntegrationsAPI, APIKeysAPI,
-	SkillsAPI, BillingAPI, SchemaAPI, @unchecked Sendable
+	SkillsAPI, BillingAPI, SchemaAPI, MCPAPI, @unchecked Sendable
 {
 	private let lock = NSLock()
 	private var _failure: SettingsError?
@@ -35,6 +35,10 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 	var savedKeys: [Set<WorkspaceSchema.Key>] { lock.withLock { _savedKeys } }
 	var savedSchemas: [WorkspaceSchema] { lock.withLock { _saved } }
 	var createdWorkspace = CreatedWorkspace(id: "ws-new", name: "New")
+	var mcpClientList: [MCPClient] = []
+	var mcpInfo = MCPServerInfo(toolCount: 24, supportsOAuth: false)
+	/// Mirrors the production stub: every MCP call throws `mcpNotAvailable`.
+	var mcpUnavailable = false
 
 	var failure: SettingsError? {
 		get { lock.withLock { _failure } }
@@ -119,6 +123,21 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 	func delete(workspaceId: String, name: String, idempotencyKey: String) async throws {
 		try record("delete-skill", key: idempotencyKey)
 		lock.withLock { skillList.removeAll { $0.name == name } }
+	}
+	func mcpServerInfo() async throws -> MCPServerInfo {
+		try record("mcp-info")
+		if mcpUnavailable { throw SettingsError.mcpNotAvailable }
+		return mcpInfo
+	}
+	func mcpClients() async throws -> [MCPClient] {
+		try record("mcp-clients")
+		if mcpUnavailable { throw SettingsError.mcpNotAvailable }
+		return mcpClientList
+	}
+	func disconnectMCPClient(id: String, idempotencyKey: String) async throws {
+		try record("mcp-disconnect", key: idempotencyKey)
+		if mcpUnavailable { throw SettingsError.mcpNotAvailable }
+		lock.withLock { mcpClientList.removeAll { $0.id == id } }
 	}
 	func usage() async throws -> BillingUsage {
 		try record("usage")

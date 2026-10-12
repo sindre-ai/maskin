@@ -70,6 +70,12 @@ public enum StatusFlow {
 		return ordered[(index + 1)...].first { StatusCategory.of($0) == target }
 	}
 
+	/// The status "Done" moves an object of this type to: the first status in the Done category, in
+	/// workspace order. Nil when the type has none; the row then hides Done.
+	public static func doneTarget(in ordered: [String]) -> String? {
+		ordered.first { StatusCategory.of($0) == .done }
+	}
+
 	/// The status archiving an object of this type moves it to: `archived` when the type has it,
 	/// else `discarded`, else the first status in the Cancelled category. Nil when none exists.
 	public static func archiveTarget(in ordered: [String]) -> String? {

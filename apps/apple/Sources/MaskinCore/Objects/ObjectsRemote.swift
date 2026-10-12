@@ -22,6 +22,12 @@ public protocol ObjectsRemote: Sendable {
 		objectId: String, content: String, mentions: [String], refs: [String],
 		attachmentFileIds: [String], parentEventId: Int?, idempotencyKey: String
 	) async throws -> ObjectEvent
+	/// `POST /api/relationships`: links `sourceId` → `targetId` with `type` (`informs`, `blocks`…).
+	/// Returns the new edge as seen from the source. `idempotencyKey` stays the same across retries.
+	func createRelationship(
+		sourceId: String, sourceType: String, targetId: String, targetType: String, type: String,
+		idempotencyKey: String
+	) async throws -> ObjectLink
 	/// `GET /api/actors`.
 	func actors() async throws -> [ActorRef]
 	/// `GET /api/objects/board`: one column per status of `query.type`, each with its first objects.

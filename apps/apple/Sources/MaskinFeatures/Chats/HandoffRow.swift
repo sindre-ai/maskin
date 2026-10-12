@@ -105,7 +105,7 @@ struct HandoffRow: View {
 		case .working?:
 			HStack(spacing: MaskinSpace.s3) {
 				Text(HandoffPill.working.label).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-				PulsingDots()
+				EqualiserBars()
 			}
 		case .failed?:
 			Label(HandoffPill.failed.label, systemImage: "exclamationmark.triangle.fill")

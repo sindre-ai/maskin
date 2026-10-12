@@ -47,7 +47,7 @@ struct ProfileView: View {
 			}
 		}
 		.settingsListStyle()
-		.navigationTitle("Profile")
+		.navigationTitle("Your profile")
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 		#endif

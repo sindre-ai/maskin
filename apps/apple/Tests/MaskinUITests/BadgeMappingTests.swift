@@ -34,7 +34,9 @@ import Testing
 	@Test func unknownStatusAndTypeFallBackToNeutral() {
 		#expect(MaskinStatus.tokenKey(for: "my_custom_status") == nil)
 		#expect(MaskinObjectType.tokenKey(for: "article") == nil)
-		#expect(MaskinObjectType.symbol(for: "article") == nil)
+		#expect(MaskinObjectType.symbol(for: "release_note") == nil)
+		#expect(MaskinObjectType.glyph(for: "release_note") == "square")
+		#expect(MaskinObjectType.symbol(for: "account") == "building.2")
 	}
 
 	@Test func aliasesShareTheirTargetColours() {

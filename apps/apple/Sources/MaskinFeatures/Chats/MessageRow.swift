@@ -9,28 +9,42 @@ import UIKit
 import AppKit
 #endif
 
-/// A day separator or system divider line.
+/// A divider line (spec 7 §3): the label in mono 11pt between two 1pt rules. Day labels are `ink5`
+/// on `line` rules; the NEW marker is `sigInk` on `sigHi` rules. A system line ("Sebastian added
+/// CPO") is centred grey text with no rules.
 struct ThreadDivider: View {
 	let label: String
-	/// Colours the label and rules (the "new messages" marker); nil keeps the quiet default.
+	/// Colours the label (the NEW marker); nil keeps the quiet day style.
 	var tint: Color?
-	/// False for a system line ("Sebastian added CPO"): centred grey text with no rules.
+	var ruleTint: Color?
+	/// False for a system line: centred text with no rules.
 	var ruled = true
+
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
 			if ruled { line }
-			Text(label).maskinText(.caption).foregroundStyle(tint ?? MaskinColor.ink4).lineLimit(2)
-				.multilineTextAlignment(.center)
-				.frame(maxWidth: ruled ? nil : .infinity)
+			if ruled {
+				Text(label).font(ChatType.mono11).tracking(ChatType.mono11Tracking)
+					.foregroundStyle(tint ?? MaskinColor.ink5).lineLimit(1)
+			} else {
+				Text(label).maskinText(.caption).foregroundStyle(MaskinColor.inkPlaceholder).lineLimit(2)
+					.multilineTextAlignment(.center)
+					.frame(maxWidth: .infinity)
+			}
 			if ruled { line }
 		}
-		.padding(.vertical, MaskinSpace.s4)
+		.padding(.vertical, MaskinSpace.s3)
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}
 
 	private var line: some View {
-		Rectangle().fill(tint?.opacity(0.35) ?? MaskinSurface.line).frame(height: 1)
+		Rectangle().fill(ruleTint ?? MaskinSurface.line).frame(height: 1)
+	}
+
+	/// The NEW divider above the first unread message.
+	static func unread(count: Int) -> ThreadDivider {
+		ThreadDivider(label: "NEW", tint: MaskinColor.sigInk, ruleTint: MaskinColor.sigHi)
 	}
 }
 
@@ -80,11 +94,12 @@ struct MentionLine: View {
 	}
 }
 
-/// One message. Everyone else's (people and agents) is flat at the full width: on the first message
-/// of a run a small avatar, the name, an agent tag and the time at the right edge, then the text.
-/// Follow-ups from the same author are just text. Yours is a soft tinted bubble on the right with no
-/// header, so who spoke is clear at a glance. A tap shows the time (in the action bar) and the actions. People's and agents' words are both rendered as markdown. An
-/// agent's question renders as tappable options under its text.
+/// One message as a spec 7 bubble. Theirs: a `card` bubble with the tail top-left, full width,
+/// with the 24pt avatar + name + time header on the first of a run (an agent's opens its page);
+/// yours: an ink bubble with the tail bottom-right, at most 82% wide, with the status line under
+/// your newest one. A quote and any attachments sit at the top of the bubble; `edited` sits inside
+/// it. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
+/// question renders as a decision card under its bubble. Tagged `@Name`s are bold in the text.
 struct MessageRow: View {
 	let message: ChatMessage
 	let isOwn: Bool
@@ -94,137 +109,63 @@ struct MessageRow: View {
 	var mentions: [(id: String, name: String)] = []
 	/// What the human picked, once this question has been answered.
 	var questionAnswers: [ChatQuestionAnswer.Answer]?
-	let onRetrySend: () -> Void
-	let onDiscard: () -> Void
-	let onRetryAgent: () -> Void
-	/// Present only for a message the reader may edit.
-	var onEdit: (() -> Void)?
-	/// Quote this message into the composer; nil when there is no text to quote.
-	var onQuote: (() -> Void)?
+	/// Set only on your newest message.
+	var sendStatus: MessageSendStatus?
+	var messageOverride = MessageOverride()
+	var isPinned = false
+	var versionsLocked = false
+	/// The agent is running right now (header avatar ring).
+	var working = false
+	var actions = MessageMenuActions()
+	var onRetrySend: () -> Void = {}
+	/// Swipe right (and the menu's Reply) start a reply; nil when there is nothing to quote.
+	var onReply: (() -> Void)?
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
-	@State private var selectingText = false
-	/// Tapping a row shows its time (in the gutter, for a follow-up) and an action bar: Copy for the
-	/// whole message first. Text itself is selectable in place, so long-press there picks words.
-	@State private var showsActions = false
-	@State private var copied = false
+	var onSelectVersion: (Int) -> Void = { _ in }
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@State private var rowWidth: CGFloat = 0
+
+	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
+	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
 
 	var body: some View {
-		layout
-		.contentShape(Rectangle())
-		.onTapGesture {
-			withAnimation(MaskinMotion.quick) { showsActions.toggle() }
+		Group {
+			if isOwn { own } else { theirs }
 		}
-		.sheet(isPresented: $selectingText) { SelectTextSheet(text: message.content) }
+		.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { rowWidth = $0 }
 		.accessibilityElement(children: .contain)
 		.accessibilityActions {
-			if let onEdit { Button("Edit message", action: onEdit) }
-			if !message.content.isEmpty {
-				Button("Copy message") { Clipboard.copy(message.content) }
+			ForEach(Array(zip(actions.titles.indices, actions.titles)), id: \.0) { _, title in
+				Button(title) { perform(title) }
 			}
-			if message.isFailed {
-				Button("Retry sending", action: onRetrySend)
-				Button("Delete message", action: onDiscard)
-			}
-			if message.isErrorReply { Button("Try again", action: onRetryAgent) }
-			if canReadAloud { Button(readAloudTitle, action: toggleReadAloud) }
 		}
 	}
 
-	// MARK: Read aloud
-
-	private var canReadAloud: Bool { !message.content.isEmpty && !message.isFailed }
-	private var isReading: Bool { SpeechReader.shared.isSpeaking(message.id) }
-	private var readAloudTitle: String { isReading ? "Stop reading" : "Read aloud" }
-
-	private func toggleReadAloud() {
-		if isReading {
-			SpeechReader.shared.stop()
-		} else {
-			SpeechReader.shared.speak(markdown: message.content, id: message.id)
+	private func perform(_ title: String) {
+		switch title {
+		case "Reply": actions.onReply?()
+		case "Copy": actions.onCopy?()
+		case "Pin", "Unpin": actions.onPin?()
+		case "Edit": actions.onEdit?()
+		case "Try again": actions.onTryAgain?()
+		case "Make it shorter": actions.onShorter?()
+		case "Good answer": actions.onGoodAnswer?()
+		case "Not right": actions.onNotRight?()
+		case "Retry": actions.onRetrySend?()
+		case "Delete": actions.onDiscard?()
+		default: actions.onReadAloud?()
 		}
 	}
 
-	// MARK: Actions
+	private var shownText: String { messageOverride.text(original: message.content) }
+	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
+	private var bodyText: String { quote?.body ?? shownText }
 
-	@ViewBuilder
-	private var actions: some View {
-		if let onEdit {
-			Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
-		}
-		if let onQuote {
-			Button(action: onQuote) { Label("Quote", systemImage: "arrowshape.turn.up.left") }
-		}
-		if !message.content.isEmpty {
-			Button {
-				Clipboard.copy(message.content)
-				MaskinHaptics.play(.selection)
-			} label: {
-				Label("Copy", systemImage: "doc.on.doc")
-			}
-			Button { selectingText = true } label: { Label("Select text", systemImage: "selection.pin.in.out") }
-			ShareLink(item: message.content) { Label("Share", systemImage: "square.and.arrow.up") }
-			if canReadAloud {
-				Button(action: toggleReadAloud) {
-					Label(readAloudTitle, systemImage: isReading ? "speaker.slash" : "speaker.wave.2")
-				}
-			}
-		}
-		if message.isFailed {
-			Button(action: onRetrySend) { Label("Retry", systemImage: "arrow.clockwise") }
-			Button(role: .destructive, action: onDiscard) { Label("Delete", systemImage: "trash") }
-		}
-		if message.isErrorReply {
-			Button(action: onRetryAgent) { Label("Try again", systemImage: "arrow.clockwise") }
-		}
-	}
-
-	// MARK: Layout
-
-	@ViewBuilder
-	private var layout: some View {
-		if isOwn { ownBubble } else { column }
-	}
-
-	/// Yours, as a soft bubble on the right that hugs a short message and fills most of the row for a long one.
-	private var ownBubble: some View {
-		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			if hasOwnSurface {
-				// A bare card or a lone emoji needs no bubble around it.
-				VStack(alignment: .trailing, spacing: MaskinSpace.s1) { content }
-					.environment(\.markdownHugsContent, true)
-			} else {
-				VStack(alignment: .leading, spacing: MaskinSpace.s1) { content }
-					.environment(\.markdownHugsContent, true)
-					.environment(\.markdownOnInverse, true)
-					.padding(.horizontal, MaskinSpace.s8)
-					.padding(.vertical, MaskinSpace.s6)
-					.background(
-						MaskinSurface.inverse,
-						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
-					)
-					.overlay {
-						if message.isFailed {
-							RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
-								.strokeBorder(MaskinColor.danger, lineWidth: 1.5)
-						}
-					}
-			}
-			MessageAttachments(attachments: message.attachments, alignment: .trailing)
-			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
-			MentionLine(names: untaggedNames, isOwn: true)
-			statusLine
-		}
-		.frame(maxWidth: .infinity, alignment: .trailing)
-		// Leaves room on the left so a short message hugs the right edge and a long one still reads as a bubble.
-		.padding(.leading, MaskinSpace.s12 + MaskinSpace.s9)
-	}
-
-	/// The text with each tagged `@Name` marked so the renderer draws it bold.
+	/// The body with each tagged `@Name` marked so the renderer draws it bold.
 	private var markdownText: String {
-		mentions.isEmpty ? message.content : MentionText.markdown(message.content, mentions: mentions)
+		mentions.isEmpty ? bodyText : MentionText.markdown(bodyText, mentions: mentions)
 	}
 
 	/// The "Mentioned X" caption only names people the words do not show; a tag in the text is
@@ -234,6 +175,8 @@ struct MessageRow: View {
 		return MentionText.untagged(names, in: message.content)
 	}
 
+	// MARK: Mine
+
 	/// Your message is only a link into Maskin (shown as a card) or only an emoji: no bubble.
 	private var hasOwnSurface: Bool {
 		if message.isEmojiOnly { return true }
@@ -241,185 +184,115 @@ struct MessageRow: View {
 		return false
 	}
 
-	private var column: some View {
+	private var own: some View {
+		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
+			Group {
+				if hasOwnSurface {
+					VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
+						if message.isEmojiOnly {
+							Text(message.content).maskinSymbol(emojiSize)
+						} else {
+							MarkdownContent(message.content, style: .chat, hardBreaks: true)
+						}
+					}
+					.environment(\.markdownHugsContent, true)
+				} else {
+					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+						if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
+						MessageAttachments(attachments: message.attachments)
+						if !bodyText.isEmpty {
+							HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
+								MarkdownContent(markdownText, style: .chat, hardBreaks: true)
+									.textSelection(.enabled)
+								if message.editedAt != nil { EditedMark() }
+							}
+						}
+					}
+					.environment(\.markdownHugsContent, true)
+					.environment(\.markdownOnInverse, true)
+					.foregroundStyle(MaskinSurface.onInverse)
+					.padding(.vertical, BubbleShape.myVertical)
+					.padding(.horizontal, BubbleShape.horizontal)
+					.background(MaskinSurface.inverse, in: BubbleShape.mine)
+					.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
+				}
+			}
+			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
+			.swipeToReply(onReply)
+			.messageContextMenu(message, isOwn: true, actions: actions)
+			MentionLine(names: untaggedNames, isOwn: true)
+			if let sendStatus {
+				MessageStatusLine(status: sendStatus, time: message.createdAt, onRetry: onRetrySend)
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .trailing)
+	}
+
+	// MARK: Theirs
+
+	private var theirs: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			if showsAuthor { header }
-			content
+			if showsAuthor {
+				MessageHeader(
+					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
+					working: working,
+					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
+			}
+			Group {
+				if message.isEmojiOnly {
+					Text(message.content).maskinSymbol(emojiSize)
+				} else {
+					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+						if let quote { QuoteBlock(author: quote.author, text: quote.text) }
+						MessageAttachments(attachments: message.attachments)
+						if !bodyText.isEmpty {
+							MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
+								.textSelection(.enabled)
+						}
+						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
+						if message.isErrorReply, let onTryAgain = actions.onTryAgain {
+							Button(action: onTryAgain) { Label("Try again", systemImage: "arrow.clockwise") }
+								.buttonStyle(SecondaryActionButtonStyle())
+								.fixedSize(horizontal: true, vertical: false)
+								.padding(.top, MaskinSpace.s2)
+						}
+					}
+					.foregroundStyle(MaskinColor.ink2)
+					.padding(.vertical, BubbleShape.theirVertical)
+					.padding(.horizontal, BubbleShape.horizontal)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.background(MaskinSurface.card, in: BubbleShape.agent)
+				}
+			}
+			.swipeToReply(onReply)
+			.messageContextMenu(message, isOwn: false, actions: actions)
 			if !message.questions.isEmpty {
-				QuestionOptionsView(
-					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
+				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
 			}
-			MessageAttachments(attachments: message.attachments)
-			if showsActions, !message.content.isEmpty || onEdit != nil { actionBar }
-			MentionLine(names: untaggedNames, isOwn: isOwn)
-			if message.isErrorReply {
-				Button {
-					onRetryAgent()
-				} label: {
-					Label("Try again", systemImage: "arrow.clockwise")
-				}
-				.buttonStyle(SecondaryActionButtonStyle())
-				.fixedSize(horizontal: true, vertical: false)
-				.padding(.top, MaskinSpace.s2)
-			}
-			if isOwn { statusLine }
-		}
-		// Fill the row: nothing is reserved on the trailing side.
-		.frame(maxWidth: .infinity, alignment: .leading)
-	}
-
-	/// Avatar, name, an agent tag and the time on one line: the avatar is small and inline so the text
-	/// below keeps the whole width. Long-press for message actions.
-	private var header: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s3) {
-			authorLabel
-			if message.author == .agent {
-				Text("AGENT").maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
-					.accessibilityHidden(true)
-			}
-			Spacer(minLength: 0)
-			RelativeTime(message.createdAt, style: .clock)
-				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+			footer
+			MentionLine(names: untaggedNames, isOwn: false)
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.contentShape(Rectangle())
-		.contextMenu { actions }
 	}
 
-	/// The avatar and name. An agent's open its page; a person's don't.
+	/// Versions pager and local feedback under an agent bubble.
 	@ViewBuilder
-	private var authorLabel: some View {
-		let label = HStack(spacing: MaskinSpace.s3) {
-			ActorAvatar(
-				name: message.actorName, kind: message.author == .agent ? .agent : .human,
-				size: MaskinSpace.s12, seed: message.actorID)
-				.accessibilityHidden(true)
-			Text(message.actorName).maskinText(.subhead).fontWeight(.bold)
-				.foregroundStyle(MaskinColor.ink).lineLimit(1)
-		}
-		if message.author == .agent, let runtime {
-			Button {
-				runtime.openAgent(message.actorID)
-			} label: {
-				label.contentShape(Rectangle())
-			}
-			.buttonStyle(.maskinPressed)
-			.accessibilityLabel("\(message.actorName), open agent")
-		} else {
-			label
-		}
-	}
-
-	// MARK: Action bar
-
-	private func copyWholeMessage() {
-		Clipboard.copy(message.content)
-		MaskinHaptics.play(.success)
-		copied = true
-		Task {
-			try? await Task.sleep(for: .seconds(1.6))
-			copied = false
-		}
-	}
-
-	/// What a tap on the row offers: copy the whole message, select across paragraphs, share, edit.
-	private var actionBar: some View {
-		HStack(spacing: MaskinSpace.s4) {
-			if !showsAuthor || isOwn {
-				// A follow-up, and your own bubble, have no header, so the tap reveals the time here.
-				RelativeTime(message.createdAt, style: .clock)
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-			}
-			if !message.content.isEmpty {
-				Button(action: copyWholeMessage) {
-					barLabel(copied ? "Copied" : "Copy", copied ? "checkmark" : "doc.on.doc")
+	private var footer: some View {
+		if messageOverride.hasVersions || messageOverride.feedback != nil {
+			HStack(spacing: MaskinSpace.s5) {
+				if messageOverride.hasVersions {
+					VersionPager(
+						index: messageOverride.versionIndex, count: messageOverride.versions.count, locked: versionsLocked,
+						onStep: onSelectVersion)
 				}
-				.buttonStyle(.maskinPressed)
-				if let onQuote {
-					Button(action: onQuote) { barLabel("Quote", "arrowshape.turn.up.left") }.buttonStyle(.maskinPressed)
+				if let feedback = messageOverride.feedback {
+					Label(
+						feedback == .good ? "Good answer" : "Not right",
+						systemImage: feedback == .good ? "hand.thumbsup.fill" : "hand.thumbsdown.fill")
+						.maskinText(.caption)
+						.foregroundStyle(MaskinColor.ink5)
 				}
-				Button { selectingText = true } label: { barLabel("Select", "selection.pin.in.out") }
-					.buttonStyle(.maskinPressed)
-				ShareLink(item: message.content) { barLabel("Share", "square.and.arrow.up") }
-					.buttonStyle(.maskinPressed)
 			}
-			if let onEdit {
-				Button(action: onEdit) { barLabel("Edit", "pencil") }.buttonStyle(.maskinPressed)
-			}
-		}
-		.padding(.top, MaskinSpace.s2)
-		.transition(.opacity)
-	}
-
-	private func barLabel(_ title: String, _ symbol: String) -> some View {
-		Label(title, systemImage: symbol)
-			.maskinText(.caption).fontWeight(.semibold)
-			.foregroundStyle(MaskinColor.ink3)
-			.padding(.horizontal, MaskinSpace.s6)
-			.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s2)
-			.background(MaskinSurface.fill, in: Capsule())
-			.contentShape(Capsule())
-	}
-
-	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
-	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
-
-	/// Every message goes through the markdown renderer, as on the web. A person's line breaks are
-	/// kept (they pressed Return); an agent's soft breaks are wrapped prose. A long-press opens the
-	/// message menu; "Select text" there covers picking words.
-	@ViewBuilder
-	private var content: some View {
-		let dimmed = message.isPending && !message.isFailed
-		Group {
-			if message.isEmojiOnly {
-				Text(message.content).maskinSymbol(emojiSize)
-			} else {
-				MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
-			}
-		}
-		// Words and sentences can be selected and copied in place (long-press, then drag the handles).
-		// The whole-message actions live on the row's tap bar and the avatar/name long-press menu.
-		.textSelection(.enabled)
-		.opacity(dimmed ? 0.6 : 1)
-		if message.editedAt != nil {
-			Text("edited").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-		}
-	}
-
-	/// Where your own message stands: on its way, held back, or not sent.
-	@ViewBuilder
-	private var statusLine: some View {
-		switch message.status {
-		case .sent:
-			EmptyView()
-		case .sending:
-			Text("Sending…").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-		case .waiting(let reason):
-			HStack(spacing: MaskinSpace.s2) {
-				Image(systemName: "clock").accessibilityHidden(true)
-				Text("Queued · \(reason)")
-			}
-			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-		case .failed(let reason):
-			VStack(alignment: .trailing, spacing: 0) {
-				HStack(spacing: MaskinSpace.s4) {
-					Image(systemName: "exclamationmark.circle.fill").foregroundStyle(MaskinColor.danger)
-						.accessibilityHidden(true)
-					Text("Not sent").foregroundStyle(MaskinColor.danger)
-					Button("Retry", action: onRetrySend).buttonStyle(.maskinPressed)
-						.foregroundStyle(MaskinColor.ink)
-						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
-						.contentShape(Rectangle())
-						.accessibilityHint(reason)
-					Button("Delete", role: .destructive, action: onDiscard).buttonStyle(.maskinPressed)
-						.foregroundStyle(MaskinColor.ink4)
-						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
-						.contentShape(Rectangle())
-				}
-				Text(reason).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-					.multilineTextAlignment(.trailing)
-			}
-			.maskinText(.caption)
 		}
 	}
 }
@@ -435,53 +308,29 @@ enum Clipboard {
 	}
 }
 
-/// "Relay is working · Reading the brief" with animated dots (static under Reduce Motion) and,
-/// for a live run, a Stop control.
+/// "Relay is working on it" with the equaliser bars (never dots: dots mean typing), and the
+/// session's one-line activity under it. Used while an agent runs without a step trace.
 struct WorkingIndicator: View {
 	let agent: ChatParticipant
 	var activity: String?
-	var onStop: (() -> Void)?
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s5) {
+		HStack(alignment: .top, spacing: MaskinSpace.s4) {
 			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id, working: true)
-			VStack(alignment: .leading, spacing: 0) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				HStack(spacing: MaskinSpace.s4) {
-					Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-					dots
+					Text(agent.name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+					EqualiserBars()
+					Text("is working on it").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				}
 				if let activity, !activity.isEmpty {
 					Text(activity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
 				}
 			}
 			Spacer(minLength: 0)
-			if let onStop {
-				Button(action: onStop) {
-					Text("Stop").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-						.padding(.horizontal, MaskinSpace.s7)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.contentShape(Rectangle())
-				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityLabel("Stop \(agent.name)")
-			}
 		}
 		.accessibilityElement(children: .combine)
-	}
-
-	private var dots: some View {
-		HStack(spacing: MaskinSpace.s1 + MaskinSpace.s1) {
-			ForEach(0..<3, id: \.self) { i in
-				Circle().fill(MaskinColor.ink5).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
-					.phaseAnimator([0.35, 1.0], trigger: reduceMotion) { view, phase in
-						view.opacity(reduceMotion ? 0.7 : phase)
-					} animation: { _ in
-						.easeInOut(duration: 0.6).delay(Double(i) * 0.15)
-					}
-			}
-		}
-		.accessibilityHidden(true)
+		.accessibilityLabel("\(agent.name) is working on it")
 	}
 }
 
@@ -507,9 +356,9 @@ struct ResumeBanner: View {
 		}
 		.padding(.horizontal, MaskinSpace.s8)
 		.padding(.vertical, MaskinSpace.s4)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+			RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
 				.strokeBorder(MaskinSurface.line, lineWidth: 1))
 		.accessibilityElement(children: .contain)
 	}

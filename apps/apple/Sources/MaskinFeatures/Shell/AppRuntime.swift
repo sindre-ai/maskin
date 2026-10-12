@@ -355,6 +355,10 @@ public final class AppRuntime {
 			// The old inbox link: its replacement is the For You tab.
 			presentation = nil
 			selectedTab = .forYou
+		case .agents:
+			presentation = .agents
+		case .agent(_, let id):
+			presentedAgentId = id
 		}
 	}
 

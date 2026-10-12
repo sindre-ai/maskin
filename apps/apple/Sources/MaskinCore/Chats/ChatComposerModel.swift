@@ -54,7 +54,15 @@ public struct PreparedChatFile: Sendable {
 @MainActor
 @Observable
 public final class ChatComposerModel {
-	public var text = ""
+	public var text = "" {
+		didSet { persistDraft() }
+	}
+	/// A message being replied to: shown as the quote strip ("Replying to {name}") and sent as a
+	/// block quote above the text, since the API has no reply field yet.
+	public private(set) var replyTo: (name: String, text: String)?
+	/// A message being edited: shown as the quote strip ("Editing message"); the field holds the
+	/// text being revised. The sender reads `editing?.messageID` before `take()` to route the edit.
+	public private(set) var editing: (messageID: String, originalText: String)?
 	/// The caret or selection as character offsets, kept by the text field. Nil until the field
 	/// reports one, in which case edits act at the end of the text.
 	public var selection: Range<Int>?
@@ -74,6 +82,10 @@ public final class ChatComposerModel {
 	}
 
 	@ObservationIgnored private var selectionRequests = 0
+	/// The conversation whose draft this composer keeps, once `bind(conversationID:)` ran.
+	@ObservationIgnored public private(set) var boundConversationID: String?
+	/// What was typed before an edit began, given back when the edit is cancelled.
+	@ObservationIgnored private var draftBeforeEdit: String?
 	@ObservationIgnored private let uploader: (any ChatFileUploading)?
 	@ObservationIgnored public let selfActorID: String
 	@ObservationIgnored nonisolated(unsafe) private var jobs: [String: Task<Void, Never>] = [:]
@@ -96,6 +108,10 @@ public final class ChatComposerModel {
 	}
 	public var isOverLength: Bool { trimmedText.count > ChatLimits.maxMessageLength }
 
+	/// Something is in the bar: text or an attachment. Drives the last slot (send vs mic), not
+	/// whether a send can go through (`canSend`).
+	public var hasContent: Bool { !trimmedText.isEmpty || !attachments.isEmpty }
+
 	/// Text is required (the API rejects an empty message); every attachment must have settled.
 	public var canSend: Bool {
 		!trimmedText.isEmpty && !isOverLength && !isUploading && !hasFailedAttachment
@@ -116,7 +132,9 @@ public final class ChatComposerModel {
 			attachments: attachments.compactMap(\.ref),
 			mentions: Array(
 				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)))
-		let result = (EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
+		var body = EmojiShortcodes.expand(trimmedText)
+		if let replyTo { body = ChatQuote.make(author: replyTo.name, content: replyTo.text) + body }
+		let result = (body, metadata.isEmpty ? nil : metadata)
 		clear()
 		return result
 	}
@@ -125,6 +143,9 @@ public final class ChatComposerModel {
 		text = ""
 		selection = nil
 		selectionRequest = nil
+		replyTo = nil
+		editing = nil
+		draftBeforeEdit = nil
 		mentions = []
 		attachments = []
 		for job in jobs.values { job.cancel() }
@@ -172,14 +193,56 @@ public final class ChatComposerModel {
 		setText(new, selecting: end..<end)
 	}
 
-	/// Start a reply to a message: it is quoted above whatever is already typed.
-	public func quote(author: String, content: String) {
-		let quoted = ChatQuote.make(author: author, content: content)
-		guard !quoted.isEmpty else { return }
-		let new = quoted + text
-		let end = new.count
-		setText(new, selecting: end..<end)
+	// MARK: Reply, edit and drafts
+
+	/// Start a reply to a message. The quote strip shows who and what; the quote itself is added
+	/// above the text on send. Replying replaces an edit in progress (and gives its draft back).
+	public func reply(to name: String, text: String) {
+		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !content.isEmpty else { return }
+		if editing != nil { clearQuote() }
+		replyTo = (name, content)
 		focusRequest += 1
+	}
+
+	/// The same as `reply(to:text:)`, under the name the thread already calls.
+	public func quote(author: String, content: String) { reply(to: author, text: content) }
+
+	/// Start editing a sent message: the field takes its text, the strip says "Editing message".
+	/// Whatever was being typed is kept and comes back if the edit is cancelled.
+	public func beginEdit(messageID: String, originalText: String) {
+		if editing == nil { draftBeforeEdit = text }
+		replyTo = nil
+		editing = (messageID, originalText)
+		let end = originalText.count
+		setText(originalText, selecting: end..<end)
+		focusRequest += 1
+	}
+
+	/// Drop the reply or edit. Cancelling an edit restores the text typed before it started.
+	public func clearQuote() {
+		replyTo = nil
+		if editing != nil {
+			editing = nil
+			text = draftBeforeEdit ?? ""
+			draftBeforeEdit = nil
+		}
+	}
+
+	/// Keep this composer's text as the conversation's draft: restored now, saved on every change.
+	/// Text already in the field wins over a stored draft, so a quoted message is not lost.
+	public func bind(conversationID: String) {
+		boundConversationID = conversationID
+		if trimmedText.isEmpty, let saved = ChatDraftStore.draft(for: conversationID) {
+			text = saved
+		} else {
+			persistDraft()
+		}
+	}
+
+	private func persistDraft() {
+		guard let boundConversationID, editing == nil else { return }
+		ChatDraftStore.set(text, for: boundConversationID)
 	}
 
 	// MARK: Mentions
@@ -326,5 +389,23 @@ public enum DictationText {
 		guard !spoken.isEmpty else { return base }
 		guard !base.isEmpty else { return spoken }
 		return base.last?.isWhitespace == true ? base + spoken : base + " " + spoken
+	}
+}
+
+/// What the composer's last slot shows. One rule, shared by every variant, so the swap is the
+/// same everywhere: nothing to send → mic; text or an attachment → send; an agent working while
+/// the field is empty → stop.
+public enum ComposerLastSlot: Equatable, Sendable {
+	case mic, send, stop, none
+
+	/// - Parameters:
+	///   - hasContent: text or an attachment is in the bar.
+	///   - busy: an agent is typing, streaming or working, and `onStop` exists.
+	///   - showsMic: the host offers dictation.
+	///   - showsSend: false for a field whose sheet commits (Hold reason).
+	public static func resolve(hasContent: Bool, busy: Bool, showsMic: Bool, showsSend: Bool) -> ComposerLastSlot {
+		if hasContent { return showsSend ? .send : .none }
+		if busy { return .stop }
+		return showsMic ? .mic : .none
 	}
 }

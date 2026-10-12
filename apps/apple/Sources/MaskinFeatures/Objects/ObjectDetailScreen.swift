@@ -1,9 +1,7 @@
 import MaskinCore
 import MaskinDesign
 import MaskinUI
-import PhotosUI
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// One object, full screen: header, decision slot, description, relationships and the activity
 /// timeline with a glass composer. Push it from anywhere:
@@ -22,25 +20,21 @@ public struct ObjectDetailScreen<Decision: View>: View {
 
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.horizontalSizeClass) private var sizeClass
-	@State private var comment = ""
-	/// Actors tagged with `@` in the comment being written (kept only while their `@Name` is in it).
-	@State private var tagged: [ActorRef] = []
 	/// Objects linked with `/` in the comment being written, and what the picker is showing.
 	@State private var linked: [CommentReference] = []
 	@State private var referenceResults: [CommentReference] = []
 	@State private var searchingReferences = false
-	/// Files being attached to the comment: uploads, retries and limits live in the chat model.
-	@State private var attachments: ChatComposerModel
-	@State private var askingAttachment = false
-	@State private var showPhotos = false
-	@State private var showFiles = false
-	@State private var photoItems: [PhotosPickerItem] = []
-	@State private var dictating = false
+	/// The comment being written: text, `@` mentions, attachments and the reply quote all live in
+	/// the shared composer model (spec 7 §1).
+	@State private var composer: ChatComposerModel
 	@State private var editing = false
 	@State private var confirmingDelete = false
 	/// Set when the reader sends a comment, so the timeline follows it to the bottom.
 	@State private var followNextItem = false
 	@State private var atTop = true
+	/// The event a held-down Reply picked; the next comment threads under it.
+	@State private var replyingTo: TimelineItem?
+	@Environment(AppRuntime.self) private var appRuntime: AppRuntime?
 
 	public init(
 		environment: AppEnvironment, objectId: String, onOpenObject: ((String) -> Void)? = nil,
@@ -61,7 +55,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		store.onObjectDeleted = { [weak listStore] in listStore?.remove($0) }
 		_store = State(initialValue: store)
 		let env = services.environment
-		_attachments = State(
+		_composer = State(
 			initialValue: ChatComposerModel(
 				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? ""),
 				selfActorID: env.auth.session?.actorId ?? ""))
@@ -74,7 +68,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// Fills the `/` picker for what is typed after the slash, waiting a beat so a fast typist
 	/// doesn't fire a request per letter.
 	private func searchReferences() async {
-		guard let query = ReferenceTrigger.find(in: comment)?.query else {
+		guard let query = ReferenceTrigger.find(in: composer.text)?.query else {
 			referenceResults = []
 			return
 		}
@@ -87,19 +81,48 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		searchingReferences = false
 	}
 
-	/// "Post to Build's timeline…" from the object's first word.
-	private var timelinePlaceholder: String {
-		let first = store.object?.displayTitle.split(separator: " ").first.map(String.init) ?? ""
-		return first.isEmpty ? "Post to the timeline — @ to tag, / to link" : "Post to \(first)'s timeline…"
+	// MARK: Comments
+
+	private var composerConfig: MaskinComposerConfig {
+		MaskinComposerConfig(
+			variant: .floating,
+			placeholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? "Comment — @ to tag, / to link",
+			suggestions: { query in
+				CommentMentions.candidates(
+					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
+					excluding: Set(composer.mentions.map(\.id))
+				).map { ChatParticipant(id: $0.id, name: $0.name, kind: $0.isAgent ? .agent : .human) }
+			})
+	}
+
+	/// Hold → Reply: the composer quotes the event and the next comment threads under it.
+	private func startReply(to item: TimelineItem) {
+		MaskinHaptics.play(.light)
+		withAnimation(MaskinMotion.quick) { replyingTo = item }
+		composer.reply(to: store.authorName(for: item), text: ActivityGrouping.summary(of: item))
+	}
+
+	/// The thread already shows the parent, so the body carries the text alone, not a quote.
+	/// Sending jumps to Activity, where the thread is.
+	private func sendComment() {
+		let text = composer.trimmedText
+		guard !text.isEmpty, !composer.isUploading, !composer.hasFailedAttachment else { return }
+		let mentions = composer.mentions.map(\.id).filter { $0 != store.currentActorId }
+		let files = composer.attachments.compactMap(\.ref)
+		let refs = linked
+		let parent = replyingTo?.eventId
+		composer.clear()
+		linked = []
+		replyingTo = nil
+		followNextItem = parent == nil
+		withAnimation(MaskinMotion.quick) { page = .activity }
+		Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files, parentEventId: parent) }
 	}
 
 	public var body: some View {
 		Group {
 			if store.object != nil {
-				VStack(spacing: 0) {
-					pageBar.padding(.vertical, MaskinSpace.s3)
-					pager
-				}
+				pageScroll
 			} else {
 				ScrollView {
 					ObjectDetailContent(store: store, onEdit: { editing = true }) { EmptyView() }
@@ -114,26 +137,12 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			// The composer stays on every page; sending jumps to Activity, where the thread is.
 			if store.object != nil {
 				VStack(spacing: MaskinSpace.s4) {
-					if let match = MentionTrigger.find(in: comment) {
-						MentionSuggestions(
-							candidates: CommentMentions.candidates(
-								query: match.query, actors: Array(store.directory.actors.values),
-								selfID: store.currentActorId, excluding: Set(tagged.map(\.id))
-							).map { ChatParticipant(id: $0.id, name: $0.name, kind: $0.isAgent ? .agent : .human) },
-							inConversation: [],
-							onPick: { person in
-								guard let actor = store.directory.actor(for: person.id) else { return }
-								comment = CommentMentions.inserting(actor, into: comment)
-								tagged.append(actor)
-							})
-							.transition(.opacity.combined(with: .move(edge: .bottom)))
-					}
-					if ReferenceTrigger.find(in: comment) != nil {
+					if ReferenceTrigger.find(in: composer.text) != nil {
 						ReferenceSuggestions(
 							results: referenceResults.filter { ref in !linked.contains { $0.id == ref.id } },
 							isSearching: searchingReferences,
 							onPick: { ref in
-								comment = ReferenceTrigger.removingTrigger(from: comment)
+								composer.text = ReferenceTrigger.removingTrigger(from: composer.text)
 								if linked.count < ReferenceTrigger.maxReferences { linked.append(ref) }
 							})
 							.transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -147,67 +156,18 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.padding(.horizontal, MaskinSpace.s5)
 					}
-					ComposerChips(model: attachments)
-					if let notice = attachments.notice {
-						Text(notice).maskinText(.caption).foregroundStyle(MaskinColor.danger)
-							.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
-							.onTapGesture { attachments.notice = nil }
-					}
-					GlassComposer(
-						text: $comment, placeholder: timelinePlaceholder,
-						canSend: !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-							&& !attachments.isUploading && !attachments.hasFailedAttachment,
-						onAttach: { askingAttachment = true },
-						onSend: {
-							let text = comment
-							let mentions = CommentMentions.active(tagged, in: text)
-							let refs = linked
-							let files = attachments.attachments.compactMap(\.ref)
-							comment = ""
-							tagged = []
-							linked = []
-							attachments.clear()
-							followNextItem = true
-							withAnimation(MaskinMotion.spring) { page = .activity }
-							Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files) }
-						},
-						listening: $dictating, mic: { DictationButton(text: $comment, listening: $dictating) })
+					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
 				}
-				.animation(MaskinMotion.quick, value: MentionTrigger.find(in: comment) != nil)
-				.animation(MaskinMotion.quick, value: ReferenceTrigger.find(in: comment) != nil)
-				.task(id: ReferenceTrigger.find(in: comment)?.query) { await searchReferences() }
-				.confirmationDialog("Attach", isPresented: $askingAttachment) {
-					Button("Photo") { showPhotos = true }
-					Button("File") { showFiles = true }
-				}
-				.photosPicker(
-					isPresented: $showPhotos, selection: $photoItems,
-					maxSelectionCount: max(1, ChatLimits.maxAttachments - attachments.attachments.count),
-					matching: .images)
-				.fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) {
-					result in
-					guard case .success(let urls) = result else { return }
-					for url in urls {
-						attachments.attach(
-							name: url.lastPathComponent, mimeType: AttachmentLoading.mimeType(for: url),
-							prepare: AttachmentLoading.file(at: url))
-					}
-				}
-				.onChange(of: photoItems) { _, items in
-					guard !items.isEmpty else { return }
-					for (index, item) in items.enumerated() {
-						let name = AttachmentLoading.photoName(index: index)
-						attachments.attach(
-							name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.photo(item, name: name))
-					}
-					photoItems = []
-				}
+				.animation(MaskinMotion.quick, value: ReferenceTrigger.find(in: composer.text) != nil)
+				.task(id: ReferenceTrigger.find(in: composer.text)?.query) { await searchReferences() }
+				// Clearing the quote strip in the composer also drops the thread target.
+				.onChange(of: composer.replyTo == nil) { _, cleared in if cleared { replyingTo = nil } }
 				.padding(.horizontal, MaskinSpace.s7)
-				.padding(.bottom, MaskinSpace.s3)
+				.padding(.bottom, MaskinSpace.s4)
 			}
 		}
-		// The title scrolls away with the overview's header, so it lives in the bar for every page.
-		.navigationTitle(page == .overview || page == nil ? "" : (store.object?.displayTitle ?? ""))
+		// The header carries the title; the bar takes it over once the header has scrolled away.
+		.navigationTitle(atTop ? "" : (store.object?.displayTitle ?? ""))
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			// The tab bar would sit on top of the composer, as in a chat. iPad keeps it.
@@ -218,22 +178,38 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				if let object = store.object {
 					Button {
 						MaskinHaptics.play(.selection)
-						withAnimation(MaskinMotion.spring) { page = .activity }
+						Task { await store.toggleStar() }
 					} label: {
-						Label("Activity", systemImage: "bubble.left.and.text.bubble.right")
+						Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
 					}
 					Menu {
-						Button {
-							MaskinHaptics.play(.selection)
-							Task { await store.toggleStar() }
-						} label: {
-							Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
-						}
 						ShareLink(item: shareText(object)) { Label("Share", systemImage: "square.and.arrow.up") }
+						if let link = objectLink(object) {
+							Button {
+								ActivityClipboard.copy(link.absoluteString)
+								MaskinHaptics.play(.selection)
+							} label: {
+								Label("Copy link", systemImage: "link")
+							}
+						}
+						Button {
+							ActivityClipboard.copy(object.id)
+							MaskinHaptics.play(.selection)
+						} label: {
+							Label("Copy ID", systemImage: "number")
+						}
 						Button {
 							editing = true
 						} label: {
 							Label("Edit", systemImage: "pencil")
+						}
+						if store.canArchive, object.status != ObjectDetailStore.archivedStatus {
+							Button {
+								MaskinHaptics.play(.light)
+								Task { await store.archive() }
+							} label: {
+								Label("Archive", systemImage: "archivebox")
+							}
 						}
 						Button(role: .destructive) {
 							confirmingDelete = true
@@ -263,92 +239,106 @@ public struct ObjectDetailScreen<Decision: View>: View {
 
 	// MARK: Pages
 
-	@State private var page: ObjectDetailPart? = .overview
+	/// The page on screen, remembered per object by the store.
+	private var page: ObjectDetailPart? {
+		get { ObjectDetailPart(store.selectedTab) }
+		nonmutating set { if let tab = newValue?.tab, tab != store.selectedTab { store.selectedTab = tab } }
+	}
 
-	private var hasDecision: Bool { Decision.self != EmptyView.self }
+	/// The Overview dot: a decision is waiting on the reader for this object.
+	private var needsYou: Bool {
+		guard Decision.self != EmptyView.self, let runtime = appRuntime else { return false }
+		return ObjectDecisionSection.needsYou(objectId: store.objectId, in: runtime.forYou.store.entries)
+	}
 
-	/// Segmented control: a rounded track with the selected page on a raised card.
+	/// Overview • · Related N · Activity N: the active page is an ink pill, the rest quiet text.
 	private var pageBar: some View {
-		HStack(spacing: 0) {
-			ForEach(pages, id: \.part) { item in
-				let selected = (page ?? .overview) == item.part
-				Button {
-					withAnimation(MaskinMotion.spring) { page = item.part }
-				} label: {
-					HStack(spacing: MaskinSpace.s3) {
-						Text(item.title)
-						if let count = item.count, count > 0 {
-							Text("\(count)").foregroundStyle(MaskinColor.ink5)
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s2) {
+				ForEach(pages, id: \.part) { item in
+					let selected = (page ?? .overview) == item.part
+					Button {
+						MaskinHaptics.play(.selection)
+						withAnimation(MaskinMotion.quick) { page = item.part }
+					} label: {
+						HStack(spacing: MaskinSpace.s3) {
+							Text(item.title)
+								.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+							if item.needsYou {
+								Circle().fill(MaskinColor.sig)
+									.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+									.accessibilityLabel("Needs you")
+							}
+							if let count = item.count, count > 0 {
+								Text("\(count)")
+									.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+									.monospacedDigit()
+									.foregroundStyle(selected ? MaskinSurface.onInverse.opacity(0.7) : MaskinColor.ink5)
+							}
 						}
-						if item.needsYou {
-							Circle().fill(MaskinColor.sig)
-								.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
-								.accessibilityLabel("Needs you")
-						}
+						.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s8)
+						.frame(height: MaskinSpace.s14 + MaskinSpace.s2)
+						.background(
+							selected ? MaskinSurface.inverse : Color.clear,
+							in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
 					}
-					.maskinText(.subhead)
-					.fontWeight(selected ? .semibold : .medium)
-					.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
-					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin - MaskinSpace.s2)
-					.background {
-						if selected {
-							Capsule().fill(MaskinSurface.card)
-						}
-					}
-					.contentShape(Capsule())
+					.buttonStyle(.maskinPressed(.shrink))
+					.accessibilityAddTraits(selected ? .isSelected : [])
 				}
-				.buttonStyle(.maskinPressed(.shrink))
-				.accessibilityAddTraits(selected ? .isSelected : [])
 			}
+			.padding(.horizontal, MaskinSpace.s8)
 		}
-		.padding(MaskinSpace.s2)
-		.background(MaskinSurface.fill, in: Capsule())
-		.padding(.horizontal, MaskinSpace.s9)
 	}
 
 	private var pages: [(part: ObjectDetailPart, title: String, count: Int?, needsYou: Bool)] {
 		[
-			(.overview, "Overview", nil, hasDecision),
-			(.related, "Related", store.links.count, false),
+			(.overview, "Overview", nil, needsYou),
+			(.related, "Related", store.relatedGroups.reduce(0) { $0 + $1.links.count }, false),
 			(.activity, "Activity", store.timeline.count, false),
 		]
 	}
 
-	/// Horizontal paging with a plain scroll view rather than a page-style `TabView`, which fights
-	/// the navigation stack's edge swipe back. Each page keeps its own vertical scroll position.
-	private var pager: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			LazyHStack(spacing: 0) {
-				ForEach(pages, id: \.part) { item in
-					pageBody(item.part)
-						.containerRelativeFrame(.horizontal)
-						.id(item.part)
-				}
-			}
-			.scrollTargetLayout()
-		}
-		.scrollTargetBehavior(.paging)
-		.scrollPosition(id: $page)
-		.onChange(of: page) { _, _ in MaskinHaptics.play(.selection) }
-		.scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-	}
-
-	@ViewBuilder private func pageBody(_ part: ObjectDetailPart) -> some View {
-		ScrollViewReader { proxy in
+	/// One scroll view: the header scrolls away, the tab bar pins under the nav (a pinned section
+	/// header), and the chosen page follows. The header is read once, above the tabs, as decision 5
+	/// asks; switching pages never loses it.
+	private var pageScroll: some View {
+		let part = page ?? .overview
+		return ScrollViewReader { proxy in
 			ScrollView {
-				ObjectDetailContent(
-					store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true }
-				) { decision }
-				.padding(.horizontal, MaskinSpace.s9)
-				.padding(.top, MaskinSpace.s3)
-				.padding(.bottom, MaskinSpace.s12)
+				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
+					ObjectDetailContent(store: store, part: .header, onEdit: { editing = true }) { EmptyView() }
+						.padding(.horizontal, MaskinSpace.s11)
+						.padding(.top, MaskinSpace.s2)
+						.padding(.bottom, MaskinSpace.s7)
+					Section {
+						ObjectDetailContent(
+							store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
+							onReply: startReply,
+							onShowActivity: { withAnimation(MaskinMotion.quick) { page = .activity } }
+						) { decision }
+						.padding(.horizontal, MaskinSpace.s9)
+						.padding(.top, MaskinSpace.s5)
+						.padding(.bottom, MaskinSpace.s12 * 4)
+						.id(part)
+						.transition(.opacity)
+					} header: {
+						pageBar
+							.padding(.top, MaskinSpace.s2)
+							.padding(.bottom, MaskinSpace.s4)
+							.background(MaskinSurface.grouped)
+							.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
+					}
+				}
 			}
 			.scrollDismissesKeyboard(.interactively)
 			.refreshable { await store.refresh() }
-			.trackingTop(part == .activity ? $atTop : .constant(true))
+			.trackingTop($atTop)
 			// The newest item is first. Only jump to it after the reader posts, or when a live item
 			// arrives while they are already at the top.
-			.onChange(of: store.timeline.last?.id) { old, id in
+			.onChange(of: store.latest?.id) { old, id in
 				guard part == .activity, let id, followNextItem || (old != nil && atTop) else { return }
 				followNextItem = false
 				withAnimation(.easeOut(duration: MaskinDuration.slide)) { proxy.scrollTo(id, anchor: .top) }
@@ -357,7 +347,15 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	}
 
 	private func shareText(_ object: WorkObject) -> String {
-		[object.displayTitle, object.content].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+		var parts = [object.displayTitle, object.content ?? ""].filter { !$0.isEmpty }
+		if let link = objectLink(object) { parts.append(link.absoluteString) }
+		return parts.joined(separator: "\n\n")
+	}
+
+	/// The web URL for this object, when the workspace is known.
+	private func objectLink(_ object: WorkObject) -> URL? {
+		guard let workspace = environment.workspaceId, !workspace.isEmpty else { return nil }
+		return DeepLink.object(workspaceId: workspace, id: object.id).universalURL()
 	}
 
 	private func close() {

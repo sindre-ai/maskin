@@ -54,6 +54,8 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	/// Preview of the latest message (list responses only).
 	public var snippet: String?
 	public var snippetActorName: String?
+	/// Who wrote the latest message (list responses only): a tick before the preview when it is you.
+	public var snippetActorID: String?
 	public var participants: [ChatParticipant]
 	/// The caller's read cursor (detail responses only).
 	public var lastReadMessageID: Int?
@@ -61,7 +63,7 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public init(
 		id: String, title: String, lastMessageAt: Date? = nil, createdAt: Date? = nil,
 		pinned: Bool = false, archived: Bool = false, unreadCount: Int = 0, snippet: String? = nil,
-		snippetActorName: String? = nil, participants: [ChatParticipant] = [],
+		snippetActorName: String? = nil, snippetActorID: String? = nil, participants: [ChatParticipant] = [],
 		lastReadMessageID: Int? = nil
 	) {
 		self.id = id
@@ -73,6 +75,7 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 		self.unreadCount = unreadCount
 		self.snippet = snippet
 		self.snippetActorName = snippetActorName
+		self.snippetActorID = snippetActorID
 		self.participants = participants
 		self.lastReadMessageID = lastReadMessageID
 	}
@@ -186,7 +189,47 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 		if case .failed = status { return true }
 		return false
 	}
+
+	/// A reply quotes the message it answers as a leading markdown blockquote (`ChatQuote.make`):
+	/// `> **Name**` then the quoted lines. Split it off so the bubble can draw it as a quote rule
+	/// and render only the reply itself as the message body.
+	public var quotedReply: QuotedReply? { QuotedReply.parse(content) }
 }
+
+/// The quote at the top of a reply bubble: who is quoted, what they said, and the reply text.
+public struct QuotedReply: Equatable, Sendable {
+	public var author: String
+	public var text: String
+	/// The message with the quote removed.
+	public var body: String
+
+	public init(author: String, text: String, body: String) {
+		self.author = author
+		self.text = text
+		self.body = body
+	}
+
+	/// Recognises exactly the shape `ChatQuote.make` writes: a blockquote whose first line is a
+	/// bold name, followed by the reply. Any other blockquote is ordinary markdown.
+	public static func parse(_ content: String) -> QuotedReply? {
+		let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+		guard let first = lines.first, first.hasPrefix("> **"), first.hasSuffix("**"), first.count > 6 else {
+			return nil
+		}
+		let author = String(first.dropFirst(4).dropLast(2))
+		var quoted: [String] = []
+		var index = 1
+		while index < lines.count, lines[index].hasPrefix(">") {
+			let line = lines[index].dropFirst().trimmingCharacters(in: .whitespaces)
+			if !line.isEmpty { quoted.append(line) }
+			index += 1
+		}
+		guard !author.isEmpty, !quoted.isEmpty else { return nil }
+		let body = lines[index...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+		return QuotedReply(author: author, text: quoted.joined(separator: " "), body: body)
+	}
+}
+
 
 public struct MessagePage: Sendable, Equatable {
 	/// Oldest first.

@@ -89,6 +89,94 @@ private struct IntegrationsSnapshot: View {
 	}
 }
 
+private func snapshotMember(_ id: String, _ name: String, _ role: MemberRole = .member, agent: Bool = false)
+	-> WorkspaceMember
+{ WorkspaceMember(actorId: id, name: name, isAgent: agent, role: role) }
+
+/// Members as the §10 tidy-up draws it: PEOPLE · n, then AGENTS · n ending in Hire an agent.
+private struct MembersGroupsSnapshot: View {
+	var body: some View {
+		let groups = MembersRoster.groups(
+			members: [
+				snapshotMember("1", "Olive Owner", .owner), snapshotMember("2", "Ari Admin", .admin),
+				snapshotMember("3", "Mo Member"), snapshotMember("ag-ghost", "Ghost", .member, agent: true),
+			],
+			agents: [
+				AgentSummary(
+					id: "ag-relay", name: "Relay", description: "Routes inbound leads",
+					latestSession: AgentSession(id: "s", actorID: "ag-relay", status: "running")),
+				AgentSummary(id: "ag-forge", name: "Forge", description: "Ships small fixes", storedState: .paused),
+				AgentSummary(id: "ag-scout", name: "Scout", description: "Researches accounts"),
+			])
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			PageGroupLabel(text: "People · \(groups.people.count)")
+			PageCard(
+				rows: groups.people.map {
+					PageRowModel(
+						id: $0.id, title: $0.name, avatar: ($0.name, false),
+						accessory: .state(WorkspacePageState.member(role: $0.role)))
+				})
+			PageGroupLabel(text: "Agents · \(groups.agents.count)").padding(.top, MaskinSpace.s7)
+			PageCard(
+				rows: groups.agents.map { agent in
+					PageRowModel(
+						id: agent.id, title: agent.name, subtitle: agent.role, avatar: (agent.name, true),
+						avatarWorking: agent.isWorking,
+						accessory: MembersView.accessory(for: agent),
+						showsChevron: true)
+				} + [
+					PageRowModel(
+						id: "hire", title: "Hire an agent", subtitle: "From the marketplace",
+						accessory: .state(PageState("Marketplace", .active)), showsChevron: true)
+				])
+		}
+	}
+}
+
+/// Keys & MCP: the MCP SERVER rows (URL, tools, auth, a connected client, the unavailable line),
+/// then the API KEYS row with the masked key and the footer.
+private struct KeysAndMCPSnapshot: View {
+	let key: SecretValue
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			PageGroupLabel(text: "MCP server")
+			PageCard(rows: [
+				PageRowModel(
+					id: "url", title: "Server URL", subtitle: "https://api.maskin.io/mcp", subtitleIsMono: true,
+					accessory: .state(PageState("Copy", .plain))),
+				PageRowModel(
+					id: "tools", title: "Tools exposed", subtitle: "Objects, flows, decisions, search, chat",
+					accessory: .state(PageState("24", .plain))),
+				PageRowModel(id: "auth", title: "Auth", subtitle: "Your API key as a bearer token"),
+				PageRowModel(
+					id: "c1", title: "Claude Desktop", subtitle: "Read + write · last call 4 min. ago",
+					accessory: .state(WorkspacePageState.mcpClientConnected)),
+				PageRowModel(
+					id: "clients", title: "Connected clients", subtitle: SettingsError.mcpNotAvailable.message,
+					accessory: .state(PageState("None listed", .muted))),
+			])
+			PageGroupLabel(text: "API keys").padding(.top, MaskinSpace.s7)
+			PageCard(rows: [
+				PageRowModel(
+					id: "own", title: "Your API key", subtitle: key.masked, subtitleIsMono: true,
+					accessory: .state(WorkspacePageState.activeKey))
+			])
+			PageFootnote(text: KeysPage.footer)
+		}
+	}
+}
+
+/// The profile sheet's three stat tiles, each a link.
+private struct StatTilesSnapshot: View {
+	var body: some View {
+		HStack(alignment: .top, spacing: MaskinSpace.s4) {
+			ProfileStatTile(value: 3, label: "waiting on you", destination: "For you") {}
+			ProfileStatTile(value: 5, label: "flows you own", destination: "Flows") {}
+			ProfileStatTile(value: 2, label: "agents working", destination: "Members") {}
+		}
+	}
+}
+
 private struct KeySnapshot: View {
 	let key: SecretValue
 	var body: some View {
@@ -113,6 +201,15 @@ struct SettingsSnapshotTests {
 		try render(MembersSnapshot(), name: "members", width: width, dark: dark)
 		try render(IntegrationsSnapshot(), name: "integrations", width: width, dark: dark)
 		try render(KeySnapshot(key: key), name: "apikey-skills", width: width, dark: dark)
+		try render(MembersGroupsSnapshot(), name: "members-groups", width: width, dark: dark)
+		try render(KeysAndMCPSnapshot(key: key), name: "keys-and-mcp", width: width, dark: dark)
+		try render(StatTilesSnapshot(), name: "profile-stat-tiles", width: width, dark: dark)
+	}
+
+	@Test("the Keys & MCP footer is the handoff sentence, with no exclamation mark")
+	func footerCopy() {
+		#expect(KeysPage.footer == "MCP lets Claude, Cursor and other AI tools use this workspace with your permissions.")
+		#expect(!KeysPage.footer.contains("!"))
 	}
 
 	@Test("the key card is fed the masked text only, so a screenshot never shows the secret")

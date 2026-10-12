@@ -16,13 +16,14 @@ struct CreateObjectSheet: View {
 	@State private var isSaving = false
 	@State private var failure: String?
 
-	init(store: ObjectsStore, onCreated: @escaping (WorkObject) -> Void = { _ in }) {
+	/// `status` preselects the status (a board column's "+"); it must belong to the current type.
+	init(store: ObjectsStore, status: String? = nil, onCreated: @escaping (WorkObject) -> Void = { _ in }) {
 		self.store = store
 		self.onCreated = onCreated
 		let type = store.typeFilter ?? store.directory.schema.types.first ?? "task"
-		_draft = State(
-			initialValue: ObjectDraft(
-				type: type, status: store.directory.schema.statuses(for: type).first ?? "new"))
+		let allowed = store.directory.schema.statuses(for: type)
+		let start = status.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.first ?? "new"
+		_draft = State(initialValue: ObjectDraft(type: type, status: start))
 	}
 
 	private var statuses: [String] { store.directory.schema.statuses(for: draft.type) }

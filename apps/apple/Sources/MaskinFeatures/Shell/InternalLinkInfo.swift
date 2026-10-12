@@ -17,6 +17,10 @@ extension InternalLinkDirectory {
 			return MarkdownLinkInfo(symbol: "bubble.left", kindLabel: "Chat")
 		case .notifications:
 			return MarkdownLinkInfo(symbol: "sparkles", kindLabel: "For you")
+		case .agents:
+			return MarkdownLinkInfo(symbol: "person.2", kindLabel: "Agents")
+		case .agent:
+			return MarkdownLinkInfo(symbol: "person", kindLabel: "Agent")
 		}
 	}
 

@@ -53,6 +53,24 @@ public enum WorkspacePageState {
 
 	public static let activeKey = PageState("Active", .active)
 
+	/// An agent's trailing state on the Members page: Working is the only signal; Idle, Paused and
+	/// Failed are quiet grey. Nil while the agents list has not resolved the agent yet.
+	public static func agent(_ status: AgentStatus?) -> PageState? {
+		guard let status else { return nil }
+		return PageState(status.label, status == .running ? .active : .muted)
+	}
+
+	/// A connected MCP client reads "Connected" in Patina; tapping it disconnects.
+	public static let mcpClientConnected = PageState("Connected", .active)
+
+	/// "Read + write · last call 4m ago" / "Read only".
+	public static func mcpClientSubtitle(_ client: MCPClient, relativeTo now: Date = Date()) -> String {
+		guard let last = client.lastCallAt else { return client.access.label }
+		let formatter = RelativeDateTimeFormatter()
+		formatter.unitsStyle = .abbreviated
+		return "\(client.access.label) · last call \(formatter.localizedString(for: last, relativeTo: now))"
+	}
+
 	/// The sub line of a trigger row: the plain-language When, or "Paused".
 	public static func triggerSubtitle(_ trigger: Trigger) -> String {
 		trigger.enabled ? trigger.summary : "Paused"

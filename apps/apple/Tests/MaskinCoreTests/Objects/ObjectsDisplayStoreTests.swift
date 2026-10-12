@@ -82,9 +82,9 @@ struct ObjectsDisplayStoreTests {
 		#expect(store.typeFilter == nil)
 		await store.setLayout(.board)
 		#expect(store.display.layout == .board)
-		#expect(store.typeFilter == "insight")
+		#expect(store.typeFilter == "bet")
 		await store.setLayout(.list)
-		#expect(store.typeFilter == "insight")
+		#expect(store.typeFilter == "bet")
 	}
 }
 

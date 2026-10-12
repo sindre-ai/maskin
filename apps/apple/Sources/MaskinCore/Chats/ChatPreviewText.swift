@@ -36,4 +36,17 @@ public enum ChatPreviewText {
 		}
 		return text.trimmingCharacters(in: CharacterSet(charactersIn: " ·").union(.whitespacesAndNewlines))
 	}
+
+	/// The first clause of a line, for a one-line flow row: cut at the first `.`, `;`, `:`, `—`
+	/// or line break. "Done. PR is up" → "Done"; a text with none of those is returned whole.
+	public static func firstClause(_ text: String) -> String {
+		let plain = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		let stops = CharacterSet(charactersIn: ".;:—\n")
+		if let end = plain.unicodeScalars.firstIndex(where: { stops.contains($0) }) {
+			let clause = String(plain.unicodeScalars[plain.unicodeScalars.startIndex..<end])
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+			return clause.isEmpty ? plain : clause
+		}
+		return plain
+	}
 }

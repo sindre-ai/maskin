@@ -7,19 +7,7 @@ import Testing
 struct FlowCopyTests {
 	// MARK: subtitle
 
-	@Test("the subtitle spells counts out and agrees in number")
-	func subtitle() {
-		#expect(FlowsSummary.line(running: 3, needYou: 2) == "Three outcomes in motion. Two need you.")
-		#expect(FlowsSummary.line(running: 1, needYou: 1) == "One outcome in motion. One needs you.")
-		#expect(FlowsSummary.line(running: 4, needYou: 0) == "Four outcomes in motion.")
-		#expect(FlowsSummary.line(running: 14, needYou: 1) == "14 outcomes in motion. One needs you.")
-	}
 
-	@Test("the subtitle is absent when nothing runs and never counts more needing you than running")
-	func subtitleBounds() {
-		#expect(FlowsSummary.line(running: 0, needYou: 0) == nil)
-		#expect(FlowsSummary.line(running: 2, needYou: 5) == "Two outcomes in motion. Two need you.")
-	}
 
 	// MARK: latest update sentence
 

@@ -126,6 +126,125 @@ struct MembersStoreTests {
 	}
 }
 
+@Suite("MembersRoster")
+struct MembersRosterTests {
+	private let members = [
+		member("o", "Olive Owner", .owner), member("m", "Mo Member"),
+		member("ag-relay", "Relay", .member, agent: true), member("ag-ghost", "Ghost", .member, agent: true),
+	]
+
+	@Test("people and agents split into two groups; member agents keep the people list clean")
+	func splits() {
+		let groups = MembersRoster.groups(members: members, agents: [])
+		#expect(groups.people.map(\.id) == ["o", "m"])
+		// No agents list yet: member agents are still shown, with no status to claim.
+		#expect(groups.agents.map(\.id) == ["ag-ghost", "ag-relay"])
+		#expect(groups.agents.allSatisfy { $0.status == nil && $0.role == "Agent" })
+	}
+
+	@Test("agents come from the agents list, working first, then paused, idle, failed, unknown")
+	func agentOrder() {
+		let agents = [
+			agentRow("ag-relay", name: "Relay", description: "Routes leads", state: .idle),
+			agentRow("ag-forge", name: "Forge", description: "Ships code", state: .paused),
+			agentRow("ag-scout", name: "Scout", description: "Finds leads", state: .failed),
+			AgentSummary(
+				id: "ag-zed", name: "Zed", description: "Does it all",
+				latestSession: agentSession("s1", actor: "ag-zed", status: "running")),
+		]
+		let groups = MembersRoster.groups(members: members, agents: agents)
+		#expect(groups.agents.map(\.id) == ["ag-zed", "ag-forge", "ag-relay", "ag-scout", "ag-ghost"])
+		#expect(groups.agents[0].isWorking)
+		#expect(groups.agents[0].statusLabel == "Working")
+		#expect(groups.agents[0].role == "Does it all")
+		#expect(groups.agents[1].statusLabel == "Paused")
+		#expect(groups.agents.last?.statusLabel == nil)
+	}
+
+	@Test("an agent that is in the agents list but not a member is still listed once")
+	func noDuplicates() {
+		let groups = MembersRoster.groups(
+			members: members, agents: [agentRow("ag-relay", name: "Relay"), agentRow("ag-new", name: "New")])
+		#expect(groups.agents.filter { $0.id == "ag-relay" }.count == 1)
+		#expect(groups.agents.map(\.id).contains("ag-new"))
+	}
+}
+
+@MainActor
+@Suite("MCPStore")
+struct MCPStoreTests {
+	private let url = URL(string: "https://api.maskin.io/mcp")!
+
+	private func make(_ fake: FakeSettings, role: MemberRole = .admin) -> MCPStore {
+		fake.mcpClientList = [
+			MCPClient(id: "c1", name: "Cursor", access: .readOnly, lastCallAt: Date(timeIntervalSince1970: 100)),
+			MCPClient(id: "c2", name: "Claude Desktop", access: .readWrite, lastCallAt: Date(timeIntervalSince1970: 200)),
+		]
+		return MCPStore(api: fake, serverURL: url, currentRole: role)
+	}
+
+	@Test("loads clients newest call first, plus tool count and auth")
+	func loads() async {
+		let store = make(FakeSettings())
+		await store.load()
+		#expect(store.clientsPhase == .loaded)
+		#expect(store.clients.map(\.name) == ["Claude Desktop", "Cursor"])
+		#expect(store.toolCountText == "24")
+		#expect(store.authLabel == "Your API key as a bearer token")
+		#expect(store.serverURL == url)
+	}
+
+	@Test("OAuth is only offered when the server says so")
+	func oauth() async {
+		let fake = FakeSettings()
+		fake.mcpInfo = MCPServerInfo(toolCount: nil, supportsOAuth: true)
+		let store = make(fake)
+		await store.load()
+		#expect(store.authLabel.hasPrefix("OAuth sign-in"))
+		#expect(store.toolCountText == nil)
+	}
+
+	@Test("the production stub reads as unavailable, not as an empty list or a crash")
+	func stubPath() async {
+		let fake = FakeSettings()
+		fake.mcpUnavailable = true
+		let store = make(fake)
+		await store.load()
+		#expect(store.clientsPhase == .unavailable(SettingsError.mcpNotAvailable.message))
+		#expect(store.clients.isEmpty)
+		#expect(store.info == nil)
+		#expect(store.toolCountText == nil)
+		#expect(store.authLabel == "Your API key as a bearer token")
+	}
+
+	@Test("disconnect is optimistic, keyed, and rolls back on refusal")
+	func disconnect() async {
+		let fake = FakeSettings()
+		let store = make(fake)
+		await store.load()
+		let cursor = store.clients.first { $0.id == "c1" }!
+		#expect(await store.disconnect(cursor))
+		#expect(!store.clients.contains { $0.id == "c1" })
+		#expect(fake.idempotencyKeys.count == 1)
+		fake.failure = SettingsError("nope")
+		let desktop = store.clients.first { $0.id == "c2" }!
+		#expect(await store.disconnect(desktop) == false)
+		#expect(store.clients.contains { $0.id == "c2" })
+		#expect(store.actionError == "nope")
+		#expect(store.busyIDs.isEmpty)
+	}
+
+	@Test("a plain member cannot disconnect a client")
+	func memberGated() async {
+		let fake = FakeSettings()
+		let store = make(fake, role: .member)
+		await store.load()
+		#expect(!store.canManage)
+		#expect(await store.disconnect(store.clients[0]) == false)
+		#expect(!fake.calls.contains("mcp-disconnect"))
+	}
+}
+
 @MainActor
 @Suite("IntegrationsStore")
 struct IntegrationsStoreTests {
@@ -324,5 +443,29 @@ struct SkillsStoreTests {
 		let store = SkillsStore(api: fake, workspaceId: "ws")
 		await store.load()
 		#expect(store.phase == .failed("down"))
+	}
+}
+
+@Suite("WorkspacePageState for agents and MCP clients")
+struct WorkspacePageAgentStateTests {
+	@Test("Working is the only Patina state; the rest are quiet, unknown is nothing")
+	func agentStates() {
+		#expect(WorkspacePageState.agent(.running) == PageState("Working", .active))
+		#expect(WorkspacePageState.agent(.idle) == PageState("Idle", .muted))
+		#expect(WorkspacePageState.agent(.paused) == PageState("Paused", .muted))
+		#expect(WorkspacePageState.agent(.failed) == PageState("Failed", .muted))
+		#expect(WorkspacePageState.agent(nil) == nil)
+	}
+
+	@Test("an MCP client's line names its access and last call, never an id")
+	func clientSubtitle() {
+		let now = Date(timeIntervalSince1970: 1_000_000)
+		let recent = MCPClient(id: "c1", name: "Cursor", access: .readOnly, lastCallAt: now.addingTimeInterval(-240))
+		let never = MCPClient(id: "c2", name: "Claude Desktop", access: .readWrite)
+		let line = WorkspacePageState.mcpClientSubtitle(recent, relativeTo: now)
+		#expect(line.hasPrefix("Read only · last call "))
+		#expect(!line.contains("c1"))
+		#expect(WorkspacePageState.mcpClientSubtitle(never, relativeTo: now) == "Read + write")
+		#expect(WorkspacePageState.mcpClientConnected == PageState("Connected", .active))
 	}
 }

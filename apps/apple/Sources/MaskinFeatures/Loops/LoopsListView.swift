@@ -3,7 +3,9 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The loops sidebar: sections by what needs attention, with loading, empty, error and offline states.
+/// The Flows list, with loading, empty, error and offline states. The header is the title alone;
+/// when a running flow needs the viewer a "{n} need you ›" pill appears under it and filters the
+/// list to those flows (handoff `7-Chat.md` §10). Flows carry no tags, so there is no filter bar.
 struct LoopsListView: View {
 	let store: LoopsStore
 	@Binding var selection: String?
@@ -43,10 +45,10 @@ struct LoopsListView: View {
 				if let notice = store.notice {
 					FormError(notice).onTapGesture { store.notice = nil }
 				}
-				if search.isEmpty, let summary = store.summaryLine {
-					Text(summary)
-						.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-						.foregroundStyle(MaskinColor.ink4)
+				if search.isEmpty, store.needYouCount > 0 {
+					FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
+						withAnimation(MaskinMotion.quick) { store.needsYouOnly.toggle() }
+					}
 				}
 				LazyVGrid(
 					columns: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
@@ -77,14 +79,15 @@ struct LoopsListView: View {
 					.listRowBackground(Color.clear)
 					.onTapGesture { store.notice = nil }
 			}
-			if search.isEmpty, let summary = store.summaryLine {
-				Text(summary)
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-					.foregroundStyle(MaskinColor.ink4)
-					.listRowSeparator(.hidden)
-					.listRowBackground(Color.clear)
+			if search.isEmpty, store.needYouCount > 0 {
+				FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
+					withAnimation(MaskinMotion.quick) { store.needsYouOnly.toggle() }
+				}
+				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+				.listRowSeparator(.hidden)
+				.listRowBackground(Color.clear)
 			}
-			if search.isEmpty {
+			if search.isEmpty, !store.needsYouOnly {
 				let cards = LoopOutcomes.cards(for: store.loops)
 				if !cards.isEmpty {
 					OutcomeScoreRow(cards: cards) { selection = $0 }
@@ -129,7 +132,12 @@ struct LoopsListView: View {
 			}
 		case .loaded:
 			if isEmpty {
-				if search.isEmpty {
+				if store.needsYouOnly {
+					// The pill is on but every flow that needed you was handled meanwhile.
+					EmptyState(symbol: "checkmark", title: "Nothing needs you right now") {
+						Button("Show all flows") { store.needsYouOnly = false }.buttonStyle(.secondaryAction)
+					}
+				} else if search.isEmpty {
 					EmptyState(
 						symbol: "arrow.triangle.2.circlepath", title: "No flows running",
 						message: "A flow is a few agents working together. Describe one in chat, or pick one from the marketplace."
@@ -145,5 +153,46 @@ struct LoopsListView: View {
 				}
 			}
 		}
+	}
+}
+
+/// "{n} need you ›" on `sigTint`/`sigInk` with a `sig` dot; while filtering it inverts to ink
+/// and reads "Showing {n} that need you · Show all". 34pt tall, like the handoff.
+struct FlowsNeedsYouPill: View {
+	let count: Int
+	let isOn: Bool
+	let action: () -> Void
+
+	/// The handoff's pill height: the spacing scale stops at 32, so 32 + 2.
+	static let height: CGFloat = MaskinSpace.s14 + MaskinSpace.s1
+
+	static func label(count: Int, isOn: Bool) -> String {
+		if isOn { return "Showing \(count) that need you · Show all" }
+		return count == 1 ? "1 needs you ›" : "\(count) need you ›"
+	}
+
+	var body: some View {
+		Button(action: action) {
+			HStack(spacing: MaskinSpace.s4) {
+				Circle()
+					.fill(isOn ? MaskinSurface.onInverse : MaskinColor.sig)
+					.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+					.accessibilityHidden(true)
+				Text(Self.label(count: count, isOn: isOn))
+					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold, relativeTo: .subheadline))
+					.lineLimit(1)
+			}
+			.foregroundStyle(isOn ? MaskinSurface.onInverse : MaskinColor.sigInk)
+			.padding(.leading, MaskinSpace.s6)
+			.padding(.trailing, MaskinSpace.s8)
+			.frame(minHeight: Self.height)
+			.background(isOn ? MaskinSurface.inverse : MaskinColor.sigTint, in: Capsule())
+			.contentShape(Capsule())
+		}
+		.buttonStyle(.maskinPressed)
+		.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+		.accessibilityLabel(isOn ? "Showing \(count) flows that need you" : "\(count) flows need you")
+		.accessibilityHint(isOn ? "Shows all flows" : "Shows only the flows that need you")
+		.accessibilityAddTraits(isOn ? .isSelected : [])
 	}
 }

@@ -103,13 +103,66 @@ import Testing
 		#expect(ChatQuote.make(author: "Sam", content: "   \n ") == "")
 	}
 
-	@Test func quotingGoesAboveTheDraft() {
+	@Test func quotingSetsTheReplyStripAndSendsTheQuoteAboveTheText() {
 		let m = model("my reply")
 		m.quote(author: "Relay", content: "Done.")
-		#expect(m.text == "> **Relay**\n> Done.\n\nmy reply")
+		#expect(m.text == "my reply", "the draft is untouched; the quote lives in the strip")
+		#expect(m.replyTo?.name == "Relay")
+		#expect(m.replyTo?.text == "Done.")
 		#expect(m.focusRequest == 1)
 		m.quote(author: "Relay", content: "")
-		#expect(m.text == "> **Relay**\n> Done.\n\nmy reply")
+		#expect(m.replyTo?.text == "Done.", "an empty message cannot be quoted")
 		#expect(m.focusRequest == 1)
+		let sent = m.take()
+		#expect(sent?.text == "> **Relay**\n> Done.\n\nmy reply")
+		#expect(m.replyTo == nil)
+	}
+
+	@Test func clearQuoteDropsTheReply() {
+		let m = model("still here")
+		m.reply(to: "Forge", text: "Shipped.")
+		m.clearQuote()
+		#expect(m.replyTo == nil)
+		#expect(m.text == "still here")
+	}
+
+	// MARK: Edit
+
+	@Test func beginEditTakesTheMessageTextAndKeepsTheDraft() {
+		let m = model("half a thought")
+		m.beginEdit(messageID: "42", originalText: "Yes please, flag anything risky.")
+		#expect(m.editing?.messageID == "42")
+		#expect(m.editing?.originalText == "Yes please, flag anything risky.")
+		#expect(m.text == "Yes please, flag anything risky.")
+		#expect(m.selectionRequest?.range == 32..<32, "the caret lands at the end")
+		#expect(m.focusRequest == 1)
+	}
+
+	@Test func cancellingAnEditRestoresTheDraft() {
+		let m = model("half a thought")
+		m.beginEdit(messageID: "42", originalText: "old text")
+		m.text = "old text, revised"
+		m.clearQuote()
+		#expect(m.editing == nil)
+		#expect(m.text == "half a thought")
+	}
+
+	@Test func editAndReplyAreExclusive() {
+		let m = model("draft")
+		m.beginEdit(messageID: "1", originalText: "sent")
+		m.reply(to: "Sam", text: "A question")
+		#expect(m.editing == nil, "replying ends the edit")
+		#expect(m.text == "draft", "and gives the draft back")
+		#expect(m.replyTo?.name == "Sam")
+		m.beginEdit(messageID: "2", originalText: "other")
+		#expect(m.replyTo == nil, "editing ends the reply")
+	}
+
+	@Test func takeClearsTheEdit() {
+		let m = model()
+		m.beginEdit(messageID: "7", originalText: "fix this")
+		#expect(m.take()?.text == "fix this")
+		#expect(m.editing == nil)
+		#expect(m.text.isEmpty)
 	}
 }
