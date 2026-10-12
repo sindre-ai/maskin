@@ -142,6 +142,6 @@ groups:
             If the cause was an empty source rather than a rejection, also confirm
             discovery.docker is returning targets — see the README's note on a single
             malformed IPv6 gateway aborting discovery for every container on the daemon.
-          runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
+          runbook_url: https://github.com/vaerksted-ai/maskin/blob/main/observability/coolify-host/README.md
         notification_settings:
           receiver: ${CONTACT_POINT}
