@@ -19,6 +19,9 @@ const { encrypt } = await import('../../lib/crypto')
 
 const FRONTEND_URL = 'https://app.test'
 const PEOPLE_URL = 'https://people.googleapis.com/v1/people/me?personFields=metadata'
+const START_PAGE_TOKEN_URL =
+	'https://www.googleapis.com/drive/v3/changes/startPageToken?supportsAllDrives=true'
+const WATCH_URL = 'https://www.googleapis.com/drive/v3/changes/watch?'
 
 function json(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -30,9 +33,10 @@ function json(body: unknown, status = 200): Response {
 /**
  * Stub Google at the network edge only. The real google-drive provider config,
  * the real generic callback and real Postgres all run; only the three Google
- * hosts the connect talks to are faked. Every other URL fails loudly.
+ * hosts the connect talks to are faked (token, userinfo, People, and the Drive
+ * change feed postInstall opens its channel on). Every other URL fails loudly.
  */
-function stubGoogle(handlers: { people: () => Response }) {
+function stubGoogle(handlers: { people: () => Response; watch?: () => Response }) {
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async (input: string | URL | Request) => {
@@ -44,6 +48,13 @@ function stubGoogle(handlers: { people: () => Response }) {
 				return json({ email: 'drive-user@example.com' })
 			}
 			if (url === PEOPLE_URL) return handlers.people()
+			if (url === START_PAGE_TOKEN_URL) return json({ startPageToken: 'start-1' })
+			if (url.startsWith(WATCH_URL)) {
+				return (
+					handlers.watch?.() ??
+					json({ resourceId: 'resource-1', expiration: String(Date.now() + 6 * 24 * 3600_000) })
+				)
+			}
 			throw new Error(`Unexpected outbound fetch in google-drive callback test: ${url}`)
 		}),
 	)
@@ -103,6 +114,8 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 		vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'drive-client-id')
 		vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'drive-client-secret')
 		vi.stubEnv('FRONTEND_URL', FRONTEND_URL)
+		vi.stubEnv('GOOGLE_DRIVE_CHANNEL_TOKEN_SECRET', 'drive-channel-secret')
+		vi.stubEnv('MASKIN_PUBLIC_URL', 'https://api.test')
 	})
 
 	afterEach(() => {
@@ -125,6 +138,15 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 		const rows = await driveRows(ws.id)
 		expect(rows).toHaveLength(1)
 		expect(rows[0].status).toBe('active')
+		// postInstall opened the changes.watch channel and seeded the cursor.
+		expect((rows[0].config as { drive?: Record<string, unknown> }).drive).toMatchObject({
+			peopleId: '112233445566778899',
+			channelId: expect.any(String),
+			channelResourceId: 'resource-1',
+			channelExpiresAt: expect.any(Number),
+			channelWebhookToken: expect.any(String),
+			startPageToken: 'start-1',
+		})
 
 		expect(connectedCalls()).toEqual([
 			[
@@ -157,6 +179,23 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 		expect(rows).toHaveLength(1)
 		expect(rows[0].status).toBe('error')
 
+		expect(connectedCalls()).toHaveLength(0)
+	})
+
+	it('emits nothing when Google refuses the notification channel and the connect ends in error', async () => {
+		const { ws, nonce, state } = await seedPendingConnect()
+		stubGoogle({
+			people: () =>
+				json({ metadata: { sources: [{ type: 'PROFILE', id: '112233445566778899' }] } }),
+			watch: () => json({ error: { code: 400, status: 'INVALID_ARGUMENT' } }, 400),
+		})
+
+		const res = await callback(state, nonce)
+
+		expect(res.headers.get('location')).toBe(
+			`${FRONTEND_URL}/${ws.id}/settings/integrations?error=post_install_failed`,
+		)
+		expect((await driveRows(ws.id))[0]?.status).toBe('error')
 		expect(connectedCalls()).toHaveLength(0)
 	})
 })
