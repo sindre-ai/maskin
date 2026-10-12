@@ -28167,10 +28167,6 @@
 										"type": "string",
 										"format": "uuid"
 									},
-									"initiated_from_object_type": {
-										"type": "string",
-										"maxLength": 64
-									},
 									"spawned_by_message_id": {
 										"type": "integer",
 										"exclusiveMinimum": 0
@@ -28181,6 +28177,9 @@
 											"type": "string",
 											"format": "uuid"
 										}
+									},
+									"notify_on_complete": {
+										"type": "boolean"
 									}
 								},
 								"required": [
@@ -29195,11 +29194,14 @@
 											"null"
 										],
 										"maxLength": 500
+									},
+									"notify_on_complete": {
+										"type": "boolean",
+										"enum": [
+											true
+										]
 									}
-								},
-								"required": [
-									"current_activity"
-								]
+								}
 							}
 						}
 					}
@@ -29305,6 +29307,17 @@
 												"string",
 												"null"
 											]
+										},
+										"notify_on_complete": {
+											"type": "string",
+											"enum": [
+												"registered",
+												"delivered",
+												"skipped"
+											]
+										},
+										"notify_skip_reason": {
+											"type": "string"
 										}
 									},
 									"required": [

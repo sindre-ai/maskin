@@ -41659,12 +41659,12 @@ public enum Operations {
                     public var entry_agent_role: Swift.String?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/initiated_from_object_id`.
                     public var initiated_from_object_id: Swift.String?
-                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/initiated_from_object_type`.
-                    public var initiated_from_object_type: Swift.String?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/spawned_by_message_id`.
                     public var spawned_by_message_id: Swift.Int?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/depends_on_session_ids`.
                     public var depends_on_session_ids: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/notify_on_complete`.
+                    public var notify_on_complete: Swift.Bool?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -41676,9 +41676,9 @@ public enum Operations {
                     ///   - source_session_id:
                     ///   - entry_agent_role:
                     ///   - initiated_from_object_id:
-                    ///   - initiated_from_object_type:
                     ///   - spawned_by_message_id:
                     ///   - depends_on_session_ids:
+                    ///   - notify_on_complete:
                     public init(
                         actor_id: Swift.String,
                         action_prompt: Swift.String,
@@ -41688,9 +41688,9 @@ public enum Operations {
                         source_session_id: Swift.String? = nil,
                         entry_agent_role: Swift.String? = nil,
                         initiated_from_object_id: Swift.String? = nil,
-                        initiated_from_object_type: Swift.String? = nil,
                         spawned_by_message_id: Swift.Int? = nil,
-                        depends_on_session_ids: [Swift.String]? = nil
+                        depends_on_session_ids: [Swift.String]? = nil,
+                        notify_on_complete: Swift.Bool? = nil
                     ) {
                         self.actor_id = actor_id
                         self.action_prompt = action_prompt
@@ -41700,9 +41700,9 @@ public enum Operations {
                         self.source_session_id = source_session_id
                         self.entry_agent_role = entry_agent_role
                         self.initiated_from_object_id = initiated_from_object_id
-                        self.initiated_from_object_type = initiated_from_object_type
                         self.spawned_by_message_id = spawned_by_message_id
                         self.depends_on_session_ids = depends_on_session_ids
+                        self.notify_on_complete = notify_on_complete
                     }
                     public enum CodingKeys: String, CodingKey {
                         case actor_id
@@ -41713,9 +41713,9 @@ public enum Operations {
                         case source_session_id
                         case entry_agent_role
                         case initiated_from_object_id
-                        case initiated_from_object_type
                         case spawned_by_message_id
                         case depends_on_session_ids
+                        case notify_on_complete
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/content/application\/json`.
@@ -42656,15 +42656,23 @@ public enum Operations {
                 public struct jsonPayload: Codable, Hashable, Sendable {
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/requestBody/json/current_activity`.
                     public var current_activity: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/requestBody/json/notify_on_complete`.
+                    public var notify_on_complete: Swift.Bool?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - current_activity:
-                    public init(current_activity: Swift.String? = nil) {
+                    ///   - notify_on_complete:
+                    public init(
+                        current_activity: Swift.String? = nil,
+                        notify_on_complete: Swift.Bool? = nil
+                    ) {
                         self.current_activity = current_activity
+                        self.notify_on_complete = notify_on_complete
                     }
                     public enum CodingKeys: String, CodingKey {
                         case current_activity
+                        case notify_on_complete
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/requestBody/content/application\/json`.
@@ -42765,6 +42773,16 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
+                        @frozen public enum notify_on_completePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case registered = "registered"
+                            case delivered = "delivered"
+                            case skipped = "skipped"
+                        }
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
+                        public var notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_skip_reason`.
+                        public var notify_skip_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -42786,6 +42804,8 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - notify_on_complete:
+                        ///   - notify_skip_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -42804,7 +42824,9 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload? = nil,
+                            notify_skip_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -42824,6 +42846,8 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.notify_on_complete = notify_on_complete
+                            self.notify_skip_reason = notify_skip_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -42844,6 +42868,8 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case notify_on_complete
+                            case notify_skip_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/application\/json`.
