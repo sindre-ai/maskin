@@ -99,13 +99,34 @@ export const DIALER_SUPPRESSING_STATUSES: readonly string[] = [
 
 export const MAX_DIALS_PER_CONTACT = 3
 
+/**
+ * The only metadata.company_type values the dialer accepts, exact and lowercase, as the
+ * prospect-list work stamps them from the CVR company form. Sole proprietors are the one
+ * protected group reachable by phone, so anything else (or nothing) is refused.
+ */
+export const DIALABLE_COMPANY_TYPES: readonly string[] = ['aps', 'as']
+
+function companyTypeReason(m: Record<string, unknown>): string | null {
+	const v = m.company_type
+	if (v === undefined || v === null) {
+		return 'contact has no company type (metadata.company_type is missing), so it is not known to be an ApS or A/S'
+	}
+	if (typeof v === 'string' && DIALABLE_COMPANY_TYPES.includes(v)) return null
+	if (v === '') {
+		return 'contact company type is empty (metadata.company_type is ""), so it is not known to be an ApS or A/S'
+	}
+	const found = typeof v === 'string' ? v : JSON.stringify(v)
+	return `contact company type "${found}" is not ApS or A/S (metadata.company_type must be aps or as)`
+}
+
 export type DncCheck =
 	| 'hold'
 	| 'status'
 	| 'protect'
 	| 'investor'
 	| 'owner'
-	| 'robinson'
+	| 'company_type'
+	| 'phone'
 	| 'time_of_day'
 	| 'max_dials'
 
@@ -115,14 +136,6 @@ export type DncResult =
 			pass: false
 			check: DncCheck
 			reason: string
-			/** Metadata the dialer writes onto the contact with the refusal. */
-			stamp?: Record<string, unknown>
-			/**
-			 * The normalized number the Robinson list matched. Set only on a confirmed match, never
-			 * on "list unavailable". The dialer stamps it so the queue read can tell this refusal is
-			 * permanent for this number.
-			 */
-			listedNumber?: string
 	  }
 
 export interface GateContact extends VoiceContact {
@@ -171,11 +184,6 @@ export function normalizeDanishNumber(raw: unknown): string | null {
 	return /^\+45\d{8}$/.test(digits) ? digits : null
 }
 
-/** The scrubbed Robinson list. A throw is treated as "unavailable" and fails closed. */
-export interface RobinsonList {
-	has(normalizedNumber: string): boolean | Promise<boolean>
-}
-
 export interface ActorRef {
 	type: string
 }
@@ -184,15 +192,10 @@ export interface DncGateDeps {
 	now: Date
 	founders: FounderActors
 	findActor(actorId: string): Promise<ActorRef | null>
-	robinson: RobinsonList
 }
 
-function refuse(
-	check: DncCheck,
-	reason: string,
-	stamp?: Record<string, unknown>,
-): Extract<DncResult, { pass: false }> {
-	return stamp ? { pass: false, check, reason, stamp } : { pass: false, check, reason }
+function refuse(check: DncCheck, reason: string): Extract<DncResult, { pass: false }> {
+	return { pass: false, check, reason }
 }
 
 export function inDialWindow(now: Date): boolean {
@@ -243,22 +246,13 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 	if (!actor) return refuse('owner', `founder actor for "${owner}" no longer exists`)
 	if (actor.type !== 'human') return refuse('owner', `founder actor for "${owner}" is not a human`)
 
-	// 4. Robinson list. Needs a number it can normalise; otherwise it cannot scrub.
-	const number = normalizeDanishNumber(m.phone)
-	if (!number) return refuse('robinson', 'contact has no valid +45 number to scrub')
-	let listed: boolean
-	try {
-		listed = await deps.robinson.has(number)
-	} catch {
-		return refuse('robinson', 'Robinson list is unavailable, so the number cannot be scrubbed')
-	}
-	if (listed) {
-		return {
-			...refuse('robinson', 'number is on the Robinson list', {
-				robinson_listed_at: deps.now.toISOString(),
-			}),
-			listedNumber: number,
-		}
+	// 4. Company type. Only an ApS or A/S is dialed; sole proprietors are a protected group.
+	const companyType = companyTypeReason(m)
+	if (companyType) return refuse('company_type', companyType)
+
+	// 4b. Phone. Needs a +45 number it can normalise.
+	if (!normalizeDanishNumber(m.phone)) {
+		return refuse('phone', 'contact has no valid +45 number to dial')
 	}
 
 	// 5. Time of day, Europe/Copenhagen workdays 09:00-16:00.

@@ -22,7 +22,7 @@ function clean(overrides: Record<string, unknown> = {}, status = 'voice_queued')
 	return {
 		id: 'c1',
 		status,
-		metadata: { owner: 'sebk', phone: '+4520123456', ...overrides },
+		metadata: { owner: 'sebk', phone: '+4520123456', company_type: 'aps', ...overrides },
 	}
 }
 
@@ -31,7 +31,6 @@ function deps(overrides: Partial<DncGateDeps> = {}): DncGateDeps {
 		now: NOW,
 		founders: parseFounderActors(FOUNDERS),
 		findActor: async () => ({ type: 'human' }),
-		robinson: { has: () => false },
 		...overrides,
 	}
 }
@@ -220,49 +219,66 @@ describe('runDncGate', () => {
 		})
 	})
 
-	describe('check 4: Robinson list', () => {
-		it('refuses a listed number and stamps robinson_listed_at', async () => {
-			const r = await refusal(clean(), deps({ robinson: { has: (n) => n === '+4520123456' } }))
-			expect(r).toMatchObject({
-				check: 'robinson',
-				stamp: { robinson_listed_at: NOW.toISOString() },
+	describe('check 4: company type', () => {
+		it.each(['aps', 'as'])('passes a contact whose company_type is %s', async (companyType) => {
+			expect(await runDncGate(clean({ company_type: companyType }), deps())).toEqual({ pass: true })
+		})
+		it('refuses a contact with no company_type and says it is missing', async () => {
+			const r = await refusal(clean({ company_type: undefined }))
+			expect(r.check).toBe('company_type')
+			expect(r.reason).toContain('missing')
+		})
+		it('refuses an empty company_type and says it is empty', async () => {
+			const r = await refusal(clean({ company_type: '' }))
+			expect(r.check).toBe('company_type')
+			expect(r.reason).toContain('empty')
+		})
+		it.each(['enkeltmandsvirksomhed', 'enk', 'iv'])(
+			'refuses the sole-proprietor-style value %s and names it',
+			async (companyType) => {
+				const r = await refusal(clean({ company_type: companyType }))
+				expect(r.check).toBe('company_type')
+				expect(r.reason).toContain(`"${companyType}"`)
+			},
+		)
+		it.each(['aps ', 'APS', 'A/S', 'k/s', 'ivs'])(
+			'refuses any other value (%s) and names it',
+			async (companyType) => {
+				const r = await refusal(clean({ company_type: companyType }))
+				expect(r.check).toBe('company_type')
+				expect(r.reason).toContain(`"${companyType}"`)
+			},
+		)
+		it('refuses a company_type that is not a string and names it', async () => {
+			const r = await refusal(clean({ company_type: 7 }))
+			expect(r.check).toBe('company_type')
+			expect(r.reason).toContain('"7"')
+		})
+		it('runs after the owner check and before the phone check', async () => {
+			expect(await refusal(clean({ owner: undefined, company_type: undefined }))).toMatchObject({
+				check: 'owner',
+			})
+			expect(await refusal(clean({ company_type: undefined, phone: undefined }))).toMatchObject({
+				check: 'company_type',
 			})
 		})
-		it('normalises the number before the lookup', async () => {
-			const seen: string[] = []
-			await runDncGate(
-				clean({ phone: '0045 20 12 34 56' }),
-				deps({
-					robinson: {
-						has: (n) => {
-							seen.push(n)
-							return false
-						},
-					},
-				}),
-			)
-			expect(seen).toEqual(['+4520123456'])
-		})
+	})
+
+	describe('check 4b: +45 phone number', () => {
+		it.each(['0045 20 12 34 56', '20123456', '(+45) 20-12-34-56'])(
+			'passes a number that normalises to +45 (%s)',
+			async (phone) => {
+				expect(await runDncGate(clean({ phone }), deps())).toEqual({ pass: true })
+			},
+		)
 		it.each([undefined, '', '12345', '+46701234567', 'not a number'])(
 			'refuses when there is no valid +45 number (%s)',
 			async (phone) => {
-				expect(await refusal(clean({ phone }))).toMatchObject({ check: 'robinson' })
+				const r = await refusal(clean({ phone }))
+				expect(r.check).toBe('phone')
+				expect(r.reason).toContain('+45')
 			},
 		)
-		it('fails closed when the list is unavailable', async () => {
-			const r = await refusal(
-				clean(),
-				deps({
-					robinson: {
-						has: () => {
-							throw new Error('no csv')
-						},
-					},
-				}),
-			)
-			expect(r).toMatchObject({ check: 'robinson' })
-			expect(r.reason).toContain('unavailable')
-		})
 	})
 
 	describe('check 5: time of day', () => {

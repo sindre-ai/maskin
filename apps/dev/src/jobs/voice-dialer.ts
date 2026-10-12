@@ -1,6 +1,5 @@
 import type { Database } from '@maskin/db'
 import { actors } from '@maskin/db/schema'
-import type { StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
 import { eq } from 'drizzle-orm'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
@@ -17,7 +16,6 @@ import {
 	inDialWindow,
 	parseFounderActors,
 } from '../lib/outreach/voice/dnc-gate'
-import { WorkspaceRobinsonLists } from '../lib/outreach/voice/robinson-list'
 
 /**
  * Voice dialer cron: a tick about every 10 seconds, and only inside the
@@ -42,11 +40,9 @@ export class VoiceDialerJob {
 	private job: Cron | null = null
 	private running = false
 	private founders: FounderActors
-	private robinson: WorkspaceRobinsonLists
 
 	constructor(
 		private db: Database,
-		storage: Pick<StorageProvider, 'get'>,
 		private env: NodeJS.ProcessEnv = process.env,
 		private cronExpression: string = CRON_EXPRESSION,
 	) {
@@ -57,7 +53,6 @@ export class VoiceDialerJob {
 				reason: this.founders.reason,
 			})
 		}
-		this.robinson = new WorkspaceRobinsonLists(db, storage)
 	}
 
 	start(): void {
@@ -118,7 +113,6 @@ export class VoiceDialerJob {
 						.limit(1)
 					return row ?? null
 				},
-				robinson: this.robinson.forWorkspace(workspaceId),
 			},
 			config: {
 				rateLimitPerMinute: runtime.callRateLimitPerMinute,
