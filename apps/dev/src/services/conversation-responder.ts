@@ -51,6 +51,10 @@ const RESPOND_DECISION_TOOL: LLMTool = {
  * first-ever reply and recovery after the previous session died (timeout,
  * crash, manual stop). Never throws; every failure mode degrades to "stay
  * silent" so a broken relevance check can't spam a conversation.
+ *
+ * Returns 'agent_cap' when the turn is dropped because the conversation already
+ * ends in 5 agent messages in a row, so a caller that cannot afford a silent
+ * drop can record it. Every other path returns nothing.
  */
 export async function evaluateAndRespond(ctx: {
 	db: Database
@@ -78,7 +82,7 @@ export async function evaluateAndRespond(ctx: {
 		 */
 		targetAgentId?: string
 	}
-}): Promise<void> {
+}): Promise<'agent_cap' | void> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
 
 	const [message] = await db
@@ -167,7 +171,7 @@ export async function evaluateAndRespond(ctx: {
 			conversationId,
 			consecutiveAgents,
 		})
-		return
+		return 'agent_cap'
 	}
 
 	const metadata = message.metadata as {

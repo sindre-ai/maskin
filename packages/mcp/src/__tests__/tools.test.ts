@@ -676,6 +676,13 @@ describe('create_session schema', () => {
 		expect(result.config?.previewGuestPorts).toEqual([5173])
 	})
 
+	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
+		const base = { actor_id: uuid, action_prompt: 'Test' }
+		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
+		expect(schema.parse(base).notify_on_complete).toBeUndefined()
+		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
+	})
+
 	it('rejects previewGuestPorts entries above 65535', () => {
 		expect(() =>
 			schema.parse({
@@ -771,6 +778,13 @@ describe('run_agent schema', () => {
 		const result = schema.parse({ actor_id: uuid, action_prompt: 'Do task' })
 		expect(result.poll_interval_seconds).toBe(5)
 		expect(result.timeout_seconds).toBe(660)
+	})
+
+	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
+		const base = { actor_id: uuid, action_prompt: 'Do task' }
+		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
+		expect(schema.parse(base).notify_on_complete).toBeUndefined()
+		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
 	})
 
 	it('rejects poll_interval below 2', () => {
