@@ -472,8 +472,8 @@ export async function withPageAdminRevokeSafetyNet<T>(
 		const summary = await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
 		// Only delete when EVERY applied row (a) succeeded on the diff (no
 		// `error`), AND (b) reports zero surviving identities (registered +
-		// unchanged both empty). An enumeration failure or an unreadable
-		// credential means we can't confirm the account is orphaned — leaving
+		// unchanged both empty). An enumeration failure or a skipped row
+		// (no unipile_acc_slug) means we can't confirm the account is orphaned — leaving
 		// it in place is the safe direction. This is the "conditional" reading
 		// of the P3-B "R11-C PAGE_ADMIN_REVOKED calls deleteAccount" AC (see
 		// PR body's "R11-C interpretation" risk note).
