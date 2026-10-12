@@ -212,7 +212,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(desc(events.createdAt))
+		.orderBy(desc(events.createdAt), desc(events.id))
 
 	return c.json(serializeArray(results) as z.infer<typeof eventResponseSchema>[])
 }) as RouteHandler<typeof eventHistoryRoute, Env>)
