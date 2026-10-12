@@ -473,8 +473,8 @@ export const sessions = pgTable(
 		// any first-class object. Threaded onto the `session_failed` event's
 		// `data.initiated_from` block so a failure card can link back to what
 		// the session was doing, and onto the PostHog `runtime_session_ended`
-		// event as `context_object_id` / `context_object_type` so Criterion 3
-		// of the parent bet is measurable. Both columns nullable; NULL means
+		// event as `context_object_id` so Criterion 3 of the parent bet is
+		// measurable. The id column is nullable; NULL means
 		// "no originating object known" (direct API create, onboarding,
 		// notification response, cron trigger). FK uses ON DELETE SET NULL so
 		// deleting the object nulls the linkage rather than blocking the row.
@@ -483,6 +483,9 @@ export const sessions = pgTable(
 			(): AnyPgColumn => objects.id,
 			{ onDelete: 'set null' },
 		),
+		// Deprecated: no longer written or read (the object's type is looked up
+		// from initiated_from_object_id). Kept so the column and this schema stay
+		// in step until a follow-up migration drops it.
 		initiatedFromObjectType: text('initiated_from_object_type'),
 		// bigint (mode 'number'): cumulative counters outgrow int4 on long-lived
 		// sessions (cache reads reached 2.1B). Drizzle maps them back to JS

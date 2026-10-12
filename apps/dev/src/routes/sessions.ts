@@ -137,7 +137,6 @@ app.openapi(createSessionRoute, (async (c) => {
 		parentSessionId: body.source_session_id,
 		spawnedBySessionId: link.linked ? link.spawnedBySessionId : undefined,
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
-		initiatedFromObjectType: body.initiated_from_object_type ?? null,
 		await: 'none',
 		spawnedByMessageId: body.spawned_by_message_id,
 		dependsOnSessionIds: body.depends_on_session_ids,

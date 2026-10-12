@@ -1350,64 +1350,30 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. By default this returns immediately with the new session row; use get_session to check status and pass `include_logs: true` on the same call to read the container output. Pass `wait: true` when you need the answer in this run: the call then starts the session, polls until it reaches a terminal state (completed/failed/timeout), and returns `{ session, logs }` instead of the bare row (it implies `auto_start`). Otherwise prefer non-blocking execution, or @mention the agent in a comment on the object, which does not block or hold a container.',
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished, then give you the session and its output. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object.",
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
-			action_prompt: z.string().min(1).describe('The prompt/task for the agent to execute'),
-			config: z
-				.object({
-					base_image: z.string().optional(),
-					runtime: z.enum(['claude-code', 'codex', 'custom']).optional(),
-					runtime_config: z.record(z.unknown()).optional(),
-					timeout_seconds: z.number().int().min(30).max(3600).optional(),
-					memory_mb: z.number().int().min(256).max(8192).optional(),
-					cpu_shares: z.number().int().min(256).max(4096).optional(),
-					env_vars: z.record(z.string()).optional(),
-					browserRequired: z
-						.boolean()
-						.optional()
-						.describe(
-							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL}.',
-						),
-					previewGuestPorts: z
-						.array(z.number().int().positive().max(65535))
-						.max(8)
-						.optional()
-						.describe(
-							"Usually unnecessary: once a browser sidecar is attached (see browserRequired), any dev-server port the agent starts on its own inside 3000-12000 (e.g. Vite's default 5173) is detected and relayed automatically — the agent's Playwright tool can reach it directly, and the agent is told the URL automatically. Only set this to pre-declare a port so its relay URL (PREVIEW_URL env var) is available from the very first turn, before the dev server itself has started listening. Implies browserRequired.",
-						),
-				})
-				.optional()
-				.describe('Container configuration overrides'),
-			trigger_id: z.string().uuid().optional().describe('Trigger that initiated this session'),
-			auto_start: z.boolean().default(true).describe('Start the session immediately'),
+			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
+			actor_id: z.string().uuid().describe('The agent that should do the work'),
+			action_prompt: z.string().min(1).describe('What you want the agent to do'),
 			source_session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
+					"An earlier session to pick up from. The new session starts with that session's files, so use it to finish work an earlier session started but could not complete (for example, code that was written but not pushed).",
 				),
 			initiated_from_object_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Object id (bet, task, insight, etc.) this session is being spawned for. Threaded into the session row so a failure event can link back to the object, and emitted on the runtime_session_ended PostHog event as context_object_id. Omit when there is no originating object (direct API create, cron, onboarding).',
-				),
-			initiated_from_object_type: z
-				.string()
-				.max(64)
-				.optional()
-				.describe(
-					"Object type of `initiated_from_object_id` (e.g. 'bet', 'task', 'insight'). Emitted on the runtime_session_ended PostHog event as context_object_type. Must be set whenever initiated_from_object_id is set.",
+					'The bet, task, insight or other object this work is for. Leave it out if the work is not about a specific object.',
 				),
 			notify_on_complete: z
 				.boolean()
 				.optional()
 				.describe(
-					"Set true to get the helper's final message back when it ends. It lands where you started the work: a new turn in your own chat if you are in one (even while you are still running), else a comment on the object you were started from. Omit it and the helper's end behaves as before. With `wait: true` the call already returns the result, so the flag only matters if the wait times out: then it is set on the helper, and its final message is sent back to you later. Omit it and a timed-out wait gets nothing more.",
+					"Set true to get the agent's final message back when it finishes. It arrives as a new turn in your own chat if you are in one, otherwise as a comment on the object you were started from. Not needed with `wait: true`, since you get the result from the call itself.",
 				),
 			spawned_by_message_id: z
 				.number()
@@ -1415,35 +1381,13 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					'The assistant message that triggered this sub-agent spawn. Persisted onto the session so the UI can anchor a handed-off strip to that bubble; omit for a spawn with no strip.',
-				),
-			depends_on_session_ids: z
-				.array(z.string().uuid())
-				.optional()
-				.describe(
-					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
+					'The message of yours that led to this work being started, so the chat can show it next to that message. Leave it out if there is none.',
 				),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'Block until the session reaches a terminal state (completed/failed/timeout) and return `{ session, logs }` with the first 500 log lines, instead of the bare session row. Implies auto_start. Follows the retry session when a subscription limit triggers one. Omit for the default non-blocking behaviour.',
-				),
-			poll_interval_seconds: z
-				.number()
-				.int()
-				.min(2)
-				.max(30)
-				.optional()
-				.describe('Only with `wait: true`: how often to check session status. Default 5.'),
-			wait_timeout_seconds: z
-				.number()
-				.int()
-				.min(30)
-				.max(3700)
-				.optional()
-				.describe(
-					'Only with `wait: true`: maximum time to wait before giving up and returning the still-running session. Should exceed config.timeout_seconds. Default 660.',
+					'Wait for the agent to finish and return the session together with the first 500 lines of its output, instead of returning straight away.',
 				),
 		}),
 	},

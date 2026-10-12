@@ -1043,6 +1043,12 @@ async function enrichSessionActorName<T extends SessionRow>(
 	return session
 }
 
+// A waiting create_session checks every few seconds and keeps going until the
+// session ends. The limit is only a backstop just above the longest session
+// timeout (3600s), so a stuck session cannot hold the call forever.
+const WAIT_POLL_MS = 5_000
+const WAIT_LIMIT_MS = 3_700_000
+
 /**
  * The `wait: true` path of `create_session`: start the session, poll until it
  * reaches a terminal state (or the wait runs out), and return `{ session, logs }`.
@@ -1051,31 +1057,19 @@ async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
 ) {
-	const {
-		workspace_id,
-		wait: _wait,
-		poll_interval_seconds,
-		wait_timeout_seconds,
-		notify_on_complete,
-		...createBody
-	} = args
+	const { workspace_id, wait: _wait, notify_on_complete, ...createBody } = args
 	const wsOpts = { workspaceId: workspace_id }
 
-	// 1. Create session. A waiting call must auto-start, or nothing would ever
-	// finish. notify_on_complete is deliberately NOT sent here: this call returns
-	// the result inline, so it is only registered (below) if the wait times out.
-	const session = (await apiCall(
-		config,
-		'POST',
-		'/api/sessions',
-		{ ...createBody, auto_start: true },
-		wsOpts,
-	)) as { id: string; status: string }
+	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
+	// call returns the result inline, so it is only registered (below) if the
+	// wait runs out.
+	const session = (await apiCall(config, 'POST', '/api/sessions', createBody, wsOpts)) as {
+		id: string
+		status: string
+	}
 
 	let sessionId = session.id
-	const pollMs = (poll_interval_seconds ?? 5) * 1000
-	const timeoutMs = (wait_timeout_seconds ?? 660) * 1000
-	const deadline = Date.now() + timeoutMs
+	const deadline = Date.now() + WAIT_LIMIT_MS
 	const terminalStatuses = ['completed', 'failed', 'timeout']
 	// §17.6: when a session hits a subscription limit its terminal report
 	// carries retried_session_id — the id of the retry the scheduler
@@ -1090,7 +1084,7 @@ async function createSessionAndWait(
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
 	while (Date.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, pollMs))
+		await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS))
 		current = (await apiCall(
 			config,
 			'GET',
@@ -5954,9 +5948,8 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			if (args.wait) return createSessionAndWait(config, args)
 
-			// Wait-only knobs never go to the create route.
-			const { workspace_id, wait, poll_interval_seconds, wait_timeout_seconds, ...createBody } =
-				args
+			// `wait` never goes to the create route.
+			const { workspace_id, wait, ...createBody } = args
 
 			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
 				workspaceId: workspace_id,

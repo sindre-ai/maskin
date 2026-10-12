@@ -628,68 +628,46 @@ describe('update_actor schema', () => {
 
 describe('create_session schema', () => {
 	const schema = tools.create_session.inputSchema
+	const base = { workspace_id: uuid, actor_id: uuid, action_prompt: 'Test' }
 
-	it('requires actor_id and action_prompt', () => {
-		const result = schema.parse({
-			actor_id: uuid,
-			action_prompt: 'Fix bugs',
-		})
+	it('requires workspace_id, actor_id and action_prompt', () => {
+		const result = schema.parse({ ...base, action_prompt: 'Fix bugs' })
 		expect(result.actor_id).toBe(uuid)
-		expect(result.auto_start).toBe(true)
-	})
-
-	it('defaults auto_start to true', () => {
-		const result = schema.parse({ actor_id: uuid, action_prompt: 'Test' })
-		expect(result.auto_start).toBe(true)
+		expect(() => schema.parse({ actor_id: uuid, action_prompt: 'Test' })).toThrow()
 	})
 
 	it('rejects empty action_prompt', () => {
-		expect(() => schema.parse({ actor_id: uuid, action_prompt: '' })).toThrow()
+		expect(() => schema.parse({ ...base, action_prompt: '' })).toThrow()
 	})
 
-	it('accepts optional config', () => {
-		const result = schema.parse({
-			actor_id: uuid,
-			action_prompt: 'Test',
-			config: { runtime: 'codex', timeout_seconds: 300 },
-		})
-		expect(result.config?.runtime).toBe('codex')
-	})
-
-	it('rejects timeout below 30', () => {
-		expect(() =>
-			schema.parse({
-				actor_id: uuid,
-				action_prompt: 'Test',
-				config: { timeout_seconds: 10 },
-			}),
-		).toThrow()
-	})
-
-	it('accepts previewGuestPorts alongside browserRequired', () => {
-		const result = schema.parse({
-			actor_id: uuid,
-			action_prompt: 'Test',
-			config: { browserRequired: true, previewGuestPorts: [5173] },
-		})
-		expect(result.config?.previewGuestPorts).toEqual([5173])
+	it('no longer exposes config, trigger_id, auto_start or the wait tuning fields', () => {
+		const keys = Object.keys(schema.shape)
+		for (const gone of [
+			'config',
+			'trigger_id',
+			'auto_start',
+			'initiated_from_object_type',
+			'depends_on_session_ids',
+			'poll_interval_seconds',
+			'wait_timeout_seconds',
+		]) {
+			expect(keys).not.toContain(gone)
+		}
 	})
 
 	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
-		const base = { actor_id: uuid, action_prompt: 'Test' }
 		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
 		expect(schema.parse(base).notify_on_complete).toBeUndefined()
 		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
 	})
 
-	it('rejects previewGuestPorts entries above 65535', () => {
-		expect(() =>
-			schema.parse({
-				actor_id: uuid,
-				action_prompt: 'Test',
-				config: { previewGuestPorts: [70000] },
-			}),
-		).toThrow()
+	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {
+		expect(schema.parse({ ...base, wait: true }).wait).toBe(true)
+		expect(schema.parse(base).wait).toBeUndefined()
+	})
+
+	it('accepts spawned_by_message_id', () => {
+		expect(schema.parse({ ...base, spawned_by_message_id: 42 }).spawned_by_message_id).toBe(42)
 	})
 })
 
@@ -767,54 +745,6 @@ describe('list_sessions schema', () => {
 		if (!result.success) {
 			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
 		}
-	})
-})
-
-describe('create_session wait schema', () => {
-	const schema = tools.create_session.inputSchema
-	const base = { actor_id: uuid, action_prompt: 'Do task' }
-
-	it('leaves the wait knobs undefined when omitted, so the default stays non-blocking', () => {
-		const result = schema.parse(base)
-		expect(result.wait).toBeUndefined()
-		expect(result.poll_interval_seconds).toBeUndefined()
-		expect(result.wait_timeout_seconds).toBeUndefined()
-	})
-
-	it('accepts wait with its poll interval and timeout', () => {
-		const result = schema.parse({
-			...base,
-			wait: true,
-			poll_interval_seconds: 10,
-			wait_timeout_seconds: 120,
-		})
-		expect(result.wait).toBe(true)
-		expect(result.poll_interval_seconds).toBe(10)
-		expect(result.wait_timeout_seconds).toBe(120)
-	})
-
-	it('accepts notify_on_complete', () => {
-		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
-		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
-	})
-
-	it('accepts spawned_by_message_id and depends_on_session_ids', () => {
-		const result = schema.parse({
-			...base,
-			spawned_by_message_id: 42,
-			depends_on_session_ids: [uuid],
-		})
-		expect(result.spawned_by_message_id).toBe(42)
-		expect(result.depends_on_session_ids).toEqual([uuid])
-		expect(() => schema.parse({ ...base, depends_on_session_ids: ['nope'] })).toThrow()
-	})
-
-	it('rejects poll_interval below 2', () => {
-		expect(() => schema.parse({ ...base, poll_interval_seconds: 1 })).toThrow()
-	})
-
-	it('rejects wait_timeout below 30', () => {
-		expect(() => schema.parse({ ...base, wait_timeout_seconds: 10 })).toThrow()
 	})
 })
 

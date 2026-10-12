@@ -466,7 +466,6 @@ async function wakeSourceAgent(ctx: {
 		// linkage lives on notifications.object_id already; per spec §3.3 this
 		// site passes null/null.
 		initiatedFromObjectId: null,
-		initiatedFromObjectType: null,
 		await: 'none',
 	})
 }

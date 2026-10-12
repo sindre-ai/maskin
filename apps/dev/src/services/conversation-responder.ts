@@ -377,7 +377,6 @@ async function spawnOrJoinConversationSession(params: {
 			// already carries the linkage a UI needs. Explicit null/null per spec
 			// §3.3 (conversation responder branch).
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'first-response',
 		})
 		// The seed prompt above inlines recent history up to and including this

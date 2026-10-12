@@ -185,12 +185,12 @@ export const createSessionSchema = z.object({
 	// Object this session is being started for (bet, task, insight, or any
 	// first-class object). Optional on the wire — a missing value means
 	// "no originating object known" and lands as NULL on the row. When set
-	// the pair is threaded into `sessions.initiated_from_object_{id,type}`,
+	// the id is threaded into `sessions.initiated_from_object_id`,
 	// carried onto the `session_failed` event's `data.initiated_from` block
-	// and onto the PostHog `runtime_session_ended` event as
-	// `context_object_id` / `context_object_type` (parent bet Criterion 3).
+	// (with the object's type looked up from it) and onto the PostHog
+	// `runtime_session_ended` event as `context_object_id` (parent bet
+	// Criterion 3).
 	initiated_from_object_id: z.string().uuid().optional(),
-	initiated_from_object_type: z.string().max(64).optional(),
 	// Handed-off strip anchors. `spawned_by_message_id` is the assistant message
 	// that triggered this sub-agent spawn (bigint to match `messages.id`);
 	// `depends_on_session_ids` names the sessions this one is blocked behind.
