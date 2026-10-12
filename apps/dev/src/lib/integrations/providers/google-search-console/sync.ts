@@ -12,31 +12,31 @@ export const GSC_PROVIDER = 'google-search-console'
 
 const GSC_API = 'https://www.googleapis.com/webmasters/v3'
 const ROW_LIMIT = 25_000
-// Safety stop for runaway pagination (100 pages = 2.5M rows per dimension).
+// Safety stop for runaway pagination (100 pages = 2.5M rows per request).
 const MAX_PAGES = 100
 const BACKFILL_MONTHS = 16
 // Search Console only returns final data up to ~2 days ago.
 const DATA_LAG_DAYS = 2
 const PERSISTENT_FAILURE_MS = 24 * 60 * 60 * 1000
-const MAX_ATTEMPTS = 5
+const MAX_ATTEMPTS = 3
 const BASE_BACKOFF_MS = 1_000
 
-export type GscDimension = 'url' | 'query'
-
-/** [date, dimension, row key (page url or query), impressions, clicks, ctr, avg position] */
-export type GscRow = [string, GscDimension, string, number, number, number, number]
+/** [date, page url, query, country, device, impressions, clicks, ctr, avg position] */
+export type GscRow = [string, string, string, string, string, number, number, number, number]
 
 export const GSC_ROW_COLUMNS = [
 	'date',
-	'dimension',
-	'key',
+	'page',
+	'query',
+	'country',
+	'device',
 	'impressions',
 	'clicks',
 	'ctr',
 	'avg_position',
 ] as const
 
-const DIMENSION_FIELD: Record<GscDimension, string> = { url: 'page', query: 'query' }
+const DIMENSIONS = ['date', 'page', 'query', 'country', 'device']
 
 /** Stored under integrations.config.gsc. */
 export interface GscIntegrationState {
@@ -91,32 +91,33 @@ export function nextRange(
 
 // ── Rows ───────────────────────────────────────────────────────────────────
 
+/** Dedupe key: date, page, query, country, device. */
 export function rowKey(row: GscRow): string {
-	return `${row[1]}|${row[0]}|${row[2]}`
+	return JSON.stringify(row.slice(0, 5))
 }
 
 /**
- * Dedupe key is date + dimension + row key within the property's own object.
- * Appends rows not already present and drops rows that fell out of the
- * trailing 16-month window.
+ * Dedupe on (date, page, query, country, device) within the property's own
+ * object. A re-fetched row replaces the stored one in place; rows that fell
+ * out of the trailing 16-month window are dropped. written counts the
+ * incoming rows that landed in the window, new or replacing.
  */
 export function mergeRows(
 	existing: GscRow[],
 	incoming: GscRow[],
 	windowStart: string,
-): { rows: GscRow[]; added: number } {
-	const rows = existing.filter((row) => row[0] >= windowStart)
-	const seen = new Set(rows.map(rowKey))
-	let added = 0
+): { rows: GscRow[]; written: number } {
+	const byKey = new Map<string, GscRow>()
+	for (const row of existing) {
+		if (row[0] >= windowStart) byKey.set(rowKey(row), row)
+	}
+	let written = 0
 	for (const row of incoming) {
 		if (row[0] < windowStart) continue
-		const key = rowKey(row)
-		if (seen.has(key)) continue
-		seen.add(key)
-		rows.push(row)
-		added++
+		byKey.set(rowKey(row), row)
+		written++
 	}
-	return { rows, added }
+	return { rows: [...byKey.values()], written }
 }
 
 export function serializeRows(rows: GscRow[]): string {
@@ -186,10 +187,9 @@ export async function listSites(accessToken: string, sleep?: Sleep): Promise<str
 		.map((site) => site.siteUrl)
 }
 
-export async function fetchDimensionRows(
+export async function fetchRows(
 	accessToken: string,
 	siteUrl: string,
-	dimension: GscDimension,
 	range: { startDate: string; endDate: string },
 	sleep?: Sleep,
 ): Promise<GscRow[]> {
@@ -202,7 +202,7 @@ export async function fetchDimensionRows(
 				headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					...range,
-					dimensions: ['date', DIMENSION_FIELD[dimension]],
+					dimensions: DIMENSIONS,
 					rowLimit: ROW_LIMIT,
 					startRow: page * ROW_LIMIT,
 				}),
@@ -220,7 +220,8 @@ export async function fetchDimensionRows(
 		}
 		const rows = body.rows ?? []
 		for (const r of rows) {
-			out.push([r.keys[0], dimension, r.keys[1], r.impressions, r.clicks, r.ctr, r.position])
+			const [date, pageUrl, query, country, device] = r.keys
+			out.push([date, pageUrl, query, country, device, r.impressions, r.clicks, r.ctr, r.position])
 		}
 		if (rows.length < ROW_LIMIT) return out
 	}
@@ -255,8 +256,11 @@ interface SavePropertyArgs {
 	integrationId: string
 	siteUrl: string
 	rows: GscRow[]
-	lastSyncedDate: string
+	/** Unset only when the very first sync of a property failed, so nothing was synced yet. */
+	lastSyncedDate?: string
 	windowStart: string
+	/** Set on a failed run; a successful save leaves both out, which clears them. */
+	failure?: { lastError: string; firstFailureAt: string }
 }
 
 /** Insert-or-update the property's knowledge object, matched on metadata external_id (the site URL). */
@@ -269,10 +273,12 @@ async function savePropertyObject(db: Database, args: SavePropertyArgs): Promise
 		external_id: siteUrl,
 		property_url: siteUrl,
 		integration_id: args.integrationId,
-		last_synced_date: args.lastSyncedDate,
+		...(args.lastSyncedDate ? { last_synced_date: args.lastSyncedDate } : {}),
 		window_start: args.windowStart,
-		url_row_count: rows.filter((r) => r[1] === 'url').length,
-		query_row_count: rows.filter((r) => r[1] === 'query').length,
+		row_count: rows.length,
+		...(args.failure
+			? { last_error: args.failure.lastError, first_failure_at: args.failure.firstFailureAt }
+			: {}),
 	}
 	const content = serializeRows(rows)
 	// No content in the event data: events feed a NOTIFY payload capped at 8KB.
@@ -381,13 +387,10 @@ async function syncProperty(
 	const range = nextRange(lastSyncedDate, now)
 	if (!range) return 0
 
-	const incoming: GscRow[] = []
-	for (const dimension of ['url', 'query'] as const) {
-		incoming.push(...(await fetchDimensionRows(accessToken, siteUrl, dimension, range, sleep)))
-	}
+	const incoming = await fetchRows(accessToken, siteUrl, range, sleep)
 
 	const windowStart = windowStartDate(now)
-	const { rows, added } = mergeRows(parseRows(existing?.content ?? null), incoming, windowStart)
+	const { rows, written } = mergeRows(parseRows(existing?.content ?? null), incoming, windowStart)
 	await savePropertyObject(db, {
 		workspaceId: row.workspaceId,
 		createdBy: row.createdBy,
@@ -397,7 +400,55 @@ async function syncProperty(
 		lastSyncedDate: range.endDate,
 		windowStart,
 	})
-	return added
+	return written
+}
+
+/**
+ * Log a failed property run on its own knowledge object: last_error, plus
+ * first_failure_at the first time (kept while the streak lasts). Rows and the
+ * other scalars stay as they were. A property whose first sync failed gets an
+ * empty object so the error has somewhere to live.
+ */
+async function recordPropertyFailure(
+	db: Database,
+	row: GscIntegrationRow,
+	siteUrl: string,
+	message: string,
+	now: Date,
+): Promise<void> {
+	const lastError = message.slice(0, 500)
+	const existing = await findPropertyObject(db, row.workspaceId, siteUrl)
+	if (!existing) {
+		await savePropertyObject(db, {
+			workspaceId: row.workspaceId,
+			createdBy: row.createdBy,
+			integrationId: row.id,
+			siteUrl,
+			rows: [],
+			windowStart: windowStartDate(now),
+			failure: { lastError, firstFailureAt: now.toISOString() },
+		})
+		return
+	}
+	const firstFailureAt =
+		(existing.metadata as { first_failure_at?: string } | null)?.first_failure_at ??
+		now.toISOString()
+	const patch = { last_error: lastError, first_failure_at: firstFailureAt }
+	await db
+		.update(objects)
+		.set({
+			metadata: sql`${objects.metadata} || ${JSON.stringify(patch)}::jsonb`,
+			updatedAt: new Date(),
+		})
+		.where(eq(objects.id, existing.id))
+	await recordEvent(db, {
+		workspaceId: row.workspaceId,
+		actorId: row.createdBy,
+		action: 'updated',
+		entityType: 'object',
+		entityId: existing.id,
+		data: { type: 'knowledge', provider: GSC_PROVIDER, property_url: siteUrl },
+	})
 }
 
 const inFlight = new Set<string>()
@@ -446,6 +497,14 @@ export async function syncGscIntegration(
 							siteUrl,
 							error: message,
 						})
+						// Best effort: a failed write here must not stop the other properties.
+						await recordPropertyFailure(db, row, siteUrl, message, now).catch((writeErr) =>
+							logger.error('GSC property failure could not be recorded', {
+								integrationId: row.id,
+								siteUrl,
+								error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+							}),
+						)
 					}
 				}
 				if (failures.length) throw new Error(failures.join('; ').slice(0, 500))

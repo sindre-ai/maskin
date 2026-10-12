@@ -58,39 +58,48 @@ describe('date window', () => {
 })
 
 describe('mergeRows', () => {
-	const row = (date: string, key: string, dim: 'url' | 'query' = 'url', clicks = 1): GscRow => [
-		date,
-		dim,
-		key,
-		10,
-		clicks,
-		0.1,
-		3,
-	]
+	const row = (
+		date: string,
+		page: string,
+		{ query = 'q', country = 'usa', device = 'DESKTOP', clicks = 1 } = {},
+	): GscRow => [date, page, query, country, device, 10, clicks, 0.1, 3]
 
-	it('appends only rows whose date + dimension + key is new', () => {
+	it('keys rows on date, page, query, country and device', () => {
 		const existing = [row('2026-10-09', '/a')]
-		const { rows, added } = mergeRows(
+		const { rows, written } = mergeRows(
 			existing,
 			[
-				row('2026-10-09', '/a', 'url', 99),
-				row('2026-10-09', '/a', 'query'),
+				row('2026-10-09', '/b'),
+				row('2026-10-09', '/a', { query: 'other' }),
+				row('2026-10-09', '/a', { country: 'dnk' }),
+				row('2026-10-09', '/a', { device: 'MOBILE' }),
 				row('2026-10-10', '/a'),
 			],
 			'2025-06-11',
 		)
-		expect(added).toBe(2)
-		expect(rows).toHaveLength(3)
-		// the existing row is kept, not overwritten
-		expect(rows[0][4]).toBe(1)
+		expect(written).toBe(5)
+		expect(rows).toHaveLength(6)
+	})
+
+	it('overwrites a stored row with the re-fetched one, in place', () => {
+		const existing = [row('2026-10-09', '/a'), row('2026-10-09', '/b')]
+		const { rows, written } = mergeRows(
+			existing,
+			[row('2026-10-09', '/a', { clicks: 99 })],
+			'2025-06-11',
+		)
+		expect(written).toBe(1)
+		expect(rows).toHaveLength(2)
+		expect(rows[0][6]).toBe(99)
+		expect(rows[1][1]).toBe('/b')
 	})
 
 	it('is idempotent when the same rows arrive twice', () => {
 		const incoming = [row('2026-10-10', '/a'), row('2026-10-10', '/b')]
 		const first = mergeRows([], incoming, '2025-06-11')
 		const second = mergeRows(first.rows, incoming, '2025-06-11')
-		expect(second.added).toBe(0)
 		expect(second.rows).toEqual(first.rows)
+		expect(second.rows).toHaveLength(2)
 	})
 
 	it('drops rows older than the window', () => {
@@ -99,7 +108,7 @@ describe('mergeRows', () => {
 			[row('2026-10-10', '/new')],
 			'2025-06-11',
 		)
-		expect(rows.map((r) => r[2])).toEqual(['/new'])
+		expect(rows.map((r) => r[1])).toEqual(['/new'])
 	})
 
 	it('round-trips through content', () => {
@@ -142,11 +151,11 @@ describe('gscFetch backoff', () => {
 		expect(sleep).toHaveBeenCalledWith(7000)
 	})
 
-	it('gives up after five attempts', async () => {
-		const fetchMock = vi.fn().mockImplementation(async () => new Response('x', { status: 503 }))
+	it('gives up after three attempts', async () => {
+		const fetchMock = vi.fn().mockImplementation(async () => new Response('x', { status: 429 }))
 		vi.stubGlobal('fetch', fetchMock)
-		await expect(gscFetch('https://example.test', {}, async () => {})).rejects.toThrow(/HTTP 503/)
-		expect(fetchMock).toHaveBeenCalledTimes(5)
+		await expect(gscFetch('https://example.test', {}, async () => {})).rejects.toThrow(/HTTP 429/)
+		expect(fetchMock).toHaveBeenCalledTimes(3)
 	})
 
 	it('does not retry a 403', async () => {
@@ -214,34 +223,32 @@ const integrationRow = (overrides: Record<string, unknown> = {}) => ({
 })
 
 function stubSearchConsole(opts: { failQueryFor?: string } = {}) {
-	vi.stubGlobal(
-		'fetch',
-		vi.fn(async (url: string, init?: RequestInit) => {
-			if (url.endsWith('/sites')) {
-				return jsonResponse({
-					siteEntry: [
-						{ siteUrl: 'sc-domain:a.test', permissionLevel: 'siteOwner' },
-						{ siteUrl: 'sc-domain:b.test', permissionLevel: 'siteOwner' },
-					],
-				})
-			}
-			if (opts.failQueryFor && url.includes(encodeURIComponent(opts.failQueryFor))) {
-				return new Response('forbidden', { status: 403 })
-			}
-			const dimension = JSON.parse(String(init?.body)).dimensions[1]
+	const fetchMock = vi.fn(async (url: string) => {
+		if (url.endsWith('/sites')) {
 			return jsonResponse({
-				rows: [
-					{
-						keys: ['2026-10-10', dimension === 'page' ? '/p' : 'q'],
-						clicks: 2,
-						impressions: 20,
-						ctr: 0.1,
-						position: 4,
-					},
+				siteEntry: [
+					{ siteUrl: 'sc-domain:a.test', permissionLevel: 'siteOwner' },
+					{ siteUrl: 'sc-domain:b.test', permissionLevel: 'siteOwner' },
 				],
 			})
-		}),
-	)
+		}
+		if (opts.failQueryFor && url.includes(encodeURIComponent(opts.failQueryFor))) {
+			return new Response('forbidden', { status: 403 })
+		}
+		return jsonResponse({
+			rows: [
+				{
+					keys: ['2026-10-10', '/p', 'q', 'usa', 'MOBILE'],
+					clicks: 2,
+					impressions: 20,
+					ctr: 0.1,
+					position: 4,
+				},
+			],
+		})
+	})
+	vi.stubGlobal('fetch', fetchMock)
+	return fetchMock
 }
 
 describe('syncGscIntegration', () => {
@@ -262,8 +269,18 @@ describe('syncGscIntegration', () => {
 			workspaceId: 'ws-1',
 			isBackfill: true,
 		})
-		// 2 properties x (1 url row + 1 query row), each property sees an empty fake store
-		expect(outcome?.recordsWritten).toBeGreaterThan(0)
+		// 2 properties x 1 row, each property sees an empty fake store
+		expect(outcome?.recordsWritten).toBe(2)
+	})
+
+	it('fetches date, page, query, country and device in one request per property', async () => {
+		const fetchMock = stubSearchConsole()
+		const { db } = makeFakeDb()
+		await syncGscIntegration(db, integrationRow(), deps)
+		const queries = fetchMock.mock.calls.filter(([url]) => !String(url).endsWith('/sites'))
+		expect(queries).toHaveLength(2)
+		const body = JSON.parse(String((queries[0][1] as RequestInit).body))
+		expect(body.dimensions).toEqual(['date', 'page', 'query', 'country', 'device'])
 	})
 
 	it('writes a knowledge object with scalar-only metadata and rows in content', async () => {
@@ -285,8 +302,14 @@ describe('syncGscIntegration', () => {
 			provider: 'google-search-console',
 			external_id: 'sc-domain:a.test',
 			last_synced_date: '2026-10-10',
+			row_count: 1,
 		})
-		expect(parseRows(first.content).map((r) => r[1])).toEqual(['url', 'query'])
+		// a clean run leaves no failure fields behind
+		expect(first.metadata).not.toHaveProperty('last_error')
+		expect(first.metadata).not.toHaveProperty('first_failure_at')
+		expect(parseRows(first.content)).toEqual([
+			['2026-10-10', '/p', 'q', 'usa', 'MOBILE', 20, 2, 0.1, 4],
+		])
 		// audit row for the new object, without the rows themselves
 		expect(recordEventSpy).toHaveBeenCalledWith(
 			expect.anything(),
@@ -312,6 +335,28 @@ describe('syncGscIntegration', () => {
 		// a failure inside 24h records the streak but leaves the status alone
 		const patch = integrationUpdates.at(-1) as { status?: string }
 		expect(patch.status).toBeUndefined()
+	})
+
+	it('logs a failed property to its own object as scalar last_error and first_failure_at', async () => {
+		stubSearchConsole({ failQueryFor: 'sc-domain:a.test' })
+		const { db, inserts } = makeFakeDb()
+		await expect(syncGscIntegration(db, integrationRow(), deps)).rejects.toThrow()
+		const failed = inserts.find(
+			(i) => (i as { title: string }).title === 'Google Search Console: sc-domain:a.test',
+		) as { metadata: Record<string, unknown>; content: string }
+		expect(failed.metadata).toMatchObject({
+			external_id: 'sc-domain:a.test',
+			row_count: 0,
+			last_error: expect.stringContaining('HTTP 403'),
+			first_failure_at: NOW.toISOString(),
+		})
+		expect(failed.metadata).not.toHaveProperty('last_synced_date')
+		expect(parseRows(failed.content)).toEqual([])
+		// the healthy property carries no error
+		const healthy = inserts.find(
+			(i) => (i as { title: string }).title === 'Google Search Console: sc-domain:b.test',
+		) as { metadata: Record<string, unknown> }
+		expect(healthy.metadata).not.toHaveProperty('last_error')
 	})
 
 	it('flips the integration to error once failures persist past 24 hours', async () => {
