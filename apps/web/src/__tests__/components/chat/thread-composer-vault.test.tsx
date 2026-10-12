@@ -20,13 +20,17 @@ vi.mock('@/hooks/use-conversation', () => ({
 	}),
 }))
 vi.mock('@/hooks/use-sessions', async () => {
-	const actual = await vi.importActual<typeof import('@/hooks/use-sessions')>('@/hooks/use-sessions')
+	const actual =
+		await vi.importActual<typeof import('@/hooks/use-sessions')>('@/hooks/use-sessions')
 	return { ...actual, useActiveSessionsForConversation: () => ({ data: sessionsState.data }) }
 })
 vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/hooks/use-actors', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
-	return { ...actual, useActors: () => ({ data: [{ id: 'agent-1', name: 'Infra', type: 'agent' }] }) }
+	return {
+		...actual,
+		useActors: () => ({ data: [{ id: 'agent-1', name: 'Infra', type: 'agent' }] }),
+	}
 })
 vi.mock('@/hooks/use-conversations', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-conversations')>(
@@ -127,7 +131,9 @@ describe('ThreadComposer — vault mode (the ! prefix)', () => {
 		await pasteIntoThread()
 
 		expect(screen.getByRole('button', { name: 'Vault →' })).toBeDisabled()
-		expect(screen.getByText(/Messages still send\. Vaulting another secret waits until/)).toBeInTheDocument()
+		expect(
+			screen.getByText(/Messages still send\. Vaulting another secret waits until/),
+		).toBeInTheDocument()
 		expect(chatCaptureMock).not.toHaveBeenCalled()
 		expect(mockMutateAsync).not.toHaveBeenCalled()
 	})
