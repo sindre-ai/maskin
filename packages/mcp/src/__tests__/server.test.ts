@@ -5289,8 +5289,8 @@ describe('tool handlers', () => {
 					id: 'ws-1',
 					name: 'Mesh Firm',
 					role: 'owner',
-					createdAt: '2026-02-01T00:00:00.000Z',
-					updatedAt: '2026-03-01T00:00:00.000Z',
+					createdAt: '2026-02-02T00:00:00.000Z',
+					updatedAt: '2026-03-02T00:00:00.000Z',
 					onboardingEnabled: true,
 					enterprise: false,
 					memberCount: 3,
@@ -5305,8 +5305,8 @@ describe('tool handlers', () => {
 					id: 'ws-2',
 					name: 'Side Project',
 					role: 'member',
-					createdAt: '2026-02-02T00:00:00.000Z',
-					updatedAt: '2026-03-02T00:00:00.000Z',
+					createdAt: '2026-02-01T00:00:00.000Z',
+					updatedAt: '2026-03-01T00:00:00.000Z',
 					onboardingEnabled: false,
 					settings: { statuses: { bet: ['signal'] } },
 				},
@@ -5341,8 +5341,8 @@ describe('tool handlers', () => {
 					id: 'ws-1',
 					name: 'Mesh Firm',
 					role: 'owner',
-					createdAt: '2026-02-01T00:00:00.000Z',
-					updatedAt: '2026-03-01T00:00:00.000Z',
+					createdAt: '2026-02-02T00:00:00.000Z',
+					updatedAt: '2026-03-02T00:00:00.000Z',
 				})
 			})
 
