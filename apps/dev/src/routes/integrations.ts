@@ -38,6 +38,11 @@ import {
 	persistRecoveredInstallationId,
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
+import { GOOGLE_DRIVE_PROVIDER } from '../lib/integrations/providers/google-drive/token'
+import {
+	type DriveIntegrationConfig,
+	carriedDriveConfig,
+} from '../lib/integrations/providers/google-drive/watch'
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
@@ -1712,9 +1717,17 @@ app.openapi(callbackRoute, (async (c) => {
 		// A reconnect rewrites config from scratch, which would drop the Drive
 		// first-use stamp (config.first_tool_call_at) and send the customer UI back
 		// to the first-call state. Carry just that key over from the prior row.
-		const priorFirstToolCallAt = (existingSameInstall.config as IntegrationConfig | null)
-			?.first_tool_call_at
+		const priorConfig = existingSameInstall.config as DriveIntegrationConfig | null
+		const priorFirstToolCallAt = priorConfig?.first_tool_call_at
 		if (priorFirstToolCallAt) activeConfig.first_tool_call_at = priorFirstToolCallAt
+
+		// The same reconnect would also drop the Drive folder watches
+		// (config.drive.watchedFolders). Carry the block over minus its channel
+		// fields, which postInstall mints fresh below.
+		if (providerName === GOOGLE_DRIVE_PROVIDER) {
+			const drive = carriedDriveConfig(priorConfig)
+			if (drive) activeConfig.drive = drive
+		}
 
 		await db
 			.update(integrations)
