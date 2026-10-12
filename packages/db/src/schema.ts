@@ -845,6 +845,58 @@ export const agentSkills = pgTable(
 export type AgentSkill = typeof agentSkills.$inferSelect
 export type NewAgentSkill = typeof agentSkills.$inferInsert
 
+// ── Live Sessions ───────────────────────────────────────────────────────────
+//
+// One row per live (voice) call between a workspace human and an agent. No
+// container is involved: the turn engine streams an OpenRouter completion and
+// speaks it through OpenRouter TTS. `status` moves pending -> active -> ended |
+// errored | timed_out. The partial unique index `live_sessions_active_per_human_uniq`
+// is the "one live call per human" guard and produces the 409 on
+// POST /api/live-sessions. `llmRoute` + the cost columns feed the plan-cap
+// aggregate (getWorkspacePlanUsdCentsUsage) for the `maskin_plan` route.
+export const liveSessions = pgTable('live_sessions', {
+	id: uuid('id').defaultRandom().primaryKey(),
+	workspaceId: uuid('workspace_id')
+		.notNull()
+		.references(() => workspaces.id, { onDelete: 'cascade' }),
+	agentActorId: uuid('agent_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	humanActorId: uuid('human_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	conversationId: uuid('conversation_id').references(() => conversations.id, {
+		onDelete: 'set null',
+	}),
+	status: text('status').notNull(),
+	provider: text('provider').notNull().default('openrouter'),
+	inputMode: text('input_mode').notNull(),
+	llmRoute: text('llm_route'),
+	llmModel: text('llm_model'),
+	ttsModel: text('tts_model'),
+	ttsVoice: text('tts_voice'),
+	sttModel: text('stt_model'),
+	inputTokens: integer('input_tokens').notNull().default(0),
+	outputTokens: integer('output_tokens').notNull().default(0),
+	ttsCharacters: integer('tts_characters').notNull().default(0),
+	sttSeconds: integer('stt_seconds').notNull().default(0),
+	llmCostUsd: numeric('llm_cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+	ttsCostUsd: numeric('tts_cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+	sttCostUsd: numeric('stt_cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
+	endedReason: text('ended_reason'),
+	startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+	lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
+	endedAt: timestamp('ended_at', { withTimezone: true }),
+	timeoutAt: timestamp('timeout_at', { withTimezone: true }).notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type LiveSession = typeof liveSessions.$inferSelect
+export type NewLiveSession = typeof liveSessions.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(

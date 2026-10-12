@@ -2,6 +2,7 @@ import './lib/sentry'
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
+import type { NodeWebSocket } from '@hono/node-ws'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
@@ -23,6 +24,10 @@ import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import {
+	LiveSessionTimeoutSweeper,
+	endAllLiveSessions,
+} from './services/live-session-timeout-sweeper'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
@@ -147,7 +152,19 @@ configureSessionLifecycle({ db, sessionManager })
 
 const port = Number(process.env.PORT) || 3000
 
-const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
+// Live mode needs a WebSocket upgrade path next to the HTTP routes. createApp
+// builds the socket handle (it owns the app instance); we hold it here and
+// attach it to the server once serve() returns it, below.
+let nodeWebSocket: NodeWebSocket | undefined
+const app = createApp(
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider },
+	{
+		port,
+		onNodeWebSocket: (ws) => {
+			nodeWebSocket = ws
+		},
+	},
+)
 
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
@@ -239,6 +256,13 @@ logger.info('Loop escalation reconciler started')
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
+
+// Live mode: ends calls whose timeout_at has passed (app killed with no end
+// request). A no-op until a live_sessions row exists, so it is safe for every
+// deployment whether or not live-mode is enabled for anyone.
+const liveSessionTimeoutSweeper = new LiveSessionTimeoutSweeper(db)
+liveSessionTimeoutSweeper.start()
+logger.info('Live session timeout sweeper started')
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
@@ -347,6 +371,13 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	liveSessionTimeoutSweeper.stop()
+	// Rows would otherwise stay live until the sweeper finds them after restart.
+	await endAllLiveSessions(db).catch((err) =>
+		logger.error(
+			`Failed to end live sessions on shutdown: ${err instanceof Error ? err.message : String(err)}`,
+		),
+	)
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
@@ -381,7 +412,7 @@ try {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
 
-serve({ fetch: app.fetch, port }, () => {
+const server = serve({ fetch: app.fetch, port }, () => {
 	const webUrl = 'http://localhost:5173'
 	const apiUrl = `http://localhost:${port}`
 
@@ -443,6 +474,8 @@ ${mcpSetup}
 		})
 	})
 })
+
+nodeWebSocket?.injectWebSocket(server)
 
 export default app
 export type AppType = typeof app

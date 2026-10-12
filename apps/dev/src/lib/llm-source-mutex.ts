@@ -169,5 +169,9 @@ export function billingAfterCancel(
 export function patchAddsAnyByoCredential(patchSettings: Partial<WorkspaceSettings>): boolean {
 	if (patchAddsByoSource(patchSettings)) return true
 	if (patchSettings.llm_keys && typeof patchSettings.llm_keys.openai === 'string') return true
+	// Live mode runs on OpenRouter: a workspace key is a BYO credential like any other, so only
+	// enterprise workspaces may set one. It deliberately does not join the paid-plan mutex
+	// (`patchAddsByoSource`): it only affects live calls, not how sessions are routed.
+	if (patchSettings.llm_keys && typeof patchSettings.llm_keys.openrouter === 'string') return true
 	return false
 }

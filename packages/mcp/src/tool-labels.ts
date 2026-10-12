@@ -1,0 +1,62 @@
+/**
+ * Human wording for a tool, shown on screen while a live call runs it.
+ * Never a tool id and never an argument: a person watching sees
+ * "Searching the workspace", not `search_objects`.
+ */
+const LABELS: Record<string, string> = {
+	search_objects: 'Searching the workspace',
+	get_objects: 'Reading an item',
+	list_objects: 'Looking through items',
+	traverse_graph: 'Following links between items',
+	list_relationships: 'Checking what an item links to',
+	get_comments: 'Reading comments',
+	create_comment: 'Posting a comment',
+	create_objects: 'Capturing a new item',
+	update_objects: 'Updating an item',
+	create_relationship: 'Linking two items',
+	delete_object: 'Deleting an item',
+	delete_relationship: 'Removing a link',
+	list_actors: 'Checking who is in the workspace',
+	get_actor: 'Looking up a teammate',
+	update_actor: 'Updating an agent',
+	create_actor: 'Creating an agent',
+	get_workspace_schema: 'Checking how the workspace is set up',
+	update_workspace: 'Changing workspace settings',
+	list_workspace_skills: 'Checking available skills',
+	get_workspace_skill: 'Reading a skill',
+	get_events: 'Checking recent activity',
+	list_unread: 'Checking what is unread',
+	mark_read: 'Marking as read',
+	list_triggers: 'Checking automations',
+	create_trigger: 'Creating an automation',
+	update_trigger: 'Changing an automation',
+	delete_trigger: 'Removing an automation',
+	list_loops: 'Checking flows',
+	get_loop: 'Reading a flow',
+	create_loop: 'Creating a flow',
+	update_loop: 'Changing a flow',
+	delete_loop: 'Removing a flow',
+	list_sessions: 'Checking running work',
+	get_session: 'Checking a run',
+	get_session_activity: 'Checking what an agent is doing',
+	create_session: 'Starting an agent',
+	run_agent: 'Starting an agent',
+	stop_session: 'Stopping an agent',
+	pause_session: 'Pausing an agent',
+	resume_session: 'Resuming an agent',
+	list_files: 'Looking through files',
+	list_integrations: 'Checking connected services',
+	list_integration_providers: 'Checking available services',
+	disconnect_integration: 'Disconnecting a service',
+	list_extensions: 'Checking extensions',
+	get_conversation: 'Reading a conversation',
+	list_conversation_messages: 'Reading earlier messages',
+	list_notifications: 'Checking notifications',
+	get_notification: 'Reading a notification',
+	pull_up_object: 'Pulling that up',
+	confirm_pending_action: 'Checking your answer',
+}
+
+export function liveToolLabel(name: string): string {
+	return LABELS[name] ?? 'Working on it'
+}

@@ -159,6 +159,18 @@ export const messageQuestionAnswerSchema = z.object({
 		.max(MESSAGE_MAX_QUESTIONS),
 })
 
+/** Backend-owned facts about one live (voice) turn, stored on the message. */
+export const messageLiveSchema = z.object({
+	turn_index: z.number().int().min(0),
+	input_mode: z.enum(['text', 'audio']),
+	interrupted: z.boolean(),
+	/** What the model actually produced; `content` holds only what was spoken through when interrupted. */
+	full_text: z.string().optional(),
+	tool_calls: z
+		.array(z.object({ name: z.string(), label: z.string(), ok: z.boolean() }))
+		.optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -172,7 +184,11 @@ export const messageMetadataSchema = z.object({
 	 * or an agent posted via the post_conversation_message MCP tool;
 	 * 'final_output' for an agent's automatically-posted end-of-turn reply.
 	 */
-	source: z.enum(['final_output']).optional(),
+	source: z.enum(['final_output', 'live']).optional(),
+	/** Backend-owned: the live session a 'live' message came from. */
+	live_session_id: z.string().uuid().optional(),
+	/** Backend-owned: per-turn facts about a live message. */
+	live: messageLiveSchema.optional(),
 	final_output: messageFinalOutputSchema.optional(),
 	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
 	question: messageQuestionSchema.optional(),
@@ -189,7 +205,14 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 	metadata: T,
 ): T {
 	if (!metadata) return metadata
-	const { source: _source, final_output: _finalOutput, question: _question, ...rest } = metadata
+	const {
+		source: _source,
+		live_session_id: _liveSessionId,
+		live: _live,
+		final_output: _finalOutput,
+		question: _question,
+		...rest
+	} = metadata
 	return rest as T
 }
 

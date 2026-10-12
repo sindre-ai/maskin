@@ -609,6 +609,7 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[], // live sessions sum
 			[
 				{
 					id: negWs,
@@ -616,6 +617,7 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[], // live sessions sum
 			[
 				{
 					id: oneWs,
@@ -623,6 +625,7 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[], // live sessions sum
 		]
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
@@ -661,8 +664,10 @@ describe('GET /api/billing/usage', () => {
 		mockResults.selectQueue = [
 			[{ id: proWs, settings: { billing: { plan: 'pro', status: 'active' } } }],
 			[],
+			[], // live sessions sum
 			[{ id: teamWs, settings: { billing: { plan: 'team', status: 'active' } } }],
 			[],
+			[], // live sessions sum
 		]
 
 		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
@@ -915,7 +920,7 @@ describe('GET /api/billing/usage', () => {
 			_resetFeatureFlagConfig()
 
 			const tester = createTestApp(billingRoutes, '/api/billing', 'tester-actor')
-			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 2 }]]
+			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [], [{ n: 2 }]]
 			const testerRes = await tester.app.request(usageGet(workspaceId))
 			expect(await testerRes.json()).toMatchObject({
 				linkedin_identity_addon: { count: 2 },
@@ -942,9 +947,11 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: workspaceId, settings: { billing: paid } }],
 				[],
+				[], // live sessions sum
 				[{ id: workspaceId, settings: { billing: paid }, billingOwnerId: 'test-actor-id' }],
 				[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'canceled' } } }],
 				[],
+				[], // live sessions sum
 			]
 
 			const before = await app.request(usageGet(workspaceId))
@@ -966,8 +973,10 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: wsA, settings: { billing: { plan: 'pro', status: 'active' } } }],
 				[],
+				[], // live sessions sum
 				[{ id: wsB, settings: {} }],
 				[],
+				[], // live sessions sum
 			]
 
 			const a = await app.request(usageGet(wsA))
@@ -1035,6 +1044,7 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: workspaceId, settings: {} }],
 				[], // sessions sum
+				[], // live sessions sum
 				[{ n: 3 }], // integrations count → 3 connected identities
 			]
 
@@ -1070,6 +1080,7 @@ describe('GET /api/billing/usage', () => {
 					},
 				],
 				[{ totalCostUsd: '1.23', inputTokens: 100, outputTokens: 50 }], // sessions sum → 123 cents
+				[], // live sessions sum
 				[{ n: 5 }], // 5 identities × $49 = $245 = 24_500 USD cents; must NOT contribute to usd_cents_used
 			]
 

@@ -150,8 +150,20 @@ export const workspaceSettingsSchema = z.object({
 			// in PATCH /api/workspaces/:id.
 			anthropic: z.string().nullable().optional(),
 			openai: z.string().nullable().optional(),
+			// Live mode (voice) runs on OpenRouter. A workspace key here is used before
+			// the operator key; see apps/dev/src/lib/live-credentials.ts.
+			openrouter: z.string().nullable().optional(),
 		})
 		.default({}),
+	// Live mode (voice conversations with agents). Both fields are optional with
+	// no default so an absent block reads as "use the platform defaults".
+	// `persist_transcripts: false` keeps a call out of Chats entirely.
+	live: z
+		.object({
+			persist_transcripts: z.boolean().optional(),
+			daily_minutes_cap: z.number().int().min(1).max(1440).optional(),
+		})
+		.optional(),
 	// claude_oauth has two valid on-disk shapes — legacy single-slot (kept for
 	// back-compat per AC-T1 of the subscription-failover bet, no migration of
 	// existing rows) and the slot-chain shape (primary, backup, extras,

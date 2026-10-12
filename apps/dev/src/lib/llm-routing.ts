@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { liveSessions, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
@@ -59,7 +59,7 @@ const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
  * so silently spending Maskin's OpenRouter account for it is both a billing
  * leak and a violation of the entitlement the customer bought.
  */
-function isMaskinPlanRouted(billing: WorkspaceSettings['billing']): boolean {
+export function isMaskinPlanRouted(billing: WorkspaceSettings['billing']): boolean {
 	return MASKIN_PLAN_ROUTED_PLANS.has(billing?.plan ?? 'trial')
 }
 
@@ -211,6 +211,22 @@ export async function getWorkspacePlanUsdCentsUsage(
 		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
 		totalCents += tokens / LEGACY_TOKENS_PER_USD_CENT
 	}
+	// Live (voice) calls run without a container, so their spend lives on
+	// live_sessions rather than sessions. Same literal-predicate reasoning as
+	// above: live_sessions_ws_plan_usage_idx is partial on this exact filter.
+	const liveConds = [
+		eq(liveSessions.workspaceId, workspaceId),
+		sql`${liveSessions.llmRoute} = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
+	]
+	if (periodStartMs !== undefined) {
+		liveConds.push(gte(liveSessions.startedAt, new Date(periodStartMs)))
+	}
+	const [liveAgg] = await db
+		.select({ liveCostUsd: sql<string>`coalesce(sum(${liveSessions.totalCostUsd}), 0)` })
+		.from(liveSessions)
+		.where(and(...liveConds))
+	const liveUsd = Number(liveAgg?.liveCostUsd)
+	if (Number.isFinite(liveUsd) && liveUsd > 0) totalCents += liveUsd * 100
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
 	return ceilCents(totalCents)
