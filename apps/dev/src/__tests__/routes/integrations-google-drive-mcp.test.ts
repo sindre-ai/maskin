@@ -27,6 +27,7 @@ import { isWorkspaceMember } from '../../lib/workspace-auth'
 import googleDriveMcpRoutes from '../../routes/integrations-google-drive-mcp'
 
 const PATH = '/api/integrations/google-drive/mcp'
+const storage = { put: vi.fn() }
 const rpc = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' })
 
 function mountedApp() {
@@ -34,6 +35,7 @@ function mountedApp() {
 	app.use('*', async (c, next) => {
 		c.set('db', {} as never)
 		c.set('actorId', '11111111-1111-1111-1111-111111111111')
+		c.set('storageProvider', storage as never)
 		await next()
 	})
 	app.route(PATH, googleDriveMcpRoutes)
@@ -90,6 +92,7 @@ describe('POST /api/integrations/google-drive/mcp', () => {
 			workspaceId: '22222222-2222-2222-2222-222222222222',
 			actorId: '11111111-1111-1111-1111-111111111111',
 			sessionId: 'sess-1',
+			storage,
 		})
 	})
 

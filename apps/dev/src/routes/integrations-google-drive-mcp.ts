@@ -1,4 +1,5 @@
 import type { Database } from '@maskin/db'
+import type { StorageProvider } from '@maskin/storage'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
@@ -24,6 +25,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		storageProvider: StorageProvider
 	}
 }
 
@@ -55,6 +57,7 @@ app.post('/', async (c) => {
 		workspaceId,
 		actorId,
 		sessionId: c.req.header('x-maskin-session-id') || undefined,
+		storage: c.get('storageProvider'),
 	})
 
 	const transport = new StreamableHTTPServerTransport({

@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -13,6 +14,12 @@ import { logger } from '../../../logger'
 import { config as driveConfig } from './config'
 import { isDriveError } from './errors'
 import type { DriveToolContext } from './operations'
+import {
+	GET_FILE_BYTES_DESCRIPTION,
+	GET_FILE_BYTES_TOOL,
+	type GetFileBytesInput,
+	getFileBytes,
+} from './tools/get-file-bytes'
 import {
 	LIST_FOLDER_DESCRIPTION,
 	LIST_FOLDER_TOOL,
@@ -33,8 +40,7 @@ import {
  * so the caller's workspace and actor are bound at construction and cannot leak
  * across concurrent requests.
  *
- * Adding a tool = one file under ./tools plus one registerTool entry below. This
- * task registers exactly two: search_files and list_folder.
+ * Adding a tool = one file under ./tools plus one registerTool entry below.
  */
 export interface DriveMcpContext {
 	db: Database
@@ -42,6 +48,8 @@ export interface DriveMcpContext {
 	actorId: string
 	/** X-Maskin-Session-Id of the calling agent session, when the request carried one. */
 	sessionId?: string
+	/** Where get_file_bytes streams downloads. Absent = that tool answers with a clean error. */
+	storage?: StorageProvider
 }
 
 export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
@@ -90,6 +98,26 @@ export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
 		},
 		async (args) =>
 			runTool(ctx, LIST_FOLDER_TOOL, args, () => listFolder(toolCtx, args as ListFolderInput)),
+	)
+
+	server.registerTool(
+		GET_FILE_BYTES_TOOL,
+		{
+			description: GET_FILE_BYTES_DESCRIPTION,
+			inputSchema: {
+				fileId: z.string().min(1).describe('Drive file id.'),
+				exportMimeType: z
+					.string()
+					.optional()
+					.describe(
+						'Export type for Google-native files (Docs, Sheets, Slides). Ignored for binary files.',
+					),
+			},
+		},
+		async (args) =>
+			runTool(ctx, GET_FILE_BYTES_TOOL, args, () =>
+				getFileBytes({ ...toolCtx, storage: ctx.storage }, args as GetFileBytesInput),
+			),
 	)
 
 	return server
