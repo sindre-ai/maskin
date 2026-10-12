@@ -112,15 +112,13 @@ export function DisconnectDriveModal({
 								className="mt-1"
 							/>
 							<span className="text-sm">
-								<span className="block font-medium text-foreground">
-									{option.label}
-									{option.chip && (
-										<span className="ml-2 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-											{option.chip}
-										</span>
-									)}
-								</span>
+								<span className="block font-medium text-foreground">{option.label}</span>
 								<span className="block text-xs text-muted-foreground">{option.hint}</span>
+								{option.chip && (
+									<span className="mt-1.5 inline-block whitespace-nowrap rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+										{option.chip}
+									</span>
+								)}
 							</span>
 						</label>
 					))}

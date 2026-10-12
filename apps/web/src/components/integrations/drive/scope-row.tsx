@@ -1,3 +1,4 @@
+import { getActorInitials } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import { Check, Plus } from 'lucide-react'
@@ -46,15 +47,6 @@ export function ScopeChip({
 	)
 }
 
-function initials(name: string): string {
-	return name
-		.split(/[\s@.]+/)
-		.filter(Boolean)
-		.map((part) => part[0]?.toUpperCase())
-		.slice(0, 2)
-		.join('')
-}
-
 /** A human with their Google identity and per-scope status. The scope chips are
  *  children so a provider can pass one chip per scope it asks for. */
 export function ScopeRow({
@@ -99,7 +91,7 @@ export function ScopeRow({
 						className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground"
 						aria-hidden="true"
 					>
-						{initials(name)}
+						{getActorInitials(name)}
 					</div>
 					<div className="min-w-0">
 						<p className="truncate text-sm font-medium text-foreground">{name}</p>
@@ -120,7 +112,9 @@ export function ScopeRow({
 					)}
 				</div>
 			</div>
-			<ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">{children}</ul>
+			<ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
+				{children}
+			</ul>
 		</li>
 	)
 }

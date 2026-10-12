@@ -15,8 +15,10 @@ export const DRIVE_WIZARD_COPY = {
 		},
 		{
 			lead: 'Confirm the permissions.',
-			// EDITED: the spec lists three capabilities, the third optional.
-			text: ' Google will ask you to allow Maskin to edit & comment on any file in your Drive.',
+			// EDITED: the spec lists three capabilities, the third optional. Conformance
+			// pass: Google words the one drive scope as full file access, so the step says
+			// that before Google's screen does.
+			text: " Google will ask you to allow Maskin to see, edit, create and delete files in your Drive. That is Google's wording for the one Drive permission Maskin asks for.",
 		},
 		{
 			lead: "You're done.",

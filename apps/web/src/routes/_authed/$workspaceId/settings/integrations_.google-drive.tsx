@@ -18,13 +18,13 @@ import {
 	useIntegrations,
 } from '@/hooks/use-integrations'
 import { DRIVE_COPY } from '@/lib/drive-copy'
-import { hasDriveIngested } from '@/lib/drive-first-call'
 import {
 	type DriveDisconnectScope,
 	connectedGoogleProviders,
 	remainingProviders,
 } from '@/lib/drive-disconnect'
 import { DRIVE_DISCONNECT_COPY } from '@/lib/drive-disconnect-copy'
+import { hasDriveIngested } from '@/lib/drive-first-call'
 import {
 	DRIVE_PROVIDER,
 	DRIVE_SCOPES,
@@ -120,19 +120,21 @@ function DriveDetail() {
 	return (
 		<div className="space-y-4" data-testid="drive-detail" data-variant={variant}>
 			<BackToIntegrations />
-			<div className="flex items-start gap-3">
-				<img
-					src="/integrations/google-drive.svg"
-					alt=""
-					aria-hidden="true"
-					className="h-12 w-12 rounded-md"
-				/>
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<h2 className="text-lg font-semibold text-foreground">{DRIVE_COPY.pageTitle}</h2>
-						<StatusPill tone={pill.tone}>{pill.label}</StatusPill>
-					</div>
-					{variant !== 'all-disconnected' && (
+			{/* The wizard carries its own logo and title; a status pill on a workspace that
+			    never connected Drive would read as a fault. */}
+			{variant !== 'all-disconnected' && (
+				<div className="flex items-start gap-3">
+					<img
+						src="/integrations/google-drive.svg"
+						alt=""
+						aria-hidden="true"
+						className="h-12 w-12 rounded-md"
+					/>
+					<div className="min-w-0 flex-1">
+						<div className="flex items-center gap-2">
+							<h2 className="text-lg font-semibold text-foreground">{DRIVE_COPY.pageTitle}</h2>
+							<StatusPill tone={pill.tone}>{pill.label}</StatusPill>
+						</div>
 						<p className="text-sm text-muted-foreground" data-testid="drive-mline">
 							{variant === 'connected'
 								? DRIVE_COPY.connectedMline(humans.length)
@@ -140,12 +142,15 @@ function DriveDetail() {
 									? DRIVE_COPY.needsReconnectMline(humans.length, needReconnect.length)
 									: DRIVE_COPY.scopeAddMline(humans.length, withDrive, needAdd.length)}
 						</p>
-					)}
+					</div>
 				</div>
-			</div>
+			)}
 
-			{variant !== 'all-disconnected' && (
+			{variant === 'scope-add' && (
 				<p className="text-sm text-muted-foreground">{DRIVE_COPY.pageDescription}</p>
+			)}
+			{variant === 'connected' && hasDriveIngested(integrations) && (
+				<p className="text-sm text-muted-foreground">{DRIVE_COPY.connectedDescription}</p>
 			)}
 
 			{done && (
