@@ -208,3 +208,29 @@ struct CycleActivityTests {
 		#expect(MeetingActivityState.Kind.dailyBriefing.eyebrow == "LIVE \u{00B7} DAILY BRIEFING")
 	}
 }
+
+@Suite("Cycle activity summary")
+struct CycleSummaryTests {
+	@Test("splits a bold lead name from the rest of the sentence")
+	func splitsActor() {
+		let s = CycleActivityState(
+			flowName: "Outreach", cycle: 12, progress: 0.62,
+			summary: "Writer is drafting follow-ups. Step 2 of 3.", actor: " Writer ")
+		#expect(s.summaryParts?.actor == "Writer")
+		#expect(s.summaryParts?.rest == " is drafting follow-ups. Step 2 of 3.")
+	}
+
+	@Test("no parts when the summary does not start with the actor or none is given")
+	func noParts() {
+		#expect(CycleActivityState(flowName: "F", cycle: 1, progress: 0, summary: "Hi", actor: "Writer").summaryParts == nil)
+		#expect(CycleActivityState(flowName: "F", cycle: 1, progress: 0, summary: "Hi").summaryParts == nil)
+		#expect(CycleActivityState(flowName: "F", cycle: 1, progress: 0, summary: "Hi", actor: "  ").actor == nil)
+	}
+
+	@Test("an older payload without an actor still decodes")
+	func decodesLegacy() throws {
+		let json = #"{"flowName":"F","cycle":1,"stage":"","progress":0.5,"summary":"x","phase":"running"}"#
+		let s = try JSONDecoder().decode(CycleActivityState.self, from: Data(json.utf8))
+		#expect(s.actor == nil)
+	}
+}
