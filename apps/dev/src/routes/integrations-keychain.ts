@@ -14,9 +14,11 @@ import {
 } from '../lib/integrations/chat-capture'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { CredentialNameError } from '../lib/integrations/credential-name'
+import { rotateIntegrationDek } from '../lib/integrations/rotate-dek'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -362,6 +364,75 @@ app.openapi(undoRoute, (async (c) => {
 	})
 	return c.json({ id, status: 'undone' as const }, 200)
 }) as RouteHandler<typeof undoRoute, Env>)
+
+// ── POST /api/integrations/:id/rotate-dek ────────────────────────────────
+
+const rotateDekRoute = createRoute({
+	method: 'post',
+	path: '/{id}/rotate-dek',
+	tags: ['integrations'],
+	summary: 'Re-wrap one credential under a fresh data key and the workspace current KEK',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Re-wrapped. The decrypted value is unchanged',
+			content: {
+				'application/json': {
+					schema: z.object({ id: z.string().uuid(), status: z.literal('rotated') }),
+				},
+			},
+		},
+		403: {
+			description: 'Only a human workspace admin or owner can rotate',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'A legacy row (no data key to rotate), or the row changed while rotating',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(rotateDekRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a workspace admin or owner can rotate a data key'),
+			403,
+		)
+	}
+
+	const outcome = await rotateIntegrationDek(db, getKmsProvider(db), {
+		integrationId: id,
+		workspaceId,
+		actorId: callerId,
+		origin: 'manual',
+	})
+	if (outcome === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+	}
+	if (outcome === 'not_envelope') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This credential is not envelope encrypted yet, so it has no data key',
+			),
+			409,
+		)
+	}
+	if (outcome === 'changed') {
+		return c.json(
+			createApiError('CONFLICT', 'The credential changed while rotating, try again'),
+			409,
+		)
+	}
+	return c.json({ id, status: 'rotated' as const }, 200)
+}) as RouteHandler<typeof rotateDekRoute, Env>)
 
 // ── GET /api/integrations/:id/audit-log ──────────────────────────────────
 

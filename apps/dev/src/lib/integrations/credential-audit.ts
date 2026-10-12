@@ -108,7 +108,7 @@ export async function insertCredentialAccessLog(
 }
 
 export type ChainVerification =
-	| { ok: true; rows: number; headHash: string | null }
+	| { ok: true; rows: number; headHash: string | null; headId: string | null }
 	| { ok: false; rows: number; brokenAtId: string; reason: string }
 
 interface LogRow extends Record<string, unknown> {
@@ -132,52 +132,68 @@ interface LogRow extends Record<string, unknown> {
  * Walks a workspace's chain from genesis to head in id order and recomputes
  * every hash. Reads read_at as text through credential_access_log_ts_text() so
  * the hashed value is exactly the microsecond text Postgres hashed on insert.
- * Loads the whole chain: fine for a test or a script, page it before pointing it
- * at a production-sized workspace.
+ * Reads the chain in pages of pageSize rows (by id), so a long chain is never held
+ * in memory whole. headId and headHash describe the last row verified.
  */
 export async function verifyCredentialAccessChain(
 	db: Database | Transaction,
 	workspaceId: string,
+	pageSize = 5000,
 ): Promise<ChainVerification> {
-	const rows = (await db.execute(sql`
-		SELECT id::text AS id, workspace_id::text AS workspace_id, integration_id::text AS integration_id,
-			actor_id::text AS actor_id, session_id::text AS session_id, loop_id::text AS loop_id,
-			outbound_target, action, source,
-			request_id, credential_access_log_ts_text(read_at) AS read_at_text, detail, prev_row_hash, row_hash
-		FROM credential_access_log
-		WHERE workspace_id = ${workspaceId}
-		-- Qualified on purpose: a bare "id" binds to the id::text output column and sorts as text.
-		ORDER BY credential_access_log.id
-	`)) as unknown as LogRow[]
-
 	let prev = CREDENTIAL_LOG_GENESIS_HASH
-	for (const [index, row] of rows.entries()) {
-		if (row.prev_row_hash !== prev) {
-			return { ok: false, rows: index, brokenAtId: row.id, reason: 'prev_row_hash does not chain' }
-		}
-		const expected = computeRowHash({
-			prevRowHash: row.prev_row_hash,
-			workspaceId: row.workspace_id,
-			integrationId: row.integration_id,
-			actorId: row.actor_id,
-			sessionId: row.session_id,
-			loopId: row.loop_id,
-			outboundTarget: row.outbound_target,
-			action: row.action,
-			source: row.source,
-			requestId: row.request_id,
-			readAtText: row.read_at_text,
-			detail: row.detail,
-		})
-		if (row.row_hash !== expected) {
-			return {
-				ok: false,
-				rows: index,
-				brokenAtId: row.id,
-				reason: 'row_hash does not match contents',
+	let headId: string | null = null
+	let verified = 0
+	let cursor = '0'
+	for (;;) {
+		const rows = (await db.execute(sql`
+			SELECT id::text AS id, workspace_id::text AS workspace_id, integration_id::text AS integration_id,
+				actor_id::text AS actor_id, session_id::text AS session_id, loop_id::text AS loop_id,
+				outbound_target, action, source,
+				request_id, credential_access_log_ts_text(read_at) AS read_at_text, detail, prev_row_hash, row_hash
+			FROM credential_access_log
+			WHERE workspace_id = ${workspaceId} AND credential_access_log.id > ${cursor}::bigint
+			-- Qualified on purpose: a bare "id" binds to the id::text output column and sorts as text.
+			ORDER BY credential_access_log.id
+			LIMIT ${pageSize}
+		`)) as unknown as LogRow[]
+
+		for (const row of rows) {
+			if (row.prev_row_hash !== prev) {
+				return {
+					ok: false,
+					rows: verified,
+					brokenAtId: row.id,
+					reason: 'prev_row_hash does not chain',
+				}
 			}
+			const expected = computeRowHash({
+				prevRowHash: row.prev_row_hash,
+				workspaceId: row.workspace_id,
+				integrationId: row.integration_id,
+				actorId: row.actor_id,
+				sessionId: row.session_id,
+				loopId: row.loop_id,
+				outboundTarget: row.outbound_target,
+				action: row.action,
+				source: row.source,
+				requestId: row.request_id,
+				readAtText: row.read_at_text,
+				detail: row.detail,
+			})
+			if (row.row_hash !== expected) {
+				return {
+					ok: false,
+					rows: verified,
+					brokenAtId: row.id,
+					reason: 'row_hash does not match contents',
+				}
+			}
+			prev = row.row_hash
+			headId = row.id
+			verified++
 		}
-		prev = row.row_hash
+		if (rows.length < pageSize) break
+		cursor = rows[rows.length - 1]?.id ?? cursor
 	}
-	return { ok: true, rows: rows.length, headHash: rows.length ? prev : null }
+	return { ok: true, rows: verified, headHash: verified ? prev : null, headId }
 }
