@@ -214,7 +214,9 @@ describe('GET /api/integrations/:provider/callback — integration_connected emi
 		const rows = await db
 			.select()
 			.from(integrations)
-			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, providerName)))
+			.where(
+				and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, providerName)),
+			)
 		expect(rows).toHaveLength(1)
 		expect(rows[0].status).toBe('active')
 		expect(JSON.parse(decrypt(rows[0].credentials))).toMatchObject({ accessToken: 'fresh-token' })
