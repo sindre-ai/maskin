@@ -56,6 +56,9 @@ function integrationRow(
 
 const driveRow = (workspaceId: string, email: string, overrides: Record<string, unknown> = {}) =>
 	integrationRow(workspaceId, 'google-drive', email, {
+		// Stamped, so the connected detail shows. The unstamped first-call state is
+		// covered in settings-integrations-google-drive-wizard.spec.ts.
+		config: { first_tool_call_at: '2026-10-05T10:00:00.000Z' },
 		grantedScopes: ['openid', DRIVE_SCOPE],
 		...overrides,
 	})
@@ -296,7 +299,7 @@ test.describe('Settings — Google Drive detail page', () => {
 		await request
 	})
 
-	test('all-disconnected: the empty state has a Connect Drive button that starts the flow', async ({
+	test('all-disconnected: the wizard starts the Drive connect flow', async ({
 		page,
 		account,
 	}) => {
@@ -309,7 +312,7 @@ test.describe('Settings — Google Drive detail page', () => {
 			'data-variant',
 			'all-disconnected',
 		)
-		await expect(page.getByText('Drive is not connected')).toBeVisible()
+		await expect(page.getByTestId('drive-connect-wizard')).toBeVisible()
 		await expect(page.getByTestId('scope-list')).toHaveCount(0)
 
 		const request = page.waitForRequest(
@@ -317,7 +320,7 @@ test.describe('Settings — Google Drive detail page', () => {
 				req.method() === 'POST' &&
 				new URL(req.url()).pathname === '/api/integrations/google-drive/connect',
 		)
-		await page.getByRole('button', { name: 'Connect Drive' }).click()
+		await page.getByRole('button', { name: 'Continue with Google →' }).click()
 		await request
 	})
 
