@@ -11,6 +11,7 @@ function makeFakeDb(returnedRows: unknown[]) {
 	const whereSpy = vi.fn()
 	const fromSpy = vi.fn()
 	const limitSpy = vi.fn()
+	const orderBySpy = vi.fn()
 	const db = {
 		select: () => ({
 			from: (table: unknown) => {
@@ -18,10 +19,15 @@ function makeFakeDb(returnedRows: unknown[]) {
 				return {
 					where: (predicate: unknown) => {
 						whereSpy(predicate)
+						const limit = (n: number) => {
+							limitSpy(n)
+							return Promise.resolve(returnedRows)
+						}
 						return {
-							limit: (n: number) => {
-								limitSpy(n)
-								return Promise.resolve(returnedRows)
+							limit,
+							orderBy: (...order: unknown[]) => {
+								orderBySpy(order)
+								return { limit }
 							},
 						}
 					},
@@ -29,7 +35,7 @@ function makeFakeDb(returnedRows: unknown[]) {
 			},
 		}),
 	}
-	return { db, whereSpy, fromSpy, limitSpy }
+	return { db, whereSpy, fromSpy, limitSpy, orderBySpy }
 }
 
 describe('actorScopedProviders', () => {
@@ -91,6 +97,16 @@ describe('getIntegrationCredential', () => {
 		const result = await getIntegrationCredential(db as never, 'ws', 'slack', 'ignored-actor')
 		expect(result).toEqual(row)
 		expect(whereSpy).toHaveBeenCalledTimes(1)
+	})
+
+	it('orders the workspace-scoped read by createdAt then id before the limit', async () => {
+		// Two workspace-scoped rows can coexist for one provider (Drive, two
+		// Google accounts), so the pick must be deterministic. The ordering is
+		// exercised against real rows in the integration test.
+		const { db, orderBySpy } = makeFakeDb([])
+		await getIntegrationCredential(db as never, 'ws', 'google-drive', null)
+		expect(orderBySpy).toHaveBeenCalledTimes(1)
+		expect(orderBySpy.mock.calls[0][0]).toHaveLength(2)
 	})
 
 	it('calls .limit(1) — never fans out multiple rows to the caller', async () => {

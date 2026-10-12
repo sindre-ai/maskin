@@ -46,7 +46,7 @@ export const DRIVE_COPY = {
 	// EDITED: the spec's drive.file and "declining" sentences describe three scopes.
 	calloutLead: 'Who reads what.',
 	calloutBody:
-		" When an agent needs to read a file, Maskin uses that human's Drive token — Google scopes reads to files the human can already see. Agents cannot see files a human wouldn't.",
+		' Agents read Drive through one connected account per workspace, the earliest one still active. They can see every file that account can see.',
 	foldersLabel: 'Folder watches',
 	// No spec copy for these three; written for this task. There is no add-a-watch
 	// control (approved call 8), so the empty state says where watches come from.
