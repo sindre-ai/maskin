@@ -218,7 +218,7 @@ function escapeLike(value: string): string {
  * only narrows (substring, coarse); equality on the segment is decided in code
  * with the shared slug helper, so "martin" never matches "martin-emil-...".
  */
-async function findContactsBySlug(
+export async function findContactsBySlug(
 	db: Database,
 	workspaceId: string,
 	publicIdentifier: string,

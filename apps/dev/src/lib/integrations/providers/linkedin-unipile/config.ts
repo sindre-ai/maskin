@@ -63,6 +63,11 @@ export const config: ProviderConfig = {
 				actions: ['received', 'received_cold', 'received_unresolved'],
 				label: 'LinkedIn message',
 			},
+			{
+				entityType: 'linkedin.connection',
+				actions: ['accepted', 'new'],
+				label: 'LinkedIn connection',
+			},
 		],
 	},
 

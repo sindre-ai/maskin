@@ -548,7 +548,7 @@ describe('POST /webhook: transport', () => {
 	})
 
 	it('answers 200 skipped unknown_type for an event type with no map row', async () => {
-		const res = await deliver({ ...messageNew(), type: 'relation.new' })
+		const res = await deliver({ ...messageNew(), type: 'chat.new' })
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual({ ok: true, skipped: 'unknown_type' })
 		expect(await deliveries()).toHaveLength(0)
