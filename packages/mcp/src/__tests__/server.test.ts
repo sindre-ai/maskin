@@ -2284,6 +2284,27 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('create_session handler: notify_on_complete', () => {
+		const postedBody = (spy: { mock: { calls: unknown[][] } }) =>
+			JSON.parse(((spy.mock.calls[0] as [string, { body: string }])[1] as { body: string }).body)
+
+		it('flag on: sent to the create route', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				notify_on_complete: true,
+			})
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
+		})
+
+		it('flag off: not in the body, so the create route sees what it saw before', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
+			expect(postedBody(vi.mocked(fetch))).not.toHaveProperty('notify_on_complete')
+		})
+	})
+
 	describe('create_session handler', () => {
 		it('POSTs to /api/sessions', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
@@ -2299,6 +2320,120 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/sessions',
 				expect.objectContaining({ method: 'POST' }),
 			)
+		})
+	})
+
+	describe('run_agent handler: notify_on_complete', () => {
+		type Call = [string, { method?: string; body?: string }]
+		const callsWith = (spy: { mock: { calls: unknown[][] } }, method: string) =>
+			(spy.mock.calls as Call[]).filter(([, init]) => init?.method === method)
+
+		const neverFinishes = (id: string) =>
+			vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'pending' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'running' }),
+				} as Response)
+
+		it('flag on and the wait times out: asks for the return with one PATCH, nothing on the create call', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n1')
+
+			const resultPromise = getHandler('run_agent')({
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				poll_interval_seconds: 5,
+				timeout_seconds: 10,
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(15000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('registered')
+
+			const [create] = callsWith(fetchSpy, 'POST')
+			expect(JSON.parse(create[1].body as string)).not.toHaveProperty('notify_on_complete')
+			const patches = callsWith(fetchSpy, 'PATCH')
+			expect(patches).toHaveLength(1)
+			expect(patches[0][0]).toBe('http://localhost:3000/api/sessions/sess-n1')
+			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
+		})
+
+		it('flag on and the helper finishes inside the wait: no PATCH, the caller has the result inline', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n2', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n2', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('run_agent')({
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed).not.toHaveProperty('notify_on_complete')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+		})
+
+		it('flag off and the wait times out: no PATCH, as before', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n3')
+
+			const resultPromise = getHandler('run_agent')({
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				poll_interval_seconds: 5,
+				timeout_seconds: 10,
+			})
+			await vi.advanceTimersByTimeAsync(15000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('notify_on_complete')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+		})
+
+		it('a failed PATCH does not fail the call; it says the return was not registered', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'PATCH'
+					? ({ ok: false, status: 500, text: () => Promise.resolve('boom') } as Response)
+					: ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n4', status: 'running' }),
+						} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('run_agent')({
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				poll_interval_seconds: 5,
+				timeout_seconds: 10,
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(15000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('failed')
+			expect(parsed.session.status).toBe('running')
 		})
 	})
 

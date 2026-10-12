@@ -1,13 +1,14 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { events, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { recordEvent } from '../../lib/events/record-event'
 import { MENTION_GUARD_LIMITS } from '../../services/mention-guards'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -163,5 +164,128 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 		expect(row.spawnedBySessionId).toBeNull()
 		expect(body.spawnLinkDropped).toBe('hop_cap')
 		expect(row.status).toBe('pending')
+	})
+
+	describe('notify_on_complete', () => {
+		const flagOf = (row: { config: unknown }) =>
+			(row.config as { notify_on_complete?: boolean }).notify_on_complete
+
+		it('is stored on the helper when the link is accepted', async () => {
+			const mine = await liveSessionOf(caller.id)
+			const { row } = await spawn(mine.id, { notify_on_complete: true })
+			expect(row.spawnedBySessionId).toBe(mine.id)
+			expect(flagOf(row)).toBe(true)
+		})
+
+		it('is not stored when the flag is omitted or false', async () => {
+			const mine = await liveSessionOf(caller.id)
+			expect(flagOf((await spawn(mine.id)).row)).toBeUndefined()
+			expect(flagOf((await spawn(mine.id, { notify_on_complete: false })).row)).toBeUndefined()
+		})
+
+		it('is dropped when there is no link to return through', async () => {
+			expect(flagOf((await spawn(null, { notify_on_complete: true })).row)).toBeUndefined()
+			const theirs = await liveSessionOf(stranger.id)
+			expect(flagOf((await spawn(theirs.id, { notify_on_complete: true })).row)).toBeUndefined()
+		})
+
+		describe('PATCH (run_agent sets it when its wait times out)', () => {
+			let objectId: string
+
+			beforeEach(async () => {
+				objectId = (await insertObject(db, workspaceId, getTestActorId(), { type: 'task' })).id
+			})
+
+			const patch = (id: string, body: unknown, actorId = caller.id) =>
+				app.request(
+					jsonRequest('PATCH', `/api/sessions/${id}`, body, {
+						'X-Workspace-Id': workspaceId,
+						'X-Test-Actor-Id': actorId,
+					}),
+				)
+
+			const returnComments = () =>
+				db
+					.select()
+					.from(events)
+					.where(
+						and(
+							eq(events.entityId, objectId),
+							eq(events.action, 'commented'),
+							eq(events.actorId, target.id),
+						),
+					)
+
+			const endedSender = () =>
+				insertSession(db, workspaceId, caller.id, caller.id, {
+					status: 'completed',
+					initiatedFromObjectId: objectId,
+				})
+
+			const helperOf = (sender: { id: string }, over?: Record<string, unknown>) =>
+				insertSession(db, workspaceId, target.id, caller.id, {
+					status: 'running',
+					spawnedBySessionId: sender.id,
+					result: { exit_code: 0 },
+					...over,
+				})
+
+			it('sets the flag for the actor who started the helper, and a running helper sends nothing yet', async () => {
+				const sender = await liveSessionOf(caller.id)
+				const helper = await helperOf(sender)
+				const res = await patch(helper.id, { notify_on_complete: true })
+				expect(res.status).toBe(200)
+				const [row] = await db.select().from(sessions).where(eq(sessions.id, helper.id))
+				expect(flagOf(row)).toBe(true)
+				expect(row.helperReturnedAt).toBeNull()
+			})
+
+			it('refuses another actor with 403 and leaves the flag off', async () => {
+				const sender = await liveSessionOf(caller.id)
+				const helper = await helperOf(sender)
+				const res = await patch(helper.id, { notify_on_complete: true }, stranger.id)
+				expect(res.status).toBe(403)
+				const [row] = await db.select().from(sessions).where(eq(sessions.id, helper.id))
+				expect(flagOf(row)).toBeUndefined()
+			})
+
+			it('rejects a body with neither field', async () => {
+				const sender = await liveSessionOf(caller.id)
+				const helper = await helperOf(sender)
+				expect((await patch(helper.id, {})).status).toBe(400)
+			})
+
+			it('a helper that already ended sends its return right away', async () => {
+				const helper = await helperOf(await endedSender(), { status: 'completed' })
+				expect((await patch(helper.id, { notify_on_complete: true })).status).toBe(200)
+				expect(await returnComments()).toHaveLength(1)
+			})
+
+			it('gives the claim back when the earlier return was skipped only because the sender was live', async () => {
+				const helper = await helperOf(await endedSender(), {
+					status: 'completed',
+					helperReturnedAt: new Date(),
+				})
+				await recordEvent(db, {
+					workspaceId,
+					actorId: target.id,
+					action: 'helper_return_skipped',
+					entityType: 'session',
+					entityId: helper.id,
+					data: { reason: 'sender_live' },
+				})
+				expect((await patch(helper.id, { notify_on_complete: true })).status).toBe(200)
+				expect(await returnComments()).toHaveLength(1)
+			})
+
+			it('does not send a second return when the helper was already returned', async () => {
+				const helper = await helperOf(await endedSender(), {
+					status: 'completed',
+					helperReturnedAt: new Date(),
+				})
+				expect((await patch(helper.id, { notify_on_complete: true })).status).toBe(200)
+				expect(await returnComments()).toHaveLength(0)
+			})
+		})
 	})
 })

@@ -1403,6 +1403,12 @@ export const tools = {
 				.describe(
 					"Object type of `initiated_from_object_id` (e.g. 'bet', 'task', 'insight'). Emitted on the runtime_session_ended PostHog event as context_object_type. Must be set whenever initiated_from_object_id is set.",
 				),
+			notify_on_complete: z
+				.boolean()
+				.optional()
+				.describe(
+					"Set true to get the helper's final message back when it ends. It lands where you started the work: a new turn in your own chat if you are in one (even while you are still running), else a comment on the object you were started from. Omit it and the helper's end behaves as before.",
+				),
 		}),
 	},
 	list_sessions: {
@@ -1579,6 +1585,12 @@ export const tools = {
 				.optional()
 				.describe(
 					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
+				),
+			notify_on_complete: z
+				.boolean()
+				.optional()
+				.describe(
+					"This call already waits and returns the result, so the flag only matters if the wait times out: then it is set on the helper, and its final message is sent back to you later where you started the work (your own chat, else the object you were started from). Omit it and a timed-out wait gets nothing more.",
 				),
 		}),
 	},

@@ -6079,6 +6079,7 @@ export function createMcpServer(config: McpConfig) {
 
 			// 2. Poll until terminal, following retried_session_id redirects
 			let current = session as typeof session & { retriedSessionId?: string | null }
+			let settled = false
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
 				current = (await apiCall(
@@ -6095,7 +6096,27 @@ export function createMcpServer(config: McpConfig) {
 						sessionId = retryId
 						continue
 					}
+					settled = true
 					break
+				}
+			}
+
+			// The wait ran out with the helper still going: ask for its result to be sent
+			// back later. Never on the blocking path, where the caller gets it inline.
+			// If the helper ended in the gap, the PATCH sends the return itself.
+			let notifyOnComplete: 'registered' | 'failed' | undefined
+			if (args.notify_on_complete && !settled) {
+				try {
+					await apiCall(
+						config,
+						'PATCH',
+						`/api/sessions/${sessionId}`,
+						{ notify_on_complete: true },
+						wsOpts,
+					)
+					notifyOnComplete = 'registered'
+				} catch {
+					notifyOnComplete = 'failed'
 				}
 			}
 
@@ -6129,7 +6150,11 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithRetryMeta, logs }),
+						text: JSON.stringify({
+							session: currentWithRetryMeta,
+							logs,
+							...(notifyOnComplete ? { notify_on_complete: notifyOnComplete } : {}),
+						}),
 					},
 				],
 			}

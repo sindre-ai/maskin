@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import { events, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
@@ -29,7 +29,8 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
-import { startSession } from '../services/session-lifecycle'
+import { returnToSender } from '../services/helper-return'
+import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -113,7 +114,15 @@ app.openapi(createSessionRoute, (async (c) => {
 		workspaceId,
 		objectId: body.initiated_from_object_id ?? null,
 	})
-	const config = link.linked ? { ...baseConfig, hop_depth: link.hopDepth } : baseConfig
+	// notify_on_complete only means something with a link: with no sender to
+	// return to, the flag is dropped rather than stored.
+	const config = link.linked
+		? {
+				...baseConfig,
+				hop_depth: link.hopDepth,
+				...(body.notify_on_complete ? { notify_on_complete: true } : {}),
+			}
+		: baseConfig
 
 	const handle = await startSession({
 		workspaceId,
@@ -460,10 +469,49 @@ app.openapi(getSessionRoute, (async (c) => {
 	} as z.infer<typeof getSessionResponseSchema>)
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
+/**
+ * The flag arrived after the helper ended (run_agent sets it at poll timeout, and
+ * the helper can finish in the gap). Nothing else will fire the return, so do it
+ * here. If the end-of-session return already ran and was skipped only because the
+ * sender was live, give the one-shot claim back so the flag gets its turn.
+ */
+async function returnIfAlreadyEnded(
+	db: Database,
+	session: typeof sessions.$inferSelect,
+	sessionManager: SessionManager,
+) {
+	if (!session.spawnedBySessionId) return
+	if (!(TERMINAL_STATUSES as readonly string[]).includes(session.status)) return
+	if (session.helperReturnedAt) {
+		const [skipped] = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(
+				and(
+					eq(events.entityType, 'session'),
+					eq(events.entityId, session.id),
+					eq(events.action, 'helper_return_skipped'),
+					sql`${events.data}->>'reason' = 'sender_live'`,
+				),
+			)
+			.limit(1)
+		if (!skipped) return
+		await db.update(sessions).set({ helperReturnedAt: null }).where(eq(sessions.id, session.id))
+	}
+	await returnToSender(db, session.id, { sessionManager })
+}
+
 // PATCH /:id - Update mutable session fields (agents call this to record active step)
-const updateSessionSchema = z.object({
-	current_activity: z.string().max(500).nullable(),
-})
+const updateSessionSchema = z
+	.object({
+		current_activity: z.string().max(500).nullable().optional(),
+		// run_agent sets this when its poll times out: "send me the result later".
+		// It only ever turns the flag on.
+		notify_on_complete: z.literal(true).optional(),
+	})
+	.refine((b) => b.current_activity !== undefined || b.notify_on_complete !== undefined, {
+		message: 'Provide current_activity or notify_on_complete',
+	})
 
 const patchSessionRoute = createRoute({
 	method: 'patch',
@@ -495,6 +543,7 @@ const patchSessionRoute = createRoute({
 
 app.openapi(patchSessionRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
@@ -502,13 +551,28 @@ app.openapi(patchSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
+	// Only whoever started the helper can ask for its result to come back.
+	if (body.notify_on_complete && session.createdBy !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
+
 	const [updated] = await db
 		.update(sessions)
-		.set({ currentActivity: body.current_activity, updatedAt: new Date() })
+		.set({
+			updatedAt: new Date(),
+			...(body.current_activity !== undefined ? { currentActivity: body.current_activity } : {}),
+			...(body.notify_on_complete
+				? {
+						config: sql`coalesce(${sessions.config}, '{}'::jsonb) || '{"notify_on_complete": true}'::jsonb`,
+					}
+				: {}),
+		})
 		.where(eq(sessions.id, id))
 		.returning()
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (body.notify_on_complete) await returnIfAlreadyEnded(db, updated, c.get('sessionManager'))
 
 	await recordEvent(db, {
 		workspaceId,
