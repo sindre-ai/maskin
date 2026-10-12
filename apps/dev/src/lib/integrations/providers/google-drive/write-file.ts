@@ -14,7 +14,7 @@ import {
 	multipartUpload,
 	resumableUpload,
 } from './upload'
-import { invalidInput } from './write-errors'
+import { DriveWriteError, invalidInput } from './write-errors'
 import { DOCS_API, DRIVE_API, type DriveHttp, SHEETS_API, googleJson } from './write-http'
 
 export type WriteFileContent =
@@ -81,6 +81,28 @@ export function assertWorkspaceStorageKey(key: string, workspaceId: string): voi
 	}
 }
 
+/** A key with no object behind it is FILE_NOT_FOUND; any other storage failure passes through. */
+async function openStorageObjectOrNotFound(
+	open: NonNullable<WriteFileContext['openStorageObject']>,
+	key: string,
+): Promise<StorageSource> {
+	try {
+		return await open(key)
+	} catch (err) {
+		const e = err as { name?: string; $metadata?: { httpStatusCode?: number } }
+		const missing =
+			e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.$metadata?.httpStatusCode === 404
+		if (missing) {
+			throw new DriveWriteError({
+				code: 'FILE_NOT_FOUND',
+				message: 'No storage object exists at that storageUrl.',
+				hint: 'Pass the storageUrl a tool such as google_drive__get_file_bytes returned, and check it was not deleted.',
+			})
+		}
+		throw err
+	}
+}
+
 async function* chunksOf(data: Buffer, size: number): AsyncGenerator<Uint8Array> {
 	for (let i = 0; i < data.length; i += size) yield data.subarray(i, i + size)
 }
@@ -138,7 +160,7 @@ export async function writeFile(
 		if (!ctx.openStorageObject) {
 			throw invalidInput('storageUrl uploads are not available on this server.')
 		}
-		const source = await ctx.openStorageObject(key)
+		const source = await openStorageObjectOrNotFound(ctx.openStorageObject, key)
 		const file = await resumableUpload(http, {
 			meta,
 			source: source.stream,
@@ -179,6 +201,27 @@ async function mintEmptyFile(
 	)
 }
 
+/**
+ * The empty Doc or Sheet is already in the user's Drive when a fill step fails.
+ * Move it to the trash (recoverable) so no blank file is left behind, then
+ * rethrow the original error. Best effort: a failed trash never masks it.
+ */
+async function trashOnFailure<T>(
+	http: DriveHttp,
+	fileId: string,
+	fill: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await fill()
+	} catch (err) {
+		const url = `${DRIVE_API}/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`
+		await googleJson(http, url, { method: 'PATCH', body: { trashed: true } }).catch(
+			() => undefined,
+		)
+		throw err
+	}
+}
+
 async function docsBatchUpdate(http: DriveHttp, documentId: string, requests: object[]) {
 	await googleJson(http, `${DOCS_API}/documents/${encodeURIComponent(documentId)}:batchUpdate`, {
 		method: 'POST',
@@ -199,6 +242,15 @@ async function createDoc(
 	elements: DocElement[],
 ): Promise<WriteFileOutput> {
 	const file = await mintEmptyFile(http, meta)
+	await trashOnFailure(http, file.id, () => fillDoc(http, file, elements))
+	return toOutput(file)
+}
+
+async function fillDoc(
+	http: DriveHttp,
+	file: DriveFileResource,
+	elements: DocElement[],
+): Promise<void> {
 	// A new Doc is one empty paragraph at [1, 2): text goes in at index 1.
 	let cursor = 1
 	let run: Exclude<DocElement, { type: 'table' }>[] = []
@@ -254,7 +306,6 @@ async function createDoc(
 		cursor = bodyEnd - 1 + inserted
 	}
 	await flushRun()
-	return toOutput(file)
 }
 
 async function createSheet(
@@ -263,6 +314,15 @@ async function createSheet(
 	values: string[][],
 ): Promise<WriteFileOutput> {
 	const file = await mintEmptyFile(http, meta)
+	await trashOnFailure(http, file.id, () => fillSheet(http, file, values))
+	return toOutput(file)
+}
+
+async function fillSheet(
+	http: DriveHttp,
+	file: DriveFileResource,
+	values: string[][],
+): Promise<void> {
 	const sheets = await googleJson<{ sheets?: Array<{ properties?: { sheetId?: number } }> }>(
 		http,
 		`${SHEETS_API}/spreadsheets/${encodeURIComponent(file.id)}?fields=sheets(properties(sheetId))`,
@@ -272,5 +332,4 @@ async function createSheet(
 		method: 'POST',
 		body: { requests: sheetValuesRequests(sheetId, values) },
 	})
-	return toOutput(file)
 }

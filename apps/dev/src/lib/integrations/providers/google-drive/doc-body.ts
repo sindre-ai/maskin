@@ -8,7 +8,8 @@ export const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
  * Elements accepted in docStructuredBody. This mirrors the element array that
  * google_drive__get_document_structured returns (heading, paragraph, list,
  * table), so a read-then-write round trip works. startIndex / endIndex on an
- * element are ignored: positions are recomputed from the order of the array.
+ * element, and the nesting level of a list item, are ignored: positions are
+ * recomputed from the order of the array and list items are written flat.
  */
 export type DocElement =
 	| { type: 'heading'; level: number; text: string }
@@ -26,7 +27,11 @@ const paragraphSchema = z.object({ text: z.string() })
 const listSchema = z
 	.object({
 		ordered: z.boolean().optional(),
-		items: z.array(z.string()).min(1).optional(),
+		// get_document_structured returns items as {text, level}; plain strings work too.
+		items: z
+			.array(z.union([z.string(), z.object({ text: z.string() })]))
+			.min(1)
+			.optional(),
 		text: z.string().optional(),
 	})
 	.refine((v) => v.items !== undefined || v.text !== undefined, {
@@ -80,7 +85,9 @@ export function parseDocBody(raw: unknown): DocElement[] {
 			return {
 				type,
 				ordered: r.data.ordered ?? false,
-				items: r.data.items ?? [r.data.text as string],
+				items: r.data.items?.map((item) => (typeof item === 'string' ? item : item.text)) ?? [
+					r.data.text as string,
+				],
 			}
 		}
 		const r = tableSchema.safeParse(el)

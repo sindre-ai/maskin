@@ -171,6 +171,30 @@ describe('writeFile: ordinary files', () => {
 		expect(open).not.toHaveBeenCalled()
 	})
 
+	it('returns FILE_NOT_FOUND when the storage object behind a storageUrl is missing', async () => {
+		const open = vi.fn().mockRejectedValue(Object.assign(new Error('gone'), { name: 'NoSuchKey' }))
+		const err = await failure(
+			writeFile(ctx(router([]).fetchImpl, { openStorageObject: open }), {
+				name: 'x',
+				mimeType: 'text/plain',
+				content: { storageUrl: 'workspaces/ws-1/integrations/google-drive/downloads/gone' },
+			}),
+		)
+		expect(err.code).toBe('FILE_NOT_FOUND')
+	})
+
+	it('passes other storage failures through unchanged', async () => {
+		const boom = new Error('storage down')
+		const open = vi.fn().mockRejectedValue(boom)
+		await expect(
+			writeFile(ctx(router([]).fetchImpl, { openStorageObject: open }), {
+				name: 'x',
+				mimeType: 'text/plain',
+				content: { storageUrl: 'workspaces/ws-1/integrations/google-drive/downloads/abc' },
+			}),
+		).rejects.toBe(boom)
+	})
+
 	it('returns PERMISSION_DENIED when the account cannot write to the folder', async () => {
 		const r = router([() => googleError(403, 'no', 'insufficientFilePermissions')])
 		const err = await failure(
@@ -304,6 +328,51 @@ describe('writeFile: Docs and Sheets', () => {
 		)
 		expect(err.code).toBe('INVALID_INPUT')
 		expect(r.calls).toHaveLength(0)
+	})
+
+	it('trashes the empty Doc and rethrows when filling it fails', async () => {
+		const r = router([
+			filesCreate,
+			(c) =>
+				c.method === 'PATCH' && c.url.startsWith('https://www.googleapis.com/drive/v3/files/new-1?')
+					? jsonResponse({})
+					: undefined,
+			(c) =>
+				c.method === 'POST' && c.url.includes('/documents/')
+					? googleError(500, 'backend error', 'backendError')
+					: undefined,
+		])
+		const err = await failure(
+			writeFile(ctx(r.fetchImpl), {
+				name: 'Spec',
+				mimeType: DOC,
+				docStructuredBody: [{ type: 'paragraph', text: 'Hello' }],
+			}),
+		)
+		expect(err.code).toBe('PROVIDER_ERROR')
+		const trash = r.calls.find((c) => c.method === 'PATCH')
+		expect(trash?.body).toEqual({ trashed: true })
+	})
+
+	it('still rethrows the fill error when trashing the empty Sheet also fails', async () => {
+		const r = router([
+			filesCreate,
+			(c) =>
+				c.method === 'GET' && c.url.includes('sheets.googleapis.com/v4/spreadsheets/new-1?fields=')
+					? googleError(403, 'no', 'insufficientFilePermissions')
+					: undefined,
+			(c) =>
+				c.method === 'PATCH' ? googleError(403, 'no', 'insufficientFilePermissions') : undefined,
+		])
+		const err = await failure(
+			writeFile(ctx(r.fetchImpl), {
+				name: 'KPIs',
+				mimeType: SHEET,
+				docStructuredBody: { values: [['a']] },
+			}),
+		)
+		expect(err.code).toBe('PERMISSION_DENIED')
+		expect(r.calls.some((c) => c.method === 'PATCH')).toBe(true)
 	})
 
 	it('mints an empty Sheet, then writes values with spreadsheets.batchUpdate', async () => {

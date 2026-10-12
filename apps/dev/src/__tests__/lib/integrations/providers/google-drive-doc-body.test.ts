@@ -17,14 +17,22 @@ describe('parseDocBody', () => {
 			body: [
 				{ type: 'heading', startIndex: 1, endIndex: 6, level: 2, text: 'Plan' },
 				{ type: 'paragraph', startIndex: 6, endIndex: 12, text: 'Hello' },
-				{ type: 'list', startIndex: 12, endIndex: 20, text: 'one' },
+				{
+					type: 'list',
+					startIndex: 12,
+					endIndex: 20,
+					items: [
+						{ text: 'one', level: 0 },
+						{ text: 'two', level: 1 },
+					],
+				},
 				{ type: 'table', startIndex: 20, endIndex: 40, cells: [['a', 'b'], ['c']] },
 			],
 		}
 		expect(parseDocBody(result)).toEqual([
 			{ type: 'heading', level: 2, text: 'Plan' },
 			{ type: 'paragraph', text: 'Hello' },
-			{ type: 'list', ordered: false, items: ['one'] },
+			{ type: 'list', ordered: false, items: ['one', 'two'] },
 			{
 				type: 'table',
 				cells: [

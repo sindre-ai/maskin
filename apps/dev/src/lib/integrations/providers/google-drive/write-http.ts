@@ -35,7 +35,7 @@ export function createDriveHttp(
 export async function googleJson<T>(
 	http: DriveHttp,
 	url: string,
-	init: { method?: 'GET' | 'POST'; body?: unknown } = {},
+	init: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown } = {},
 ): Promise<T> {
 	const token = await http.getAccessToken()
 	let res: Response
