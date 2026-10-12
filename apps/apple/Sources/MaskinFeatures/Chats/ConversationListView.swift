@@ -93,11 +93,11 @@ struct ConversationListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "bubble.left.and.bubble.right",
-						title: store.scope == .archived ? "Nothing archived" : "A quiet inbox",
-						message: store.scope == .archived ? nil : "Start a chat with a teammate or an agent."
+						title: store.scope == .archived ? "Nothing archived" : "No conversations yet",
+						message: store.scope == .archived ? nil : "Start one with the Chief of Staff or tag an agent."
 					) {
 						if store.scope == .active {
-							Button("New chat", action: onNewChat).buttonStyle(.primaryAction)
+							Button("New conversation", action: onNewChat).buttonStyle(.primaryAction)
 						}
 					}
 				} else {

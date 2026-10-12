@@ -13,7 +13,6 @@ struct LoopsListView: View {
 	var isGrid = false
 	var zoomNamespace: Namespace.ID?
 	var onNew: () -> Void = {}
-	var onBrowse: () -> Void = {}
 
 	var body: some View {
 		let loops = store.filtered(query: search)
@@ -132,13 +131,9 @@ struct LoopsListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "arrow.triangle.2.circlepath", title: "No flows running",
-						message: "A flow is a few agents working together. Describe one in chat, or pick one from the marketplace."
+						message: "Ask the Chief of Staff to set one up. Nothing runs until you approve it."
 					) {
-						VStack(spacing: MaskinSpace.s5) {
-							Button("Build a flow in chat", action: onNew).buttonStyle(.primaryAction)
-							Button("Browse marketplace", action: onBrowse).buttonStyle(.secondaryAction)
-						}
-						.frame(maxWidth: 320)
+						Button("Build a flow in chat", action: onNew).buttonStyle(.primaryAction)
 					}
 				} else {
 					ContentUnavailableView.search(text: search)

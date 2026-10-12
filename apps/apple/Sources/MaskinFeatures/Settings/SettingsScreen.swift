@@ -114,7 +114,9 @@ public struct SettingsScreen: View {
 				case .apiKey: APIKeyView(store: services.apiKeyStore())
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
-				case .billing: BillingView(store: services.billingStore())
+				case .billing: BillingView(
+				store: services.billingStore(),
+				manageURL: services.role == .owner ? services.webURL("billing") : nil)
 				case .mcp:
 					MCPConnectView(
 						serverURL: services.mcpURL, workspaceId: services.workspaceId ?? "",

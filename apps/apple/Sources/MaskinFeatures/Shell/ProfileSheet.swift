@@ -120,7 +120,9 @@ struct ProfileSheet: View {
 				TriggersPage(environment: environment, workspaceID: workspaceID)
 			}
 		case .billing:
-			BillingView(store: services.billingStore())
+			BillingView(
+				store: services.billingStore(),
+				manageURL: services.role == .owner ? services.webURL("billing") : nil)
 		case .keys:
 			KeysPage(store: services.apiKeyStore())
 		case .settings:

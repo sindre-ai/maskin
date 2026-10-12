@@ -101,7 +101,7 @@ private struct LoopsContainer: View {
 	private var sidebar: some View {
 		LoopsListView(
 			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
-			onNew: { buildLoopInChat() }, onBrowse: { showMarketplace = true }
+			onNew: { buildLoopInChat() }
 		)
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search flows")
 		.searchMinimized()
