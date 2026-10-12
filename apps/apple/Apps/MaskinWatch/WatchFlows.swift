@@ -62,6 +62,9 @@ private struct WatchFlowSummary: View {
 				}
 				Text(flow.name).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 				Text(flow.cycleStage).font(WatchType.microMono()).foregroundStyle(MaskinColor.ink4)
+				Text(flow.needsYou ? "NEEDS YOU" : "ON TRACK")
+					.font(WatchType.microMono()).tracking(0.6)
+					.foregroundStyle(flow.needsYou ? MaskinColor.sigHi : MaskinColor.ink4)
 				if let target = flow.target {
 					Text(target).font(WatchType.row()).foregroundStyle(MaskinColor.ink2)
 				}

@@ -12,6 +12,8 @@ struct WatchNeedsYou: View {
 	let watch: MaskinWatchStore
 	let workspaceId: String?
 
+	@State private var selection: String?
+
 	private var entries: [FeedEntry] {
 		(store?.entries ?? []).filter { $0.section == .needs }
 	}
@@ -34,9 +36,13 @@ struct WatchNeedsYou: View {
 	@ViewBuilder
 	private var content: some View {
 		if let store, !entries.isEmpty {
-			TabView {
-				ForEach(entries) { entry in
-					WatchDecisionPage(store: store, entry: entry, workspaceId: workspaceId)
+			TabView(selection: $selection) {
+				ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+					WatchDecisionPage(
+						store: store, entry: entry, workspaceId: workspaceId,
+						remaining: entries[(index + 1)...].filter { $0.record == nil }.count,
+						next: index + 1 < entries.count ? { selection = entries[index + 1].id } : nil)
+					.tag(Optional(entry.id))
 				}
 			}
 			.tabViewStyle(.page)
@@ -93,6 +99,10 @@ private struct WatchDecisionPage: View {
 	let store: ForYouStore
 	let entry: FeedEntry
 	let workspaceId: String?
+	/// Decisions still open behind this one, for the footer.
+	let remaining: Int
+	/// Moves the pager to the next decision; nil on the last one.
+	let next: (() -> Void)?
 	// Option labels (an option's id): `navigationDestination(item:)` wants a Hashable value.
 	@State private var confirming: String?
 	@State private var holding: String?
@@ -116,6 +126,11 @@ private struct WatchDecisionPage: View {
 						.font(WatchType.caption())
 						.foregroundStyle(MaskinColor.ink4)
 						.frame(minHeight: WatchMetrics.target)
+					Text(WatchDecisionOptions.remainingLabel(remaining))
+						.font(WatchType.microMono())
+						.tracking(0.6)
+						.foregroundStyle(MaskinColor.ink4)
+						.frame(maxWidth: .infinity)
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -199,6 +214,11 @@ private struct WatchDecisionPage: View {
 				Button("Undo") { _ = store.undo(card) }
 					.buttonStyle(SecondaryActionButtonStyle())
 					.frame(minHeight: WatchMetrics.target)
+				if let next {
+					Button("Next", action: next)
+						.buttonStyle(PrimaryActionButtonStyle())
+						.frame(minHeight: WatchMetrics.target)
+				}
 			case .queued:
 				Text("Queued, sends when you're back.").font(WatchType.caption()).foregroundStyle(MaskinColor.sigHi)
 			default:
@@ -278,7 +298,7 @@ private struct WatchConfirm: View {
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.gapDefault) {
-				Text(option.label).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
+				Text(WatchDecisionOptions.confirmTitle(for: option.label)).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 				ForEach(option.consequences, id: \.self) { line in
 					Text(line).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3)
 				}
