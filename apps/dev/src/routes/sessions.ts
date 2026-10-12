@@ -54,7 +54,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  */
 const SSE_HEARTBEAT_MS = 15_000
 
-/** Load a session and verify it belongs to the caller's workspace. */
 /**
  * Session row for an HTTP response. The stored config can hold env_vars values
  * and mcps env / headers values, so those are masked here, in the one place every
@@ -64,6 +63,7 @@ function serializeSession<T extends { config: unknown } & Record<string, unknown
 	return serialize({ ...session, config: redactSessionConfig(session.config) })
 }
 
+/** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
 	const [session] = await db
 		.select()
