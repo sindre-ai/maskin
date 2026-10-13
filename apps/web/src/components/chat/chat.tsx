@@ -12,11 +12,11 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
-import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import {
 	UnifiedChatSlashPicker,
 	type UnifiedChatSlashPickerHandle,
 } from '@/components/chat/unified-slash-picker'
+import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'

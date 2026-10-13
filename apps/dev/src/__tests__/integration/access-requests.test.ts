@@ -1,12 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import {
+	events,
 	accessRequests,
 	credentialAccessLog,
-	events,
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, eq, sql as dsql } from 'drizzle-orm'
+import { and, sql as dsql, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: vi.fn(async () => {}) }))

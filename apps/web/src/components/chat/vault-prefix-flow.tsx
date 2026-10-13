@@ -51,6 +51,7 @@ interface VaultRecord {
 	marker: string
 	undoExpiresAt: number
 	undone: boolean
+	sessionEnded: boolean
 }
 
 export interface VaultPrefixFlowProps {
@@ -226,6 +227,7 @@ export function VaultPrefixFlow({
 					marker,
 					undoExpiresAt: new Date(res.undoExpiresAt).getTime(),
 					undone: false,
+					sessionEnded: false,
 				},
 			])
 			try {
@@ -259,9 +261,13 @@ export function VaultPrefixFlow({
 			setUndoingId(record.integrationId)
 			setUndoError(null)
 			try {
-				await api.integrations.undo(record.integrationId, workspaceId)
+				const res = await api.integrations.undo(record.integrationId, workspaceId)
 				setVaults((prev) =>
-					prev.map((v) => (v.integrationId === record.integrationId ? { ...v, undone: true } : v)),
+					prev.map((v) =>
+						v.integrationId === record.integrationId
+							? { ...v, undone: true, sessionEnded: res.sessionEnded }
+							: v,
+					),
 				)
 				queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			} catch {
@@ -290,11 +296,15 @@ export function VaultPrefixFlow({
 			<VaultedCard
 				credentialName={v.name}
 				agentCount={v.agentCount}
+				agentName={agentName}
+				phase={v.undone ? 'undone' : 'live'}
 				undoAvailable={v.undoExpiresAt > now}
 				undoing={undoingId === v.integrationId}
-				undone={v.undone}
+				retrying={false}
+				sessionEnded={v.sessionEnded}
 				error={undoError}
 				onUndo={() => undo(v)}
+				onRetry={() => undefined}
 			/>
 		</div>
 	))
