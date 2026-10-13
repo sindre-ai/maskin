@@ -10,6 +10,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, count, desc, eq, sql } from 'drizzle-orm'
+import { hasWorkspaceGrant, liveActorGrants } from './grants'
 
 // Slice A of the access-request bet: an agent files a request for a credential it
 // cannot read, and the server either files it (Tier 1) or refuses it. Every rule
@@ -246,13 +247,9 @@ export async function listRequestableAccess(
 		})
 }
 
-/** True when the actor, or the whole workspace, already holds a grant. Expiry is the expiry task's. */
+/** True when the actor, or the whole workspace, holds a grant that has not expired. */
 function holdsGrant(grants: unknown, actorId: string): boolean {
-	if (!Array.isArray(grants)) return false
-	return grants.some(
-		(g: { kind?: string; actorId?: string }) =>
-			g?.kind === 'workspace' || (g?.kind === 'actor' && g.actorId === actorId),
-	)
+	return hasWorkspaceGrant(grants) || liveActorGrants(grants, actorId, new Date()).length > 0
 }
 
 /** The workspace's CTO agent, the default Tier 1 approver. Null when there is none. */
