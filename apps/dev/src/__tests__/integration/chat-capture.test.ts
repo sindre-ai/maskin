@@ -724,11 +724,11 @@ describe('credential names', () => {
 	})
 
 	it.each([
-		['cfut_' + 'A1'.repeat(20)],
-		['ghp_' + 'a'.repeat(36)],
-		['sk_live_' + 'c'.repeat(24)],
-		['xoxb-' + '1'.repeat(24)],
-		['sk-' + 'e'.repeat(44)],
+		[`cfut_${'A1'.repeat(20)}`],
+		[`ghp_${'a'.repeat(36)}`],
+		[`sk_live_${'c'.repeat(24)}`],
+		[`xoxb-${'1'.repeat(24)}`],
+		[`sk-${'e'.repeat(44)}`],
 	])(
 		'rejects a secret-shaped name with 400 NAME_LOOKS_LIKE_SECRET and does not echo it',
 		async (name) => {

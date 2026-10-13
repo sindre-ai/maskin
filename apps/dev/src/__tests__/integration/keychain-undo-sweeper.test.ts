@@ -163,9 +163,9 @@ describe('KeychainUndoSweeperJob', () => {
 		const plan = await db.transaction(async (tx) => {
 			// A near-empty test table would otherwise plan a sequential scan.
 			await tx.execute(sql`SET LOCAL enable_seqscan = off`)
-			const rows = (await tx.execute(
-				sql`EXPLAIN ${sweepStatement}`,
-			)) as unknown as Array<Record<string, string>>
+			const rows = (await tx.execute(sql`EXPLAIN ${sweepStatement}`)) as unknown as Array<
+				Record<string, string>
+			>
 			return rows.map((r) => r['QUERY PLAN']).join('\n')
 		})
 		expect(plan).toContain('integrations_undo_sweeper_idx')

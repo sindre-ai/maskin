@@ -67,7 +67,11 @@ async function reload(id: string) {
 	return row
 }
 
-async function valueOf(row: { workspaceId: string; credentials: string | null; dekCiphertext: string | null }) {
+async function plaintextOf(row: {
+	workspaceId: string
+	credentials: string | null
+	dekCiphertext: string | null
+}) {
 	return decryptStoredCredential(kms, {
 		workspaceId: row.workspaceId,
 		credentials: row.credentials as string,
@@ -102,7 +106,7 @@ describe('rotateIntegrationDek', () => {
 		const after = await reload(before.id)
 		expect(after.dekCiphertext).not.toBe(before.dekCiphertext)
 		expect(after.credentials).not.toBe(before.credentials)
-		expect(await valueOf(after)).toBe('secret-a')
+		expect(await plaintextOf(after)).toBe('secret-a')
 		const log = await rotatedLog(before.id)
 		expect(log).toHaveLength(1)
 		expect(log[0]?.actorId).toBe(getTestActorId())
@@ -178,7 +182,7 @@ describe('rotateIntegrationDek', () => {
 		})
 
 		expect(out).toBe('changed')
-		expect(await valueOf(await reload(row.id))).toBe('secret-race-rewritten')
+		expect(await plaintextOf(await reload(row.id))).toBe('secret-race-rewritten')
 		expect(await rotatedLog(row.id)).toHaveLength(0)
 	})
 })
@@ -216,7 +220,7 @@ describe('POST /api/integrations/:id/rotate-dek', () => {
 		expect(await res.json()).toEqual({ id: row.id, status: 'rotated' })
 		const after = await reload(row.id)
 		expect(after.dekCiphertext).not.toBe(row.dekCiphertext)
-		expect(await valueOf(after)).toBe('secret-http')
+		expect(await plaintextOf(after)).toBe('secret-http')
 	})
 
 	it('refuses an agent, even one that is a member of the workspace', async () => {
@@ -281,7 +285,7 @@ describe('RotateDeksJob', () => {
 		expect(result.rotated).toBeGreaterThanOrEqual(1)
 		const readAfter = await reload(read.id)
 		expect(readAfter.dekCiphertext).not.toBe(read.dekCiphertext)
-		expect(await valueOf(readAfter)).toBe('secret-read')
+		expect(await plaintextOf(readAfter)).toBe('secret-read')
 		const unreadAfter = await reload(unread.id)
 		expect(unreadAfter.dekCiphertext).toBe(unread.dekCiphertext)
 		expect(unreadAfter.credentials).toBe(unread.credentials)

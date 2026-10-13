@@ -2194,6 +2194,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {

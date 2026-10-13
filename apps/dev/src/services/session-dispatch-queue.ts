@@ -15,6 +15,13 @@ import { type SettleDependencies, settleSession } from './session-lifecycle'
  * One row per session_id. Re-enqueueing the same session is a no-op while a
  * row exists. The row is deleted on `dispatched` and marked `failed` on
  * `permanent_failure` or after `max_attempts` transient failures.
+ *
+ * An attempt is spent when a row is claimed (leased), not when its dispatch
+ * returns. A start call that hangs — the tick times out, the lease expires, or
+ * the process dies mid-call — therefore still costs one attempt, and a row
+ * whose start call never returns reaches `max_attempts` and is failed instead
+ * of being re-leased forever. `no_capacity` hands the attempt back: no start
+ * call was made, so waiting for a slot never burns one.
  */
 
 /** Outcome the dispatch callback reports to the queue. */
@@ -133,8 +140,22 @@ export function dispatchIdempotencyKey(sessionId: string): string {
 const DISPATCH_FAILED_MESSAGE =
 	'This session could not be started — no agent server accepted it after several attempts. Nothing was run. Start a new session to try again.'
 
+/**
+ * Shown when every start call for a session hung until its lease expired.
+ * Says the start timed out, unlike DISPATCH_FAILED_MESSAGE, which blames
+ * "no agent server accepted it".
+ */
+const START_TIMED_OUT_MESSAGE =
+	'This session could not be started — the agent server did not answer the start request in time, after several attempts. Start a new session to try again.'
+
 /** The only statuses a dispatch failure may still turn into a failed session. */
 const DISPATCHABLE_STATUSES: readonly string[] = ['pending', 'queued', 'starting']
+
+/** A leased queue row; `leaseExhausted` means no attempts were left to spend on it. */
+type ClaimedRow = {
+	row: typeof sessionDispatchAttempts.$inferSelect
+	leaseExhausted: boolean
+}
 
 export class SessionDispatchQueue {
 	private timer: NodeJS.Timeout | null = null
@@ -260,8 +281,12 @@ export class SessionDispatchQueue {
 				current = null
 				const claimed = await this.claimOne()
 				if (!claimed) break
-				current = claimed.sessionId
-				await this.processOne(claimed)
+				current = claimed.row.sessionId
+				if (claimed.leaseExhausted) {
+					await this.handleStartTimedOut(claimed.row)
+					continue
+				}
+				await this.processOne(claimed.row)
 			}
 			return 'done' as const
 		})()
@@ -285,13 +310,20 @@ export class SessionDispatchQueue {
 	/**
 	 * Claim one ready row. Atomically selects the oldest `pending` row whose
 	 * `next_attempt_at` is in the past, pushes its `next_attempt_at` forward
-	 * by the lease, and returns it. Returns `null` when no row is ready.
+	 * by the lease, spends one attempt on it, and returns it. Returns `null`
+	 * when no row is ready.
+	 *
+	 * The attempt is spent here so a start call that never returns still counts
+	 * (see the file header). A row that comes back already at `max_attempts`
+	 * can only mean that every earlier claim was never resolved — a resolved
+	 * claim either deletes the row, fails it, or leaves it below the limit — so
+	 * it is returned with `leaseExhausted` set and no further attempt is made.
 	 *
 	 * Holding the row lock only across the UPDATE — never across the dispatch
 	 * itself — keeps tail latency on other workers bounded by the lease, not
 	 * by the slowest in-flight HTTPS call.
 	 */
-	private async claimOne(): Promise<typeof sessionDispatchAttempts.$inferSelect | null> {
+	private async claimOne(): Promise<ClaimedRow | null> {
 		return this.db.transaction(async (tx) => {
 			const [candidate] = await tx
 				.select()
@@ -308,14 +340,20 @@ export class SessionDispatchQueue {
 
 			if (!candidate) return null
 
+			const leaseExhausted = candidate.attempt >= candidate.maxAttempts
 			const leaseUntil = new Date(Date.now() + this.leaseMs)
 			const [leased] = await tx
 				.update(sessionDispatchAttempts)
-				.set({ nextAttemptAt: leaseUntil, updatedAt: new Date() })
+				.set({
+					nextAttemptAt: leaseUntil,
+					// The row lock is held, so the read-then-write is safe.
+					attempt: leaseExhausted ? candidate.attempt : candidate.attempt + 1,
+					updatedAt: new Date(),
+				})
 				.where(eq(sessionDispatchAttempts.id, candidate.id))
 				.returning()
 
-			return leased ?? null
+			return leased ? { row: leased, leaseExhausted } : null
 		})
 	}
 
@@ -350,19 +388,26 @@ export class SessionDispatchQueue {
 		await this.db.delete(sessionDispatchAttempts).where(eq(sessionDispatchAttempts.id, row.id))
 		logger.info('Session dispatched', {
 			sessionId: row.sessionId,
-			attempt: row.attempt + 1,
+			attempt: row.attempt,
 		})
 	}
 
 	private async handleNoCapacity(row: typeof sessionDispatchAttempts.$inferSelect): Promise<void> {
-		// Backpressure: every agent-server is full. Don't burn an attempt — just
-		// delay the next try. A queue parked here will resume as soon as an
-		// agent-server frees a slot.
+		// Backpressure: every agent-server is full. No start call was made, so
+		// hand back the attempt claimOne spent and just delay the next try. A
+		// queue parked here will resume as soon as an agent-server frees a slot.
+		// Compare-and-set on the attempt count: if a late result from an
+		// abandoned tick lands after a newer claim, the newer claim owns the row.
 		const nextAttemptAt = new Date(Date.now() + this.noCapacityBackoffMs)
 		await this.db
 			.update(sessionDispatchAttempts)
-			.set({ nextAttemptAt, updatedAt: new Date() })
-			.where(eq(sessionDispatchAttempts.id, row.id))
+			.set({ attempt: row.attempt - 1, nextAttemptAt, updatedAt: new Date() })
+			.where(
+				and(
+					eq(sessionDispatchAttempts.id, row.id),
+					eq(sessionDispatchAttempts.attempt, row.attempt),
+				),
+			)
 		logger.info('Session dispatch parked — no agent-server capacity', {
 			sessionId: row.sessionId,
 			nextAttemptAt: nextAttemptAt.toISOString(),
@@ -373,7 +418,7 @@ export class SessionDispatchQueue {
 		row: typeof sessionDispatchAttempts.$inferSelect,
 		error: string,
 	): Promise<void> {
-		const attempt = row.attempt + 1
+		const attempt = row.attempt
 		if (attempt >= row.maxAttempts) {
 			await this.markRowFailed(row, error)
 			await this.markSessionFailed(
@@ -443,6 +488,31 @@ export class SessionDispatchQueue {
 		}
 	}
 
+	/**
+	 * Give up on a row whose start call never returned on any of its
+	 * `max_attempts` claims. Same terminal path as every other give-up; only
+	 * the message differs, so the user is told the start timed out.
+	 */
+	private async handleStartTimedOut(
+		row: typeof sessionDispatchAttempts.$inferSelect,
+	): Promise<void> {
+		const error = `Dispatch start timed out after ${row.attempt} attempts: the agent server did not answer before the lease expired`
+		await this.markRowFailed(row, error)
+		await this.markSessionFailed(row.sessionId, error, {
+			provider: 'agent-server',
+			reason_code: 'dispatch_failed',
+			human_message: START_TIMED_OUT_MESSAGE,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: error,
+		})
+		logger.error('Session dispatch start timed out', {
+			sessionId: row.sessionId,
+			attempt: row.attempt,
+			maxAttempts: row.maxAttempts,
+		})
+	}
+
 	private async markRowFailed(
 		row: typeof sessionDispatchAttempts.$inferSelect,
 		error: string,
@@ -451,7 +521,6 @@ export class SessionDispatchQueue {
 			.update(sessionDispatchAttempts)
 			.set({
 				status: 'failed',
-				attempt: row.attempt + 1,
 				lastError: error,
 				updatedAt: new Date(),
 			})
