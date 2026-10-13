@@ -24655,6 +24655,144 @@ public enum Operations {
                     }
                 }
             }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_relationships.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_relationships.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Source or target not found in the workspace
+            ///
+            /// - Remark: Generated from `#/paths//api/relationships/post/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.post_sol_api_sol_relationships.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.post_sol_api_sol_relationships.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
             public struct InternalServerError: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/relationships/POST/responses/500/content`.
                 @frozen public enum Body: Sendable, Hashable {
