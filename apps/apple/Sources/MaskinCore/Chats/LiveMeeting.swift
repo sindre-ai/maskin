@@ -135,8 +135,22 @@ public struct LiveMeetingTurn: Equatable, Sendable {
 public struct LiveMeetingNote: Equatable, Sendable {
 	public var title: String
 	public var turns: [LiveMeetingTurn]
+	/// For a note that only summarises a call whose lines are already in the thread: how many lines
+	/// each side spoke. Nil for a note that carries the whole transcript itself.
+	public var spoken: Spoken?
+
+	public struct Spoken: Equatable, Sendable {
+		public var you: Int
+		public var agent: Int
+		public init(you: Int, agent: Int) {
+			self.you = you
+			self.agent = agent
+		}
+	}
 
 	public static let transcriptHeading = "**Transcript**"
+	/// Opens the line of a summary that points at the thread instead of repeating it.
+	public static let aboveHeading = "**Transcript above**"
 	public static let emptyText = "No speech was captured."
 	static let maxTurnLength = 1200
 	static let maxTranscriptLength = 12_000
@@ -147,10 +161,30 @@ public struct LiveMeetingNote: Equatable, Sendable {
 		self.turns = turns
 	}
 
+	/// The summary of a call whose lines were each posted into the thread as they were said: counts
+	/// and the two lines worth showing, not the transcript a second time.
+	public static func summary(title: String, turns: [LiveMeetingTurn]) -> LiveMeetingNote {
+		var note = LiveMeetingNote(
+			title: title, turns: [turns.first { $0.isYou }, turns.last { !$0.isYou }].compactMap { $0 })
+		if !turns.isEmpty {
+			let you = turns.filter(\.isYou).count
+			note.spoken = Spoken(you: you, agent: turns.count - you)
+		}
+		return note
+	}
+
 	/// The markdown posted into the chat. Turns are flattened to one line each and the whole
 	/// transcript is capped, keeping the most recent lines.
 	public var markdown: String {
 		guard !turns.isEmpty else { return "\(title)\n\n\(Self.emptyText)" }
+		if let spoken {
+			let you = spoken.you == 1 ? "1 line from you" : "\(spoken.you) lines from you"
+			let other = spoken.agent == 1 ? "1 reply" : "\(spoken.agent) replies"
+			let lines = turns.map { turn in
+				"- **\(turn.isYou ? Self.youName : Self.clean(turn.speaker)):** \(Self.shorten(turn.text))"
+			}
+			return ([title, "", "\(Self.aboveHeading) · \(you) · \(other)"] + lines).joined(separator: "\n")
+		}
 		var lines = turns.map { turn in
 			"- **\(turn.isYou ? Self.youName : Self.clean(turn.speaker)):** \(Self.shorten(turn.text))"
 		}
@@ -169,6 +203,7 @@ public struct LiveMeetingNote: Equatable, Sendable {
 		let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 		guard let title = lines.first, title.contains(" · "),
 			lines.contains(transcriptHeading) || lines.contains(emptyText)
+				|| lines.contains(where: { $0.hasPrefix(aboveHeading) })
 		else { return nil }
 		var turns: [LiveMeetingTurn] = []
 		for line in lines.dropFirst() where line.hasPrefix("- **") {
@@ -178,7 +213,12 @@ public struct LiveMeetingNote: Equatable, Sendable {
 			let text = String(body[split.upperBound...])
 			turns.append(LiveMeetingTurn(speaker: speaker, text: text, isYou: speaker == youName))
 		}
-		return LiveMeetingNote(title: title, turns: turns)
+		var note = LiveMeetingNote(title: title, turns: turns)
+		if let counts = lines.first(where: { $0.hasPrefix(aboveHeading) }) {
+			let numbers = counts.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+			if numbers.count >= 2 { note.spoken = Spoken(you: numbers[0], agent: numbers[1]) }
+		}
+		return note
 	}
 
 	/// The duration at the end of the title ("7:01"), as shown on the card.
@@ -193,8 +233,10 @@ public struct LiveMeetingNote: Equatable, Sendable {
 		return parts.joined(separator: " · ")
 	}
 
-	public var youCount: Int { turns.filter(\.isYou).count }
-	public var agentCount: Int { turns.count - youCount }
+	public var youCount: Int { spoken?.you ?? turns.filter(\.isYou).count }
+	public var agentCount: Int { spoken?.agent ?? (turns.count - turns.filter(\.isYou).count) }
+	/// True when the call's lines are in the thread above this note rather than in it.
+	public var isSummary: Bool { spoken != nil }
 
 	/// The last thing the agent said, the nearest thing to an outcome the transcript has.
 	public var lastAgentTurn: LiveMeetingTurn? { turns.last { !$0.isYou } }

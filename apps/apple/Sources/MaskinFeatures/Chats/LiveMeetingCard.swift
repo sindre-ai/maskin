@@ -23,19 +23,24 @@ struct LiveMeetingCard: View {
 				Text(counts).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				if let first = note.firstYouTurn { line("You said", first.text) }
 				if let last = note.lastAgentTurn { line("\(last.speaker) ended with", last.text) }
-				DisclosureGroup(isExpanded: $expanded) {
-					VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-						ForEach(Array(note.turns.enumerated()), id: \.offset) { _, turn in
-							(Text(turn.speaker + "  ").fontWeight(.semibold) + Text(turn.text))
-								.maskinText(.subhead).foregroundStyle(MaskinColor.ink)
-								.frame(maxWidth: .infinity, alignment: .leading)
+				if note.isSummary {
+					Text("The whole conversation is in the thread above.")
+						.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+				} else {
+					DisclosureGroup(isExpanded: $expanded) {
+						VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+							ForEach(Array(note.turns.enumerated()), id: \.offset) { _, turn in
+								(Text(turn.speaker + "  ").fontWeight(.semibold) + Text(turn.text))
+									.maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+									.frame(maxWidth: .infinity, alignment: .leading)
+							}
 						}
+						.padding(.top, MaskinSpace.s4)
+						.textSelection(.enabled)
+					} label: {
+						Text(expanded ? "Hide transcript" : "Show transcript")
+							.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 					}
-					.padding(.top, MaskinSpace.s4)
-					.textSelection(.enabled)
-				} label: {
-					Text(expanded ? "Hide transcript" : "Show transcript")
-						.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 				}
 			}
 		}

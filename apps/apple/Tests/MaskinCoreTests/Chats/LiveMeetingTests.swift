@@ -150,4 +150,26 @@ struct ChiefOfStaffLiveChatTests {
 		#expect(!markdown.contains("line 0 "))
 		#expect(markdown.contains("earlier lines left out"))
 	}
+
+	@Test func summaryPointsAtTheThreadInsteadOfRepeatingIt() {
+		let turns: [LiveMeetingTurn] = [
+			.init(speaker: "You", text: "what is blocked", isYou: true),
+			.init(speaker: "Relay", text: "Three bets.", isYou: false),
+			.init(speaker: "You", text: "who owns them", isYou: true),
+			.init(speaker: "Relay", text: "Forge owns two.", isYou: false),
+		]
+		let note = LiveMeetingNote.summary(title: "Live meeting with Relay · 7:01", turns: turns)
+		#expect(!note.markdown.contains("who owns them"))
+		let parsed = LiveMeetingNote.parse(note.markdown)
+		#expect(parsed?.isSummary == true)
+		#expect(parsed?.youCount == 2 && parsed?.agentCount == 2)
+		#expect(parsed?.firstYouTurn?.text == "what is blocked")
+		#expect(parsed?.lastAgentTurn?.text == "Forge owns two.")
+		#expect(parsed?.durationText == "7:01")
+	}
+
+	@Test func emptySummaryStillSaysNoSpeechWasCaptured() {
+		let note = LiveMeetingNote.summary(title: "Live meeting with Relay · 0:42", turns: [])
+		#expect(note.markdown.hasSuffix(LiveMeetingNote.emptyText))
+	}
 }
