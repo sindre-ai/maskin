@@ -149,7 +149,7 @@ import Testing
 		_ = m.tick(at: at(3))
 		_ = m.replyArrived(messageID: "m1", text: "Three bets are blocked on review.")
 		let cmds = m.heard("actually stop", at: at(5))
-		#expect(cmds == [.stopSpeaking, .resetTranscript])
+		#expect(cmds == [.stopSpeaking])
 		#expect(m.phase == .listening)
 		#expect(m.transcript == "actually stop")
 		#expect(m.tick(at: at(7.5)) == [.resetTranscript, .send("actually stop")])
@@ -263,5 +263,31 @@ import Testing
 		var m = LiveVoiceMachine()
 		_ = m.begin()
 		#expect(m.end() == [.stopListening, .stopSpeaking])
+	}
+
+	@Test("the agent's own words are echo, fillers are fillers")
+	func echoAndFillers() {
+		var m = LiveVoiceMachine()
+		_ = m.begin()
+		_ = m.heard("what is blocked", at: at(0))
+		_ = m.tick(at: at(3))
+		_ = m.replyArrived(messageID: "m1", text: "Three bets are blocked on review.")
+		#expect(m.isEcho("three bets are"))
+		#expect(!m.isEcho("what about billing"))
+		#expect(m.isFiller("um"))
+	}
+
+	@Test("go on after being cut off goes back to speaking")
+	func resumesSpeaking() {
+		var m = LiveVoiceMachine()
+		_ = m.begin()
+		_ = m.heard("what is blocked", at: at(0))
+		_ = m.tick(at: at(3))
+		_ = m.replyArrived(messageID: "m1", text: "Three bets.")
+		_ = m.interrupt()
+		#expect(m.phase == .listening)
+		#expect(m.resumeSpeaking(text: "Four bets remain") == [.resetTranscript])
+		#expect(m.phase == .speaking)
+		#expect(m.isEcho("bets remain"))
 	}
 }

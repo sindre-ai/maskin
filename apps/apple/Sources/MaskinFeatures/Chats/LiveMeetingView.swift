@@ -77,7 +77,8 @@ extension LiveMeetingSession {
 			speak: { id, markdown in SpeechReader.shared.enqueue(markdown: markdown, id: id) },
 			stopSpeaking: { SpeechReader.shared.stop() },
 			isSpeaking: { SpeechReader.shared.speakingID != nil },
-			send: send)
+			send: send,
+			setSpeechRate: { SpeechReader.shared.rate = $0 })
 		#else
 		return LiveVoiceController.Ports(
 			startListening: { _ in "Live calls need an iPhone or iPad." },

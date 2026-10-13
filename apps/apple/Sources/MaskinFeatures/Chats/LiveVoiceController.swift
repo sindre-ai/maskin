@@ -24,6 +24,8 @@ final class LiveVoiceController {
 		/// Sends what was said as a message.
 		var send: @MainActor (String) -> Void
 		var now: @MainActor () -> Date = { Date() }
+		/// How fast the voice reads (`AVSpeechUtterance.rate`).
+		var setSpeechRate: @MainActor (Float) -> Void = { _ in }
 	}
 
 	private(set) var machine = LiveVoiceMachine()
@@ -36,6 +38,17 @@ final class LiveVoiceController {
 	private(set) var notice: String?
 	/// A phone call, Siri or an alarm has the audio: the call is paused until it hands it back.
 	private(set) var isInterrupted = false
+	/// How the agent's replies are delivered: in beats with listening breaks, or straight through.
+	var pace: LiveCallPace {
+		didSet {
+			pacer.pace = pace
+			ports.setSpeechRate(pace.speechRate)
+			pace.store(defaults)
+		}
+	}
+	/// The mic is open for you between the beats of a reply: "Your turn…".
+	var isYourTurn: Bool { machine.phase == .speaking && onBreak }
+	private(set) var onBreak = false
 	/// The agent's name on its turns.
 	@ObservationIgnored var agentName = "Agent"
 
@@ -46,6 +59,10 @@ final class LiveVoiceController {
 	var speakingText: String? { phase == .speaking ? turns.last { !$0.isYou }?.text : nil }
 
 	@ObservationIgnored private let ports: Ports
+	@ObservationIgnored private let defaults: UserDefaults
+	@ObservationIgnored private var pacer = ReplyPacer()
+	/// A short acknowledgement heard after the reading stopped, waiting to prove it is the whole phrase.
+	@ObservationIgnored private var ack: (text: String, since: Date)?
 	@ObservationIgnored private let tickInterval: Duration
 	@ObservationIgnored private var seen: Set<String> = []
 	@ObservationIgnored private var texts: [String: String] = [:]
@@ -57,9 +74,16 @@ final class LiveVoiceController {
 	private static let restartLimit = 4
 	private static let restartWindow: TimeInterval = 15
 
-	init(ports: Ports, tickInterval: Duration = .milliseconds(250)) {
+	init(
+		ports: Ports, tickInterval: Duration = .milliseconds(250),
+		defaults: UserDefaults = .standard, pace: LiveCallPace? = nil
+	) {
 		self.ports = ports
 		self.tickInterval = tickInterval
+		self.defaults = defaults
+		let chosen = pace ?? LiveCallPace.stored(defaults)
+		self.pace = chosen
+		pacer.pace = chosen
 	}
 
 	/// Begin listening. Messages already in the thread are not replies and are never read.
@@ -72,6 +96,8 @@ final class LiveVoiceController {
 		notice = nil
 		isInterrupted = false
 		isActive = true
+		pacer.discard()
+		ports.setSpeechRate(pace.speechRate)
 		run(machine.begin())
 		ticker = Task { [weak self] in
 			while !Task.isCancelled {
@@ -157,10 +183,12 @@ final class LiveVoiceController {
 	/// outside world knows (the reader went quiet, the recogniser stopped by itself).
 	func tick() {
 		guard isActive else { return }
-		run(machine.tick(at: ports.now()))
+		let now = ports.now()
+		resumeIfAsked(at: now)
+		run(machine.tick(at: now))
 		switch machine.phase {
 		case .speaking:
-			if !ports.isSpeaking() { run(machine.speechFinished()) }
+			tickReading(at: now)
 		case .listening, .thinking:
 			if !machine.isMuted, !isInterrupted, !starting, !ports.isListening() {
 				let now = ports.now()
@@ -183,14 +211,92 @@ final class LiveVoiceController {
 			case .stopListening: ports.stopListening()
 			case .resetTranscript: ports.resetTranscript()
 			case .send(let text): send(text)
-			case .speak(let id): ports.speak(id, SpokenReply.text(from: texts[id] ?? ""))
-			case .stopSpeaking: ports.stopSpeaking()
+			case .speak(let id): read(id)
+			case .stopSpeaking:
+				ports.stopSpeaking()
+				// Cut off mid-reading: "go on" picks up at the beat that was interrupted.
+				pacer.interrupted(at: ports.now())
+				onBreak = false
 			}
 		}
 	}
 
+	// MARK: Reading in beats
+
+	/// Say an agent reply: straight through when quick, otherwise beat by beat with breaks.
+	private func read(_ id: String) {
+		let spoken = SpokenReply.text(from: texts[id] ?? "")
+		guard pace.isPaced else {
+			ports.speak(id, spoken)
+			return
+		}
+		runPacer(pacer.enqueue(id: id, text: spoken, at: ports.now()))
+	}
+
+	private func runPacer(_ commands: [ReplyPacer.Command]) {
+		for command in commands {
+			switch command {
+			case .speak(let id, let text): ports.speak(id, text)
+			case .resetTranscript: ports.resetTranscript()
+			case .finished: run(machine.speechFinished())
+			case .takeOver(let text):
+				// You started talking in a break: the usual barge-in, with the words so far kept.
+				// The recogniser keeps its transcript: the words so far are the start of your turn.
+				run(machine.interrupt().filter { $0 != .resetTranscript && $0 != .startListening })
+				run(machine.heard(text, at: ports.now()))
+			}
+		}
+		onBreak = pacer.isOnBreak
+	}
+
+	/// While the agent is speaking: a beat ending starts a break; a break ends by itself, by "go on",
+	/// or by you taking over.
+	private func tickReading(at now: Date) {
+		guard pace.isPaced else {
+			if !ports.isSpeaking() { run(machine.speechFinished()) }
+			return
+		}
+		switch pacer.state {
+		case .speaking, .speakingCheckIn:
+			if !ports.isSpeaking() { runPacer(pacer.beatFinished(at: now)) }
+		case .pause, .held:
+			runPacer(pacer.tick(at: now))
+		case .idle:
+			if !ports.isSpeaking() { run(machine.speechFinished()) }
+		}
+	}
+
+	/// What the recogniser hears: during a break it is you reacting; after the reading stopped, a
+	/// short "go on" picks it up again; otherwise it is the machine's to turn into a message.
+	private func heard(_ text: String, isFinal: Bool) {
+		let now = ports.now()
+		if machine.phase == .speaking, pacer.isOnBreak, pace.isPaced {
+			guard !machine.isMuted, !machine.isEcho(text), !machine.isFiller(text) else { return }
+			runPacer(pacer.heard(text, at: now))
+			return
+		}
+		if machine.phase == .listening, pacer.canResume(at: now), SpokenReaction.classify(text) == .continue {
+			if ack?.text != text { ack = (text, now) }
+		} else {
+			ack = nil
+		}
+		run(machine.heard(text, at: now, isFinal: isFinal))
+	}
+
+	private func resumeIfAsked(at now: Date) {
+		guard let candidate = ack, machine.phase == .listening, machine.transcript == candidate.text,
+			now.timeIntervalSince(candidate.since) >= ReplyPacer.reactionDelay, pacer.canResume(at: now)
+		else { return }
+		ack = nil
+		run(machine.resumeSpeaking(text: pacer.remainingText))
+		runPacer(pacer.resume(at: now))
+	}
+
 	/// One finished line of yours: it goes into the chat at once.
 	private func send(_ text: String) {
+		pacer.discard()
+		onBreak = false
+		ack = nil
 		turns.append(LiveMeetingTurn(speaker: LiveMeetingNote.youName, text: text, isYou: true))
 		ports.send(text)
 	}
@@ -203,7 +309,7 @@ final class LiveVoiceController {
 			let problem = await self.ports.startListening { [weak self] text, isFinal in
 				guard let self, self.isActive else { return }
 				self.notice = nil
-				self.run(self.machine.heard(text, at: self.ports.now(), isFinal: isFinal))
+				self.heard(text, isFinal: isFinal)
 			}
 			self.starting = false
 			if let problem {
