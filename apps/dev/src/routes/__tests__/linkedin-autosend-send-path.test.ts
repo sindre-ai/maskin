@@ -32,7 +32,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: vi.fn(),
+	findIntegrationRow: vi.fn(),
+	getCredential: vi.fn(),
 }))
 
 vi.mock('../../lib/integrations/providers/linkedin-unipile/errors', async () => {
@@ -56,7 +57,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 import { FLAGS, parseFeatureFlagConfig } from '../../lib/feature-flags'
-import { getIntegrationCredential } from '../../lib/integrations/lookup'
+import { findIntegrationRow, getCredential } from '../../lib/integrations/lookup'
 import {
 	buildLinkedinAutosendIdempotencyKey,
 	isSalesRepLinkedinAutosendEnabled,
@@ -124,7 +125,8 @@ const CONTACT_ID = 'contact-abc'
 const DRAFT_ID = 'draft-xyz'
 
 beforeEach(() => {
-	vi.mocked(getIntegrationCredential).mockReset()
+	vi.mocked(findIntegrationRow).mockReset()
+	vi.mocked(getCredential).mockReset()
 	vi.mocked(isWorkspaceMember).mockResolvedValue(true)
 	__setLinkedInClientForTests(null)
 })
@@ -143,7 +145,7 @@ describe('Sales Rep loop autosend — flag-on send path (integration)', () => {
 		expect(isSalesRepLinkedinAutosendEnabled(DRIVER_ACTOR, config)).toBe(true)
 
 		// 2. Credential — the driver-actor has a linkedin-unipile row.
-		vi.mocked(getIntegrationCredential).mockImplementation(
+		vi.mocked(findIntegrationRow).mockImplementation(
 			async (_db, _ws, provider, requestedActor) => {
 				if (provider !== 'linkedin-unipile' || requestedActor !== DRIVER_ACTOR) return null
 				return {
@@ -162,6 +164,10 @@ describe('Sales Rep loop autosend — flag-on send path (integration)', () => {
 				} as never
 			},
 		)
+		// The value is read by id through getCredential, scope-checked and audited.
+		vi.mocked(getCredential).mockResolvedValue({
+			value: JSON.stringify({ account_id: 'unipile-driver' }),
+		} as never)
 
 		// 3. Fake Unipile client — captures what the send lands with.
 		let seenAccountId: string | null = null
