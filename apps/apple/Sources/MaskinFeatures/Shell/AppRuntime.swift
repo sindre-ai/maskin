@@ -351,6 +351,8 @@ public final class AppRuntime {
 			presentation = nil
 			selectedTab = .chats
 			requestedConversationId = id
+		case .file(_, let id):
+			openFile(id)
 		case .notifications:
 			// The old inbox link: its replacement is the For You tab.
 			presentation = nil
