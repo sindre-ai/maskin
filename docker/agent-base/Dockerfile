@@ -1,4 +1,10 @@
 # CI: trigger automated build and deploy
+
+# GitHub's official MCP server, pinned by tag AND digest. Bump both together,
+# deliberately. The tag is a multi-arch index; the build is amd64 only
+# (agent-base-docker.yml), so buildx resolves the linux/amd64 variant.
+FROM ghcr.io/github/github-mcp-server:v1.13.0@sha256:15b28878c7d46edf07e16c373e48144fbeb2c5cc464e723f252677fd82a91f5f AS github-mcp
+
 FROM node:22-slim
 
 # System tools
@@ -18,6 +24,12 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.285
 
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp
+
+# Pre-install GitHub MCP server (static Go binary from the github-mcp stage).
+# Baked in because sessions are microVMs with no Docker daemon. The --version
+# run fails the image build if the binary is the wrong architecture.
+COPY --from=github-mcp /server/github-mcp-server /usr/local/bin/github-mcp-server
+RUN github-mcp-server --version
 
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent

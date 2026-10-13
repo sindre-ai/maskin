@@ -306,6 +306,13 @@ export const sessionResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 })
 
+// PATCH /sessions/:id answer when notify_on_complete was requested: what happened
+// to the return, not just that the flag was saved.
+export const sessionNotifyResponseSchema = sessionResponseSchema.extend({
+	notify_on_complete: z.enum(['registered', 'delivered', 'skipped']).optional(),
+	notify_skip_reason: z.string().optional(),
+})
+
 export const conversationParticipantResponseSchema = z.object({
 	actorId: z.string().uuid(),
 	actorName: z.string(),

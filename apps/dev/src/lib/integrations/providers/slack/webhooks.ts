@@ -213,7 +213,10 @@ interface UnlinkedView {
 	blocks: Array<Record<string, unknown>>
 }
 
-/** Cold-state view: a single Connect button. T2 wires the linking flow. */
+/**
+ * Cold-state view: a single Connect button. It opens the Maskin app root (sign in with the
+ * same email as Slack); the web app has no /integrations/slack route, so linking there 404s.
+ */
 function buildUnlinkedView(): UnlinkedView {
 	return {
 		blocks: [
@@ -230,7 +233,7 @@ function buildUnlinkedView(): UnlinkedView {
 				accessory: {
 					type: 'button',
 					text: { type: 'plain_text', text: 'Connect Maskin', emoji: false },
-					url: `${frontendBaseUrl()}/integrations/slack`,
+					url: frontendBaseUrl(),
 					action_id: 'maskin_slack_connect',
 				},
 			},

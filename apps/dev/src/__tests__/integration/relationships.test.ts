@@ -49,7 +49,9 @@ describe('Relationships Integration', () => {
 		expect(created.targetId).toBe(obj2Id)
 
 		// List
-		const listRes = await app.request(jsonGet(`/api/relationships?source_id=${obj1Id}`))
+		const listRes = await app.request(
+			jsonGet(`/api/relationships?source_id=${obj1Id}`, { 'x-workspace-id': workspaceId }),
+		)
 		expect(listRes.status).toBe(200)
 		const list = await listRes.json()
 		expect(list).toHaveLength(1)
@@ -91,7 +93,9 @@ describe('Relationships Integration', () => {
 		)
 
 		// object_id should return both edges, regardless of direction
-		const res = await app.request(jsonGet(`/api/relationships?object_id=${obj1Id}`))
+		const res = await app.request(
+			jsonGet(`/api/relationships?object_id=${obj1Id}`, { 'x-workspace-id': workspaceId }),
+		)
 		expect(res.status).toBe(200)
 		const list = await res.json()
 		expect(list).toHaveLength(2)

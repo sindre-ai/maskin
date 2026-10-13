@@ -265,6 +265,7 @@ export async function maybeGenerateConversationTitle(ctx: {
 		const adapter = createLLMAdapter(credentials.provider, {
 			api_key: credentials.apiKey,
 			base_url: credentials.baseUrl,
+			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
 		})
 		const response = await withTimeout(
 			adapter.chat({

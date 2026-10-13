@@ -119,6 +119,12 @@ services:
       # Gate: production under local-file wraps no credential until this is "true". Infra
       # sets it in Coolify only after the off-volume KEK copy is confirmed.
       KEYCHAIN_KEK_BACKUP_CONFIRMED: ${KEYCHAIN_KEK_BACKUP_CONFIRMED:-false}
+      # Invite emails. Set RESEND_API_KEY and APP_URL together: with a key and no
+      # APP_URL, invite creation returns 500. Do not add EMAIL_FROM here: the
+      # email package reads it with ??, so an empty value would beat the
+      # notifications@maskin.io default.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      APP_URL: ${APP_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

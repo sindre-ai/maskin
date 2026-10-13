@@ -8,7 +8,10 @@ import {
 	createAuthLink,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/client'
 import { LinkedInUnavailableError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
-import { createLinkedInHttpClient } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import {
+	createLinkedInHttpClient,
+	normalizeProfileIdentifier,
+} from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
 
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
 const ENV_KEYS = ['UNIPILE_BASE_URL', 'UNIPILE_API_KEY'] as const
@@ -187,11 +190,62 @@ describe('read-surface routes', () => {
 		expect(mock.inbox().at(-1)?.path).toBe('/v2/acc_1/users/janedoe')
 	})
 
-	// An identifier can be a URN containing characters that would otherwise
-	// change the path shape.
+	// An identifier can contain characters that would otherwise change the
+	// path shape.
 	it('url-encodes the identifier', async () => {
 		await client().getProfile({ account_id, identifier: 'a/b?c' })
 		expect(mock.inbox().at(-1)?.path).toBe('/v2/acc_1/users/a%2Fb%3Fc')
+	})
+
+	// The round-trip fault: `search_people` surfaces `recipient_urn` in URN
+	// form, and feeding that exact value back into `get_profile` is what
+	// faulted with INVALID_INPUT. The URN must be reduced to the bare provider
+	// id BEFORE it reaches the path — a URN-encoded path still faults upstream.
+	it('reduces a fsd_profile URN to the bare provider id', async () => {
+		await client().getProfile({
+			account_id,
+			identifier: 'urn:li:fsd_profile:ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs',
+		})
+		const path = mock.inbox().at(-1)?.path ?? ''
+		expect(path).toBe('/v2/acc_1/users/ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs')
+		expect(path).not.toContain('urn')
+	})
+
+	it('reduces a person URN to the bare provider id', async () => {
+		await client().getProfile({ account_id, identifier: 'urn:li:person:ACoAAAGMeU8BW-R2' })
+		expect(mock.inbox().at(-1)?.path).toBe('/v2/acc_1/users/ACoAAAGMeU8BW-R2')
+	})
+
+	// The whole call, not just the path: a normalized identifier must still get
+	// a 2xx with a parseable profile back. Pins that the mock answers with the
+	// v2 shape (network_distance nested under `specifics`), so the mock cannot
+	// drift back into agreeing with a reader that only looks top-level.
+	it('gets a 200 with a v2-shaped profile for a URN identifier', async () => {
+		const res = await client().getProfile({
+			account_id,
+			identifier: 'urn:li:fsd_profile:ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs',
+		})
+		expect(res.status).toBe(200)
+		const body = res.body as { specifics?: { network_distance?: string } }
+		expect(body.specifics?.network_distance).toBe('SECOND_DEGREE')
+	})
+})
+
+describe('normalizeProfileIdentifier', () => {
+	it.each([
+		[
+			'urn:li:fsd_profile:ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs',
+			'ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs',
+		],
+		['urn:li:person:ACoAAAGMeU8BW-R2', 'ACoAAAGMeU8BW-R2'],
+		['urn:li:member:100000001', '100000001'],
+		['  urn:li:person:ACoAAA  ', 'ACoAAA'],
+		['URN:LI:PERSON:ACoAAA', 'ACoAAA'],
+		['karsten-rendemann-4394ab', 'karsten-rendemann-4394ab'],
+		['ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs', 'ACoAAAASpq0BvL5By3vIRVdRhE9_yF6d2AhFfLs'],
+		['me', 'me'],
+	])('normalizes %s to %s', (input, expected) => {
+		expect(normalizeProfileIdentifier(input)).toBe(expected)
 	})
 })
 
