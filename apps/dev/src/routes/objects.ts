@@ -451,7 +451,7 @@ export function buildObjectListConditions(
 				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 				if (match) perTokenMatches.push(match)
 				perTokenHits.push(
-					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT} + floor(${TITLE_COVERAGE_SCALE} * ${token.length} / greatest(length(${objects.title}), 1)) else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
+					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(${objects.title}), 1)) else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
 				)
 			}
 			const combined = or(...perTokenMatches)
