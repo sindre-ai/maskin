@@ -72,6 +72,15 @@ import Testing
 		#expect(m.tick(at: at(6.8)) == [.resetTranscript, .send("Can you tell me what some people are working on")])
 	}
 
+	@Test("a trailing preposition waits about three seconds")
+	func prepositionWaits() {
+		var m = LiveVoiceMachine()
+		_ = m.begin()
+		_ = m.heard("what are people working on", at: at(0))
+		#expect(m.tick(at: at(2.8)).isEmpty)
+		#expect(m.tick(at: at(3.3)) == [.resetTranscript, .send("what are people working on")])
+	}
+
 	@Test("a finished sentence is sent after a shorter pause")
 	func sentenceEndIsQuicker() {
 		var m = LiveVoiceMachine()

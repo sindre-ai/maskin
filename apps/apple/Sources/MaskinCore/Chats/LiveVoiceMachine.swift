@@ -36,6 +36,8 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 	public var sentenceEndWindow: TimeInterval = 1.3
 	/// The words trail off like a half-said thought ("tell me what", "and", a comma): wait longer.
 	public var unfinishedWindow: TimeInterval = 4.5
+	/// The words end on a preposition ("working on"): could be done, could be mid-thought.
+	public var prepositionWindow: TimeInterval = 3.2
 	/// A lone "yes" / "no" is an answer on its own.
 	public var singleWordWindow: TimeInterval = 1.6
 	/// The recogniser calling the utterance final shortens the wait, but never for an unfinished one.
@@ -133,6 +135,7 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 			text.hasSuffix(",") || text.hasSuffix(":") || text.hasSuffix(";") || text.hasSuffix("-")
 			|| text.hasSuffix("…") || Self.unfinishedEndings.contains(last)
 		if trailsOff { return unfinishedWindow }
+		if Self.prepositions.contains(last), !text.hasSuffix("?") { return prepositionWindow }
 		if transcriptIsFinal { return finalWindow }
 		let ended = text.hasSuffix(".") || text.hasSuffix("?") || text.hasSuffix("!")
 		if words.count == 1 { return Self.shortAnswers.contains(last) || ended ? singleWordWindow : silenceWindow }
@@ -217,6 +220,10 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 		"could", "would", "should", "will", "do", "does", "did", "have", "has", "my", "your", "our", "their",
 		"its", "i", "i'm", "i'd", "i'll", "we", "you", "they", "then", "also", "like", "um", "uh", "umm", "uhh",
 		"as", "not", "just", "tell", "show", "give", "send", "list",
+	]
+
+	static let prepositions: Set<String> = [
+		"in", "on", "at", "for", "with", "about", "from", "by", "into", "onto", "over", "under", "between",
 	]
 
 	static let fillers: Set<String> = ["um", "uh", "umm", "uhh", "hmm", "hm", "mm", "mmm", "er", "ah", "eh"]
