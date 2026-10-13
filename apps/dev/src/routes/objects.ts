@@ -397,6 +397,11 @@ export function tokenizeSearchQuery(q: string): string[] {
 	return tokens
 }
 
+// Per-token rank weight for a title hit; a content hit is worth 1. A title
+// match therefore outranks any content-only match for realistic queries
+// (fewer than 1000 tokens), while more matched tokens still rank higher.
+const TITLE_HIT_WEIGHT = 1000
+
 function tokenIlikePattern(token: string): string {
 	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
 }
@@ -441,7 +446,7 @@ export function buildObjectListConditions(
 				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 				if (match) perTokenMatches.push(match)
 				perTokenHits.push(
-					sql`(case when ${objects.title} ilike ${pattern} or ${objects.content} ilike ${pattern} then 1 else 0 end)`,
+					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT} else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
 				)
 			}
 			const combined = or(...perTokenMatches)
