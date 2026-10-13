@@ -9775,6 +9775,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -9812,6 +9831,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -10025,6 +10045,25 @@
 												],
 												"additionalProperties": {}
 											},
+											"llm_configured": {
+												"type": "object",
+												"properties": {
+													"anthropic": {
+														"type": "boolean"
+													},
+													"openai": {
+														"type": "boolean"
+													},
+													"custom_llm": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"anthropic",
+													"openai",
+													"custom_llm"
+												]
+											},
 											"onboardingEnabled": {
 												"type": "boolean"
 											},
@@ -10069,6 +10108,7 @@
 											"id",
 											"name",
 											"settings",
+											"llm_configured",
 											"onboardingEnabled",
 											"enterprise",
 											"billingOwnerId",
@@ -10731,6 +10771,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -10768,6 +10827,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11009,6 +11069,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11046,6 +11125,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11583,6 +11663,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11620,6 +11719,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",

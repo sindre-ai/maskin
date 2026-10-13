@@ -36,7 +36,6 @@ import {
 	isWorkspaceMember,
 	isWorkspaceOwner,
 } from '../lib/workspace-auth'
-import { workspaceForCaller } from '../lib/workspace-redaction'
 import {
 	OwnershipCapExceededError,
 	SeatCapExceededError,
@@ -50,6 +49,7 @@ import {
 	seatCapErrorBody,
 	seatCapForPlan,
 } from '../lib/workspace-capacity'
+import { workspaceForCaller } from '../lib/workspace-redaction'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
