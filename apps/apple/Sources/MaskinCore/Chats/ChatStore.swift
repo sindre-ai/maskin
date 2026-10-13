@@ -166,13 +166,26 @@ public final class ChatStore {
 		return confirmed + shown
 	}
 
+	/// How far a server timestamp may trail the device clock and still count as "after the send".
+	private static let twinClockSkew: TimeInterval = 120
+
 	/// The confirmed row that is the server's copy of a queued send: mine, same text, and newer
-	/// than anything I had seen when I sent it.
+	/// than anything I had seen when I sent it. A send made before the thread had loaded (the
+	/// Chief of Staff sheet sends its opening message on appear) saw nothing, so an earlier
+	/// identical message of mine would match it and hide the queued bubble; for those the
+	/// copy must also have been created no earlier than the send.
 	private func confirmedTwin(of row: PendingChatSend, excluding consumed: Set<Int>) -> Int? {
 		confirmed.first { message in
 			guard let id = message.serverID, !consumed.contains(id) else { return false }
-			return message.actorID == currentActorID && message.content == row.content
-				&& id > (row.afterServerID ?? 0)
+			guard message.actorID == currentActorID, message.content == row.content,
+				id > (row.afterServerID ?? 0)
+			else { return false }
+			if row.afterServerID == nil, let created = message.createdAt,
+				created < row.createdAt.addingTimeInterval(-Self.twinClockSkew)
+			{
+				return false
+			}
+			return true
 		}?.serverID
 	}
 
