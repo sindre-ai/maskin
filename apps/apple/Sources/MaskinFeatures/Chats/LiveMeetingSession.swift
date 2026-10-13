@@ -31,6 +31,7 @@ final class LiveMeetingSession {
 		self.lead = lead
 		self.now = now
 		voice = LiveVoiceController(ports: makePorts { [chat] text in _ = chat.send(text) })
+		voice.agentName = lead.name
 	}
 
 	var isLive: Bool { startedAt != nil && endedAt == nil }
@@ -73,15 +74,17 @@ final class LiveMeetingSession {
 		_ = chat.send("Pulling up [\(title)](\(url.absoluteString))")
 	}
 
-	/// Hang up. An ad hoc call leaves "Live meeting with X · 0:42" in its chat; the briefing doesn't.
+	/// Hang up. An ad hoc call leaves a note in its chat: "Live meeting with X · 0:42" and the
+	/// transcript, so the agent has the call as context and the thread shows what happened. The
+	/// briefing doesn't.
 	func end() {
 		guard isLive else { return }
 		voice.end()
 		let finished = now()
 		endedAt = finished
 		guard kind.postsNote else { return }
-		let note = LiveMeetingFormat.endNote(
+		let title = LiveMeetingFormat.endNote(
 			lead: lead.name, guests: guests.map(\.name), seconds: elapsed(at: finished))
-		_ = chat.send(note)
+		_ = chat.send(LiveMeetingNote(title: title, turns: voice.turns).markdown)
 	}
 }

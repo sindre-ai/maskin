@@ -92,6 +92,23 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		#expect(live.phase == .thinking)
 	}
 
+	@Test("what you said and what the agent replied are kept as the call's turns")
+	func keepsTurns() async {
+		let (live, room) = make()
+		live.agentName = "Relay"
+		live.begin(existing: [])
+		await settle()
+		room.hear("summarise the pipeline please")
+		room.advance(2)
+		live.tick()
+		live.messagesChanged([message(2, "Three bets are blocked.")])
+		#expect(
+			live.turns == [
+				LiveMeetingTurn(speaker: "You", text: "summarise the pipeline please", isYou: true),
+				LiveMeetingTurn(speaker: "Relay", text: "Three bets are blocked.", isYou: false),
+			])
+	}
+
 	@Test("the reply is read aloud, then it listens again")
 	func fullTurn() async {
 		let (live, room) = make()

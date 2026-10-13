@@ -30,8 +30,8 @@ public enum LiveMeetingFormat {
 			: String(format: "%d:%02d", minutes, secs)
 	}
 
-	/// The line posted into the chat when an ad hoc call ends: "Live meeting with Relay · 0:42", with
-	/// anyone who was invited named: "Live meeting with Relay, with Forge and Quill · 0:42".
+	/// The first line of the note posted when an ad hoc call ends: "Live meeting with Relay · 0:42",
+	/// with anyone who was invited named: "Live meeting with Relay, with Forge and Quill · 0:42".
 	public static func endNote(lead: String, guests: [String], seconds: TimeInterval) -> String {
 		var text = "Live meeting with \(lead)"
 		if !guests.isEmpty { text += ", with \(list(guests))" }
@@ -111,5 +111,103 @@ public enum ChiefOfStaffLiveChat {
 					&& $0.participants.contains { $0.id == chiefID }
 			}
 			.max { ($0.lastMessageAt ?? .distantPast) < ($1.lastMessageAt ?? .distantPast) }
+	}
+}
+
+
+/// One thing said in a live call: what you said, or what the agent answered.
+public struct LiveMeetingTurn: Equatable, Sendable {
+	public var speaker: String
+	public var text: String
+	public var isYou: Bool
+
+	public init(speaker: String, text: String, isYou: Bool) {
+		self.speaker = speaker
+		self.text = text
+		self.isYou = isYou
+	}
+}
+
+/// The note an ad hoc call leaves in its chat when it ends: a header line, then the transcript (or
+/// an honest "No speech was captured"). It is plain markdown, so the agent reads the call as
+/// context and any client that does not know the format still shows something readable; this
+/// type also reads it back so the thread can draw it as a summary card.
+public struct LiveMeetingNote: Equatable, Sendable {
+	public var title: String
+	public var turns: [LiveMeetingTurn]
+
+	public static let transcriptHeading = "**Transcript**"
+	public static let emptyText = "No speech was captured."
+	static let maxTurnLength = 1200
+	static let maxTranscriptLength = 12_000
+	public static let youName = "You"
+
+	public init(title: String, turns: [LiveMeetingTurn]) {
+		self.title = title
+		self.turns = turns
+	}
+
+	/// The markdown posted into the chat. Turns are flattened to one line each and the whole
+	/// transcript is capped, keeping the most recent lines.
+	public var markdown: String {
+		guard !turns.isEmpty else { return "\(title)\n\n\(Self.emptyText)" }
+		var lines = turns.map { turn in
+			"- **\(turn.isYou ? Self.youName : Self.clean(turn.speaker)):** \(Self.shorten(turn.text))"
+		}
+		var dropped = 0
+		while lines.joined(separator: "\n").count > Self.maxTranscriptLength, lines.count > 1 {
+			lines.removeFirst()
+			dropped += 1
+		}
+		let earlier = dropped > 0 ? "\n_\(dropped) earlier lines left out._" : ""
+		return "\(title)\n\n\(Self.transcriptHeading)\(earlier)\n" + lines.joined(separator: "\n")
+	}
+
+	/// Reads a message back as a call note; nil for any other message.
+	public static func parse(_ content: String) -> LiveMeetingNote? {
+		guard content.hasPrefix("Live meeting with ") else { return nil }
+		let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+		guard let title = lines.first, title.contains(" · "),
+			lines.contains(transcriptHeading) || lines.contains(emptyText)
+		else { return nil }
+		var turns: [LiveMeetingTurn] = []
+		for line in lines.dropFirst() where line.hasPrefix("- **") {
+			let body = line.dropFirst(4)
+			guard let split = body.range(of: ":** ") else { continue }
+			let speaker = String(body[body.startIndex..<split.lowerBound])
+			let text = String(body[split.upperBound...])
+			turns.append(LiveMeetingTurn(speaker: speaker, text: text, isYou: speaker == youName))
+		}
+		return LiveMeetingNote(title: title, turns: turns)
+	}
+
+	/// The duration at the end of the title ("7:01"), as shown on the card.
+	public var durationText: String {
+		title.components(separatedBy: " · ").last ?? ""
+	}
+
+	/// The title without its duration: "Live meeting with Relay".
+	public var heading: String {
+		var parts = title.components(separatedBy: " · ")
+		if parts.count > 1 { parts.removeLast() }
+		return parts.joined(separator: " · ")
+	}
+
+	public var youCount: Int { turns.filter(\.isYou).count }
+	public var agentCount: Int { turns.count - youCount }
+
+	/// The last thing the agent said, the nearest thing to an outcome the transcript has.
+	public var lastAgentTurn: LiveMeetingTurn? { turns.last { !$0.isYou } }
+	public var firstYouTurn: LiveMeetingTurn? { turns.first { $0.isYou } }
+
+	private static func clean(_ text: String) -> String {
+		text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "\n", with: " ")
+	}
+
+	private static func shorten(_ text: String) -> String {
+		let flat = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }.joined(separator: " ")
+		guard flat.count > maxTurnLength else { return flat }
+		return String(flat.prefix(maxTurnLength)).trimmingCharacters(in: .whitespaces) + "…"
 	}
 }

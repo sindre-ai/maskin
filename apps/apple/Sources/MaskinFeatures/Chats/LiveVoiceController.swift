@@ -27,6 +27,10 @@ final class LiveVoiceController {
 	private(set) var isActive = false
 	/// Why the conversation could not start or had to stop ("Allow Microphone access in Settings…").
 	private(set) var failure: String?
+	/// What was said in this call, in order: your sent lines and the agent's replies.
+	private(set) var turns: [LiveMeetingTurn] = []
+	/// The agent's name on its turns.
+	@ObservationIgnored var agentName = "Agent"
 
 	var phase: LiveVoicePhase { machine.phase }
 	var transcript: String { machine.transcript }
@@ -54,6 +58,7 @@ final class LiveVoiceController {
 		guard !isActive else { return }
 		seen = Set(messages.map(\.id))
 		texts = [:]
+		turns = []
 		failure = nil
 		isActive = true
 		run(machine.begin())
@@ -91,6 +96,7 @@ final class LiveVoiceController {
 				continue
 			}
 			texts[message.id] = message.content
+			turns.append(LiveMeetingTurn(speaker: agentName, text: message.content, isYou: false))
 			run(machine.replyArrived(messageID: message.id))
 		}
 	}
@@ -124,7 +130,9 @@ final class LiveVoiceController {
 			switch command {
 			case .startListening: startListening()
 			case .stopListening: ports.stopListening()
-			case .send(let text): ports.send(text)
+			case .send(let text):
+				turns.append(LiveMeetingTurn(speaker: LiveMeetingNote.youName, text: text, isYou: true))
+				ports.send(text)
 			case .speak(let id): ports.speak(id, texts[id] ?? "")
 			case .stopSpeaking: ports.stopSpeaking()
 			}
