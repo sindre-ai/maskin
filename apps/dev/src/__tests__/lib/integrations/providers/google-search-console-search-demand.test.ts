@@ -120,7 +120,10 @@ describe('keywordStats', () => {
 	})
 
 	it('matches the keyword exactly, ignoring case and spacing', () => {
-		const byQuery = index([row('2026-10-01', 'claude code', 20), row('2026-10-01', 'claude code vs cursor', 20)])
+		const byQuery = index([
+			row('2026-10-01', 'claude code', 20),
+			row('2026-10-01', 'claude code vs cursor', 20),
+		])
 		expect(keywordStats(byQuery, '  Claude  Code ')?.impressions).toBe(20)
 	})
 
@@ -129,7 +132,9 @@ describe('keywordStats', () => {
 			row('2026-10-01', 'kw', 20),
 			row('2026-10-01', 'kw', 50, { page: 'https://maskin.io/other/' }),
 		])
-		expect(keywordStats(byQuery, 'kw', 'https://maskin.io/docs/claude-md-vs-agents-md')?.impressions).toBe(20)
+		expect(
+			keywordStats(byQuery, 'kw', 'https://maskin.io/docs/claude-md-vs-agents-md')?.impressions,
+		).toBe(20)
 	})
 
 	it('falls back to the busiest page, never a sum across pages, under the floor', () => {
@@ -170,10 +175,7 @@ describe('deriveSearchDemand', () => {
 // Two selects per run: the Search Console knowledge objects, then the live content pieces.
 
 function makeFakeDb(properties: GscRow[][], pieces: Array<{ id: string; metadata: unknown }>) {
-	const selects = [
-		properties.map((rows) => ({ content: serializeRows(rows) })),
-		pieces,
-	]
+	const selects = [properties.map((rows) => ({ content: serializeRows(rows) })), pieces]
 	const updates: Array<{ set: Record<string, unknown> }> = []
 	const db = {
 		select: () => ({ from: () => ({ where: () => Promise.resolve(selects.shift() ?? []) }) }),
@@ -238,7 +240,13 @@ describe('writeSearchDemand', () => {
 	it('does not overwrite a value that was typed by hand', async () => {
 		const { db, updates } = makeFakeDb(
 			[rows],
-			[piece({ primary_keyword: 'claude.md vs agents.md', search_demand: 390, canonical_url: PAGE })],
+			[
+				piece({
+					primary_keyword: 'claude.md vs agents.md',
+					search_demand: 390,
+					canonical_url: PAGE,
+				}),
+			],
 		)
 		const result = await writeSearchDemand(db, args)
 		expect(result).toEqual({ updated: 0, unchanged: 0, skipped: 0, preserved: 1 })

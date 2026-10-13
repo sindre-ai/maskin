@@ -57,7 +57,10 @@ describe('writeSearchDemand — metadata merge and audit against real Postgres',
 		})
 
 	const metadataOf = async (id: string) => {
-		const [found] = await db.select({ metadata: objects.metadata }).from(objects).where(eq(objects.id, id))
+		const [found] = await db
+			.select({ metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.id, id))
 		return found?.metadata as Record<string, unknown>
 	}
 
