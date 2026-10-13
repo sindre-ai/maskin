@@ -237,10 +237,11 @@ public final class ChatStore {
 	/// nothing is known, so the session counts as working.
 	public func isIdle(_ session: ChatAgentSession, at date: Date? = nil) -> Bool {
 		let t = date ?? now()
-		guard awaitingReplySince == nil,
-			let turns = trace?.turnsBySession[session.id],
-			let last = turns.max(by: { $0.messageID < $1.messageID }), !last.isRunning
-		else { return false }
+		guard awaitingReplySince == nil else { return false }
+		guard let turns = trace?.turnsBySession[session.id],
+			let last = turns.max(by: { $0.messageID < $1.messageID })
+		else { return finalOutputIsNewest(of: session, at: t) }
+		guard !last.isRunning else { return false }
 		let newerFromOthers = messages.contains { message in
 			guard message.kind == "message", message.actorID != session.actorID else { return false }
 			guard message.serverID == nil || (message.serverID ?? 0) > last.messageID else { return false }
@@ -248,6 +249,19 @@ public final class ChatStore {
 			return t.timeIntervalSince(created) < spawnGrace
 		}
 		return !newerFromOthers
+	}
+
+	/// No trace to read: the agent's `final_output` message being newer than anything anyone else
+	/// wrote means its last turn is over. Mirrors the web, which keys off that message.
+	private func finalOutputIsNewest(of session: ChatAgentSession, at t: Date) -> Bool {
+		guard let last = messages.last(where: { $0.kind == "message" }) else { return false }
+		return last.actorID == session.actorID && last.serverID != nil && last.isFinalOutput
+	}
+
+	/// Sessions that are open but between turns, kept so the user can still end one.
+	public func idleSessions(at date: Date? = nil) -> [ChatAgentSession] {
+		let t = date ?? now()
+		return runningSessions(at: t).filter { $0.status == .running && isIdle($0, at: t) }
 	}
 
 	private func runningSessions(at t: Date) -> [ChatAgentSession] {

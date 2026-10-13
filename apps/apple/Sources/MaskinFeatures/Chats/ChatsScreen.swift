@@ -206,7 +206,7 @@ private struct ChatThreadHost: View {
 				let workspaceId = environment?.workspaceId
 			else { return }
 			let turns = LiveTurn.turns(
-				from: sessions, workspaceId: workspaceId, conversationId: conversationID,
+				from: sessions.filter { !chat.isIdle($0) }, workspaceId: workspaceId, conversationId: conversationID,
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
 				topic: conversations.conversation(id: conversationID)?.title, now: Date())
 			Task {
