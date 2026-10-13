@@ -79,6 +79,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import type { SessionManager } from '../services/session-manager'
@@ -593,6 +594,14 @@ app.openapi(createObjectRoute, async (c) => {
 			400,
 		)
 	}
+
+	const taskStatusError = checkTaskInitialStatus({
+		type: body.type,
+		status: body.status,
+		actorId,
+		field: 'status',
+	})
+	if (taskStatusError) return c.json(taskStatusError, 400)
 
 	if (body.type === 'knowledge') {
 		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
