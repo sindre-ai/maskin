@@ -1,9 +1,11 @@
 import { InlineScopePicker, type ScopeAgent } from '@/components/chat/inline-scope-picker'
-import { VaultedCard } from '@/components/chat/secret-detected-card'
+import { VaultedCard, type VaultedPhase } from '@/components/chat/secret-detected-card'
 import { TranscriptRedactedRow } from '@/components/chat/transcript-redacted-row'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
+import { type RelaunchWatch, useRelaunchProgress } from '@/hooks/use-relaunch-progress'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { ApiError, api } from '@/lib/api'
 import { pauseClientErrorLogging } from '@/lib/client-logging-pause'
 import { queryKeys } from '@/lib/query-keys'
@@ -50,7 +52,9 @@ interface VaultRecord {
 	agentCount: number
 	marker: string
 	undoExpiresAt: number
-	undone: boolean
+	phase: VaultedPhase
+	/** False when the session that held the key could not be stopped on undo. */
+	sessionEnded: boolean
 }
 
 export interface VaultPrefixFlowProps {
@@ -61,7 +65,7 @@ export interface VaultPrefixFlowProps {
 	 */
 	seedRef: MutableRefObject<string>
 	/** The live session to vault into. Null when this composer has none. */
-	capture: { sessionId: string; agent: ScopeAgent } | null
+	capture: { sessionId: string; conversationId?: string; agent: ScopeAgent } | null
 	/** The conversation has no running session, or one that is still coming up. */
 	unavailable: boolean
 	agentName: string
@@ -112,8 +116,31 @@ export function VaultPrefixFlow({
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [vaults, setVaults] = useState<VaultRecord[]>([])
 	const [undoingId, setUndoingId] = useState<string | null>(null)
-	const [undoError, setUndoError] = useState<string | null>(null)
+	const [retryingId, setRetryingId] = useState<string | null>(null)
+	const [cardError, setCardError] = useState<string | null>(null)
 	const [now, setNow] = useState(() => Date.now())
+	// Vaulting stops the session this flow was opened for, so the live capture target goes
+	// away mid-flow. The relaunch watch keeps the last one it saw.
+	const lastCapture = useRef(capture)
+	if (capture) lastCapture.current = capture
+	// The redacted marker of a vault whose relaunch failed. It is held back until Retry
+	// stops the old session, because the message is what respawns it.
+	const withheld = useRef<string | null>(null)
+	const [watch, setWatch] = useState<(RelaunchWatch & { integrationId: string }) | null>(null)
+	const { data: conversationSessions } = useActiveSessionsForConversation(
+		workspaceId,
+		capture?.conversationId ?? null,
+	)
+	const progress = useRelaunchProgress(workspaceId, watch)
+	// Every session the conversation has right now, and the same set frozen when the vault
+	// (or Retry) went out. A relaunch is watched for the session that is not in the frozen one.
+	const sessionIds = useMemo(
+		() => new Set((conversationSessions ?? []).map((x) => x.id)),
+		[conversationSessions],
+	)
+	const sessionIdsNow = useRef<ReadonlySet<string>>(sessionIds)
+	sessionIdsNow.current = sessionIds
+	const sessionIdsAtRelaunch = useRef<ReadonlySet<string>>(new Set())
 
 	const { data: actors } = useActors(workspaceId, { enabled: !!capture })
 	const otherAgents = useMemo(
@@ -164,12 +191,42 @@ export function VaultPrefixFlow({
 	}, [finished])
 
 	// Ticks only while an undo window is open, so the button disappears on time.
-	const nextExpiry = Math.max(0, ...vaults.filter((v) => !v.undone).map((v) => v.undoExpiresAt))
+	const nextExpiry = Math.max(
+		0,
+		...vaults.filter((v) => v.phase !== 'undone').map((v) => v.undoExpiresAt),
+	)
 	useEffect(() => {
 		if (nextExpiry <= Date.now()) return
 		const t = setInterval(() => setNow(Date.now()), 1000)
 		return () => clearInterval(t)
 	}, [nextExpiry])
+
+	const clearResuming = useCallback((integrationId: string) => {
+		setWatch((w) => (w?.integrationId === integrationId ? null : w))
+		setVaults((prev) =>
+			prev.map((v) =>
+				v.integrationId === integrationId && v.phase === 'resuming' ? { ...v, phase: 'live' } : v,
+			),
+		)
+	}, [])
+	useEffect(() => {
+		if (progress && watch) clearResuming(watch.integrationId)
+	}, [progress, watch, clearResuming])
+
+	/** The marker message is out and the old session is gone: the new session is on its way. */
+	const startResuming = useCallback((integrationId: string) => {
+		setVaults((prev) =>
+			prev.map((v) => (v.integrationId === integrationId ? { ...v, phase: 'resuming' } : v)),
+		)
+		const target = lastCapture.current
+		if (!target?.conversationId) return
+		setWatch({
+			integrationId,
+			conversationId: target.conversationId,
+			agentId: target.agent.id,
+			knownSessionIds: sessionIdsAtRelaunch.current,
+		})
+	}, [])
 
 	const cancel = useCallback(() => {
 		clearSecret()
@@ -192,6 +249,7 @@ export function VaultPrefixFlow({
 			if (!capture || !secret || unavailable) return
 			setBusy(true)
 			setError(null)
+			sessionIdsAtRelaunch.current = sessionIdsNow.current
 			let res: Awaited<ReturnType<typeof api.integrations.chatCapture>>
 			try {
 				res = await api.integrations.chatCapture(workspaceId, {
@@ -225,12 +283,24 @@ export function VaultPrefixFlow({
 					agentCount: grants === 'none' ? 0 : selected.size,
 					marker,
 					undoExpiresAt: new Date(res.undoExpiresAt).getTime(),
-					undone: false,
+					phase: res.relaunch === 'failed' ? 'failed' : 'live',
+					sessionEnded: true,
 				},
 			])
+			if (res.relaunch === 'failed') {
+				// The old session is still running without the key. The message is what
+				// respawns a session, so hold it until Retry has stopped the old one.
+				withheld.current = marker
+				setBusy(false)
+				setFinished(true)
+				onDone(true)
+				return
+			}
+			let sent = true
 			try {
 				await onSend(marker)
 			} catch (err) {
+				sent = false
 				setSendError(
 					err instanceof Error
 						? `Saved, but the message didn't send: ${err.message}`
@@ -240,6 +310,7 @@ export function VaultPrefixFlow({
 			setBusy(false)
 			setFinished(true)
 			onDone(true)
+			if (sent) startResuming(res.integrationId)
 		},
 		[
 			capture,
@@ -251,28 +322,72 @@ export function VaultPrefixFlow({
 			queryClient,
 			onSend,
 			onDone,
+			startResuming,
 		],
 	)
 
 	const undo = useCallback(
 		async (record: VaultRecord) => {
 			setUndoingId(record.integrationId)
-			setUndoError(null)
+			setCardError(null)
 			try {
-				await api.integrations.undo(record.integrationId, workspaceId)
+				const res = await api.integrations.undo(record.integrationId, workspaceId)
+				withheld.current = null
+				setWatch((w) => (w?.integrationId === record.integrationId ? null : w))
 				setVaults((prev) =>
-					prev.map((v) => (v.integrationId === record.integrationId ? { ...v, undone: true } : v)),
+					prev.map((v) =>
+						v.integrationId === record.integrationId
+							? { ...v, phase: 'undone', sessionEnded: res.sessionEnded }
+							: v,
+					),
 				)
 				queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			} catch {
-				setUndoError(
-					"Couldn't undo. The undo window has closed. Revoke it from Settings > Keychain.",
-				)
+				setCardError("Couldn't undo. The undo window has closed.")
 			} finally {
 				setUndoingId(null)
 			}
 		},
 		[queryClient, workspaceId],
+	)
+
+	/** Retry on 7c-3: repeat stop and wait; on success send the held marker, which respawns. */
+	const retry = useCallback(
+		async (record: VaultRecord) => {
+			setRetryingId(record.integrationId)
+			setCardError(null)
+			sessionIdsAtRelaunch.current = sessionIdsNow.current
+			try {
+				const res = await api.integrations.relaunch(record.integrationId, workspaceId)
+				if (res.relaunch === 'failed') return
+				const body = withheld.current
+				if (body === null) {
+					setVaults((prev) =>
+						prev.map((v) =>
+							v.integrationId === record.integrationId ? { ...v, phase: 'live' } : v,
+						),
+					)
+					return
+				}
+				try {
+					await onSend(body)
+				} catch (err) {
+					setSendError(
+						err instanceof Error
+							? `Saved, but the message didn't send: ${err.message}`
+							: 'Saved, but the message did not send.',
+					)
+					return
+				}
+				withheld.current = null
+				startResuming(record.integrationId)
+			} catch {
+				// Same state as a failed stop: the line stays and Retry is offered again.
+			} finally {
+				setRetryingId(null)
+			}
+		},
+		[workspaceId, onSend, startResuming],
 	)
 
 	const toggle = useCallback((id: string) => {
@@ -289,12 +404,18 @@ export function VaultPrefixFlow({
 			<TranscriptRedactedRow marker={v.marker} />
 			<VaultedCard
 				credentialName={v.name}
+				workspaceId={workspaceId}
+				integrationId={v.integrationId}
 				agentCount={v.agentCount}
+				agentName={agentName}
+				phase={v.phase}
 				undoAvailable={v.undoExpiresAt > now}
 				undoing={undoingId === v.integrationId}
-				undone={v.undone}
-				error={undoError}
+				retrying={retryingId === v.integrationId}
+				sessionEnded={v.sessionEnded}
+				error={cardError}
 				onUndo={() => undo(v)}
+				onRetry={() => retry(v)}
 			/>
 		</div>
 	))

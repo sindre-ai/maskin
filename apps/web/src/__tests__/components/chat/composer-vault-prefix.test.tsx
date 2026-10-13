@@ -11,6 +11,7 @@ import { createWorkspaceWrapper } from '../../setup'
 const flags = vi.hoisted(() => ({ on: true }))
 const chatCaptureMock = vi.hoisted(() => vi.fn())
 const undoMock = vi.hoisted(() => vi.fn())
+const relaunchMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-feature-flag', () => ({
 	useFeatureFlag: (id: string) => (id === 'keychain-chat-capture' ? flags.on : false),
@@ -46,7 +47,12 @@ vi.mock('@/lib/api', async () => {
 		...actual,
 		api: {
 			...actual.api,
-			integrations: { ...actual.api.integrations, chatCapture: chatCaptureMock, undo: undoMock },
+			integrations: {
+				...actual.api.integrations,
+				chatCapture: chatCaptureMock,
+				undo: undoMock,
+				relaunch: relaunchMock,
+			},
 		},
 	}
 })
@@ -98,11 +104,11 @@ async function openVaultWith(secret: string) {
 	return user
 }
 
-const vaulted = (id: string) => ({
+const vaulted = (id: string, relaunch: 'stopped' | 'failed' = 'stopped') => ({
 	integrationId: id,
 	undoExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
 	undoUrl: `/api/integrations/${id}/undo`,
-	relaunch: 'stopped',
+	relaunch,
 })
 
 beforeEach(() => {
@@ -111,7 +117,15 @@ beforeEach(() => {
 	localStorage.clear()
 	chatCaptureMock.mockReset()
 	undoMock.mockReset()
+	relaunchMock.mockReset()
 })
+
+async function vaultAs(user: ReturnType<typeof userEvent.setup>, name: string) {
+	await user.click(screen.getByRole('button', { name: 'Vault →' }))
+	await user.type(await screen.findByLabelText('Credential name'), name)
+	await user.type(screen.getByLabelText('Service'), name)
+	await user.click(screen.getByRole('button', { name: /Vault \+ continue chat/ }))
+}
 
 describe('vaultSeedFrom', () => {
 	it.each([
@@ -353,6 +367,39 @@ describe('Composer vault mode (the ! prefix)', () => {
 		expect(screen.getByRole('textbox')).not.toBeDisabled()
 		expect(document.body.textContent).not.toContain(FAKE_TOKEN)
 		expect(storageHolds(FAKE_TOKEN)).toBe(false)
+	})
+
+	it('holds the marker back when the relaunch failed, shows Retry, and sends it once Retry works', async () => {
+		chatCaptureMock.mockResolvedValue(vaulted('int-1', 'failed'))
+		relaunchMock.mockResolvedValue({ relaunch: 'stopped' })
+		const props = renderComposer()
+		const user = await openVaultWith(FAKE_TOKEN)
+		await vaultAs(user, 'Coolify')
+
+		expect(
+			await screen.findByText(
+				/Couldn't restart Infra\. The credential is saved, but the session is still running/,
+			),
+		).toBeInTheDocument()
+		expect(props.onSend).not.toHaveBeenCalled()
+
+		await user.click(screen.getByRole('button', { name: 'Retry' }))
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1))
+		expect(relaunchMock).toHaveBeenCalledWith('int-1', 'ws-test')
+		expect(await screen.findByText('Resuming with the new credential…')).toBeInTheDocument()
+	})
+
+	it('shows the resuming status after a vault, and the Undone card with its session line after Undo', async () => {
+		chatCaptureMock.mockResolvedValue(vaulted('int-1'))
+		undoMock.mockResolvedValue({ id: 'int-1', status: 'undone', sessionEnded: true })
+		renderComposer()
+		const user = await openVaultWith(FAKE_TOKEN)
+		await vaultAs(user, 'Coolify')
+
+		expect(await screen.findByText('Resuming with the new credential…')).toBeInTheDocument()
+		await user.click(await screen.findByRole('button', { name: 'Undo' }))
+		expect(await screen.findByText('Undone. Coolify is removed.')).toBeInTheDocument()
+		expect(screen.getByText(/This session has ended/)).toBeInTheDocument()
 	})
 
 	it('a taken name keeps the card open and the secret in the field; a new name then vaults', async () => {

@@ -18,6 +18,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCredentialAuditLog, useIntegrations } from '@/hooks/use-integrations'
 import type { CredentialAuditEntry } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 
@@ -67,7 +68,7 @@ function AuditEntryText({
 						<>
 							{' '}
 							targeting{' '}
-							<span className="font-mono text-xs text-muted-foreground">
+							<span className="break-all font-mono text-xs text-muted-foreground">
 								{entry.outboundTarget}
 							</span>
 						</>
@@ -95,6 +96,12 @@ function CredentialDetailPage() {
 
 	const actorName = (actorId: string) => actors?.find((a) => a.id === actorId)?.name
 	const entries = audit.data?.pages.flatMap((page) => page.entries) ?? []
+	// A credential always has its own created row, so "no reads" means no read row, not no rows.
+	const noReads =
+		!audit.isLoading &&
+		!audit.isError &&
+		!audit.hasNextPage &&
+		!entries.some((entry) => entry.action === 'read')
 
 	if (isLoading) {
 		return (
@@ -174,6 +181,14 @@ function CredentialDetailPage() {
 								</li>
 							))}
 						</ul>
+					)}
+					{noReads && (
+						<div className={cn('p-3', entries.length > 0 && 'border-t border-border')}>
+							<p className="text-sm font-medium">No reads yet</p>
+							<p className="text-xs text-muted-foreground">
+								When an agent uses this credential, the read shows up here.
+							</p>
+						</div>
 					)}
 					{audit.hasNextPage && (
 						<div className="border-t border-border p-2 text-center">
