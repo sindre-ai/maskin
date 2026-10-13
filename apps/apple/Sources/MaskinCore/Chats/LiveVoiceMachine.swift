@@ -81,7 +81,8 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 			let stop = interrupt()
 			transcript = text
 			lastHeardAt = now
-			return stop.filter { $0 != .startListening }
+			// Keep the recogniser's transcript: its words so far are the start of your turn.
+			return stop.filter { $0 != .startListening && $0 != .resetTranscript }
 		}
 	}
 
@@ -115,6 +116,28 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 		case .speaking:
 			return []
 		}
+	}
+
+	/// Whether `text` is only words the agent is saying itself (its voice back through the microphone).
+	public func isEcho(_ text: String) -> Bool {
+		let words = Self.words(text)
+		return !words.isEmpty && words.allSatisfy { spokenWords.contains($0) }
+	}
+
+	/// Whether `text` is only fillers or a cough.
+	public func isFiller(_ text: String) -> Bool {
+		!Self.words(text).contains { !Self.fillers.contains($0) }
+	}
+
+	/// "Go on" after the agent was cut off: back to speaking the rest of what it was saying.
+	public mutating func resumeSpeaking(text: String) -> [Command] {
+		guard phase == .listening, !isMuted else { return [] }
+		phase = .speaking
+		transcript = ""
+		lastHeardAt = nil
+		transcriptIsFinal = false
+		spokenWords = Set(Self.words(text))
+		return [.resetTranscript]
 	}
 
 	/// Send what has been heard now, without waiting out the pause ("Send now").

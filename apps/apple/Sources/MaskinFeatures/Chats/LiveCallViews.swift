@@ -9,7 +9,7 @@ extension LiveMeetingSession {
 		LiveCallStatus.text(
 			phase: voice.phase, isMuted: voice.isMuted, failure: voice.failure,
 			notice: voice.notice ?? connectionNotice, leadName: lead.name,
-			hasWords: !voice.transcript.isEmpty)
+			hasWords: !voice.transcript.isEmpty, yourTurn: voice.isYourTurn)
 	}
 
 	var title: String { LiveCallStatus.title(kind: kind, leadName: lead.name) }
@@ -93,6 +93,13 @@ struct LiveCallBanner: View {
 			MuteButton(session: session)
 			Menu {
 				Button(action: onInvite) { Label("Invite an agent", systemImage: "person.badge.plus") }
+				// How the agent's replies are delivered: with breaks to react, or straight through.
+				Picker(
+					"Pace",
+					selection: Binding(get: { session.voice.pace }, set: { session.voice.pace = $0 })
+				) {
+					ForEach(LiveCallPace.allCases) { Text($0.title).tag($0) }
+				}
 				if !mentioned.isEmpty {
 					Section("Mentioned in this call") {
 						ForEach(mentioned.prefix(8)) { object in

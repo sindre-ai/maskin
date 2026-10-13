@@ -5,7 +5,7 @@ public enum LiveCallStatus {
 	/// Failure and notices win over the phase; muted wins over listening.
 	public static func text(
 		phase: LiveVoicePhase, isMuted: Bool, failure: String?, notice: String?, leadName: String,
-		hasWords: Bool
+		hasWords: Bool, yourTurn: Bool = false
 	) -> String {
 		if let failure { return failure }
 		if let notice { return notice }
@@ -13,7 +13,7 @@ public enum LiveCallStatus {
 		switch phase {
 		case .listening: return hasWords ? "Hearing you…" : "Listening"
 		case .thinking: return "\(leadName) is working on it"
-		case .speaking: return "\(leadName) is speaking · talk to interrupt"
+		case .speaking: return yourTurn ? "Your turn…" : "\(leadName) is speaking · talk to interrupt"
 		}
 	}
 

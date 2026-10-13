@@ -65,10 +65,14 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 
 @MainActor
 @Suite("LiveVoiceController") struct LiveVoiceControllerTests {
-	private func make() -> (LiveVoiceController, FakeRoom) {
+	private func make(pace: LiveCallPace = .quick) -> (LiveVoiceController, FakeRoom) {
 		let room = FakeRoom()
-		// A long beat: the tests tick by hand.
-		return (LiveVoiceController(ports: room.ports, tickInterval: .seconds(3600)), room)
+		// A long beat: the tests tick by hand; a private defaults suite so the stored pace is untouched.
+		let defaults = UserDefaults(suiteName: "live-voice-\(UUID().uuidString)")!
+		return (
+			LiveVoiceController(
+				ports: room.ports, tickInterval: .seconds(3600), defaults: defaults, pace: pace), room
+		)
 	}
 
 	@Test("beginning starts the microphone")
@@ -301,5 +305,118 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		#expect(room.stoppedSpeaking == 1)
 		live.messagesChanged([message(9, "ignored after end")])
 		#expect(room.spoken.isEmpty)
+	}
+
+	// MARK: Paced reading
+
+	private static let reply =
+		"One is here. Two is here. Three is here. Four is here. Five is here. Six is here."
+
+	/// Gets the call to the point where the agent has begun reading `reply` in beats.
+	private func startReading(_ live: LiveVoiceController, _ room: FakeRoom) async {
+		live.begin(existing: [])
+		await settle()
+		room.hear("tell me the news please")
+		room.advance(3)
+		live.tick()
+		live.messagesChanged([message(1, Self.reply)])
+	}
+
+	@Test("a long reply is read in beats with a listening break between them")
+	func readsInBeats() async {
+		let (live, room) = make(pace: .relaxed)
+		await startReading(live, room)
+		#expect(room.spoken.map(\.text) == ["One is here. Two is here."])
+		#expect(live.phase == .speaking && !live.isYourTurn)
+		room.speakingID = nil
+		live.tick()
+		#expect(live.isYourTurn)
+		#expect(room.spoken.count == 1)
+		room.advance(1.9)
+		live.tick()
+		#expect(room.spoken.map(\.text).last == "Three is here. Four is here.")
+		#expect(!live.isYourTurn)
+	}
+
+	@Test("saying yes in a break carries straight on")
+	func yesContinues() async {
+		let (live, room) = make(pace: .relaxed)
+		await startReading(live, room)
+		room.speakingID = nil
+		live.tick()
+		room.hear("yes")
+		room.advance(0.6)
+		live.tick()
+		#expect(room.spoken.count == 2)
+	}
+
+	@Test("speaking in a break stops the reading and the words become your turn")
+	func takingOver() async {
+		let (live, room) = make(pace: .relaxed)
+		await startReading(live, room)
+		room.speakingID = nil
+		live.tick()
+		room.hear("what about billing")
+		#expect(live.phase == .listening && live.transcript == "what about billing")
+		room.advance(3)
+		live.tick()
+		#expect(room.sent.last == "what about billing")
+		#expect(room.spoken.count == 1)
+	}
+
+	@Test("go on after being cut off picks the reading up again")
+	func goOnResumes() async {
+		let (live, room) = make(pace: .relaxed)
+		await startReading(live, room)
+		room.hear("wait stop there now")  // talks over the first beat
+		#expect(live.phase == .listening)
+		room.advance(1)
+		live.tick()
+		// Not yet sent; the person says "go on" instead of a question.
+		room.hear("go on")
+		room.advance(0.6)
+		live.tick()
+		#expect(live.phase == .speaking)
+		#expect(room.spoken.last?.text == "One is here. Two is here.")
+	}
+
+	@Test("a check-in is spoken but never sent or kept as a turn")
+	func checkInIsLocal() async {
+		let (live, room) = make(pace: .relaxed)
+		live.begin(existing: [])
+		await settle()
+		let long = (1...12).map { "Sentence number \($0) is here." }.joined(separator: " ")
+		room.hear("tell me the news please")
+		room.advance(3)
+		live.tick()
+		live.messagesChanged([message(1, long)])
+		for _ in 0..<12 where live.phase == .speaking {
+			room.speakingID = nil
+			live.tick()
+			room.advance(4)
+			live.tick()
+		}
+		#expect(room.spoken.contains { $0.id.contains("checkin") })
+		#expect(room.sent == ["tell me the news please"])
+		#expect(live.turns.allSatisfy { !$0.text.hasPrefix("Want me") })
+	}
+
+	@Test("quick reads the whole reply at once")
+	func quickIsContinuous() async {
+		let (live, room) = make(pace: .quick)
+		await startReading(live, room)
+		#expect(room.spoken.count == 1 && room.spoken[0].text.contains("Six is here."))
+	}
+
+	@Test("changing the pace is remembered")
+	func paceIsRemembered() async {
+		let room = FakeRoom()
+		let defaults = UserDefaults(suiteName: "live-voice-\(UUID().uuidString)")!
+		let live = LiveVoiceController(ports: room.ports, defaults: defaults)
+		#expect(live.pace == .relaxed)
+		live.pace = .normal
+		#expect(LiveCallPace.stored(defaults) == .normal)
+		let again = LiveVoiceController(ports: room.ports, defaults: defaults)
+		#expect(again.pace == .normal)
 	}
 }
