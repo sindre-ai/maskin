@@ -252,12 +252,21 @@ export const integrationResponseSchema = z.object({
 	scopeGrants: z
 		.array(
 			z.discriminatedUnion('kind', [
-				z.object({ kind: z.literal('actor'), actorId: z.string().uuid() }),
+				z.object({
+					kind: z.literal('actor'),
+					actorId: z.string().uuid(),
+					expiresAt: z.string().optional(),
+					grantId: z.string().uuid().optional(),
+				}),
 				z.object({ kind: z.literal('loop'), loopId: z.string().uuid() }),
 				z.object({ kind: z.literal('workspace') }),
 			]),
 		)
 		.optional(),
+	// Access requests. NULL tier is unset, which counts as Tier 2.
+	tier: z.number().int().min(1).max(3).nullable().optional(),
+	approverActorId: z.string().uuid().nullable().optional(),
+	secondApproverActorIds: z.array(z.string().uuid()).optional(),
 })
 
 export const providerEventSchema = z.object({
