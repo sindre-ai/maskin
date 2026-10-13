@@ -79,7 +79,14 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
-import { isAuthRevokedError } from '../lib/integrations/errors'
+import {
+	CredentialUndoneError,
+	ScopeDeniedError,
+	isAuthRevokedError,
+} from '../lib/integrations/errors'
+import { hasWorkspaceGrant, liveActorGrants } from '../lib/integrations/grants'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
+import { getCredential } from '../lib/integrations/lookup'
 import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
@@ -2410,12 +2417,20 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (rtConfig.command) envVars.CUSTOM_COMMAND = rtConfig.command as string
 		}
 
-		// Load integration credentials for MCP servers
+		// Load integration credentials for MCP servers. Registered providers only:
+		// a bring-your-own key (a chat-captured github or slack key, say) carries a
+		// provider name too, and reading it here would hand it to every session in
+		// the workspace under that provider's env var. Those go through the scoped
+		// Keychain read below.
 		const activeIntegrations = await this.db
 			.select()
 			.from(integrations)
 			.where(
-				and(eq(integrations.workspaceId, session.workspaceId), eq(integrations.status, 'active')),
+				and(
+					eq(integrations.workspaceId, session.workspaceId),
+					eq(integrations.status, 'active'),
+					eq(integrations.providerMode, 'registered'),
+				),
 			)
 			.orderBy(asc(integrations.createdAt))
 
@@ -2583,6 +2598,9 @@ ${HUMAN_MESSAGE_STYLE}`
 				})
 			}
 		}
+
+		// Keychain credentials: bring-your-own keys this session's actor may read.
+		Object.assign(envVars, await this.buildKeychainEnv(session))
 
 		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
 		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
@@ -2858,6 +2876,14 @@ ${HUMAN_MESSAGE_STYLE}`
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
+		// One start log for both launch paths (local launchContainer and the
+		// production buildStartRequest), with every value redacted: see redactLaunchEnv.
+		logger.info('Session launch env built', {
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			env: redactLaunchEnv(envVars),
+		})
+
 		return {
 			image,
 			env: envVars,
@@ -2869,6 +2895,111 @@ ${HUMAN_MESSAGE_STYLE}`
 			skillsManifest,
 			skillsAttached,
 		}
+	}
+
+	/**
+	 * Env vars for the Keychain credentials this session may read: bring-your-own API
+	 * keys, active or still inside their undo window, whose scope grants name the
+	 * session's actor or the whole workspace. The scope filter runs in SQL so a key
+	 * scoped to another actor is never decrypted and never writes a denied-read event
+	 * on every launch of an unrelated agent. Each match then goes through getCredential,
+	 * which re-checks status and scope, decrypts, and writes the audit row.
+	 *
+	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
+	 * other integration.
+	 *
+	 * A loop-kind grant matches nothing here: a session carries no loop id today, so a
+	 * loop grant stays fail-closed at launch.
+	 *
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
+	 * characters is skipped, and so is a later key whose slug an earlier one already took
+	 * (oldest wins), each with a warning that carries no value.
+	 */
+	private async buildKeychainEnv(
+		session: typeof sessions.$inferSelect,
+	): Promise<Record<string, string>> {
+		const env: Record<string, string> = {}
+		const rows = await this.db
+			.select({
+				id: integrations.id,
+				displayName: integrations.displayName,
+				scopeGrants: integrations.scopeGrants,
+			})
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, session.workspaceId),
+					eq(integrations.providerMode, 'byo_apikey'),
+					inArray(integrations.status, ['active', 'pending_undo']),
+					// Main's per-integration switch (config.expose_to_agent_sessions === false):
+					// a switched-off key is neither injected nor decrypted, so no read is audited.
+					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
+					or(
+						sql`${integrations.scopeGrants} @> '[{"kind":"workspace"}]'::jsonb`,
+						sql`${integrations.scopeGrants} @> ${JSON.stringify([{ kind: 'actor', actorId: session.actorId }])}::jsonb`,
+					),
+				),
+			)
+			.orderBy(asc(integrations.createdAt))
+
+		// The SQL filter above matches an actor grant by containment, so it cannot see
+		// expiresAt. Drop a key whose only matching grants have expired, here, before
+		// getCredential would refuse it and log a denied read on every launch.
+		// Expiry is checked at launch only: a key already injected into a running
+		// session stays usable until that session ends (CTO-accepted Tier 1 limit).
+		const now = new Date()
+		const launchable = rows.filter(
+			(r) =>
+				hasWorkspaceGrant(r.scopeGrants) ||
+				liveActorGrants(r.scopeGrants, session.actorId, now).length > 0,
+		)
+
+		for (const row of launchable) {
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
+			if (!name) {
+				logger.warn('Keychain credential has no usable name for an env var; not injected', {
+					sessionId: session.id,
+					integrationId: row.id,
+				})
+				continue
+			}
+			if (name in env) {
+				logger.warn('Keychain credential skipped: another one already took this env var name', {
+					sessionId: session.id,
+					integrationId: row.id,
+					envName: name,
+				})
+				continue
+			}
+			try {
+				const credential = await getCredential(this.db, session.workspaceId, row.id, {
+					requestingActorId: session.actorId,
+					sessionId: session.id,
+					requestId: `launch:${session.id}:${row.id}`,
+				})
+				env[name] = credential.value
+			} catch (err) {
+				// Undone, or its grants changed, between the query and the read. Either way
+				// this session does not get it.
+				if (err instanceof CredentialUndoneError || err instanceof ScopeDeniedError) {
+					logger.info('Keychain credential no longer readable at launch; not injected', {
+						sessionId: session.id,
+						integrationId: row.id,
+						reason: err.name,
+					})
+					continue
+				}
+				// Anything else (KMS unreachable, a broken row): skip this one key and log. A
+				// session that starts without it fails visibly on the first call that needs
+				// it; failing the launch would take every agent in the workspace down with it.
+				logger.error('Keychain credential could not be read at launch; not injected', {
+					sessionId: session.id,
+					integrationId: row.id,
+					error: err instanceof Error ? err.name : 'unknown',
+				})
+			}
+		}
+		return env
 	}
 
 	/**

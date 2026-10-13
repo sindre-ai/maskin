@@ -12,6 +12,7 @@ import {
 	numeric,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
@@ -287,9 +288,37 @@ export type IntegrationStatus =
 	 * is the intent — it must never be mistaken for a live connection.
 	 */
 	| 'inactive'
+	/**
+	 * Keychain chat capture (see credentials.source = 'chat_capture'): vaulted and
+	 * readable through getCredential during the undo window, before the sweeper
+	 * flips it to 'active'. Written by the capture endpoint (a later Keychain PR).
+	 */
+	| 'pending_undo'
+	/** Keychain undo: the row survives for FK integrity and audit; credentials and dek_ciphertext are zeroised. */
+	| 'undone'
 
 /** The one status meaning "connected and usable". See `IntegrationStatus`. */
 export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
+export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_oauth'
+
+/** 1 read-only (an agent approves), 2 write (a human approves), 3 spend, outbound as a person, destructive. */
+export type CredentialTier = 1 | 2 | 3
+
+export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+
+/** Who may read a credential through getCredential. Stored inline in integrations.scope_grants. */
+export type ScopeGrant =
+	| {
+			kind: 'actor'
+			actorId: string
+			/** ISO timestamp. Set only on a grant made by an access request. Enforced at launch by the expiry task. */
+			expiresAt?: string
+			/** access_requests.grant_id of the request that made this grant. */
+			grantId?: string
+	  }
+	| { kind: 'loop'; loopId: string }
+	| { kind: 'workspace' }
 
 export const integrations = pgTable(
 	'integrations',
@@ -301,7 +330,8 @@ export const integrations = pgTable(
 		provider: text('provider').notNull(),
 		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
-		credentials: text('credentials').notNull(),
+		// NULL only on an undone row (Keychain undo zeroises it); see migration 0088.
+		credentials: text('credentials'),
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
@@ -317,6 +347,31 @@ export const integrations = pgTable(
 		// Phase 1 rows that predate R11 carry NULL until the next
 		// `account.reconnect` webhook or the admin refresh-identities call fills it.
 		unipileAccSlug: text('unipile_acc_slug'),
+		// Keychain columns. providerMode: 'registered' | 'byo_apikey' | 'byo_oauth'.
+		providerMode: text('provider_mode')
+			.$type<IntegrationProviderMode>()
+			.notNull()
+			.default('registered'),
+		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
+		displayName: text('display_name'),
+		// JSONB array of ScopeGrant. Fail-closed: the empty default grants nobody.
+		scopeGrants: jsonb('scope_grants').$type<ScopeGrant[]>().notNull().default(sql`'[]'::jsonb`),
+		// KMS-wrapped per-credential DEK. NULL = legacy row, decrypted under
+		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
+		dekCiphertext: text('dek_ciphertext'),
+		source: text('source').$type<IntegrationSource>().notNull().default('admin_ui'),
+		originSessionId: uuid('origin_session_id').references((): AnyPgColumn => sessions.id),
+		undoExpiresAt: timestamp('undo_expires_at', { withTimezone: true }),
+		// Access requests. Risk tier, set only by a human (see routes/integrations-keychain.ts).
+		// NULL means unset, and unset counts as Tier 2 (see effectiveTier in access-requests.ts).
+		tier: smallint('tier').$type<CredentialTier>(),
+		// The agent that decides Tier 1 requests for this credential. NULL until a human sets a tier.
+		approverActorId: uuid('approver_actor_id').references(() => actors.id),
+		// Stored, server-enforced fallbacks when the approver is the requester: a JSON array of actor ids.
+		secondApproverActorIds: jsonb('second_approver_actor_ids')
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -327,17 +382,165 @@ export const integrations = pgTable(
 		uniqueIndex('integrations_ws_actor_provider_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
+		// One per provider for registered and OAuth connections. A bring-your-own API key
+		// is a named credential, so a workspace may hold several for one provider (0089).
 		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider)
-			.where(sql`${t.externalId} IS NULL`),
+			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} <> 'byo_apikey'`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
+		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
+		index('integrations_undo_sweeper_idx')
+			.on(t.status, t.undoExpiresAt)
+			.where(sql`${t.status} = 'pending_undo'`),
+		check(
+			'integrations_byo_needs_display_name',
+			sql`${t.providerMode} = 'registered' OR ${t.displayName} IS NOT NULL`,
+		),
+		check('integrations_scope_grants_is_array', sql`jsonb_typeof(${t.scopeGrants}) = 'array'`),
+		check(
+			'integrations_source_enum',
+			sql`${t.source} IN ('admin_ui', 'chat_capture', 'oauth_callback', 'registry_install')`,
+		),
+		check(
+			'integrations_chat_capture_has_session',
+			sql`${t.source} <> 'chat_capture' OR ${t.originSessionId} IS NOT NULL`,
+		),
+		check('integrations_tier_range', sql`${t.tier} IS NULL OR ${t.tier} IN (1, 2, 3)`),
+		check(
+			'integrations_second_approvers_is_array',
+			sql`jsonb_typeof(${t.secondApproverActorIds}) = 'array'`,
+		),
+		check(
+			'integrations_credentials_null_only_when_undone',
+			sql`${t.credentials} IS NOT NULL OR ${t.status} = 'undone'`,
+		),
 		index('integrations_unipile_acc_slug_idx')
 			.on(t.unipileAccSlug)
 			.where(sql`${t.unipileAccSlug} IS NOT NULL`),
 	],
 )
 export type Integration = typeof integrations.$inferSelect
+
+// ── Keychain ────────────────────────────────────────────────────────────────
+
+/** workspace -> KMS key alias (AwsKmsProvider provisions the alias on a workspace's first write). */
+export const workspaceKmsAliases = pgTable('workspace_kms_aliases', {
+	workspaceId: uuid('workspace_id')
+		.primaryKey()
+		.references(() => workspaces.id),
+	kekAlias: text('kek_alias').notNull(),
+	provider: text('provider').notNull().default('aws-kms'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type CredentialAccessAction =
+	| 'read'
+	| 'create'
+	| 'undone'
+	| 'rotated'
+	| 'sweeper_activated'
+	| 'scope_changed'
+	| 'tier_changed'
+	| 'grant_requested'
+	| 'grant_approved'
+	| 'grant_denied'
+	| 'grant_expired'
+	| 'grant_revoked'
+
+/**
+ * Hash-chained audit log of credential use. Insert-only: the app role has no
+ * UPDATE or DELETE. prev_row_hash, row_hash, read_at and id are all assigned by
+ * the credential_access_log_insert() BEFORE INSERT trigger under a per-workspace
+ * lock, so a caller cannot set them (see migration 0087).
+ */
+export const credentialAccessLog = pgTable(
+	'credential_access_log',
+	{
+		id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id)
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		sessionId: uuid('session_id'),
+		loopId: uuid('loop_id'),
+		outboundTarget: text('outbound_target'),
+		action: text('action').$type<CredentialAccessAction>().notNull().default('read'),
+		source: text('source').notNull().default('unknown'),
+		requestId: text('request_id').notNull(),
+		readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+		detail: text('detail'),
+		prevRowHash: text('prev_row_hash').notNull().default(''),
+		rowHash: text('row_hash').notNull().default(''),
+	},
+	(t) => [
+		index('cal_ws_read_at_idx').on(t.workspaceId, t.readAt),
+		index('cal_integration_read_at_idx').on(t.integrationId, t.readAt),
+		index('cal_actor_read_at_idx').on(t.actorId, t.readAt),
+		index('cal_action_idx').on(t.workspaceId, t.action),
+	],
+)
 export type NewIntegration = typeof integrations.$inferInsert
+
+export type AccessRequestStatus = 'requested' | 'approved' | 'denied' | 'expired' | 'cancelled'
+
+/**
+ * An agent's request for a credential it cannot read. The reason is stored text
+ * and is never interpreted: no route decision, approver rule or audit detail is
+ * derived from it. session_id is the blocked run and is a hint only, never an
+ * input to a decision. A request the route refuses itself is written as denied
+ * with no approver. See migration 0092.
+ */
+export const accessRequests = pgTable(
+	'access_requests',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		requesterActorId: uuid('requester_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id)
+			.notNull(),
+		// The credential's effective tier when the request was filed (unset is stored as 2).
+		tier: smallint('tier').$type<CredentialTier>().notNull(),
+		// 'session' or a whole number of hours or days: 2h, 3d. At most 7d.
+		requestedDuration: text('requested_duration').notNull(),
+		reason: text('reason').notNull(),
+		status: text('status').$type<AccessRequestStatus>().notNull().default('requested'),
+		approverActorId: uuid('approver_actor_id').references(() => actors.id),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		grantId: uuid('grant_id'),
+		sessionId: uuid('session_id').references((): AnyPgColumn => sessions.id, {
+			onDelete: 'set null',
+		}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One open request per agent and credential. The route dedupes first; this is the race guard.
+		uniqueIndex('access_requests_open_uniq')
+			.on(t.requesterActorId, t.integrationId)
+			.where(sql`${t.status} = 'requested'`),
+		index('access_requests_ws_status_idx').on(t.workspaceId, t.status),
+		index('access_requests_pair_idx').on(t.requesterActorId, t.integrationId, t.createdAt),
+		check(
+			'access_requests_status_enum',
+			sql`${t.status} IN ('requested', 'approved', 'denied', 'expired', 'cancelled')`,
+		),
+		check('access_requests_tier_range', sql`${t.tier} IN (1, 2, 3)`),
+		check(
+			'access_requests_duration_form',
+			sql`${t.requestedDuration} = 'session' OR ${t.requestedDuration} ~ '^[1-9][0-9]{0,3}[hd]$'`,
+		),
+	],
+)
+export type AccessRequest = typeof accessRequests.$inferSelect
 
 // ── Slack User Links ───────────────────────────────────────────────────────
 // Per-(Slack team, Slack user) routing into a Maskin actor + default

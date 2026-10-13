@@ -241,6 +241,32 @@ export const integrationResponseSchema = z.object({
 	// and reconnecting is what fixes it. Scope names only — never the token.
 	missingScopes: z.array(z.string()).optional(),
 	needsReconnect: z.boolean().optional(),
+	// Keychain. Where the credential came from, and for source chat_capture the
+	// session the key was pasted into. Never the value or the wrapped data key.
+	source: z.string().optional(),
+	originSessionId: z.string().uuid().nullable().optional(),
+	// Keychain. How the credential is held, its display name (null for the
+	// registered providers) and who may read it. Never the value.
+	providerMode: z.enum(['registered', 'byo_apikey', 'byo_oauth']).optional(),
+	displayName: z.string().nullable().optional(),
+	scopeGrants: z
+		.array(
+			z.discriminatedUnion('kind', [
+				z.object({
+					kind: z.literal('actor'),
+					actorId: z.string().uuid(),
+					expiresAt: z.string().optional(),
+					grantId: z.string().uuid().optional(),
+				}),
+				z.object({ kind: z.literal('loop'), loopId: z.string().uuid() }),
+				z.object({ kind: z.literal('workspace') }),
+			]),
+		)
+		.optional(),
+	// Access requests. NULL tier is unset, which counts as Tier 2.
+	tier: z.number().int().min(1).max(3).nullable().optional(),
+	approverActorId: z.string().uuid().nullable().optional(),
+	secondApproverActorIds: z.array(z.string().uuid()).optional(),
 })
 
 export const providerEventSchema = z.object({

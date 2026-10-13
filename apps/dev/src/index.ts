@@ -8,7 +8,13 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { AccessRequestTimeoutJob } from './jobs/access-request-timeout'
+import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
+import { KeychainGrantExpirySweeperJob } from './jobs/keychain-grant-expiry-sweeper'
+import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { RotateDeksJob } from './jobs/rotate-deks'
+import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -18,6 +24,7 @@ import {
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
+import { assertKeychainKmsConfig, prepareLocalKek } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
@@ -46,6 +53,11 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+// An unknown KEYCHAIN_KMS value must stop the process here, not surface on the
+// first credential read.
+assertKeychainKmsConfig()
+await prepareLocalKek(db)
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -217,6 +229,41 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Keychain: flips chat-captured keys from pending_undo to active once the undo
+// window has passed. One UPDATE per minute, no KMS.
+const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
+keychainUndoSweeperJob.start()
+logger.info('Keychain undo sweeper started')
+
+// Keychain: writes one grant_expired audit row per expired access-request grant.
+// Expiry itself is enforced at read time; this job only records it.
+const keychainGrantExpirySweeperJob = new KeychainGrantExpirySweeperJob(db)
+keychainGrantExpirySweeperJob.start()
+logger.info('Keychain grant expiry sweeper started')
+
+// Access requests: an unanswered Tier 1 request is closed after an hour and goes to a human.
+const accessRequestTimeoutJob = new AccessRequestTimeoutJob(db, sessionManager)
+accessRequestTimeoutJob.start()
+logger.info('Access request timeout job started')
+
+// Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
+// unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
+const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
+upgradeLegacyCredentialsJob.start()
+logger.info('Legacy credential upgrade job scheduled')
+
+// Keychain: nightly re-wrap of every envelope credential read in the last 24 hours
+// under a fresh DEK and the workspace's current KEK (the lazy half of KEK rotation).
+const rotateDeksJob = new RotateDeksJob(db)
+rotateDeksJob.start()
+logger.info('DEK rotation job scheduled')
+
+// Keychain: daily audit-chain snapshot into the write-once bucket, plus the verifier.
+// Inert until KEYCHAIN_WORM_BUCKET is set.
+const chainSnapshotJob = new ChainSnapshotJob(db)
+chainSnapshotJob.start()
+logger.info('Chain snapshot job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -347,6 +394,13 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	keychainUndoSweeperJob.stop()
+	keychainGrantExpirySweeperJob.stop()
+
+	accessRequestTimeoutJob.stop()
+	upgradeLegacyCredentialsJob.stop()
+	rotateDeksJob.stop()
+	chainSnapshotJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

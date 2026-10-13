@@ -482,6 +482,39 @@ export const api = {
 
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
+		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
+			request<ChatCaptureResponse>('/integrations/chat-capture', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		createByoApiKey: (workspaceId: string, body: { displayName: string; rawSecret: string }) =>
+			request<{ integrationId: string }>('/integrations/byo-apikey', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
+			request<CredentialAuditLogPage>(
+				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
+				{ workspaceId },
+			),
+		updateScope: (id: string, workspaceId: string, scopeGrants: KeychainScopeGrant[]) =>
+			request<{ id: string; scopeGrants: KeychainScopeGrant[] }>(`/integrations/${id}/scope`, {
+				method: 'PUT',
+				body: { scopeGrants },
+				workspaceId,
+			}),
+		undo: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(`/integrations/${id}/undo`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		relaunch: (id: string, workspaceId: string) =>
+			request<{ relaunch: 'stopped' | 'failed' }>(`/integrations/${id}/relaunch`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
 		connect: (
 			workspaceId: string,
@@ -1633,6 +1666,74 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Keychain: where the credential came from. Never the value. */
+	source?: string
+	/** Keychain: for source chat_capture, the session the key was pasted into. */
+	originSessionId?: string | null
+	/** Keychain: how the credential is held. Absent from a server that predates it. */
+	providerMode?: 'registered' | 'byo_apikey' | 'byo_oauth'
+	/** Keychain: the name the member gave it. Null for the registered providers. */
+	displayName?: string | null
+	/** Keychain: who may read it. Empty means nobody (fail-closed). */
+	scopeGrants?: KeychainScopeGrant[]
+}
+
+export type KeychainScopeGrant =
+	| { kind: 'actor'; actorId: string }
+	| { kind: 'loop'; loopId: string }
+	| { kind: 'workspace' }
+
+export interface CredentialAuditEntry {
+	id: string
+	actorId: string
+	sessionId: string | null
+	outboundTarget: string | null
+	action:
+		| 'read'
+		| 'create'
+		| 'undone'
+		| 'rotated'
+		| 'sweeper_activated'
+		| 'scope_changed'
+		| 'tier_changed'
+		| 'grant_requested'
+		| 'grant_approved'
+		| 'grant_denied'
+		| 'grant_expired'
+		| 'grant_revoked'
+	source: string
+	readAt: string
+	/** Only tier_changed rows carry it, as approver=...;grant=...;tier=N;ext=... Null otherwise. */
+	detail: string | null
+}
+
+export interface CredentialAuditLogPage {
+	integrationId: string
+	source: string
+	originSessionId: string | null
+	entries: CredentialAuditEntry[]
+	nextBeforeId: string | null
+}
+
+export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' | 'openai-style'
+
+export interface ChatCaptureInput {
+	sessionId: string
+	providerMode: 'byo_apikey'
+	/** manual: the user typed the ! prefix, so nothing was detected. */
+	detectedProvider: ChatCaptureProvider | 'manual'
+	displayName: string
+	rawSecret: string
+	/** Omit for the default (the session's agent). [] means unassigned. */
+	scopeGrants?: Array<{ kind: 'actor'; actorId: string } | { kind: 'workspace' }>
+}
+
+export interface ChatCaptureResponse {
+	integrationId: string
+	undoExpiresAt: string
+	undoUrl: string
+	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
+	relaunch: 'stopped' | 'failed'
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
