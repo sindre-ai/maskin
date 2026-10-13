@@ -333,7 +333,9 @@ describe('Relationship and graph routes are scoped to the header workspace', () 
 					'POST',
 					'/api/graph',
 					{
-						nodes: [],
+						// The graph schema requires at least one node; the edge under test
+						// is the foreign pair, the node is only there to pass validation.
+						nodes: [{ $id: 'n1', type: 'task', title: 'New in workspace A', status: 'todo' }],
 						edges: [{ source: bObject.id, target: bOther.id, type: 'breaks_into' }],
 					},
 					{ 'x-workspace-id': wsA },
