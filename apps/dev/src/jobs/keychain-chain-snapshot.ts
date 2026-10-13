@@ -220,5 +220,7 @@ export class ChainSnapshotJob {
 
 function bucketStoreFromEnv(env: Record<string, string | undefined> = process.env) {
 	const bucket = env[WORM_BUCKET_ENV]?.trim()
-	return bucket ? new WormSnapshotStore({ bucket, region: env.AWS_REGION?.trim() || undefined }) : null
+	return bucket
+		? new WormSnapshotStore({ bucket, region: env.AWS_REGION?.trim() || undefined })
+		: null
 }

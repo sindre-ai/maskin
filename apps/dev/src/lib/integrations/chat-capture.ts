@@ -6,15 +6,15 @@ import {
 	conversationParticipants,
 	integrations,
 	sessions,
-	workspaceMembers,
 } from '@maskin/db/schema'
 import { SECRET_PROVIDER_IDS, type SecretProviderId } from '@maskin/shared'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { BYO_APIKEY_PROVIDER } from './byo-apikey'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
+import { grantedActorsAreInWorkspace } from './scope-grants'
 
 /** How long a captured key stays undoable before the sweeper activates it. */
 export const UNDO_WINDOW_MS = 5 * 60 * 1000
@@ -115,26 +115,12 @@ export async function captureChatSecret(
 	// Only caller-supplied grants are checked against membership. The default is the
 	// session's own driver, which the session row already vouches for.
 	const requested = input.scopeGrants ?? []
-	const requestedActorIds = [
-		...new Set(requested.flatMap((g) => (g.kind === 'actor' ? [g.actorId] : []))),
-	]
-	if (requestedActorIds.length > 0) {
-		const members = await db
-			.select({ actorId: workspaceMembers.actorId })
-			.from(workspaceMembers)
-			.where(
-				and(
-					eq(workspaceMembers.workspaceId, workspaceId),
-					inArray(workspaceMembers.actorId, requestedActorIds),
-				),
-			)
-		if (members.length !== requestedActorIds.length) {
-			throw new ChatCaptureError(
-				400,
-				'BAD_REQUEST',
-				'A scope grant names an actor outside this workspace',
-			)
-		}
+	if (!(await grantedActorsAreInWorkspace(db, workspaceId, requested))) {
+		throw new ChatCaptureError(
+			400,
+			'BAD_REQUEST',
+			'A scope grant names an actor outside this workspace',
+		)
 	}
 	// Omitted means the default (the session driver). An explicit empty list is the
 	// user's "Save unassigned": fail closed, nobody can read it.

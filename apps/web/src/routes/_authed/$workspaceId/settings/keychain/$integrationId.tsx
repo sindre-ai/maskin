@@ -8,6 +8,13 @@ import {
 	isKeychainCredential,
 	providerLabel,
 } from '@/components/keychain/keychain-parts'
+import {
+	NO_AGENT_LINE,
+	ScopeEditorSheet,
+	agentCountLine,
+	countAgents,
+	scopeSaveErrorMessage,
+} from '@/components/keychain/scope-editor-sheet'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -16,10 +23,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useCredentialAuditLog, useIntegrations } from '@/hooks/use-integrations'
+import {
+	useCredentialAuditLog,
+	useIntegrations,
+	useUpdateKeyScope,
+} from '@/hooks/use-integrations'
 import type { CredentialAuditEntry } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/$integrationId')({
 	component: CredentialDetailPage,
@@ -32,6 +46,7 @@ const ACTION_LABELS: Record<CredentialAuditEntry['action'], string> = {
 	undone: 'UNDONE',
 	rotated: 'ROTATED',
 	sweeper_activated: 'ACTIVATED',
+	scope_changed: 'SCOPE CHANGED',
 }
 
 function sessionLabel(sessionId: string): string {
@@ -67,7 +82,7 @@ function AuditEntryText({
 						<>
 							{' '}
 							targeting{' '}
-							<span className="font-mono text-xs text-muted-foreground">
+							<span className="break-all font-mono text-xs text-muted-foreground">
 								{entry.outboundTarget}
 							</span>
 						</>
@@ -81,20 +96,30 @@ function AuditEntryText({
 			return <>{actorName} rotated this credential.</>
 		case 'sweeper_activated':
 			return <>The undo window closed. This credential is now permanent.</>
+		case 'scope_changed':
+			return <>{actorName} changed which agents can use this credential.</>
 	}
 }
 
 function CredentialDetailPage() {
 	const { integrationId } = Route.useParams()
-	const { workspaceId } = useWorkspace()
+	const { workspace, workspaceId } = useWorkspace()
 	const { data: integrations, isLoading } = useIntegrations(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const audit = useCredentialAuditLog(workspaceId, integrationId)
+	const updateScope = useUpdateKeyScope(workspaceId, integrationId)
+	const [editingAccess, setEditingAccess] = useState(false)
 	const credential = integrations?.find((i) => i.id === integrationId)
 	useDocumentTitle(credential ? credentialName(credential) : 'Keychain')
 
 	const actorName = (actorId: string) => actors?.find((a) => a.id === actorId)?.name
 	const entries = audit.data?.pages.flatMap((page) => page.entries) ?? []
+	// A credential always has its own created row, so "no reads" means no read row, not no rows.
+	const noReads =
+		!audit.isLoading &&
+		!audit.isError &&
+		!audit.hasNextPage &&
+		!entries.some((entry) => entry.action === 'read')
 
 	if (isLoading) {
 		return (
@@ -114,6 +139,21 @@ function CredentialDetailPage() {
 
 	const name = credentialName(credential)
 	const viaChat = credential.source === 'chat_capture'
+	// Only an active saved API key has agents to assign. A key still in its undo window is
+	// scoped by the chat card; OAuth connections keep their workspace grant.
+	const assignable = credential.providerMode === 'byo_apikey' && credential.status === 'active'
+	const me = getStoredActor()
+	const canEditAccess =
+		assignable &&
+		me?.type === 'human' &&
+		(credential.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
+	const agents = (actors ?? []).filter((a) => a.type === 'agent')
+	const grants = credential.scopeGrants ?? []
+	const everyAgent = grants.some((g) => g.kind === 'workspace')
+	const grantedAgents = agents.filter((a) =>
+		grants.some((g) => g.kind === 'actor' && g.actorId === a.id),
+	)
+	const agentCount = countAgents(grants, agents)
 
 	return (
 		<div className="max-w-[880px]">
@@ -175,6 +215,14 @@ function CredentialDetailPage() {
 							))}
 						</ul>
 					)}
+					{noReads && (
+						<div className={cn('p-3', entries.length > 0 && 'border-t border-border')}>
+							<p className="text-sm font-medium">No reads yet</p>
+							<p className="text-xs text-muted-foreground">
+								When an agent uses this credential, the read shows up here.
+							</p>
+						</div>
+					)}
 					{audit.hasNextPage && (
 						<div className="border-t border-border p-2 text-center">
 							<Button
@@ -217,8 +265,60 @@ function CredentialDetailPage() {
 							<dd className="text-right">{describeScope(credential.scopeGrants, actorName)}</dd>
 						</div>
 					</dl>
+					{assignable && (
+						<div className="mt-3 border-t border-border pt-3">
+							<div className="flex items-center justify-between gap-2">
+								<h4 className="text-sm font-semibold">Agents</h4>
+								{canEditAccess && (
+									<Button variant="outline" size="sm" onClick={() => setEditingAccess(true)}>
+										Edit access
+									</Button>
+								)}
+							</div>
+							{agentCount === 0 ? (
+								<p className="mt-1.5 text-xs text-muted-foreground">{NO_AGENT_LINE}</p>
+							) : (
+								<>
+									<p className="mt-1.5 text-xs text-muted-foreground">
+										{agentCountLine(agentCount)}
+									</p>
+									<ul className="mt-1.5 space-y-1 text-sm">
+										{everyAgent ? (
+											<li>All agents in this workspace</li>
+										) : (
+											grantedAgents.map((agent) => (
+												<li key={agent.id} className="truncate">
+													{agent.name}
+												</li>
+											))
+										)}
+									</ul>
+								</>
+							)}
+						</div>
+					)}
 				</section>
 			</div>
+
+			{canEditAccess && (
+				<ScopeEditorSheet
+					open={editingAccess}
+					onOpenChange={(open) => {
+						setEditingAccess(open)
+						if (!open) updateScope.reset()
+					}}
+					credentialName={name}
+					agents={agents.map((a) => ({ id: a.id, name: a.name }))}
+					grants={grants}
+					saving={updateScope.isPending}
+					error={updateScope.isError ? scopeSaveErrorMessage(updateScope.error) : null}
+					onSave={(next) =>
+						updateScope.mutate(next, {
+							onSuccess: () => setEditingAccess(false),
+						})
+					}
+				/>
+			)}
 		</div>
 	)
 }

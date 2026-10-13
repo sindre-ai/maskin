@@ -9,7 +9,10 @@ class AwsError extends Error {
 	}
 }
 
-type Handler = (command: { constructor: { name: string }; input: Record<string, unknown> }) => unknown
+type Handler = (command: {
+	constructor: { name: string }
+	input: Record<string, unknown>
+}) => unknown
 
 function storeWith(handler: Handler) {
 	const sent: Array<{ name: string; input: Record<string, unknown> }> = []

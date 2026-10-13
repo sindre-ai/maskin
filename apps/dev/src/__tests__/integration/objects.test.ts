@@ -1511,6 +1511,32 @@ describe('Objects Integration', () => {
 			const walked = [...page1.map((r) => r.id), ...page2.map((r) => r.id)]
 			expect([...walked].sort()).toEqual([...seededIds].sort())
 		})
+
+		it('ranks a title match above a content-only match on /objects/search', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+			// Alphabetically first and hits the token in the body twice over, so
+			// the old equal-weight rank + title-ASC tie-break would put it first.
+			const contentOnly = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Aardvark notes',
+				content: 'zebrafish zebrafish zebrafish appears only in the body',
+			})
+			const titleMatch = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Zebrafish tracker',
+				content: 'nothing relevant here',
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=zebrafish', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const rows = (await res.json()) as Array<{ id: string }>
+			expect(rows.map((r) => r.id)).toEqual([titleMatch.id, contentOnly.id])
+		})
 	})
 
 	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {

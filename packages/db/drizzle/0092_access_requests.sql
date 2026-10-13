@@ -5,15 +5,17 @@
 --   2. access_requests: one row per agent request, including the ones the route
 --      refuses itself (status denied, no approver).
 --   3. credential_access_log: the action CHECK learns tier_changed and the five
---      grant_* actions. A forward ALTER only. action is already hashed as text,
---      so the trigger, the hash formula and the verifier are untouched and every
---      existing row still verifies.
+--      grant_* actions, and keeps scope_changed from 0091_credential_access_log_scope_changed.
+--      This runs after that migration, so the CHECK lists all twelve actions. A
+--      forward ALTER only. action is already hashed as text, so the trigger, the
+--      hash formula and the verifier are untouched and every existing row still
+--      verifies.
 --
 -- The new CHECK goes on NOT VALID first, then VALIDATE, so the log is never
--- scanned under a write-blocking lock. Existing rows only carry the five old
--- actions, so VALIDATE cannot fail.
+-- scanned under a write-blocking lock. Existing rows only carry actions the
+-- 0091 CHECK already allows, which are all in the new list, so VALIDATE cannot fail.
 --
--- Down: drizzle/down/0091_access_requests_down.sql.
+-- Down: drizzle/down/0092_access_requests_down.sql.
 
 ALTER TABLE "integrations"
 	ADD COLUMN IF NOT EXISTS "tier" smallint,
@@ -59,7 +61,7 @@ CREATE INDEX IF NOT EXISTS "access_requests_pair_idx" ON "access_requests" ("req
 ALTER TABLE "credential_access_log" DROP CONSTRAINT IF EXISTS "credential_access_log_action_enum";
 --> statement-breakpoint
 ALTER TABLE "credential_access_log" ADD CONSTRAINT "credential_access_log_action_enum" CHECK ("action" IN (
-	'read', 'create', 'undone', 'rotated', 'sweeper_activated',
+	'read', 'create', 'undone', 'rotated', 'sweeper_activated', 'scope_changed',
 	'tier_changed', 'grant_requested', 'grant_approved', 'grant_denied', 'grant_expired', 'grant_revoked'
 )) NOT VALID;
 --> statement-breakpoint

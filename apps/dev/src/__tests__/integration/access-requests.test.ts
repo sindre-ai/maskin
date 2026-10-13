@@ -638,13 +638,14 @@ describe('GET /api/access-requests/requestable', () => {
 	})
 })
 
-describe('credential_access_log action CHECK (migration 0091)', () => {
+describe('credential_access_log action CHECK (migration 0092)', () => {
 	it('accepts the new actions and the chain verifies across old and new rows', async () => {
 		const w = await world()
 		const agent = await w.agent('Agent A')
 		const cred = await credential(w, { tier: 1 })
 		const actions = [
 			'create',
+			'scope_changed',
 			'tier_changed',
 			'grant_requested',
 			'grant_approved',

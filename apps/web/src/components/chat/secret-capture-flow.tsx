@@ -311,9 +311,7 @@ export function SecretCaptureFlow({
 				)
 				queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			} catch {
-				setCardError(
-					"Couldn't undo. The undo window has closed. Revoke it from Settings > Keychain.",
-				)
+				setCardError("Couldn't undo. The undo window has closed.")
 			} finally {
 				setUndoingId(null)
 			}
@@ -366,6 +364,8 @@ export function SecretCaptureFlow({
 			<TranscriptRedactedRow marker={v.marker} />
 			<VaultedCard
 				credentialName={v.name}
+				workspaceId={workspaceId}
+				integrationId={v.integrationId}
 				agentCount={v.agentCount}
 				agentName={agentName}
 				phase={v.phase}
