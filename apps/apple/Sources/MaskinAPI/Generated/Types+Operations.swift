@@ -34327,6 +34327,8 @@ public enum Operations {
                         public var stripe_subscription_id: Swift.String?
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/credit_balance_cents`.
                         public var credit_balance_cents: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/credit_topup_available`.
+                        public var credit_topup_available: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon`.
                         public struct linkedin_identity_addonPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon/count`.
@@ -34370,6 +34372,7 @@ public enum Operations {
                         ///   - stripe_customer_id:
                         ///   - stripe_subscription_id:
                         ///   - credit_balance_cents:
+                        ///   - credit_topup_available:
                         ///   - linkedin_identity_addon:
                         public init(
                             plan: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.planPayload,
@@ -34381,6 +34384,7 @@ public enum Operations {
                             stripe_customer_id: Swift.String? = nil,
                             stripe_subscription_id: Swift.String? = nil,
                             credit_balance_cents: Swift.Int,
+                            credit_topup_available: Swift.Bool,
                             linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil
                         ) {
                             self.plan = plan
@@ -34392,6 +34396,7 @@ public enum Operations {
                             self.stripe_customer_id = stripe_customer_id
                             self.stripe_subscription_id = stripe_subscription_id
                             self.credit_balance_cents = credit_balance_cents
+                            self.credit_topup_available = credit_topup_available
                             self.linkedin_identity_addon = linkedin_identity_addon
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -34404,6 +34409,7 @@ public enum Operations {
                             case stripe_customer_id
                             case stripe_subscription_id
                             case credit_balance_cents
+                            case credit_topup_available
                             case linkedin_identity_addon
                         }
                     }
