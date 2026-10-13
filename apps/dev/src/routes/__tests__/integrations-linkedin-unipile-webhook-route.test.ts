@@ -43,9 +43,10 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/webhook', () => ({
 // The real ingest runs by default (account.reconnect without an account_id answers before
 // touching the db); only the re-enumeration test stubs it, because the db here is a sentinel.
 vi.mock('../../lib/integrations/providers/linkedin-unipile/ingest', async (importOriginal) => {
-	const actual = await importOriginal<
-		typeof import('../../lib/integrations/providers/linkedin-unipile/ingest')
-	>()
+	const actual =
+		await importOriginal<
+			typeof import('../../lib/integrations/providers/linkedin-unipile/ingest')
+		>()
 	mocks.realIngest = actual.ingestUnipileEnvelope as unknown as typeof mocks.realIngest
 	return { ...actual, ingestUnipileEnvelope: mocks.ingest }
 })
