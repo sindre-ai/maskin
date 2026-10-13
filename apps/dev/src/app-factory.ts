@@ -61,7 +61,6 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
-import { createVoiceSessionEventsRoutes } from './routes/voice-session-events'
 import voiceSessionsRoutes from './routes/voice-sessions'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
@@ -408,7 +407,6 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
 	app.route('/api/voice-sessions', voiceSessionsRoutes)
-	app.route('/api/voice-sessions', createVoiceSessionEventsRoutes(nodeWebSocket.upgradeWebSocket))
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

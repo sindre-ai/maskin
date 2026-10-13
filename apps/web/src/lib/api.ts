@@ -798,18 +798,23 @@ export const api = {
 	},
 
 	voiceSessions: {
-		// Mints an ephemeral OpenAI Realtime session for the caller-agent pair.
-		// Task 1 (voice backend) owns the route; response shape is agreed on the
-		// task-1 handoff comment. Task 2 (this file) is the sole client, so a
-		// divergence in the final Task 1 shape is a coordination bug, not an
-		// external-contract change.
+		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
+		// credential comes back: the connection to the vendor is made by the
+		// server when the offer below is posted.
 		create: (workspaceId: string, body: { agent_actor_id: string }) =>
-			request<{
-				voice_session_id: string
-				client_secret: string
-				expires_at: string
-				ws_url: string
-			}>('/voice-sessions', { method: 'POST', body, workspaceId }),
+			request<{ voice_session_id: string }>('/voice-sessions', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		// Hands the browser's WebRTC offer to the server, which connects it to the
+		// vendor and attaches its own tool connection. tools_available is false when
+		// that attach failed; the call still runs, and the agent says tools are down.
+		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
+				`/voice-sessions/${voiceSessionId}/offer`,
+				{ method: 'POST', body: { sdp }, workspaceId },
+			),
 		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
 		// Idempotent, so a double hangup (End button then dialog close) is harmless.
 		// Audio seconds are what this client measured; the server clamps them to

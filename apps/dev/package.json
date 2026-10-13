@@ -45,6 +45,7 @@
 		"postgres": "^3.4.9",
 		"stripe": "17.x",
 		"tar-stream": "^3.1.0",
+		"ws": "^8.20.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {

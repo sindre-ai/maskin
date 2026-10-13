@@ -5,8 +5,11 @@ import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
 // Import the route module lazily so it picks up the env `beforeEach` set.
-const { default: voiceSessionsRoutes, setRealtimeMintFn } = await import(
+const { default: voiceSessionsRoutes, setVoiceInvokeToolFactory } = await import(
 	'../../routes/voice-sessions'
+)
+const { setCreateRealtimeCallFn, setOpenRealtimeSocketFn } = await import(
+	'../../services/voice-realtime-call'
 )
 
 const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
@@ -42,39 +45,17 @@ function agentRow(overrides?: Partial<{ metadata: unknown; type: string }>) {
 	}
 }
 
-function stubMint(overrides?: {
-	kind?: 'ok' | 'rate_limited' | 'error'
-	retryAfterSeconds?: number
-	status?: number
-}) {
-	const kind = overrides?.kind ?? 'ok'
-	setRealtimeMintFn(async () => {
-		if (kind === 'rate_limited') {
-			return { kind: 'rate_limited', retryAfterSeconds: overrides?.retryAfterSeconds ?? 15 }
-		}
-		if (kind === 'error') {
-			return { kind: 'error', status: overrides?.status ?? 500, body: 'boom' }
-		}
-		return {
-			kind: 'ok',
-			vendorSessionId: 'vs_test123',
-			clientSecret: 'ek_test_abc',
-			expiresAt: '2026-09-29T10:00:00.000Z',
-			wsUrl: 'wss://api.openai.com/v1/realtime',
-			model: 'gpt-realtime',
-		}
-	})
-}
-
 beforeEach(() => {
 	setEnv({})
-	setRealtimeMintFn(null) // reset to default
 	process.env.MASKIN_VOICE_OPENAI_API_KEY = 'test-key'
 })
 
 afterEach(() => {
 	setEnv({})
-	setRealtimeMintFn(null)
+	setCreateRealtimeCallFn(null)
+	setOpenRealtimeSocketFn(null)
+	setVoiceInvokeToolFactory(null)
+	vi.unstubAllGlobals()
 	process.env.MASKIN_VOICE_OPENAI_API_KEY = undefined
 })
 
@@ -106,7 +87,6 @@ describe('POST /api/voice-sessions', () => {
 		mockResults.selectQueue = [
 			[membershipRow()],
 			[agentRow({ metadata: null })],
-			[], // agentSkills
 		]
 		const res = await app.request(
 			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
@@ -118,13 +98,11 @@ describe('POST /api/voice-sessions', () => {
 
 	it('409s on the unique-index violation when the caller already has a live session', async () => {
 		enableFlagFor(HUMAN)
-		stubMint({ kind: 'ok' })
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[membershipRow()],
 			[agentRow()],
 			[{ seconds: '0' }], // daily minutes used
-			[], // agentSkills
 		]
 		// The route inserts voice_sessions first; the partial unique index on
 		// (human_actor_id) fires with pg code 23505.
@@ -142,35 +120,8 @@ describe('POST /api/voice-sessions', () => {
 		expect(body.error.code).toBe('CONFLICT')
 	})
 
-	it('propagates 429 with retry_after_seconds from the vendor rate limit', async () => {
-		enableFlagFor(HUMAN)
-		stubMint({ kind: 'rate_limited', retryAfterSeconds: 42 })
-		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		mockResults.selectQueue = [
-			[membershipRow()],
-			[agentRow()],
-			[{ seconds: '0' }], // daily minutes used
-			[], // agentSkills
-		]
-		mockResults.insert = [{ id: '9f8e7d6c-5b4a-4a3b-2c1d-0e9f8a7b6c5d' }]
-
-		const res = await app.request(
-			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
-		)
-		expect(res.status).toBe(429)
-		const body = (await res.json()) as {
-			error: { code: string }
-			retry_after_seconds: number
-		}
-		expect(body.error.code).toBe('RATE_LIMITED')
-		expect(body.retry_after_seconds).toBe(42)
-	})
-
 	it('429s with retry_after_seconds when the workspace has used its 60 daily voice minutes', async () => {
 		enableFlagFor(HUMAN)
-		stubMint({ kind: 'ok' })
-		const mint = vi.fn()
-		setRealtimeMintFn(mint)
 		const { app, mockResults, calls } = createTestApp(
 			voiceSessionsRoutes,
 			'/api/voice-sessions',
@@ -193,21 +144,18 @@ describe('POST /api/voice-sessions', () => {
 		expect(body.error.code).toBe('RATE_LIMITED')
 		expect(body.retry_after_seconds).toBeGreaterThanOrEqual(1)
 		expect(body.retry_after_seconds).toBeLessThanOrEqual(24 * 60 * 60)
-		// Nothing written and the vendor never called for a capped workspace.
+		// Nothing written for a capped workspace.
 		expect(calls.inserts).toHaveLength(0)
-		expect(mint).not.toHaveBeenCalled()
 	})
 
-	it('returns 201 with the ephemeral session on the happy path', async () => {
+	it('returns 201 with only the session id: no vendor credential leaves the server', async () => {
 		enableFlagFor(HUMAN)
-		stubMint({ kind: 'ok' })
 		const insertedId = '11111111-1111-4111-8111-111111111111'
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[membershipRow()],
 			[agentRow()],
 			[{ seconds: '0' }], // daily minutes used
-			[], // agentSkills
 		]
 		mockResults.insert = [{ id: insertedId }]
 
@@ -215,55 +163,7 @@ describe('POST /api/voice-sessions', () => {
 			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
 		)
 		expect(res.status).toBe(201)
-		const body = (await res.json()) as {
-			voice_session_id: string
-			client_secret: string
-			expires_at: string
-			ws_url: string
-		}
-		expect(body).toEqual({
-			voice_session_id: insertedId,
-			client_secret: 'ek_test_abc',
-			expires_at: '2026-09-29T10:00:00.000Z',
-			ws_url: 'wss://api.openai.com/v1/realtime',
-		})
-	})
-
-	it('pins the voice tool whitelist on the vendor session it mints', async () => {
-		enableFlagFor(HUMAN)
-		// Real mint function, stubbed transport: what leaves the process is what
-		// OpenAI would receive.
-		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					id: 'sess_vendor1',
-					model: 'gpt-realtime',
-					client_secret: { value: 'ek_live_abc', expires_at: 1_790_000_000 },
-				}),
-				{ status: 200 },
-			),
-		)
-		vi.stubGlobal('fetch', fetchMock)
-		try {
-			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-			mockResults.selectQueue = [[membershipRow()], [agentRow()], [{ seconds: '0' }], []]
-			mockResults.insert = [{ id: '11111111-1111-4111-8111-111111111111' }]
-
-			const res = await app.request(
-				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
-			)
-			expect(res.status).toBe(201)
-
-			const sent = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
-				tools: Array<{ type: string; name: string }>
-				tool_choice: string
-			}
-			expect(sent.tools.map((t) => t.name).sort()).toEqual([...VOICE_ALLOWED_TOOLS].sort())
-			expect(sent.tools.every((t) => t.type === 'function')).toBe(true)
-			expect(sent.tool_choice).toBe('auto')
-		} finally {
-			vi.unstubAllGlobals()
-		}
+		expect(await res.json()).toEqual({ voice_session_id: insertedId })
 	})
 
 	it('rejects a body missing agent_actor_id with 400 VALIDATION_ERROR', async () => {
@@ -271,5 +171,187 @@ describe('POST /api/voice-sessions', () => {
 		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		const res = await app.request(jsonRequest('POST', '/api/voice-sessions', {}))
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('POST /api/voice-sessions/:id/offer', () => {
+	const SESSION = '9f8e7d6c-5b4a-4a3b-2c1d-0e9f8a7b6c5d'
+	const OFFER = { sdp: 'v=0 browser offer' }
+
+	function sessionRow(overrides?: Record<string, unknown>) {
+		return {
+			id: SESSION,
+			workspaceId: WORKSPACE,
+			agentActorId: AGENT,
+			humanActorId: HUMAN,
+			status: 'pending',
+			vendorSessionId: null,
+			conversationId: null,
+			...overrides,
+		}
+	}
+	const memberRow = () => ({ actorId: HUMAN })
+	const offerAgent = () => ({
+		name: 'Chief of Staff',
+		systemPrompt: 'You are the Chief of Staff.',
+		apiKey: 'ank_agent',
+	})
+	const post = (app: { request: (r: Request) => Response | Promise<Response> }) =>
+		app.request(jsonRequest('POST', `/api/voice-sessions/${SESSION}/offer`, OFFER))
+
+	function openSocketImmediately() {
+		setOpenRealtimeSocketFn((_url, _key, handlers) => {
+			queueMicrotask(() => handlers.onOpen())
+			return { send: vi.fn(), close: vi.fn() }
+		})
+	}
+
+	it('404s when the voice-mode-v1 flag is off for the caller', async () => {
+		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		expect((await post(app)).status).toBe(404)
+	})
+
+	it("404s for another human's session", async () => {
+		enableFlagFor(HUMAN)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [[sessionRow({ humanActorId: 'someone-else' })]]
+		expect((await post(app)).status).toBe(404)
+	})
+
+	it('404s when the minting human is no longer a member of the workspace', async () => {
+		enableFlagFor(HUMAN)
+		const createCall = vi.fn()
+		setCreateRealtimeCallFn(createCall)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [[sessionRow()], []]
+		expect((await post(app)).status).toBe(404)
+		expect(createCall).not.toHaveBeenCalled()
+	})
+
+	it('409s a session that already took an offer', async () => {
+		enableFlagFor(HUMAN)
+		const createCall = vi.fn()
+		setCreateRealtimeCallFn(createCall)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [[sessionRow({ vendorSessionId: 'rtc_first' })], [memberRow()]]
+		expect((await post(app)).status).toBe(409)
+		expect(createCall).not.toHaveBeenCalled()
+	})
+
+	it('409s and never calls the vendor when a concurrent offer won the claim', async () => {
+		enableFlagFor(HUMAN)
+		const createCall = vi.fn()
+		setCreateRealtimeCallFn(createCall)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()], [offerAgent()]]
+		mockResults.update = [] // the claim UPDATE matched no row
+		expect((await post(app)).status).toBe(409)
+		expect(createCall).not.toHaveBeenCalled()
+	})
+
+	it('sends the offer to the GA calls endpoint with the pinned model and the tool whitelist', async () => {
+		enableFlagFor(HUMAN)
+		openSocketImmediately()
+		setVoiceInvokeToolFactory(() => vi.fn())
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response('v=0 vendor answer', {
+				status: 201,
+				headers: { location: '/v1/realtime/calls/rtc_abc' },
+			}),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[], // agentSkills
+			[{ settings: null }], // transcript persistence
+		]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			sdp: 'v=0 vendor answer',
+			tools_available: true,
+			persist_transcripts: true,
+		})
+
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('https://api.openai.com/v1/realtime/calls')
+		const headers = init.headers as Record<string, string>
+		expect(headers.Authorization).toBe('Bearer test-key')
+		expect(headers['OpenAI-Beta']).toBeUndefined()
+		const form = init.body as FormData
+		expect(form.get('sdp')).toBe(OFFER.sdp)
+		const sent = JSON.parse(form.get('session') as string) as {
+			type: string
+			model: string
+			tools: Array<{ type: string; name: string }>
+			tool_choice: string
+		}
+		expect(sent.type).toBe('realtime')
+		expect(sent.model).toBe('gpt-realtime-2.1')
+		expect(sent.tools.map((t) => t.name).sort()).toEqual([...VOICE_ALLOWED_TOOLS].sort())
+		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('reports tools_available false when the server socket cannot attach', async () => {
+		enableFlagFor(HUMAN)
+		setCreateRealtimeCallFn(async () => ({ kind: 'ok', callId: 'rtc_abc', answerSdp: 'v=0 answer' }))
+		setOpenRealtimeSocketFn((_url, _key, handlers) => {
+			queueMicrotask(() => handlers.onError(new Error('refused')))
+			return { send: vi.fn(), close: vi.fn() }
+		})
+		setVoiceInvokeToolFactory(() => vi.fn())
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[],
+			[{ settings: null }],
+		]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ tools_available: false })
+	})
+
+	it('propagates 429 with retry_after_seconds from the vendor rate limit and releases the row', async () => {
+		enableFlagFor(HUMAN)
+		setCreateRealtimeCallFn(async () => ({ kind: 'rate_limited', retryAfterSeconds: 42 }))
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()], [offerAgent()], []]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(429)
+		expect(((await res.json()) as { retry_after_seconds: number }).retry_after_seconds).toBe(42)
+		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
+	})
+
+	it('500s and releases the row when the vendor connect fails', async () => {
+		enableFlagFor(HUMAN)
+		setCreateRealtimeCallFn(async () => ({ kind: 'error', status: 502, body: 'bad gateway' }))
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()], [offerAgent()], []]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(500)
+		expect(calls.updates).toContainEqual(
+			expect.objectContaining({ status: 'errored', endedReason: 'vendor_error' }),
+		)
 	})
 })

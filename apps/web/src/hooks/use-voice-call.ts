@@ -1,12 +1,6 @@
 import { ApiError, api } from '@/lib/api'
-import { API_BASE } from '@/lib/constants'
 import { VOICE_UNAVAILABLE_TOOLTIP, markVoiceUnavailable } from '@/lib/voice-availability'
-import {
-	type VoiceRelay,
-	type VoiceTranscriptLine,
-	buildVoiceEventsUrl,
-	createVoiceRelay,
-} from '@/lib/voice-relay'
+import { type VoiceRelay, type VoiceTranscriptLine, createVoiceRelay } from '@/lib/voice-relay'
 import { showVoiceCallEndedToast } from '@/lib/voice-toast'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -66,11 +60,6 @@ function isMicMissing(err: unknown): boolean {
 	)
 }
 
-// The Realtime endpoint. Documented in the tech spec §Auth flow (POST to
-// api.openai.com/v1/realtime with the ephemeral client_secret as bearer).
-const OPENAI_REALTIME_URL = 'https://api.openai.com/v1/realtime'
-const REALTIME_MODEL = 'gpt-realtime'
-
 export function useVoiceCall(agentActorId: string, agentName: string, open: boolean): VoiceCall {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
@@ -93,13 +82,11 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	const localStreamRef = useRef<MediaStream | null>(null)
 	const remoteAudioRef = useRef<HTMLAudioElement | null>(null)
 	const dataChannelRef = useRef<RTCDataChannel | null>(null)
-	const relayRef = useRef<VoiceRelay | null>(null)
 	// What the post-call toast needs. Set once the call is connecting, cleared
 	// when finish() takes it, so the toast fires at most once per call.
 	const callRef = useRef<{
 		startedAt: number
 		persistTranscripts: boolean | null
-		conversationId: string | null
 	} | null>(null)
 
 	// Server-side call bookkeeping. The voice_sessions row stays pending / active
@@ -118,8 +105,6 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	}, [])
 
 	const teardown = useCallback(() => {
-		relayRef.current?.close()
-		relayRef.current = null
 		try {
 			dataChannelRef.current?.close()
 		} catch {
@@ -152,12 +137,12 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	// closes the row regardless.
 	const finish = useCallback(
 		(reason: 'user_hangup' | 'network_error') => {
-			// Taken before the relay closes: it holds what the control channel
-			// reported about the transcript, and taking it here is what makes the
-			// toast fire once however many exit paths run.
+			// Taking the call here is what makes the toast fire once however many
+			// exit paths run.
 			const call = callRef.current
 			callRef.current = null
 			const voiceSessionId = voiceSessionIdRef.current
+			const durationMs = call ? Date.now() - call.startedAt : 0
 			if (voiceSessionId) {
 				voiceSessionIdRef.current = null
 				const now = Date.now()
@@ -171,33 +156,36 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 						input_audio_seconds: inputSeconds,
 						output_audio_seconds: Math.round((outputAudioMsRef.current + speakingMs) / 1000),
 					})
+					.then((ended) => {
+						// Only when the transcript's fate is known: saved (the hangup names
+						// a conversation) or the workspace opted out. If neither is known,
+						// either message would be a guess. A dropped connection already
+						// explains itself in the dialog's notice.
+						if (!call || reason !== 'user_hangup') return
+						const conversationId = ended.conversation_id
+						if (!conversationId && call.persistTranscripts !== false) return
+						const { agentName, navigate } = toastContextRef.current
+						showVoiceCallEndedToast({
+							durationMs,
+							agentName,
+							conversationUrl: conversationId ? `/${workspaceId}/chats/${conversationId}` : null,
+							onOpen: () => {
+								if (!conversationId) return
+								navigate({
+									to: '/$workspaceId/chats/$conversationId',
+									params: { workspaceId, conversationId },
+								})
+							},
+						})
+					})
+					// A hangup that fails (offline, 5xx) must not trap the user in the
+					// dialog, and the server's idle sweeper closes the row regardless.
 					.catch(() => {})
 			}
 			connectedAtRef.current = null
 			agentSpeakingSinceRef.current = null
 			outputAudioMsRef.current = 0
 			teardown()
-
-			// Only when the transcript's fate is known: saved (a conversation
-			// exists) or the workspace opted out. If the control channel never
-			// connected we know neither, and either message would be a guess. A
-			// dropped connection already explains itself in the dialog's notice.
-			if (!call || reason !== 'user_hangup') return
-			const conversationId = call.conversationId
-			if (!conversationId && call.persistTranscripts !== false) return
-			const { agentName, navigate } = toastContextRef.current
-			showVoiceCallEndedToast({
-				durationMs: Date.now() - call.startedAt,
-				agentName,
-				conversationUrl: conversationId ? `/${workspaceId}/chats/${conversationId}` : null,
-				onOpen: () => {
-					if (!conversationId) return
-					navigate({
-						to: '/$workspaceId/chats/$conversationId',
-						params: { workspaceId, conversationId },
-					})
-				},
-			})
 		},
 		[teardown, workspaceId],
 	)
@@ -323,30 +311,18 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		const dc = pc.createDataChannel('oai-events')
 		dataChannelRef.current = dc
 
-		// Tool round-trip and transcript persistence ride the Maskin control
-		// channel. The call does not depend on it: if the socket can't be opened,
-		// tool calls are answered with an error the agent can voice.
-		callRef.current = { startedAt: Date.now(), persistTranscripts: null, conversationId: null }
+		// Tools and transcript persistence run on the server's own connection to
+		// the call; the relay only mirrors the call into the transcript pane (and
+		// covers for the server if it could not attach). It exists once the offer
+		// answer says which, and no event can arrive before that answer is set.
+		callRef.current = { startedAt: Date.now(), persistTranscripts: null }
 		setTranscriptLines([])
-		const relay = createVoiceRelay({
-			url: buildVoiceEventsUrl(session.voice_session_id, API_BASE),
-			channel: dc,
-			onReady: ({ persistTranscripts, conversationId }) => {
-				if (!callRef.current) return
-				callRef.current.persistTranscripts = persistTranscripts
-				callRef.current.conversationId = conversationId
-			},
-			onConversation: (conversationId) => {
-				if (callRef.current) callRef.current.conversationId = conversationId
-			},
-			onLine: (line) => setTranscriptLines((prev) => [...prev, line]),
-		})
-		relayRef.current = relay
+		let relay: VoiceRelay | null = null
 
 		dc.addEventListener('message', (e) => {
 			try {
 				const evt = JSON.parse(e.data)
-				relay.handleRealtimeEvent(evt)
+				relay?.handleRealtimeEvent(evt)
 				trackOutputAudio(evt, agentSpeakingSinceRef, outputAudioMsRef)
 				handleRealtimeEvent(evt, mutedRef, preMuteStateRef, setState)
 				if (evt?.type === 'session.created' && connectedAtRef.current === null) {
@@ -393,22 +369,20 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			const offer = await pc.createOffer()
 			await pc.setLocalDescription(offer)
 
-			const sdpResponse = await fetch(
-				`${OPENAI_REALTIME_URL}?model=${encodeURIComponent(REALTIME_MODEL)}`,
-				{
-					method: 'POST',
-					body: offer.sdp,
-					headers: {
-						Authorization: `Bearer ${session.client_secret}`,
-						'Content-Type': 'application/sdp',
-					},
-				},
+			// The server posts the offer to the vendor with the operator key and
+			// returns the answer: this browser never holds a vendor credential.
+			const answer = await api.voiceSessions.offer(
+				workspaceId,
+				session.voice_session_id,
+				offer.sdp ?? '',
 			)
-			if (!sdpResponse.ok) {
-				throw new Error(`Realtime handshake returned ${sdpResponse.status}`)
-			}
-			const answerSdp = await sdpResponse.text()
-			await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+			if (callRef.current) callRef.current.persistTranscripts = answer.persist_transcripts
+			relay = createVoiceRelay({
+				channel: dc,
+				toolsAvailable: answer.tools_available,
+				onLine: (line) => setTranscriptLines((prev) => [...prev, line]),
+			})
+			await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
 		} catch (err) {
 			// The row was minted, so release it; otherwise the caller could not
 			// start another call until the idle timeout.
@@ -495,7 +469,8 @@ function handleRealtimeEvent(
 			preMuteStateRef.current = 'live-user-speaking'
 		else if (evt.type === 'input_audio_buffer.speech_stopped')
 			preMuteStateRef.current = 'live-agent-speaking'
-		else if (evt.type === 'response.audio.done') preMuteStateRef.current = 'live-agent-speaking'
+		else if (evt.type === 'response.output_audio.done' || evt.type === 'response.audio.done')
+			preMuteStateRef.current = 'live-agent-speaking'
 		else if (evt.type === 'response.function_call_arguments.done')
 			preMuteStateRef.current = 'live-agent-thinking'
 		return
@@ -503,6 +478,7 @@ function handleRealtimeEvent(
 	if (evt.type === 'session.created') setState('live-agent-speaking')
 	else if (evt.type === 'input_audio_buffer.speech_started') setState('live-user-speaking')
 	else if (evt.type === 'input_audio_buffer.speech_stopped') setState('live-agent-speaking')
-	else if (evt.type === 'response.audio.done') setState('live-agent-speaking')
+	else if (evt.type === 'response.output_audio.done' || evt.type === 'response.audio.done')
+		setState('live-agent-speaking')
 	else if (evt.type === 'response.function_call_arguments.done') setState('live-agent-thinking')
 }

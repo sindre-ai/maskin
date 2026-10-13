@@ -13,8 +13,10 @@ import {
 } from './voice-transcript'
 
 /**
- * Per-connection logic for GET /api/voice-sessions/:id/events, kept apart from
- * the WebSocket transport so it can be driven directly in tests.
+ * Per-call logic for the server's socket to a Realtime call (see
+ * services/voice-realtime-call.ts, which turns Realtime events into the frames
+ * below and sends tool_result.event back), kept apart from the transport so it
+ * can be driven directly in tests.
  *
  * Wire protocol (JSON text frames):
  *
