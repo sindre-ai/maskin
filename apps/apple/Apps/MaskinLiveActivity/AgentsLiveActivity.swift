@@ -208,8 +208,10 @@ private struct AgentsBody: View {
 	}
 
 	private func progressLine(_ agent: WorkingAgent) -> String {
-		if let left = agent.timeLeftText(now: Date()) { return "Started \(started(agent)) · \(left)" }
-		return "Started \(started(agent))"
+		var parts = ["Started \(started(agent))"]
+		if let left = agent.timeLeftText(now: Date()) { parts.append(left) }
+		if let topic = agent.topic { parts.append(topic) }
+		return parts.joined(separator: " · ")
 	}
 
 	private func started(_ agent: WorkingAgent) -> String {
