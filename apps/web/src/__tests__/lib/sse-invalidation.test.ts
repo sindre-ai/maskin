@@ -419,10 +419,21 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.logs)).toBe(true)
 		expect(invalidated(keys.byActor)).toBe(true)
 		expect(invalidated(keys.byConversation)).toBe(true)
-		expect(invalidated(keys.paged)).toBe(true)
-		// The coalesced list and billing wait / are skipped.
+		// The coalesced lists and billing wait / are skipped.
 		expect(invalidated(keys.list)).toBe(false)
+		expect(invalidated(keys.paged)).toBe(false)
 		expect(invalidated(keys.billing)).toBe(false)
+	})
+
+	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {
+		const { qc, keys, invalidated } = seededClient()
+		for (let i = 0; i < 25; i++) {
+			invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		}
+		vi.advanceTimersByTime(5_000)
+		expect(invalidated(keys.paged)).toBe(false)
+		vi.advanceTimersByTime(25_000)
+		expect(invalidated(keys.paged)).toBe(true)
 	})
 
 	it.each(['session_credit_debited', 'session_budget_stopped'])(

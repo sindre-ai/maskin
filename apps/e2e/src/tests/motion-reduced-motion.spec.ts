@@ -18,7 +18,6 @@ interface RouteSpec {
 const ROUTES: RouteSpec[] = [
 	{ label: 'login', path: () => '/login' },
 	{ label: 'signup', path: () => '/signup' },
-	{ label: 'workspace picker', path: () => '/workspaces' },
 	{ label: 'for-you', path: (ctx) => `/${ctx.workspaceId}` },
 	{ label: 'objects index', path: (ctx) => `/${ctx.workspaceId}/objects` },
 	{ label: 'agents index', path: (ctx) => `/${ctx.workspaceId}/agents` },
