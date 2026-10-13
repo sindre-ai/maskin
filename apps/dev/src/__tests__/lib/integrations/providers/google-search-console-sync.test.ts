@@ -18,9 +18,9 @@ vi.mock('../../../../lib/integrations/sync/runner', () => ({
 
 import {
 	type GscRow,
+	MAX_PROPERTY_ROWS,
 	gscFetch,
 	listSites,
-	MAX_PROPERTY_ROWS,
 	mergeRows,
 	nextRange,
 	parseRows,
