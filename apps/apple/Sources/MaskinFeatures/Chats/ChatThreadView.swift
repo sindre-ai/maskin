@@ -389,11 +389,10 @@ struct ChatThreadView: View {
 			}
 			.animation(.easeOut(duration: 0.18), value: revealed)
 			.onAppear { settleOpen(proxy) }
-			.simultaneousGesture(
-				DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in
-					followingOpen = false
-					revealed = true
-				})
+			.onUserScroll {
+				followingOpen = false
+				revealed = true
+			}
 			.trackingBottom { atBottom in
 				if atBottom { reachedBottom() } else { isAtBottom = false }
 			}
@@ -940,6 +939,19 @@ struct ThreadDelayedSkeleton: View {
 		.task {
 			try? await Task.sleep(for: .milliseconds(300))
 			withAnimation(MaskinMotion.fade) { visible = true }
+		}
+	}
+}
+
+extension View {
+	/// Runs `action` when the reader starts scrolling. Observes the scroll phase on iOS 18+ so no
+	/// gesture competes with the scroll view's own pan; earlier systems fall back to a passive drag.
+	@ViewBuilder
+	fileprivate func onUserScroll(_ action: @escaping () -> Void) -> some View {
+		if #available(iOS 18.0, macOS 15.0, *) {
+			onScrollPhaseChange { _, phase in if phase == .interacting { action() } }
+		} else {
+			simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in action() })
 		}
 	}
 }
