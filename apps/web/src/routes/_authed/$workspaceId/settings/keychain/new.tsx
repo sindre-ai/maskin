@@ -70,7 +70,8 @@ function AddCredentialPage() {
 			<KeychainBreadcrumb workspaceId={workspaceId} current="Add credential" />
 			<h2 className="text-sm font-bold text-foreground">Add a credential</h2>
 			<p className="mt-1 mb-4 text-xs text-muted-foreground">
-				Choose how you'll bring the credential into Maskin.
+				Choose how you'll bring the credential into Maskin. Pick which agents can use it on the key
+				page.
 			</p>
 
 			<ul className="mb-4 grid gap-3 sm:grid-cols-3">

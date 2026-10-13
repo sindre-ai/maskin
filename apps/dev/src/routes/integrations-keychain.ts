@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { credentialAccessLog, integrations } from '@maskin/db/schema'
@@ -15,6 +16,7 @@ import {
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { CredentialNameError } from '../lib/integrations/credential-name'
 import { rotateIntegrationDek } from '../lib/integrations/rotate-dek'
+import { grantedActorsAreInWorkspace } from '../lib/integrations/scope-grants'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -551,6 +553,151 @@ app.openapi(rotateDekRoute, (async (c) => {
 	}
 	return c.json({ id, status: 'rotated' as const }, 200)
 }) as RouteHandler<typeof rotateDekRoute, Env>)
+
+// ── PUT /api/integrations/:id/scope ──────────────────────────────────────
+
+const scopeBodySchema = z.object({ scopeGrants: z.array(scopeGrantSchema).max(25) }).strict()
+
+const scopeRoute = createRoute({
+	method: 'put',
+	path: '/{id}/scope',
+	tags: ['integrations'],
+	summary: 'Replace which agents may use a saved API key (humans only)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: scopeBodySchema } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'Saved. Applies to sessions started after this call',
+			content: {
+				'application/json': {
+					schema: z.object({ id: z.string().uuid(), scopeGrants: z.array(scopeGrantSchema) }),
+				},
+			},
+		},
+		400: {
+			description: 'Invalid body, or a grant names an actor outside the workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a person, or neither the key creator nor a workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Not an active saved API key (undo window, undone, or an OAuth connection)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(scopeRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+
+	// Agents never change who can read a key: grants come from a person, never from a session.
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can change who can use a key'), 403)
+	}
+
+	// Values come only from the validated schema. Deduped, order kept.
+	const seen = new Set<string>()
+	const next = c.req.valid('json').scopeGrants.filter((g) => {
+		const key = g.kind === 'actor' ? `actor:${g.actorId}` : 'workspace'
+		if (seen.has(key)) return false
+		seen.add(key)
+		return true
+	})
+
+	const outcome = await db.transaction(async (tx) => {
+		// Locked, so two saves queue and each audit row records the grants it replaced.
+		const [row] = await tx
+			.select({
+				createdBy: integrations.createdBy,
+				providerMode: integrations.providerMode,
+				status: integrations.status,
+				source: integrations.source,
+				provider: integrations.provider,
+				scopeGrants: integrations.scopeGrants,
+			})
+			.from(integrations)
+			.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+			.for('update')
+			.limit(1)
+		if (!row) return 'not_found' as const
+		if (
+			row.createdBy !== callerId &&
+			!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))
+		) {
+			return 'forbidden' as const
+		}
+		if (row.providerMode !== 'byo_apikey' || row.status !== 'active') return 'not_editable' as const
+		if (!(await grantedActorsAreInWorkspace(tx, workspaceId, next))) return 'outside' as const
+
+		await tx
+			.update(integrations)
+			.set({ scopeGrants: next, updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+		// detail stays NULL: it caps at 512 characters and 25 grants do not fit. The grants
+		// are on the event. Actor ids are not secrets.
+		await insertCredentialAccessLog(tx, {
+			workspaceId,
+			integrationId: id,
+			actorId: callerId,
+			action: 'scope_changed',
+			source: 'admin_ui',
+			requestId: `scope-change:${id}:${randomUUID()}`,
+		})
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: {
+				change: 'scope_grants',
+				provider: row.provider,
+				source: row.source,
+				scope_grants_before: row.scopeGrants,
+				scope_grants_after: next,
+			},
+		})
+		return 'saved' as const
+	})
+
+	if (outcome === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+	}
+	if (outcome === 'forbidden') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only the person who saved this key or a workspace admin can change who can use it',
+			),
+			403,
+		)
+	}
+	if (outcome === 'not_editable') {
+		return c.json(
+			createApiError('CONFLICT', 'Access can only be changed on an active saved API key'),
+			409,
+		)
+	}
+	if (outcome === 'outside') {
+		return c.json(
+			createApiError('BAD_REQUEST', 'A scope grant names an actor outside this workspace'),
+			400,
+		)
+	}
+	return c.json({ id, scopeGrants: next }, 200)
+}) as RouteHandler<typeof scopeRoute, Env>)
 
 // ── GET /api/integrations/:id/audit-log ──────────────────────────────────
 

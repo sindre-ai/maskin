@@ -407,7 +407,13 @@ export const workspaceKmsAliases = pgTable('workspace_kms_aliases', {
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export type CredentialAccessAction = 'read' | 'create' | 'undone' | 'rotated' | 'sweeper_activated'
+export type CredentialAccessAction =
+	| 'read'
+	| 'create'
+	| 'undone'
+	| 'rotated'
+	| 'sweeper_activated'
+	| 'scope_changed'
 
 /**
  * Hash-chained audit log of credential use. Insert-only: the app role has no
