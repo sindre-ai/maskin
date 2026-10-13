@@ -175,11 +175,12 @@ function ScopeRow({
 }) {
 	const id = useId()
 	return (
-		<div className="flex items-center gap-2 rounded-md border border-border px-3 py-2">
+		<Label
+			htmlFor={id}
+			className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-normal"
+		>
 			<Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={onToggle} />
-			<Label htmlFor={id} className="min-w-0 flex-1 truncate text-sm font-normal">
-				{label}
-			</Label>
-		</div>
+			<span className="min-w-0 flex-1 truncate">{label}</span>
+		</Label>
 	)
 }

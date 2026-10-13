@@ -200,6 +200,8 @@ export function useCreateByoApiKey(workspaceId: string) {
 export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
+		// The sheet shows the failure inline, so the global error toast would only cover Save.
+		meta: { handlesOwnErrors: true },
 		mutationFn: (scopeGrants: KeychainScopeGrant[]) =>
 			api.integrations.updateScope(integrationId, workspaceId, scopeGrants),
 		onSuccess: () => {
