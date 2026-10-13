@@ -227,7 +227,9 @@ export async function handleSlackMention(args: HandleMentionArgs): Promise<void>
 	const coach = link ? await findWorkspaceCoach(db, link.defaultWorkspaceId) : null
 	const agentLabel = coach?.name ?? WORKSPACE_COACH_NAME
 
-	const blocks = link ? buildWorkingAckBlocks(agentLabel) : buildUnlinkedAckBlocks(workspaceId, agentLabel)
+	const blocks = link
+		? buildWorkingAckBlocks(agentLabel)
+		: buildUnlinkedAckBlocks(workspaceId, agentLabel)
 	const text = link
 		? `${agentLabel} is working on it…`
 		: 'Link your Maskin account to use @Maskin here.'
