@@ -21,6 +21,10 @@ import type { Database } from '@maskin/db'
 import { objects, sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
 
+import {
+	type AiGenerationOutcome,
+	trackSessionAiGeneration,
+} from '../lib/analytics/ai-generation-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
@@ -572,6 +576,10 @@ export interface SessionSettleRow {
 	previousCacheReadTokens: number | null
 	previousCacheCreationTokens: number | null
 	previousCostUsd: number | null
+	/** `sessions.model_name` — feeds `$ai_model` on the `$ai_generation` emit. */
+	modelName?: string | null
+	/** `sessions.duration_ms` before this settle — feeds `active_seconds`. */
+	previousDurationMs?: number | null
 }
 
 /**
@@ -856,6 +864,8 @@ export async function settleSession(
 			cacheReadInputTokens: sessions.cacheReadInputTokens,
 			cacheCreationInputTokens: sessions.cacheCreationInputTokens,
 			totalCostUsd: sessions.totalCostUsd,
+			modelName: sessions.modelName,
+			durationMs: sessions.durationMs,
 		})
 		.from(sessions)
 		.where(eq(sessions.id, sessionId))
@@ -887,6 +897,8 @@ export async function settleSession(
 		previousCacheReadTokens: existing.cacheReadInputTokens ?? null,
 		previousCacheCreationTokens: existing.cacheCreationInputTokens ?? null,
 		previousCostUsd,
+		modelName: existing.modelName ?? null,
+		previousDurationMs: existing.durationMs ?? null,
 	}
 
 	const wasAlreadyTerminal = TRULY_TERMINAL_STATUS_SET.has(existing.status)
@@ -1086,12 +1098,29 @@ export async function settleSession(
 	let posthogEmitted = false
 	if (flipped && completedAt) {
 		try {
-			posthogEmitted = await emitCompletion(
-				row,
-				outcome,
-				computePostSettleTotals(row, outcome.usage),
-				completedAt,
-			)
+			const totals = computePostSettleTotals(row, outcome.usage)
+			posthogEmitted = await emitCompletion(row, outcome, totals, completedAt)
+			// One `$ai_generation` per session at terminal state. A pause is not
+			// terminal: the resume adds to the same totals and settles again, so
+			// emitting here would count the first segment twice.
+			if (outcome.kind !== 'pause') {
+				await trackSessionAiGeneration({
+					sessionId: row.id,
+					workspaceId: row.workspaceId,
+					actorId: row.actorId,
+					outcome: mapKindToOutcomeProp(outcome.kind) as AiGenerationOutcome,
+					config: row.config,
+					modelName: row.modelName ?? null,
+					inputTokens: totals.inputTokens,
+					outputTokens: totals.outputTokens,
+					cacheReadTokens: totals.cacheReadTokens,
+					cacheCreationTokens: totals.cacheCreationTokens,
+					costUsd: totals.costUsd,
+					activeMs: row.previousDurationMs ?? null,
+					startedAt: row.startedAt,
+					completedAt,
+				})
+			}
 		} catch (err) {
 			// `emitCompletion` swallows every capture rejection, so a throw
 			// here is a defensive net for an unexpected pre-emit failure —

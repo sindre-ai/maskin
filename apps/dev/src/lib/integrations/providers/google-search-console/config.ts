@@ -22,6 +22,8 @@ import type { ProviderConfig } from '../../types'
 export const config: ProviderConfig = {
 	name: 'google-search-console',
 	displayName: 'Google Search Console',
+	description:
+		'Daily Search Console sync. Sets search_demand on live content with a primary_keyword: the 30-day impressions for that query, scaled up for results below page 1. It is an estimate and a lower bound on monthly searches, not comparable to Ubersuggest volumes. Keywords with fewer than 10 impressions in the window are left unset, and a value typed by hand is never overwritten.',
 
 	auth: {
 		type: 'oauth2',

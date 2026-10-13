@@ -7,6 +7,7 @@ import { logger } from '../../../logger'
 import { TokenManager } from '../../oauth/token-manager'
 import { runIntegrationSync } from '../../sync/runner'
 import type { PostInstallContext } from '../../types'
+import { writeSearchDemand } from './search-demand'
 
 export const GSC_PROVIDER = 'google-search-console'
 
@@ -355,6 +356,8 @@ export interface SyncDeps {
 	now?: () => Date
 	sleep?: Sleep
 	getAccessToken?: (db: Database, integrationId: string) => Promise<string>
+	/** Replaces the search_demand writeback that follows a completed sync. */
+	writeSearchDemand?: typeof writeSearchDemand
 }
 
 function gscState(row: GscIntegrationRow): GscIntegrationState {
@@ -538,9 +541,35 @@ export async function syncGscIntegration(
 			{ lastSyncedDate: endDate, backfilledAt: state.backfilledAt ?? now.toISOString() },
 			failing ? 'active' : undefined,
 		)
+		await writeDemand(db, row, now, deps)
 		return outcome
 	} finally {
 		inFlight.delete(row.id)
+	}
+}
+
+/**
+ * Derive search_demand for the workspace's live content from the freshly
+ * synced rows. The sync has already succeeded and been recorded, so a failure
+ * here is logged and the next daily run tries again.
+ */
+async function writeDemand(
+	db: Database,
+	row: GscIntegrationRow,
+	now: Date,
+	deps: SyncDeps,
+): Promise<void> {
+	try {
+		await (deps.writeSearchDemand ?? writeSearchDemand)(db, {
+			workspaceId: row.workspaceId,
+			actorId: row.createdBy,
+			now,
+		})
+	} catch (err) {
+		logger.error('GSC search_demand writeback failed', {
+			integrationId: row.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
 	}
 }
 

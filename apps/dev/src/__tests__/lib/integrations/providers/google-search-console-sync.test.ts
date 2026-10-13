@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const runnerSpy = vi.hoisted(() => vi.fn())
 const recordEventSpy = vi.hoisted(() => vi.fn())
+const writeDemandSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('../../../../lib/events/record-event', () => ({ recordEvent: recordEventSpy }))
 
@@ -186,7 +187,7 @@ describe('listSites', () => {
 	})
 })
 
-// ── syncGscIntegration against a recording fake db ────────────────────────
+// ── syncGscIntegration against a recording fake db ────────────────────────────────────
 // Every property looks new (the lookup finds nothing), so each run inserts.
 
 function makeFakeDb() {
@@ -256,10 +257,18 @@ describe('syncGscIntegration', () => {
 	beforeEach(() => {
 		runnerSpy.mockReset()
 		recordEventSpy.mockReset().mockResolvedValue(undefined)
+		writeDemandSpy
+			.mockReset()
+			.mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0, preserved: 0 })
 	})
 	afterEach(() => vi.unstubAllGlobals())
 
-	const deps = { now: () => NOW, sleep: async () => {}, getAccessToken: async () => 'tok' }
+	const deps = {
+		now: () => NOW,
+		sleep: async () => {},
+		getAccessToken: async () => 'tok',
+		writeSearchDemand: writeDemandSpy,
+	}
 
 	it('wraps the run in runIntegrationSync and flags the first run as a backfill', async () => {
 		stubSearchConsole()
@@ -316,6 +325,36 @@ describe('syncGscIntegration', () => {
 			expect.anything(),
 			expect.objectContaining({ action: 'created', entityType: 'object', entityId: 'obj-1' }),
 		)
+	})
+
+	it('writes search_demand for the workspace once the sync has succeeded', async () => {
+		stubSearchConsole()
+		const { db } = makeFakeDb()
+		await syncGscIntegration(db, integrationRow(), deps)
+		expect(writeDemandSpy).toHaveBeenCalledTimes(1)
+		expect(writeDemandSpy).toHaveBeenCalledWith(db, {
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			now: NOW,
+		})
+	})
+
+	it('does not fail the sync when the search_demand writeback throws', async () => {
+		stubSearchConsole()
+		writeDemandSpy.mockRejectedValue(new Error('boom'))
+		const { db, integrationUpdates } = makeFakeDb()
+		await expect(syncGscIntegration(db, integrationRow(), deps)).resolves.toMatchObject({
+			recordsWritten: 2,
+		})
+		// the sync still recorded itself as complete
+		expect(integrationUpdates.length).toBeGreaterThan(0)
+	})
+
+	it('does not write search_demand when the sync fails', async () => {
+		stubSearchConsole({ failQueryFor: 'sc-domain:a.test' })
+		const { db } = makeFakeDb()
+		await expect(syncGscIntegration(db, integrationRow(), deps)).rejects.toThrow()
+		expect(writeDemandSpy).not.toHaveBeenCalled()
 	})
 
 	it('skips an integration that is already current for the day', async () => {

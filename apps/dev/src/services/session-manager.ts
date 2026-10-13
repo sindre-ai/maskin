@@ -52,6 +52,7 @@ import {
 	trackAgentSessionStartedWithPrompt,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackSessionAiGeneration } from '../lib/analytics/ai-generation-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
@@ -3668,6 +3669,11 @@ export class SessionManager extends EventEmitter {
 		if (status === 'completed' || status === 'failed' || status === 'timeout') {
 			void this.emitCompletedWithSkills(session, status)
 		}
+		void this.emitAiGenerationAfterCompletion(
+			session,
+			this.stopRequested.has(sessionId) ? 'user_stopped' : status,
+			usage,
+		)
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
@@ -5043,6 +5049,49 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * `$ai_generation` for the local completion path. `session` is the row as it
+	 * was read before this completion wrote anything, and `usage` is the segment
+	 * `accumulateSessionUsage` just added on top of it, so the cumulative totals
+	 * are rebuilt here rather than re-reading the row (an extra select per
+	 * completion). Best-effort, like every other analytics emit on this path.
+	 */
+	private async emitAiGenerationAfterCompletion(
+		session: typeof sessions.$inferSelect,
+		outcome: 'completed' | 'failed' | 'user_stopped',
+		usage: SessionUsage | null,
+	): Promise<void> {
+		try {
+			const config = (session.config as Record<string, unknown>) ?? {}
+			const route = typeof config.llm_route === 'string' ? config.llm_route : ''
+			const segmentCostUsd = usage
+				? await resolveSessionCostUsd({ route, modelName: session.modelName, usage })
+				: null
+			await trackSessionAiGeneration({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				outcome,
+				config,
+				modelName: session.modelName,
+				inputTokens: (session.inputTokens ?? 0) + (usage?.inputTokens ?? 0),
+				outputTokens: (session.outputTokens ?? 0) + (usage?.outputTokens ?? 0),
+				cacheReadTokens: (session.cacheReadInputTokens ?? 0) + (usage?.cacheReadInputTokens ?? 0),
+				cacheCreationTokens:
+					(session.cacheCreationInputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0),
+				costUsd: Number(session.totalCostUsd ?? 0) + (segmentCostUsd ?? 0),
+				activeMs: (session.durationMs ?? 0) + (usage?.durationMs ?? 0),
+				startedAt: session.startedAt,
+				completedAt: new Date(),
+			})
+		} catch (err) {
+			logger.warn('Failed to emit $ai_generation after local completion', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+	}
+
 	async insertSystemLog(sessionId: string, content: string): Promise<void> {
 		const [log] = await this.db
 			.insert(sessionLogs)
@@ -5785,6 +5834,29 @@ export class SessionManager extends EventEmitter {
 		// at start (and updated by `recordSkillStagingResult`) reach PostHog
 		// on both the started and completed events. Best-effort.
 		void this.emitCompletedWithSkills(updated, status)
+
+		// `$ai_generation` for the finished session. Skipped for stopSession()'s
+		// provisional write: its usage is not known yet and the genuine report
+		// that overwrites it is the one that carries the totals, so emitting on
+		// both would count one session twice. `updated` is the row as persisted.
+		if (!stoppedByUser) {
+			void trackSessionAiGeneration({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
+				outcome: status,
+				config: updated.config as Record<string, unknown> | null,
+				modelName: updated.modelName,
+				inputTokens: updated.inputTokens,
+				outputTokens: updated.outputTokens,
+				cacheReadTokens: updated.cacheReadInputTokens,
+				cacheCreationTokens: updated.cacheCreationInputTokens,
+				costUsd: updated.totalCostUsd,
+				activeMs: updated.durationMs,
+				startedAt: updated.startedAt,
+				completedAt: updated.completedAt ?? new Date(),
+			})
+		}
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({
