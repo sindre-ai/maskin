@@ -7,6 +7,11 @@ name: Apple
 # the paths below will never report it and will block — keep it non-required, or
 # add a path-aware aggregator job first.
 #
+# Triggers only on changes under apps/apple (plus this file). Consequence: token and
+# OpenAPI drift checks below do NOT run when only the backend, packages/shared,
+# packages/db or the design-system CSS change — drift surfaces on the next apps/apple
+# change instead.
+#
 # What each step guards against, cheapest first so a drift failure costs seconds,
 # not a 20-minute Xcode build:
 #   1. Token drift      — Tokens.swift is generated from the design-system CSS
@@ -32,21 +37,11 @@ on:
     branches: [main]
     paths:
       - 'apps/apple/**'
-      - 'apps/dev/src/**'
-      - 'packages/shared/**'
-      - 'packages/db/**'
-      - '.claude/skills/maskin-design/tokens/**'
-      - 'apps/web/src/app.css'
       - '.github/workflows/apple.yml'
   pull_request:
     branches: [main]
     paths:
       - 'apps/apple/**'
-      - 'apps/dev/src/**'
-      - 'packages/shared/**'
-      - 'packages/db/**'
-      - '.claude/skills/maskin-design/tokens/**'
-      - 'apps/web/src/app.css'
       - '.github/workflows/apple.yml'
 
 concurrency:
