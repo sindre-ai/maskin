@@ -168,6 +168,26 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 		])
 	})
 
+	it('leaves out a key whose config switches off agent sessions, and does not read it', async () => {
+		const s = await setup()
+		const off = await vaultKey(s, 'Switched off', fake('off'), [{ kind: 'workspace' }])
+		await db
+			.update(integrations)
+			.set({ config: { expose_to_agent_sessions: false } })
+			.where(eq(integrations.id, off))
+		await vaultKey(s, 'Switched on', fake('on'), [{ kind: 'workspace' }])
+
+		const env = await launchEnv(s.sessionA)
+		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([
+			'KEYCHAIN_BYO_APIKEY_SWITCHED_ON',
+		])
+		const reads = await db
+			.select()
+			.from(credentialAccessLog)
+			.where(eq(credentialAccessLog.integrationId, off))
+		expect(reads).toEqual([])
+	})
+
 	it('treats a workspace grant as every actor in the workspace, and a loop grant as nobody yet', async () => {
 		const s = await setup()
 		await vaultKey(s, 'Shared', fake('shared'), [{ kind: 'workspace' }])
