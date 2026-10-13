@@ -23,11 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import {
-	useCredentialAuditLog,
-	useIntegrations,
-	useUpdateKeyScope,
-} from '@/hooks/use-integrations'
+import { useCredentialAuditLog, useIntegrations, useUpdateKeyScope } from '@/hooks/use-integrations'
 import type { CredentialAuditEntry } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -198,7 +194,7 @@ function CredentialDetailPage() {
 				</div>
 			</div>
 
-			<div className="grid gap-4 md:grid-cols-[1fr_240px]">
+			<div className="grid gap-4 lg:grid-cols-[1fr_240px]">
 				<section
 					aria-labelledby="audit-log-heading"
 					className="min-w-0 rounded-lg border border-border"

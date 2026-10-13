@@ -120,7 +120,8 @@ describe('ScopeEditorSheet', () => {
 
 	it('shows a spinner state and disables the controls while saving', () => {
 		renderSheet({ saving: true })
-		expect(screen.getByRole('button', { name: 'Save access' })).toBeDisabled()
+		// The spinner adds its "Loading" title to the button name while saving.
+		expect(screen.getByRole('button', { name: /Save access/ })).toBeDisabled()
 		expect(screen.getByRole('checkbox', { name: 'Code Reviewer' })).toBeDisabled()
 	})
 })

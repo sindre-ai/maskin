@@ -6415,9 +6415,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/access-requests/${args.id}/approve`, undefined, {
-				workspaceId: args.workspace_id,
-			})
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/access-requests/${args.id}/approve`,
+				undefined,
+				{
+					workspaceId: args.workspace_id,
+				},
+			)
 			return {
 				_meta: meta('approve_access_request', config, args.workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
@@ -6434,9 +6440,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/access-requests/${args.id}/deny`, undefined, {
-				workspaceId: args.workspace_id,
-			})
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/access-requests/${args.id}/deny`,
+				undefined,
+				{
+					workspaceId: args.workspace_id,
+				},
+			)
 			return {
 				_meta: meta('deny_access_request', config, args.workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],

@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { LocalFileKmsProvider } from '@maskin/auth/kms'
 import {
+	events,
 	type ScopeGrant,
 	credentialAccessLog,
-	events,
 	integrations,
 	sessions,
 	workspaceMembers,
@@ -395,16 +395,24 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 		const s = await setup()
 		await putScope(appFor(s.human), s.ws.id, s.integrationId, { scopeGrants: [] })
 		expect(await scopeRows(s)).toHaveLength(1)
-		await expect(
-			db.insert(credentialAccessLog).values({
+		// drizzle wraps the Postgres error: the constraint name is on the cause, not the message.
+		const refused = await db
+			.insert(credentialAccessLog)
+			.values({
 				workspaceId: s.ws.id,
 				integrationId: s.integrationId,
 				actorId: s.human,
 				action: 'scope_edited' as 'scope_changed',
 				source: 'admin_ui',
 				requestId: 'check-refuses-unknown-action',
-			}),
-		).rejects.toThrow(/credential_access_log_action_enum|violates check constraint/i)
+			})
+			.then(
+				() => null,
+				(err: Error & { cause?: Error }) => err,
+			)
+		expect(refused?.cause?.message ?? refused?.message).toMatch(
+			/credential_access_log_action_enum|violates check constraint/i,
+		)
 	})
 })
 

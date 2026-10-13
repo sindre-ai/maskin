@@ -145,25 +145,23 @@ describe('Sales Rep loop autosend — flag-on send path (integration)', () => {
 		expect(isSalesRepLinkedinAutosendEnabled(DRIVER_ACTOR, config)).toBe(true)
 
 		// 2. Credential — the driver-actor has a linkedin-unipile row.
-		vi.mocked(findIntegrationRow).mockImplementation(
-			async (_db, _ws, provider, requestedActor) => {
-				if (provider !== 'linkedin-unipile' || requestedActor !== DRIVER_ACTOR) return null
-				return {
-					id: 'int-driver',
-					workspaceId: WORKSPACE_ID,
-					provider: 'linkedin-unipile',
-					status: 'active',
-					credentials: JSON.stringify({ account_id: 'unipile-driver' }),
-					externalId: null,
-					config: {},
-					metadata: null,
-					actorId: DRIVER_ACTOR,
-					createdBy: DRIVER_ACTOR,
-					createdAt: new Date(),
-					updatedAt: new Date(),
-				} as never
-			},
-		)
+		vi.mocked(findIntegrationRow).mockImplementation(async (_db, _ws, provider, requestedActor) => {
+			if (provider !== 'linkedin-unipile' || requestedActor !== DRIVER_ACTOR) return null
+			return {
+				id: 'int-driver',
+				workspaceId: WORKSPACE_ID,
+				provider: 'linkedin-unipile',
+				status: 'active',
+				credentials: JSON.stringify({ account_id: 'unipile-driver' }),
+				externalId: null,
+				config: {},
+				metadata: null,
+				actorId: DRIVER_ACTOR,
+				createdBy: DRIVER_ACTOR,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			} as never
+		})
 		// The value is read by id through getCredential, scope-checked and audited.
 		vi.mocked(getCredential).mockResolvedValue({
 			value: JSON.stringify({ account_id: 'unipile-driver' }),

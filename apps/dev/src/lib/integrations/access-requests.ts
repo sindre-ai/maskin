@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
 import {
-	INTEGRATION_STATUS_ACTIVE,
 	type AccessRequest,
 	type CredentialTier,
+	INTEGRATION_STATUS_ACTIVE,
 	accessRequests,
 	actors,
 	integrations,

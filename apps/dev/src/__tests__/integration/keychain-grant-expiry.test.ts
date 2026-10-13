@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LocalFileKmsProvider } from '@maskin/auth/kms'
 import {
+	events,
 	type ScopeGrant,
 	accessRequests,
-	events,
 	integrations,
 	sessions,
 	workspaceMembers,
