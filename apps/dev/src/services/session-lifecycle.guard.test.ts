@@ -68,28 +68,28 @@ test('the detector flags every way of writing a status it cannot prove non-termi
 	// Terminal literal.
 	expect(flagged(`await db.update(sessions).set({ status: 'failed' }).where(w)`)).toBe(1)
 	// Shorthand property: the shape the old writers in session-manager.ts used.
-	expect(flagged(`await db.update(sessions).set({ status, result }).where(w)`)).toBe(1)
+	expect(flagged('await db.update(sessions).set({ status, result }).where(w)')).toBe(1)
 	// Computed from a variable.
-	expect(flagged(`await db.update(sessions).set({ status: finalStatus }).where(w)`)).toBe(1)
+	expect(flagged('await db.update(sessions).set({ status: finalStatus }).where(w)')).toBe(1)
 	// Conditional between two literals: one branch is terminal.
 	expect(
 		flagged(`await db.update(sessions).set({ status: ok ? 'completed' : 'running' }).where(w)`),
 	).toBe(1)
 	// Inside a transaction handle, and behind a spread.
-	expect(flagged(`await tx.update(sessions).set({ ...(c ? { status } : {}) }).where(w)`)).toBe(1)
+	expect(flagged('await tx.update(sessions).set({ ...(c ? { status } : {}) }).where(w)')).toBe(1)
 	// A set() argument held in a variable that carries a status.
 	expect(
-		flagged(`const patch = { status: next }\nawait db.update(sessions).set(patch).where(w)`),
+		flagged('const patch = { status: next }\nawait db.update(sessions).set(patch).where(w)'),
 	).toBe(1)
 	// A set() argument the guard cannot read at all.
-	expect(flagged(`await db.update(sessions).set(buildPatch()).where(w)`)).toBe(1)
+	expect(flagged('await db.update(sessions).set(buildPatch()).where(w)')).toBe(1)
 })
 
 test('the detector leaves non-terminal and unrelated writes alone', () => {
 	const flagged = (body: string) => findSessionStatusWriters(sourceOf(body)).length
 
 	expect(flagged(`await db.update(sessions).set({ status: 'running' }).where(w)`)).toBe(0)
-	expect(flagged(`await db.update(sessions).set({ currentActivity: null }).where(w)`)).toBe(0)
+	expect(flagged('await db.update(sessions).set({ currentActivity: null }).where(w)')).toBe(0)
 	// A status nested inside another column's JSON value is not the status column.
 	expect(flagged(`await db.update(sessions).set({ result: { status: 'failed' } }).where(w)`)).toBe(
 		0,
@@ -98,7 +98,7 @@ test('the detector leaves non-terminal and unrelated writes alone', () => {
 	expect(flagged(`await db.update(imports).set({ status: 'completed' }).where(w)`)).toBe(0)
 	// A set() argument held in a variable with no status.
 	expect(
-		flagged(`const patch = {}\npatch.config = c\nawait db.update(sessions).set(patch).where(w)`),
+		flagged('const patch = {}\npatch.config = c\nawait db.update(sessions).set(patch).where(w)'),
 	).toBe(0)
 })
 
