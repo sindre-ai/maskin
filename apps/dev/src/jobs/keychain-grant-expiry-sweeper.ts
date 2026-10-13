@@ -3,6 +3,7 @@ import { Cron } from 'croner'
 import { sql } from 'drizzle-orm'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { formatCredentialLogDetail } from '../lib/integrations/credential-log-detail'
+import { isGrantExpired } from '../lib/integrations/grants'
 import { logger } from '../lib/logger'
 
 /**
@@ -26,12 +27,17 @@ import { logger } from '../lib/logger'
  * The detail text comes from the single canonical writer. approver and tier come
  * from the access request that made the grant, when there is one.
  *
- * Scheduler: croner, same as the pending-undo sweeper. The sweeper judges expiry by
- * the database clock, so a row can trail expiresAt by up to a minute. An expiresAt
- * that does not parse is refused at read time (isGrantExpired fails closed) but is
- * never logged here, because it has no time to log.
+ * Expiry is judged by isGrantExpired, the same function the read paths use, so a grant
+ * is logged exactly when it has stopped working (an expiresAt that does not parse counts
+ * as expired in both places). The query returns every unlogged grant that has an
+ * expiresAt and the judgement is made here, because the expiry text is ISO with a Z suffix
+ * and a cast in SQL would abort the whole sweep on one damaged entry.
+ *
+ * Scheduler: croner, same as the pending-undo sweeper. A row can trail expiresAt by up
+ * to a minute.
  */
 const CRON_EXPRESSION = '* * * * *'
+/** Rows written per run at most; the rest wait for the next run. */
 const BATCH_LIMIT = 200
 
 export const GRANT_EXPIRED_ACTION = 'grant_expired'
@@ -46,6 +52,7 @@ interface Candidate extends Record<string, unknown> {
 	source: string
 	actor_id: string
 	grant_id: string
+	expires_at: string
 }
 
 /** True when the log already holds a grant_expired row for this grant. */
@@ -58,23 +65,18 @@ const alreadyLoggedPredicate = sql`
 	)
 `
 
-/** Actor grants that carry expiresAt and grantId, are expired by the database clock, and are not yet on the chain. */
+/** Actor grants that carry an expiresAt and a grantId and are not yet on the chain as expired. */
 export const candidateStatement = sql`
 	SELECT i.workspace_id::text AS workspace_id, i.id::text AS integration_id, i.source AS source,
-		g.entry->>'actorId' AS actor_id, g.entry->>'grantId' AS grant_id
+		g.entry->>'actorId' AS actor_id, g.entry->>'grantId' AS grant_id, g.entry->>'expiresAt' AS expires_at
 	FROM integrations i
 	CROSS JOIN LATERAL jsonb_array_elements(i.scope_grants) AS g(entry)
 	WHERE g.entry->>'kind' = 'actor'
 		AND g.entry->>'grantId' ~* ${UUID_RE}
 		AND g.entry->>'actorId' ~* ${UUID_RE}
-		AND jsonb_path_exists(
-			g.entry,
-			'$ ? (@.expiresAt.datetime() <= $now.datetime())',
-			jsonb_build_object('now', to_jsonb(now()))
-		)
+		AND g.entry->>'expiresAt' IS NOT NULL
 		AND NOT ${alreadyLoggedPredicate}
 	ORDER BY i.id, g.entry->>'grantId'
-	LIMIT ${BATCH_LIMIT}
 `
 
 export class KeychainGrantExpirySweeperJob {
@@ -106,8 +108,13 @@ export class KeychainGrantExpirySweeperJob {
 		this.running = true
 		let written = 0
 		try {
+			const now = new Date()
 			const candidates = (await this.db.execute(candidateStatement)) as unknown as Candidate[]
 			for (const c of candidates) {
+				if (written >= BATCH_LIMIT) break
+				if (!isGrantExpired({ kind: 'actor', actorId: c.actor_id, expiresAt: c.expires_at }, now)) {
+					continue
+				}
 				try {
 					if (await this.logExpiry(c)) written++
 				} catch (err) {

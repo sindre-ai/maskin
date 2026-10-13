@@ -102,7 +102,10 @@ async function vaultKey(
 		displayName: name,
 		rawSecret: value,
 	})
-	await db.update(integrations).set({ scopeGrants: grants, tier }).where(eq(integrations.id, integrationId))
+	await db
+		.update(integrations)
+		.set({ scopeGrants: grants, tier })
+		.where(eq(integrations.id, integrationId))
 	return integrationId
 }
 
@@ -125,7 +128,9 @@ async function launchEnv(session: typeof sessions.$inferSelect) {
 }
 
 const logRows = (workspaceId: string) =>
-	sql<{ id: string; action: string; detail: string | null; request_id: string; actor_id: string }[]>`
+	sql<
+		{ id: string; action: string; detail: string | null; request_id: string; actor_id: string }[]
+	>`
 		SELECT id::text, action, detail, request_id, actor_id::text
 		FROM credential_access_log WHERE workspace_id = ${workspaceId} ORDER BY id
 	`
@@ -242,7 +247,9 @@ describe('listRequestableAccess: expiry', () => {
 			[{ kind: 'actor', actorId: w.agent.id, expiresAt: inAnHour(), grantId: randomUUID() }],
 			1,
 		)
-		expect((await listRequestableAccess(db, w.ws.id, w.agent.id)).map((c) => c.id)).not.toContain(id)
+		expect((await listRequestableAccess(db, w.ws.id, w.agent.id)).map((c) => c.id)).not.toContain(
+			id,
+		)
 
 		await setGrants(id, [
 			{ kind: 'actor', actorId: w.agent.id, expiresAt: anHourAgo(), grantId: randomUUID() },
@@ -266,7 +273,10 @@ describe('use rows made under a grant', () => {
 		await getCredential(db, w.ws.id, standing, readCtx(w), { kms })
 
 		const reads = (await logRows(w.ws.id)).filter((r) => r.action === 'read')
-		expect(reads.map((r) => r.detail)).toEqual([formatCredentialLogDetail({ grant: grantId }), null])
+		expect(reads.map((r) => r.detail)).toEqual([
+			formatCredentialLogDetail({ grant: grantId }),
+			null,
+		])
 		expect(reads[0]?.detail).toBe(`approver=;grant=${grantId};tier=;ext=`)
 	})
 
@@ -350,7 +360,10 @@ describe('grant expiry sweeper', () => {
 			{ kind: 'actor', actorId: w.agent.id, expiresAt: anHourAgo(), grantId: randomUUID() },
 		])
 
-		await Promise.all([new KeychainGrantExpirySweeperJob(db).tick(), new KeychainGrantExpirySweeperJob(db).tick()])
+		await Promise.all([
+			new KeychainGrantExpirySweeperJob(db).tick(),
+			new KeychainGrantExpirySweeperJob(db).tick(),
+		])
 
 		expect(await expiredRows(w)).toHaveLength(1)
 	})
@@ -371,7 +384,9 @@ describe('grant expiry sweeper', () => {
 		await sweeper().tick()
 
 		const rows = await expiredRows(w)
-		expect(rows.map((r) => r.request_id).sort()).toEqual([`grant_expired:${a}`, `grant_expired:${b}`].sort())
+		expect(rows.map((r) => r.request_id).sort()).toEqual(
+			[`grant_expired:${a}`, `grant_expired:${b}`].sort(),
+		)
 		// A grant with no access request behind it records only what it knows.
 		expect(rows.find((r) => r.request_id === `grant_expired:${a}`)?.detail).toBe(
 			`approver=;grant=${a};tier=;ext=`,
@@ -420,7 +435,10 @@ describe('audit chain across a grant sequence', () => {
 		// request and approve routes write them.
 		for (const [action, detail] of [
 			['grant_requested', formatCredentialLogDetail({ tier: 1 })],
-			['grant_approved', formatCredentialLogDetail({ approver: w.approver.id, grant: grantId, tier: 1 })],
+			[
+				'grant_approved',
+				formatCredentialLogDetail({ approver: w.approver.id, grant: grantId, tier: 1 }),
+			],
 		] as const) {
 			await db.transaction((tx) =>
 				insertCredentialAccessLog(tx, {
