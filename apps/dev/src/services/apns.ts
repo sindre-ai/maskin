@@ -244,6 +244,7 @@ export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = 'MaskinTurnAttributes'
 export const LIVE_ACTIVITY_STEP_MAX = 80
 export const LIVE_ACTIVITY_AGENT_NAME_MAX = 40
+export const LIVE_ACTIVITY_TOPIC_MAX = 60
 /** Seconds between the Unix epoch and Swift's reference date (2001-01-01T00:00:00Z). */
 const SWIFT_REFERENCE_DATE_OFFSET_S = 978_307_200
 
@@ -257,6 +258,8 @@ export interface LiveActivityContentState {
 	/** Seconds since 2001-01-01T00:00:00Z — Swift's default `Date` Codable encoding. */
 	startedAt: number
 	status: LiveActivityStatus
+	/** What the turn is about (the conversation title). Optional: omitted when unknown. */
+	topic?: string
 }
 
 export interface LiveActivityPush {
@@ -268,6 +271,8 @@ export interface LiveActivityPush {
 	step?: string | null
 	startedAt: Date
 	status: LiveActivityStatus
+	/** Conversation title, shown on the card so several cards from one agent can be told apart. */
+	topic?: string | null
 	/** Optional alert shown with the update so it buzzes (needsYou). */
 	alert?: { title: string; body?: string | null } | null
 }
@@ -298,6 +303,7 @@ export function buildLiveActivityPayload(
 		step: truncate((push.step ?? '').trim() || defaultStep(push.status), LIVE_ACTIVITY_STEP_MAX),
 		startedAt: toSwiftReferenceSeconds(push.startedAt),
 		status: push.status,
+		...(push.topic?.trim() ? { topic: truncate(push.topic.trim(), LIVE_ACTIVITY_TOPIC_MAX) } : {}),
 	}
 	const timestamp = Math.floor(nowMs / 1000)
 	const aps: Record<string, unknown> = {

@@ -74,6 +74,8 @@ export const liveActivityContentStateSchema = z.object({
 	/** Seconds since 2001-01-01T00:00:00Z (Swift's default `Date` Codable encoding). */
 	startedAt: z.number(),
 	status: z.enum(['running', 'needsYou', 'done', 'failed']),
+	/** Conversation title; optional so older clients and pushes keep decoding. */
+	topic: z.string().optional(),
 })
 
 export type RegisterLiveActivityTokenInput = z.infer<typeof registerLiveActivityTokenSchema>

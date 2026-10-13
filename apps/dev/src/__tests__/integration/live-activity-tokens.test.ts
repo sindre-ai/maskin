@@ -1,7 +1,15 @@
 import { EventEmitter } from 'node:events'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, deviceTokens, liveActivityTokens, sessions } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	conversations,
+	deviceTokens,
+	liveActivityPendingEnds,
+	liveActivityTokens,
+	sessions,
+} from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
@@ -371,6 +379,86 @@ describe('LiveActivityFanout lifecycle (real Postgres, fake APNs transport)', ()
 		expect(
 			await db.select().from(liveActivityTokens).where(eq(liveActivityTokens.kind, 'update')),
 		).toEqual(expect.not.arrayContaining([expect.objectContaining({ sessionId })]))
+	})
+
+	it('carries the conversation title as topic in the start payload', async () => {
+		await db
+			.update(conversations)
+			.set({ title: 'Q3 pricing review' })
+			.where(eq(conversations.id, conversationId))
+		await tokens()
+		await fanout.handleEvent(sessionEvent('session_started'))
+		expect(bodies()[0]['content-state']).toMatchObject({ topic: 'Q3 pricing review' })
+	})
+
+	describe('end with no update token registered', () => {
+		it('holds the end and sends it when the device registers the update token', async () => {
+			const device = await tokens()
+			fanout.start()
+			try {
+				await fanout.handleEvent(sessionEvent('session_started'))
+				requests.length = 0
+
+				// The session finishes before the app ever registered the card's update token.
+				await fanout.handleEvent(sessionEvent('session_completed'))
+				expect(requests).toHaveLength(0)
+				const pending = await db
+					.select()
+					.from(liveActivityPendingEnds)
+					.where(eq(liveActivityPendingEnds.sessionId, sessionId))
+				expect(pending).toHaveLength(1)
+				expect(pending[0]?.endStatus).toBe('done')
+
+				// The app launches, adopts the card and registers its update token.
+				const res = await register(human, {
+					kind: 'update',
+					device_id: device.id,
+					session_id: sessionId,
+					token: hex(100),
+				})
+				expect(res.status).toBe(200)
+				expect(bodies()).toHaveLength(1)
+				expect(bodies()[0]).toMatchObject({ event: 'end', 'content-state': { status: 'done' } })
+				expect(bodies()[0]['dismissal-date']).toBeGreaterThan(0)
+				expect(
+					await db
+						.select()
+						.from(liveActivityPendingEnds)
+						.where(eq(liveActivityPendingEnds.sessionId, sessionId)),
+				).toHaveLength(0)
+
+				// Registering again sends nothing more.
+				requests.length = 0
+				await register(human, {
+					kind: 'update',
+					device_id: device.id,
+					session_id: sessionId,
+					token: hex(100),
+				})
+				expect(requests).toHaveLength(0)
+			} finally {
+				fanout.stop()
+			}
+		})
+
+		it('records nothing when the person never had a push-to-start token', async () => {
+			await fanout.handleEvent(sessionEvent('session_completed'))
+			expect(
+				await db
+					.select()
+					.from(liveActivityPendingEnds)
+					.where(eq(liveActivityPendingEnds.sessionId, sessionId)),
+			).toHaveLength(0)
+		})
+
+		it('cascades the pending end with its session', async () => {
+			await tokens()
+			await fanout.handleEvent(sessionEvent('session_failed'))
+			await db.delete(sessions).where(eq(sessions.id, sessionId))
+			expect(await db.select().from(liveActivityPendingEnds)).toEqual(
+				expect.not.arrayContaining([expect.objectContaining({ sessionId })]),
+			)
+		})
 	})
 
 	it('does nothing for a session that is not bound to a conversation', async () => {

@@ -3,12 +3,13 @@ import {
 	actors,
 	conversations,
 	deviceTokens,
+	liveActivityPendingEnds,
 	liveActivityTokens,
 	notifications,
 	sessions,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, lt } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { ApnsSender, LiveActivityEvent, LiveActivityStatus } from './apns'
 import type { SessionTurnEvent } from './session-manager'
@@ -43,6 +44,23 @@ const END_STATUS: Record<string, LiveActivityStatus> = {
 	session_failed: 'failed',
 	session_timeout: 'failed',
 	session_budget_stopped: 'failed',
+}
+
+/** A pending end older than this is dropped: the card is long gone or the sweep has it. */
+export const PENDING_END_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Lets the token-registration route flush a pending end without owning the sender. Set by
+ * `LiveActivityFanout.start()`; a no-op when APNs / the fan-out is not running.
+ */
+let pendingEndFlusher: ((sessionId: string, actorId: string) => Promise<void>) | null = null
+export async function flushPendingLiveActivityEnd(sessionId: string, actorId: string) {
+	if (!pendingEndFlusher) return
+	try {
+		await pendingEndFlusher(sessionId, actorId)
+	} catch (err) {
+		logger.warn('Live activity pending end flush failed', { sessionId, error: String(err) })
+	}
 }
 
 interface Pending {
@@ -85,6 +103,7 @@ export class LiveActivityFanout {
 	}
 
 	start() {
+		pendingEndFlusher = (sessionId, actorId) => this.flushPendingEnd(sessionId, actorId)
 		this.handler = (event) => {
 			const relevant =
 				event.entity_type === 'session' ||
@@ -106,6 +125,7 @@ export class LiveActivityFanout {
 	}
 
 	stop() {
+		pendingEndFlusher = null
 		if (this.handler) this.bridge.off('event', this.handler)
 		this.handler = null
 		if (this.turnHandler) this.opts.turns?.off('turn', this.turnHandler)
@@ -114,6 +134,66 @@ export class LiveActivityFanout {
 		this.pending.clear()
 		this.activeTurns.clear()
 		this.noTokensUntil.clear()
+	}
+
+	/**
+	 * The device just registered an update token for this session. If the session already ended
+	 * while no token existed, send the end now. The row delete is the claim, so concurrent
+	 * registrations send at most once.
+	 */
+	async flushPendingEnd(sessionId: string, actorId: string): Promise<void> {
+		if (!this.sender.isEnabled()) return
+		const [claimed] = await this.db
+			.delete(liveActivityPendingEnds)
+			.where(
+				and(
+					eq(liveActivityPendingEnds.sessionId, sessionId),
+					eq(liveActivityPendingEnds.actorId, actorId),
+				),
+			)
+			.returning()
+		if (!claimed) return
+		if (this.now() - claimed.createdAt.getTime() > PENDING_END_TTL_MS) return
+		await this.push(sessionId, 'end', {
+			endStatus: claimed.endStatus === 'failed' ? 'failed' : 'done',
+			startedAt: claimed.startedAt ?? undefined,
+		})
+	}
+
+	/** Remember an end that had nowhere to go, if the recipient could have a card showing. */
+	private async recordPendingEnd(
+		sessionId: string,
+		recipientId: string,
+		endStatus: LiveActivityStatus,
+		startedAt: Date | undefined,
+	) {
+		const [pushToStart] = await this.db
+			.select({ id: liveActivityTokens.id })
+			.from(liveActivityTokens)
+			.where(
+				and(
+					eq(liveActivityTokens.actorId, recipientId),
+					eq(liveActivityTokens.kind, 'push_to_start'),
+				),
+			)
+			.limit(1)
+		// No push-to-start token: the backend never started a card for this person.
+		if (!pushToStart) return
+		await this.db
+			.delete(liveActivityPendingEnds)
+			.where(lt(liveActivityPendingEnds.createdAt, new Date(this.now() - PENDING_END_TTL_MS)))
+		await this.db
+			.insert(liveActivityPendingEnds)
+			.values({
+				sessionId,
+				actorId: recipientId,
+				endStatus: endStatus === 'failed' ? 'failed' : 'done',
+				startedAt: startedAt ?? null,
+			})
+			.onConflictDoUpdate({
+				target: liveActivityPendingEnds.sessionId,
+				set: { endStatus: endStatus === 'failed' ? 'failed' : 'done' },
+			})
 	}
 
 	/** Turn boundary of an interactive session: the activity starts and ends with it. */
@@ -258,6 +338,7 @@ export class LiveActivityFanout {
 				createdAt: sessions.createdAt,
 				agentName: actors.name,
 				recipientId: conversations.createdBy,
+				topic: conversations.title,
 			})
 			.from(sessions)
 			.innerJoin(actors, eq(actors.id, sessions.actorId))
@@ -307,6 +388,14 @@ export class LiveActivityFanout {
 			targets = tokens.filter((t) => t.kind === 'update')
 		}
 		if (targets.length === 0) {
+			if (kind === 'end') {
+				await this.recordPendingEnd(
+					sessionId,
+					row.recipientId,
+					extra.endStatus ?? 'done',
+					extra.startedAt ?? row.startedAt ?? undefined,
+				)
+			}
 			// Remember it so the next burst of updates does not repeat 3 queries to find nothing.
 			if (kind === 'update') this.rememberNoTokens(sessionId)
 			return
@@ -343,6 +432,7 @@ export class LiveActivityFanout {
 				row.createdAt ??
 				new Date(this.now()),
 			status,
+			topic: row.topic,
 			alert: extra.alert ?? null,
 		}
 

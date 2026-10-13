@@ -1851,6 +1851,27 @@ export const liveActivityTokens = pgTable(
 	],
 )
 
+// A session ended while the recipient had no per-activity update token registered, so the
+// 'end' push could not be addressed (ActivityKit ends a card only through that card's own
+// token; push-to-start tokens can only start). Held here until the device registers the
+// update token, then pushed immediately. One row per session; rows cascade with it.
+export const liveActivityPendingEnds = pgTable(
+	'live_activity_pending_ends',
+	{
+		sessionId: uuid('session_id')
+			.primaryKey()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		// 'done' | 'failed'
+		endStatus: text('end_status').notNull(),
+		startedAt: timestamp('started_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('live_activity_pending_ends_actor_idx').on(t.actorId)],
+)
+
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 
