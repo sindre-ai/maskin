@@ -52,6 +52,11 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 		() => !secretCapture && !!sessions?.some((s) => BOOTING_STATUSES.has(s.status)),
 		[secretCapture, sessions],
 	)
+	// Vault mode (the ! prefix) needs a running session to vault into. It waits while the
+	// conversation has none, or has one still coming up (pending, starting or queued).
+	const vaultModeBlocked =
+		!sessions?.some((s) => s.status === 'running') ||
+		sessions.some((s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued')
 	const participantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
@@ -148,6 +153,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			draftKey={conversationId}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
+			vaultModeBlocked={vaultModeBlocked}
 		/>
 	)
 }

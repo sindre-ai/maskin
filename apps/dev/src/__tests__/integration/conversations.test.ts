@@ -8,6 +8,11 @@ import {
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
+import {
+	CREDENTIAL_NAME_MAX_LENGTH,
+	checkCredentialName,
+	manualRedactionMarker,
+} from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -1031,6 +1036,38 @@ describe('Conversations Integration', () => {
 			const conversation = await startConversation(app)
 			const res = await post(app, conversation.id, 'here it is ghp_[REDACTED · vaulted as NAME]')
 			expect(res.status).toBe(201)
+		})
+
+		it('lets the manual redaction marker through for names built from every provider prefix', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const prefixes = [
+				'cfut_',
+				'cfat_',
+				'cfk_',
+				'ghp_',
+				'github_pat_',
+				'sk_live_',
+				'sk_test_',
+				'xoxb-',
+				'xoxp-',
+				'sk-',
+				'sk-proj-',
+				'sk-svcacct-',
+			]
+			for (const prefix of prefixes) {
+				// The bare prefix, and the longest name the name rule still lets through.
+				const names = [prefix]
+				for (let n = 1; n <= CREDENTIAL_NAME_MAX_LENGTH - prefix.length; n++) {
+					const name = `${prefix}${'a'.repeat(n)}`
+					if (checkCredentialName(name) === null) names[1] = name
+				}
+				for (const name of names) {
+					expect(checkCredentialName(name)).toBeNull()
+					const res = await post(app, conversation.id, manualRedactionMarker(name))
+					expect(res.status).toBe(201)
+				}
+			}
 		})
 
 		it('lets ordinary messages and amber-only blobs through', async () => {

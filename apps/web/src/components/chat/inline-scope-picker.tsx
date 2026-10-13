@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
+import { CREDENTIAL_NAME_MAX_LENGTH } from '@maskin/shared'
 import { ChevronDown } from 'lucide-react'
 import { useEffect, useId, useRef } from 'react'
 
@@ -16,6 +17,15 @@ interface InlineScopePickerProps {
 	credentialName: string
 	onCredentialNameChange: (name: string) => void
 	service: string
+	/**
+	 * Set when nothing was detected (the ! prefix): Service becomes a required text
+	 * input instead of a read-only row, and the vault button waits for it.
+	 */
+	onServiceChange?: (service: string) => void
+	serviceError?: string | null
+	nameError?: string | null
+	/** The env var the key will be read from, when the name gives a usable one. */
+	envVar?: string | null
 	/** The agent running this session. Pre-selected by the parent. */
 	sessionAgent: ScopeAgent
 	/** Every other agent in the workspace, behind the expander. */
@@ -39,6 +49,10 @@ export function InlineScopePicker({
 	credentialName,
 	onCredentialNameChange,
 	service,
+	onServiceChange,
+	serviceError = null,
+	nameError = null,
+	envVar = null,
 	sessionAgent,
 	otherAgents,
 	selectedIds,
@@ -49,6 +63,9 @@ export function InlineScopePicker({
 	onVault,
 }: InlineScopePickerProps) {
 	const nameId = useId()
+	const serviceId = useId()
+	const nameNoteId = useId()
+	const serviceNoteId = useId()
 	const nameRef = useRef<HTMLInputElement>(null)
 	// The step replaces the button that was focused, so focus moves into the card. It
 	// comes back whenever the controls free up again: disabling the focused input while
@@ -58,7 +75,9 @@ export function InlineScopePicker({
 		if (!busy) nameRef.current?.focus()
 	}, [busy])
 	const count = selectedIds.size
-	const canVault = credentialName.trim().length > 0 && !busy
+	const serviceMissing = onServiceChange !== undefined && service.trim().length === 0
+	const canVault =
+		credentialName.trim().length > 0 && !serviceMissing && !nameError && !serviceError && !busy
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -73,16 +92,51 @@ export function InlineScopePicker({
 						ref={nameRef}
 						id={nameId}
 						value={credentialName}
-						maxLength={80}
+						maxLength={CREDENTIAL_NAME_MAX_LENGTH}
 						disabled={busy}
+						aria-invalid={nameError ? true : undefined}
+						aria-describedby={nameError || envVar ? nameNoteId : undefined}
 						onChange={(e) => onCredentialNameChange(e.target.value)}
 					/>
+					{nameError ? (
+						<p id={nameNoteId} className="text-xs text-error">
+							{nameError}
+						</p>
+					) : envVar ? (
+						<p id={nameNoteId} className="break-words text-xs text-muted-foreground">
+							Env var <code className="font-mono">{envVar}</code>
+						</p>
+					) : null}
 				</div>
 				<div className="flex flex-col gap-1.5">
-					<Label>Service</Label>
-					<div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-						{service}
-					</div>
+					<Label htmlFor={onServiceChange ? serviceId : undefined}>Service</Label>
+					{onServiceChange ? (
+						<>
+							<Input
+								id={serviceId}
+								value={service}
+								placeholder="e.g. Linear"
+								maxLength={CREDENTIAL_NAME_MAX_LENGTH}
+								disabled={busy}
+								aria-invalid={serviceError ? true : undefined}
+								aria-describedby={serviceError || serviceMissing ? serviceNoteId : undefined}
+								onChange={(e) => onServiceChange(e.target.value)}
+							/>
+							{serviceError ? (
+								<p id={serviceNoteId} className="text-xs text-error">
+									{serviceError}
+								</p>
+							) : serviceMissing ? (
+								<p id={serviceNoteId} className="text-xs text-muted-foreground">
+									Add the service name to continue.
+								</p>
+							) : null}
+						</>
+					) : (
+						<div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+							{service}
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -141,7 +195,7 @@ export function InlineScopePicker({
 			) : null}
 
 			<div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-				<Button type="button" variant="outline" disabled={busy} onClick={onSaveUnassigned}>
+				<Button type="button" variant="outline" disabled={!canVault} onClick={onSaveUnassigned}>
 					Save unassigned
 				</Button>
 				<Button type="button" disabled={!canVault} onClick={onVault}>

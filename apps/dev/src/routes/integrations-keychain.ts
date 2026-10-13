@@ -13,9 +13,12 @@ import {
 	captureChatSecret,
 } from '../lib/integrations/chat-capture'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { CredentialNameError } from '../lib/integrations/credential-name'
+import { rotateIntegrationDek } from '../lib/integrations/rotate-dek'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 import { endSessionHoldingKey, relaunchChatSession } from '../services/chat-relaunch'
 import type { SessionManager } from '../services/session-manager'
 
@@ -107,6 +110,10 @@ const chatCaptureRoute = createRoute({
 			description: 'Session not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'NAME_TAKEN: another active or pending-undo key has this env var name',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -138,9 +145,10 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		void capturePosthogEvent('keychain_credential_created', actorId, {
 			workspace_id: workspaceId,
 			integration_id: result.integrationId,
-			provider: body.detectedProvider,
+			provider: result.provider,
 			provider_mode: 'byo_apikey',
 			source: 'chat_capture',
+			trigger: result.trigger,
 		})
 
 		// After the vault transaction has committed: the row is the source of truth
@@ -168,6 +176,9 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		)
 	} catch (err) {
 		if (err instanceof ChatCaptureError) {
+			return c.json(createApiError(err.code, err.message), err.status)
+		}
+		if (err instanceof CredentialNameError) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
 		// Error text only, never the request: a driver error can carry bound params.
@@ -203,6 +214,10 @@ const byoApiKeyRoute = createRoute({
 		},
 		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
 		403: { description: 'Not a human', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'NAME_TAKEN: another active or pending-undo key has this env var name',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -238,6 +253,9 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 
 		return c.json({ integrationId: result.integrationId }, 201)
 	} catch (err) {
+		if (err instanceof CredentialNameError) {
+			return c.json(createApiError(err.code, err.message), err.status)
+		}
 		// Error name only, never the request: a driver error can carry bound params.
 		logger.error('Keychain paste failed', {
 			workspaceId,
@@ -464,6 +482,75 @@ app.openapi(relaunchRoute, (async (c) => {
 	})
 	return c.json({ relaunch }, 200)
 }) as RouteHandler<typeof relaunchRoute, Env>)
+
+// ── POST /api/integrations/:id/rotate-dek ────────────────────────────────
+
+const rotateDekRoute = createRoute({
+	method: 'post',
+	path: '/{id}/rotate-dek',
+	tags: ['integrations'],
+	summary: 'Re-wrap one credential under a fresh data key and the workspace current KEK',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Re-wrapped. The decrypted value is unchanged',
+			content: {
+				'application/json': {
+					schema: z.object({ id: z.string().uuid(), status: z.literal('rotated') }),
+				},
+			},
+		},
+		403: {
+			description: 'Only a human workspace admin or owner can rotate',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'A legacy row (no data key to rotate), or the row changed while rotating',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(rotateDekRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a workspace admin or owner can rotate a data key'),
+			403,
+		)
+	}
+
+	const outcome = await rotateIntegrationDek(db, getKmsProvider(db), {
+		integrationId: id,
+		workspaceId,
+		actorId: callerId,
+		origin: 'manual',
+	})
+	if (outcome === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+	}
+	if (outcome === 'not_envelope') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This credential is not envelope encrypted yet, so it has no data key',
+			),
+			409,
+		)
+	}
+	if (outcome === 'changed') {
+		return c.json(
+			createApiError('CONFLICT', 'The credential changed while rotating, try again'),
+			409,
+		)
+	}
+	return c.json({ id, status: 'rotated' as const }, 200)
+}) as RouteHandler<typeof rotateDekRoute, Env>)
 
 // ── GET /api/integrations/:id/audit-log ──────────────────────────────────
 

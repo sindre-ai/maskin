@@ -6,8 +6,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateByoApiKey } from '@/hooks/use-integrations'
+import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import {
+	CREDENTIAL_NAME_MAX_LENGTH,
+	checkCredentialName,
+	credentialNameMessage,
+} from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
@@ -28,7 +34,9 @@ function AddCredentialPage() {
 	const [reveal, setReveal] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 
-	const canSave = name.trim().length > 0 && secret.length > 0 && !create.isPending
+	// The same rule the server applies, so the message appears before a request.
+	const nameProblem = name.trim() ? checkCredentialName(name) : null
+	const canSave = name.trim().length > 0 && !nameProblem && secret.length > 0 && !create.isPending
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
@@ -45,9 +53,15 @@ function AddCredentialPage() {
 				to: '/$workspaceId/settings/keychain/$integrationId',
 				params: { workspaceId, integrationId },
 			})
-		} catch {
-			// The server names the bad field; a person needs to know what to do, not which key it was.
-			setError('Could not save this credential. Check the name and secret, then try again.')
+		} catch (err) {
+			// A taken or secret-shaped name has a message a person can act on. Anything else
+			// stays generic: the server names the bad field, not what to do about it.
+			setError(
+				err instanceof ApiError &&
+					(err.code === 'NAME_TAKEN' || err.code === 'NAME_LOOKS_LIKE_SECRET')
+					? err.message
+					: 'Could not save this credential. Check the name and secret, then try again.',
+			)
 		}
 	}
 
@@ -98,11 +112,16 @@ function AddCredentialPage() {
 						value={name}
 						onChange={(e) => setName(e.target.value)}
 						placeholder='e.g. "Stripe · Sindre AI"'
-						maxLength={80}
+						maxLength={CREDENTIAL_NAME_MAX_LENGTH}
 						autoComplete="off"
+						aria-invalid={nameProblem ? true : undefined}
 						required
 					/>
-					<p className="text-xs text-muted-foreground">What agents will see.</p>
+					{nameProblem ? (
+						<p className="text-xs text-error">{credentialNameMessage(nameProblem)}</p>
+					) : (
+						<p className="text-xs text-muted-foreground">What agents will see.</p>
+					)}
 				</div>
 				<div className="space-y-1.5">
 					<Label htmlFor="keychain-secret">Secret</Label>

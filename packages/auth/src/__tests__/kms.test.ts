@@ -30,6 +30,7 @@ import {
 	KmsKekMissingError,
 	LocalFileKmsProvider,
 	createKmsProvider,
+	nextKekAlias,
 	resolveKeychainEnv,
 	resolveKeychainKmsKind,
 } from '../kms'
@@ -302,6 +303,187 @@ describe('AwsKmsProvider (mocked KMS client)', () => {
 		const { kms } = provider()
 		await expect(kms.decrypt(WS_B, 'AAAA')).rejects.toBeInstanceOf(KmsDecryptError)
 		expect(kmsMock.commandCalls(DecryptCommand)).toHaveLength(0)
+	})
+})
+
+describe('AwsKmsProvider KEK rotation (mocked KMS client)', () => {
+	const kmsMock = mockClient(KMSClient)
+	const BASE = `alias/maskin-keychain-staging-${WS_A}`
+	const noSleep = async () => {}
+	beforeEach(() => {
+		kmsMock.reset()
+		// A fake KMS that wraps by echoing, so the probe's round trip can compare bytes.
+		kmsMock.on(EncryptCommand).callsFake((input) => ({ CiphertextBlob: input.Plaintext }))
+		kmsMock.on(DecryptCommand).callsFake((input) => ({ Plaintext: input.CiphertextBlob }))
+	})
+
+	function provider(currentAlias: string = BASE) {
+		const store = fakeAliasDb()
+		store.rows.set(WS_A, { kekAlias: currentAlias, provider: 'aws-kms' })
+		const kms = new AwsKmsProvider({
+			db: store.db,
+			client: new KMSClient({ region: 'eu-central-1' }),
+			environment: 'staging',
+		})
+		return { kms, ...store }
+	}
+
+	it('nextKekAlias counts the bare alias as version 1', () => {
+		expect(nextKekAlias(BASE, BASE)).toBe(`${BASE}-2`)
+		expect(nextKekAlias(`${BASE}-2`, BASE)).toBe(`${BASE}-3`)
+		expect(nextKekAlias(`${BASE}-9`, BASE)).toBe(`${BASE}-10`)
+		expect(() => nextKekAlias('alias/something-else', BASE)).toThrow(KmsConfigError)
+		expect(() => nextKekAlias(`${BASE}-x`, BASE)).toThrow(KmsConfigError)
+	})
+
+	it('creates a tagged key, aliases it as n+1, probes it, and leaves the stored alias alone', async () => {
+		kmsMock.on(DescribeKeyCommand).rejects(new AwsError('NotFoundException'))
+		kmsMock.on(CreateKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+		kmsMock.on(CreateAliasCommand).resolves({})
+		const created: Array<{ alias: string; keyId: string }> = []
+
+		const { kms, rows } = provider()
+		const out = await kms.rotateKek(WS_A, { sleep: noSleep, onKeyCreated: (i) => created.push(i) })
+
+		expect(out).toEqual({ previousAlias: BASE, alias: `${BASE}-2`, reusedExistingAlias: false })
+		expect(created).toEqual([{ alias: `${BASE}-2`, keyId: 'key-2' }])
+		expect(kmsMock.commandCalls(CreateKeyCommand)[0].args[0].input.Tags).toContainEqual({
+			TagKey: 'maskin-keychain',
+			TagValue: 'staging',
+		})
+		expect(kmsMock.commandCalls(CreateAliasCommand)[0].args[0].input).toMatchObject({
+			AliasName: `${BASE}-2`,
+			TargetKeyId: 'key-2',
+		})
+		// The probe wrapped and unwrapped on the NEW alias, with the workspace as context.
+		expect(kmsMock.commandCalls(EncryptCommand)[0].args[0].input).toMatchObject({
+			KeyId: `${BASE}-2`,
+			EncryptionContext: { workspace_id: WS_A },
+		})
+		// The caller flips the table row; the provider never does.
+		expect(rows.get(WS_A)?.kekAlias).toBe(BASE)
+		// Nothing in rotation ever moves an alias or schedules deletion.
+		expect(kmsMock.calls().map((c) => c.args[0].constructor.name)).not.toContain(
+			'UpdateAliasCommand',
+		)
+		expect(kmsMock.calls().map((c) => c.args[0].constructor.name)).not.toContain(
+			'ScheduleKeyDeletionCommand',
+		)
+	})
+
+	it('decrypts a DEK wrapped before the rotation: Decrypt does not pin a KeyId', async () => {
+		kmsMock.on(DescribeKeyCommand).rejects(new AwsError('NotFoundException'))
+		kmsMock.on(CreateKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+		kmsMock.on(CreateAliasCommand).resolves({})
+
+		const { kms, rows } = provider()
+		const oldWrapped = await kms.encrypt(WS_A, fakeDek())
+		const next = await kms.rotateKek(WS_A, { sleep: noSleep })
+		// The caller switches the row to the new alias, last.
+		rows.set(WS_A, { kekAlias: next.alias, provider: 'aws-kms' })
+
+		expect((await kms.decrypt(WS_A, oldWrapped)).equals(fakeDek())).toBe(true)
+		for (const call of kmsMock.commandCalls(DecryptCommand)) {
+			expect(call.args[0].input.KeyId).toBeUndefined()
+		}
+		// New wraps go to the new alias.
+		await kms.encrypt(WS_A, fakeDek())
+		const encrypts = kmsMock.commandCalls(EncryptCommand)
+		expect(encrypts[encrypts.length - 1].args[0].input.KeyId).toBe(next.alias)
+	})
+
+	it('reuses an alias that already exists (retry after a crash): no second CreateKey', async () => {
+		kmsMock.on(DescribeKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+
+		const { kms } = provider()
+		const out = await kms.rotateKek(WS_A, { sleep: noSleep })
+
+		expect(out.alias).toBe(`${BASE}-2`)
+		expect(out.reusedExistingAlias).toBe(true)
+		expect(kmsMock.commandCalls(CreateKeyCommand)).toHaveLength(0)
+		expect(kmsMock.commandCalls(CreateAliasCommand)).toHaveLength(0)
+	})
+
+	it('treats AlreadyExists on CreateAlias as reuse, not failure', async () => {
+		kmsMock.on(DescribeKeyCommand).rejects(new AwsError('NotFoundException'))
+		kmsMock.on(CreateKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+		kmsMock.on(CreateAliasCommand).rejects(new AwsError('AlreadyExistsException'))
+
+		const { kms } = provider()
+		await expect(kms.rotateKek(WS_A, { sleep: noSleep })).resolves.toMatchObject({
+			alias: `${BASE}-2`,
+		})
+	})
+
+	it('computes the next version from a rotated alias', async () => {
+		kmsMock.on(DescribeKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-3' } })
+		const { kms } = provider(`${BASE}-2`)
+		await expect(kms.rotateKek(WS_A, { sleep: noSleep })).resolves.toMatchObject({
+			previousAlias: `${BASE}-2`,
+			alias: `${BASE}-3`,
+		})
+	})
+
+	it('retries AccessDenied on the probe while the new alias propagates, then succeeds', async () => {
+		kmsMock.on(DescribeKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+		kmsMock
+			.on(EncryptCommand)
+			.rejectsOnce(new AwsError('AccessDeniedException'))
+			.rejectsOnce(new AwsError('AccessDeniedException'))
+			.callsFake((input) => ({ CiphertextBlob: input.Plaintext }))
+		const waits: number[] = []
+
+		const { kms } = provider()
+		await kms.rotateKek(WS_A, {
+			probeIntervalMs: 10_000,
+			sleep: async (ms) => {
+				waits.push(ms)
+			},
+		})
+
+		expect(waits).toEqual([10_000, 10_000])
+		expect(kmsMock.commandCalls(EncryptCommand)).toHaveLength(3)
+	})
+
+	it('gives up with KmsAccessError when AccessDenied outlasts the probe window, leaving the row alone', async () => {
+		kmsMock.on(DescribeKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+		kmsMock.on(EncryptCommand).rejects(new AwsError('AccessDeniedException'))
+		let now = 0
+		const realNow = Date.now
+		Date.now = () => now
+		try {
+			const { kms, rows } = provider()
+			await expect(
+				kms.rotateKek(WS_A, {
+					probeTimeoutMs: 30_000,
+					probeIntervalMs: 10_000,
+					sleep: async (ms) => {
+						now += ms
+					},
+				}),
+			).rejects.toBeInstanceOf(KmsAccessError)
+			expect(rows.get(WS_A)?.kekAlias).toBe(BASE)
+		} finally {
+			Date.now = realNow
+		}
+	})
+
+	it('does not retry errors that are not AccessDenied', async () => {
+		kmsMock.on(DescribeKeyCommand).resolves({ KeyMetadata: { KeyId: 'key-2' } })
+		kmsMock.on(EncryptCommand).rejects(new AwsError('KMSInternalException'))
+		const { kms } = provider()
+		await expect(kms.rotateKek(WS_A, { sleep: noSleep })).rejects.toThrow('KMSInternalException')
+		expect(kmsMock.commandCalls(EncryptCommand)).toHaveLength(1)
+	})
+
+	it('refuses a workspace with no alias row', async () => {
+		const store = fakeAliasDb()
+		const kms = new AwsKmsProvider({
+			db: store.db,
+			client: new KMSClient({ region: 'eu-central-1' }),
+			environment: 'staging',
+		})
+		await expect(kms.rotateKek(WS_B)).rejects.toBeInstanceOf(KmsConfigError)
 	})
 })
 

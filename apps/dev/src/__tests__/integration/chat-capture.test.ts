@@ -257,7 +257,8 @@ describe('POST /api/integrations/chat-capture', () => {
 			const res = await capture(
 				appFor(s.human),
 				s.ws.id,
-				validBody(s.session.id, { detectedProvider }),
+				// One workspace, so each key needs its own name.
+				validBody(s.session.id, { detectedProvider, displayName: `Key for ${detectedProvider}` }),
 			)
 			expect(res.status).toBe(201)
 		}
@@ -543,5 +544,224 @@ describe('several keys for one provider', () => {
 		const found = await getIntegrationCredential(db, s.ws.id, 'github', null)
 		expect(found?.id).toBe(registered?.id)
 		expect(found?.id).not.toBe(integrationId)
+	})
+})
+
+// The ! prefix: the user typed the prefix and named the key, so nothing was detected.
+describe('manual capture (the ! prefix)', () => {
+	const manualBody = (sessionId: string, extra: Record<string, unknown> = {}) =>
+		validBody(sessionId, { detectedProvider: 'manual', displayName: 'Coolify', ...extra })
+
+	it('accepts detectedProvider manual, keeps providerMode byo_apikey and the chat_capture audit row', async () => {
+		const s = await setup()
+		const res = await capture(appFor(s.human), s.ws.id, manualBody(s.session.id))
+		expect(res.status).toBe(201)
+		const { integrationId } = (await res.json()) as { integrationId: string }
+
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+		expect(row).toMatchObject({
+			status: 'pending_undo',
+			source: 'chat_capture',
+			providerMode: 'byo_apikey',
+			// The same provider id a key pasted in the Keychain gets when nothing was detected.
+			provider: 'custom',
+			displayName: 'Coolify',
+		})
+		const log = await db
+			.select()
+			.from(credentialAccessLog)
+			.where(eq(credentialAccessLog.integrationId, integrationId))
+		expect(log).toHaveLength(1)
+		expect(log[0]).toMatchObject({ action: 'create', source: 'chat_capture' })
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true })
+		expect(JSON.stringify(captureMock.mock.calls)).not.toContain(CANARY)
+	})
+
+	it('derives trigger prefix for manual and detected otherwise, and the client cannot set it', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		expect((await capture(app, s.ws.id, manualBody(s.session.id))).status).toBe(201)
+		expect(captureMock).toHaveBeenLastCalledWith(
+			'keychain_credential_created',
+			s.human,
+			expect.objectContaining({ source: 'chat_capture', trigger: 'prefix' }),
+		)
+		expect((await capture(app, s.ws.id, validBody(s.session.id))).status).toBe(201)
+		expect(captureMock).toHaveBeenLastCalledWith(
+			'keychain_credential_created',
+			s.human,
+			expect.objectContaining({ provider: 'cloudflare', trigger: 'detected' }),
+		)
+		// The body schema is strict: a client-sent trigger is refused, not honoured.
+		const forged = await capture(
+			app,
+			s.ws.id,
+			manualBody(s.session.id, { trigger: 'detected', displayName: 'Other' }),
+		)
+		expect(forged.status).toBe(400)
+	})
+
+	it('still requires a display name', async () => {
+		const s = await setup()
+		const res = await capture(
+			appFor(s.human),
+			s.ws.id,
+			manualBody(s.session.id, { displayName: '   ' }),
+		)
+		expect(res.status).toBe(400)
+		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id))
+		expect(rows).toHaveLength(0)
+	})
+})
+
+describe('credential names', () => {
+	const named = (sessionId: string, displayName: string) =>
+		validBody(sessionId, { detectedProvider: 'manual', displayName })
+
+	async function writtenFor(workspaceId: string) {
+		const rows = await db
+			.select()
+			.from(integrations)
+			.where(eq(integrations.workspaceId, workspaceId))
+		const log = await db
+			.select()
+			.from(credentialAccessLog)
+			.where(eq(credentialAccessLog.workspaceId, workspaceId))
+		const evs = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, workspaceId), eq(events.entityType, 'integration')))
+		return { rows: rows.length, log: log.length, events: evs.length }
+	}
+
+	it('returns 409 NAME_TAKEN before any encryption, write, audit row or created event', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		expect((await capture(app, s.ws.id, named(s.session.id, 'my key'))).status).toBe(201)
+		const before = await writtenFor(s.ws.id)
+		captureMock.mockClear()
+		const encrypt = vi.spyOn(kms, 'encrypt')
+
+		// Compared by slug, so case and separators do not make a new name.
+		const res = await capture(app, s.ws.id, named(s.session.id, 'My-Key'))
+		expect(res.status).toBe(409)
+		expect(((await res.json()) as { error: { code: string } }).error.code).toBe('NAME_TAKEN')
+		expect(encrypt).not.toHaveBeenCalled()
+		encrypt.mockRestore()
+		expect(await writtenFor(s.ws.id)).toEqual(before)
+		expect(captureMock).not.toHaveBeenCalled()
+	})
+
+	it('a pending_undo row holds the name and an undone row frees it', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const first = await capture(app, s.ws.id, named(s.session.id, 'Coolify'))
+		const { integrationId } = (await first.json()) as { integrationId: string }
+		expect((await capture(app, s.ws.id, named(s.session.id, 'coolify'))).status).toBe(409)
+		const undone = await app.request(`/api/integrations/${integrationId}/undo`, {
+			method: 'POST',
+			headers: { 'x-workspace-id': s.ws.id },
+		})
+		expect(undone.status).toBe(200)
+		expect((await capture(app, s.ws.id, named(s.session.id, 'coolify'))).status).toBe(201)
+	})
+
+	it('an active row holds the name too', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const first = await capture(app, s.ws.id, named(s.session.id, 'Coolify'))
+		const { integrationId } = (await first.json()) as { integrationId: string }
+		await db
+			.update(integrations)
+			.set({ status: 'active' })
+			.where(eq(integrations.id, integrationId))
+		expect((await capture(app, s.ws.id, named(s.session.id, 'COOLIFY'))).status).toBe(409)
+	})
+
+	it('is per workspace', async () => {
+		const a = await setup()
+		const b = await setup()
+		expect((await capture(appFor(a.human), a.ws.id, named(a.session.id, 'Coolify'))).status).toBe(
+			201,
+		)
+		expect((await capture(appFor(b.human), b.ws.id, named(b.session.id, 'Coolify'))).status).toBe(
+			201,
+		)
+	})
+
+	it('holds across both entry points: the paste form and chat', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const paste = (name: string) =>
+			app.request('/api/integrations/byo-apikey', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'x-workspace-id': s.ws.id },
+				body: JSON.stringify({ displayName: name, rawSecret: CANARY }),
+			})
+		expect((await paste('Notion team')).status).toBe(201)
+		expect((await capture(app, s.ws.id, named(s.session.id, 'notion_team'))).status).toBe(409)
+		expect((await capture(app, s.ws.id, named(s.session.id, 'Linear'))).status).toBe(201)
+		const taken = await paste('LINEAR')
+		expect(taken.status).toBe(409)
+		expect(((await taken.json()) as { error: { code: string } }).error.code).toBe('NAME_TAKEN')
+	})
+
+	it('gives one 201 and one 409 for two concurrent vaults of the same slug', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const statuses = (
+			await Promise.all([
+				capture(app, s.ws.id, named(s.session.id, 'Race key')),
+				capture(app, s.ws.id, named(s.session.id, 'race-key')),
+			])
+		)
+			.map((r) => r.status)
+			.sort()
+		expect(statuses).toEqual([201, 409])
+		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id))
+		expect(rows).toHaveLength(1)
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true })
+	})
+
+	it.each([
+		['cfut_' + 'A1'.repeat(20)],
+		['ghp_' + 'a'.repeat(36)],
+		['sk_live_' + 'c'.repeat(24)],
+		['xoxb-' + '1'.repeat(24)],
+		['sk-' + 'e'.repeat(44)],
+	])(
+		'rejects a secret-shaped name with 400 NAME_LOOKS_LIKE_SECRET and does not echo it',
+		async (name) => {
+			const s = await setup()
+			const res = await capture(appFor(s.human), s.ws.id, named(s.session.id, name))
+			expect(res.status).toBe(400)
+			const text = await res.text()
+			expect(JSON.parse(text).error.code).toBe('NAME_LOOKS_LIKE_SECRET')
+			expect(text).not.toContain(name)
+			expect(await writtenFor(s.ws.id)).toEqual({ rows: 0, log: 0, events: 0 })
+		},
+	)
+
+	it.each([
+		['square brackets', 'bad [name]'],
+		['a control character', 'bad\u0007name'],
+		['over 64 characters', 'x'.repeat(65)],
+		['nothing usable for an env var', '🔑🔑'],
+	])('rejects a name with %s and writes nothing', async (_label, name) => {
+		const s = await setup()
+		const res = await capture(appFor(s.human), s.ws.id, named(s.session.id, name))
+		expect(res.status).toBe(400)
+		expect(await writtenFor(s.ws.id)).toEqual({ rows: 0, log: 0, events: 0 })
+	})
+
+	it('applies the same name rule to the paste form', async () => {
+		const s = await setup()
+		const res = await appFor(s.human).request('/api/integrations/byo-apikey', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'x-workspace-id': s.ws.id },
+			body: JSON.stringify({ displayName: 'bad [name]', rawSecret: CANARY }),
+		})
+		expect(res.status).toBe(400)
+		expect(await writtenFor(s.ws.id)).toEqual({ rows: 0, log: 0, events: 0 })
 	})
 })

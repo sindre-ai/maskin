@@ -206,6 +206,40 @@ export interface AwsKmsProviderOptions {
 const aliasFor = (environment: KeychainEnv, workspaceId: string) =>
 	`alias/maskin-keychain-${environment}-${workspaceId}`
 
+const PROBE_TIMEOUT_MS = 5 * 60_000
+const PROBE_INTERVAL_MS = 15_000
+
+export interface RotateKekOptions {
+	/** Total time to keep retrying AccessDenied on the probe. Default 5 minutes. */
+	probeTimeoutMs?: number
+	/** Wait between probe attempts. Default 15 seconds. */
+	probeIntervalMs?: number
+	/** Injected in tests. */
+	sleep?: (ms: number) => Promise<void>
+	/** Called as soon as CreateKey returns, before CreateAlias, so an orphan can be traced. */
+	onKeyCreated?: (info: { alias: string; keyId: string }) => void
+}
+
+export interface RotatedKek {
+	previousAlias: string
+	/** The new alias. Not yet written to workspace_kms_aliases. */
+	alias: string
+	/** The alias already existed in KMS (a retry after a crash), so no key was created. */
+	reusedExistingAlias: boolean
+}
+
+/**
+ * The alias after `current`. The first key's alias is the bare base and counts as
+ * version 1; rotated keys are <base>-2, <base>-3 and so on.
+ */
+export function nextKekAlias(current: string, base: string): string {
+	if (current === base) return `${base}-2`
+	const suffix = current.startsWith(`${base}-`) ? current.slice(base.length + 1) : ''
+	const match = /^\d+$/.exec(suffix)
+	if (!match) throw new KmsConfigError(`Unrecognised KEK alias ${current}`)
+	return `${base}-${Number(match[0]) + 1}`
+}
+
 function awsErrorName(err: unknown): string {
 	return err instanceof Error ? err.name : ''
 }
@@ -253,9 +287,10 @@ export class AwsKmsProvider implements KmsProvider {
 		if (!alias) throw new KmsDecryptError(`No KMS alias for workspace ${workspaceId}`)
 		try {
 			const out = await this.client.send(
+				// No KeyId: KMS reads the key from the ciphertext. After a KEK rotation the
+				// current alias points at a newer key than the one that wrapped an old DEK.
 				new DecryptCommand({
 					CiphertextBlob: Buffer.from(ciphertext, 'base64'),
-					KeyId: alias,
 					EncryptionContext: { workspace_id: workspaceId },
 				}),
 			)
@@ -263,6 +298,106 @@ export class AwsKmsProvider implements KmsProvider {
 			return Buffer.from(out.Plaintext)
 		} catch (err) {
 			throw this.mapError(err)
+		}
+	}
+
+	/**
+	 * Prepares the next KEK version for a workspace and returns its alias. It does
+	 * NOT switch anything: the caller writes workspace_kms_aliases.kek_alias only
+	 * after this resolves, so a failure anywhere in here leaves the old key live.
+	 *
+	 * Rotation never moves an alias (UpdateAlias would strip the old key of the alias
+	 * the runtime IAM boundary matches on, and every DEK it wrapped would stop
+	 * decrypting). The new key gets its own alias, <base>-<n+1>, where the first key's
+	 * alias <base> counts as version 1. Order: find or create the key and alias, then
+	 * prove one Encrypt and Decrypt round trip on the new alias, retrying AccessDenied
+	 * for a few minutes because alias and tag changes can take that long to reach
+	 * authorization. The caller must hold a per-workspace lock before calling.
+	 *
+	 * A retry after a crash computes the same n+1 and reuses the alias if it exists,
+	 * so it never calls CreateKey twice for one version. A crash between CreateKey and
+	 * CreateAlias still leaves one tagged key with no alias; onKeyCreated reports the
+	 * key id the moment it exists so it can be logged. Nothing here ever schedules
+	 * key deletion.
+	 */
+	async rotateKek(workspaceId: string, opts: RotateKekOptions = {}): Promise<RotatedKek> {
+		const previousAlias = await this.lookupAlias(workspaceId)
+		if (!previousAlias) {
+			throw new KmsConfigError(`Workspace ${workspaceId} has no KEK alias to rotate`)
+		}
+		const base = aliasFor(this.environment, workspaceId)
+		const alias = nextKekAlias(previousAlias, base)
+
+		let reused = true
+		try {
+			await this.client.send(new DescribeKeyCommand({ KeyId: alias }))
+		} catch (err) {
+			if (awsErrorName(err) !== 'NotFoundException') throw this.mapError(err)
+			reused = false
+			const created = await this.client
+				.send(
+					new CreateKeyCommand({
+						Description: `Maskin Keychain KEK for workspace ${workspaceId} (${alias})`,
+						Tags: [
+							{ TagKey: 'maskin-keychain', TagValue: this.environment },
+							{ TagKey: 'maskin-workspace-id', TagValue: workspaceId },
+						],
+					}),
+				)
+				.catch((e) => {
+					throw this.mapError(e)
+				})
+			const keyId = created.KeyMetadata?.KeyId
+			if (!keyId) throw new KmsAccessError('KMS CreateKey returned no key id')
+			opts.onKeyCreated?.({ alias, keyId })
+			try {
+				await this.client.send(new CreateAliasCommand({ AliasName: alias, TargetKeyId: keyId }))
+			} catch (e) {
+				// Another run got the alias first: use theirs.
+				if (awsErrorName(e) !== 'AlreadyExistsException') throw this.mapError(e)
+			}
+		}
+
+		await this.probe(workspaceId, alias, opts)
+		return { previousAlias, alias, reusedExistingAlias: reused }
+	}
+
+	private async probe(workspaceId: string, alias: string, opts: RotateKekOptions): Promise<void> {
+		const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+		const intervalMs = opts.probeIntervalMs ?? PROBE_INTERVAL_MS
+		const deadline = Date.now() + (opts.probeTimeoutMs ?? PROBE_TIMEOUT_MS)
+		const probeKey = randomBytes(32)
+		try {
+			for (;;) {
+				try {
+					const wrapped = await this.client.send(
+						new EncryptCommand({
+							KeyId: alias,
+							Plaintext: probeKey,
+							EncryptionContext: { workspace_id: workspaceId },
+						}),
+					)
+					if (!wrapped.CiphertextBlob) {
+						throw new KmsAccessError('KMS Encrypt returned no ciphertext')
+					}
+					const back = await this.client.send(
+						new DecryptCommand({
+							CiphertextBlob: wrapped.CiphertextBlob,
+							EncryptionContext: { workspace_id: workspaceId },
+						}),
+					)
+					if (!back.Plaintext || !Buffer.from(back.Plaintext).equals(probeKey)) {
+						throw new KmsDecryptError('KMS probe did not round-trip on the new alias')
+					}
+					return
+				} catch (err) {
+					const mapped = this.mapError(err)
+					if (!(mapped instanceof KmsAccessError) || Date.now() + intervalMs > deadline) throw mapped
+					await sleep(intervalMs)
+				}
+			}
+		} finally {
+			probeKey.fill(0)
 		}
 	}
 
