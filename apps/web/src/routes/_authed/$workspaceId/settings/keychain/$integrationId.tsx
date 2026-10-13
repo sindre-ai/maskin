@@ -67,7 +67,7 @@ function AuditEntryText({
 						<>
 							{' '}
 							targeting{' '}
-							<span className="font-mono text-xs text-muted-foreground">
+							<span className="break-all font-mono text-xs text-muted-foreground">
 								{entry.outboundTarget}
 							</span>
 						</>

@@ -315,6 +315,11 @@ describe('7c-4: undo ends the session', () => {
 		await user.click(await screen.findByRole('button', { name: 'Undo' }))
 		expect(await screen.findByText('Undone. Cloudflare key is removed.')).toBeInTheDocument()
 		expect(screen.queryByText(/This session has ended/)).not.toBeInTheDocument()
+		expect(screen.queryByText('Ended')).not.toBeInTheDocument()
+		expect(screen.getByText('Still running')).toBeInTheDocument()
+		expect(
+			screen.getByText(/The key is removed, but the session may still hold it/),
+		).toBeInTheDocument()
 	})
 
 	it('reads Undoing… and is disabled while the call waits on a relaunch', async () => {

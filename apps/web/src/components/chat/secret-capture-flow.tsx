@@ -364,6 +364,8 @@ export function SecretCaptureFlow({
 			<TranscriptRedactedRow marker={v.marker} />
 			<VaultedCard
 				credentialName={v.name}
+				workspaceId={workspaceId}
+				integrationId={v.integrationId}
 				agentCount={v.agentCount}
 				agentName={agentName}
 				phase={v.phase}
