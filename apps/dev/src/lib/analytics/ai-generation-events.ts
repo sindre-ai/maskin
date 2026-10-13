@@ -57,12 +57,17 @@ function costBasisForRoute(route: string): string {
  * `sessions.model_name` is only stamped on maskin_plan, so claude_oauth (and
  * the other routes) would otherwise reach PostHog with no model. Fall back to
  * what the route runs by default.
+ *
+ * The workspace_api_key, agent_api_key and custom routes have no default: the
+ * model depends on the key and the agent, so naming one would present a guess
+ * as fact. They get a labelled `unknown:<route>` instead, which keeps those
+ * sessions apart from each other in PostHog's per-model cost split.
  */
 function resolveModel(route: string, modelName: string | null): string {
 	if (modelName) return modelName
 	if (route === LLM_ROUTE_OAUTH) return CLAUDE_SUBSCRIPTION_MODEL
 	if (route === LLM_ROUTE_MASKIN_PLAN) return readFallbackConfig().model ?? 'unknown'
-	return 'unknown'
+	return route ? `unknown:${route}` : 'unknown'
 }
 
 function toFiniteNumber(value: number | string | null): number {

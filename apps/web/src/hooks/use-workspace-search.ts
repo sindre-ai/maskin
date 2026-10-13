@@ -71,6 +71,43 @@ export function matches(query: string, ...fields: (string | null | undefined)[])
 	return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
 }
 
+/** True when any whitespace-separated term of the query appears in the title. */
+export function titleMatches(query: string, title: string): boolean {
+	const haystack = title.toLowerCase()
+	return query
+		.toLowerCase()
+		.split(/\s+/)
+		.some((term) => term.length > 0 && haystack.includes(term))
+}
+
+/** Share of the title (0..1) covered by the query terms found in it. */
+export function titleCoverage(query: string, title: string): number {
+	if (!title) return 0
+	const haystack = title.toLowerCase()
+	const matched = query
+		.toLowerCase()
+		.split(/\s+/)
+		.filter((term) => term.length > 0 && haystack.includes(term))
+		.reduce((sum, term) => sum + term.length, 0)
+	return Math.min(matched / title.length, 1)
+}
+
+/**
+ * Title matches first (largest share of the title matched first), content-only
+ * matches after. Array.sort is stable, so the group order (and the server's
+ * rank order) is kept among equals.
+ */
+export function rankTitleMatchesFirst(rows: SearchRow[], query: string): SearchRow[] {
+	const titleHits: SearchRow[] = []
+	const contentOnly: SearchRow[] = []
+	for (const row of rows) {
+		;(titleMatches(query, row.title) ? titleHits : contentOnly).push(row)
+	}
+	const coverage = new Map(titleHits.map((row) => [row, titleCoverage(query, row.title)]))
+	titleHits.sort((a, b) => (coverage.get(b) ?? 0) - (coverage.get(a) ?? 0))
+	return [...titleHits, ...contentOnly]
+}
+
 export function useWorkspaceSearch(
 	workspaceId: string,
 	{ q, type, status }: { q: string; type?: string; status?: string },
@@ -96,7 +133,7 @@ export function useWorkspaceSearch(
 	const firstChatPage = conversations?.pages?.[0]?.conversations
 
 	return useMemo(() => {
-		const rows: SearchRow[] = []
+		let rows: SearchRow[] = []
 		const countsByGroup: Record<SearchGroup, number> = {
 			chats: 0,
 			loops: 0,
@@ -184,6 +221,8 @@ export function useWorkspaceSearch(
 				params: { workspaceId, triggerId: trigger.id },
 			})
 		}
+
+		rows = rankTitleMatchesFirst(rows, query)
 
 		for (const row of rows) countsByGroup[row.group] += 1
 

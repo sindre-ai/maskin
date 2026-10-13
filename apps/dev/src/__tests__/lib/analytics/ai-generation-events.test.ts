@@ -13,6 +13,9 @@ import {
 } from '../../../lib/analytics/ai-generation-events'
 import {
 	CLAUDE_SUBSCRIPTION_MODEL,
+	LLM_ROUTE_AGENT,
+	LLM_ROUTE_API_KEY,
+	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 } from '../../../lib/llm-routing'
@@ -126,6 +129,23 @@ describe('trackSessionAiGeneration', () => {
 		expect(props.$ai_model).toBe('deepseek/deepseek-v4.1-flash')
 		expect(props.$ai_provider).toBe('openrouter')
 		expect(props.cost_basis).toBe('openrouter_price_table')
+	})
+
+	it.each([LLM_ROUTE_API_KEY, LLM_ROUTE_AGENT, LLM_ROUTE_CUSTOM])(
+		'labels the model unknown:<route> on %s, which has no default model',
+		async (route) => {
+			await trackSessionAiGeneration(baseProps({ config: { llm_route: route } }))
+
+			expect(lastCall()[2].$ai_model).toBe(`unknown:${route}`)
+		},
+	)
+
+	it('prefers the stored model over the unknown:<route> label', async () => {
+		await trackSessionAiGeneration(
+			baseProps({ config: { llm_route: LLM_ROUTE_API_KEY }, modelName: 'claude-sonnet-5-5' }),
+		)
+
+		expect(lastCall()[2].$ai_model).toBe('claude-sonnet-5-5')
 	})
 
 	it('reads the numeric-string cost Drizzle returns for total_cost_usd', async () => {
