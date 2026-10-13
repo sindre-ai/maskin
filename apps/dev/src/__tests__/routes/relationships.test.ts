@@ -21,7 +21,7 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 
 // POST /api/relationships first asks which endpoint ids live in the caller's
 // workspace: one select on objects, one on files (queued in that order). Ids
-// found in objects need no further lookups.
+// found in objects need no further lookups. Returns two queue entries; spread them.
 function endpointsInWorkspace(...ids: string[]) {
 	return [ids.map((id) => ({ id })), []]
 }
@@ -32,7 +32,7 @@ describe('Relationships Routes', () => {
 			const rel = buildRelationship()
 			const createBody = buildCreateRelationshipBody()
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
-			mockResults.selectQueue = [endpointsInWorkspace(createBody.source_id, createBody.target_id)]
+			mockResults.selectQueue = [...endpointsInWorkspace(createBody.source_id, createBody.target_id)]
 			mockResults.insert = [rel]
 
 			const res = await app.request(
@@ -53,7 +53,7 @@ describe('Relationships Routes', () => {
 			// so both endpoints resolve to 'object'
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
 			mockResults.selectQueue = [
-				endpointsInWorkspace(
+				...endpointsInWorkspace(
 					'00000000-0000-0000-0000-000000000001',
 					'00000000-0000-0000-0000-000000000002',
 				),
@@ -93,7 +93,7 @@ describe('Relationships Routes', () => {
 			mockResults.insert = []
 			const createBody = buildCreateRelationshipBody()
 			mockResults.selectQueue = [
-				endpointsInWorkspace(createBody.source_id, createBody.target_id),
+				...endpointsInWorkspace(createBody.source_id, createBody.target_id),
 				[], // files lookup for source_type/target_type resolution
 				[rel],
 			]
@@ -118,7 +118,7 @@ describe('Relationships Routes', () => {
 			const createBody = buildCreateRelationshipBody()
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
 			// Only the source is found; the target lives in another workspace (or nowhere).
-			mockResults.selectQueue = [endpointsInWorkspace(createBody.source_id)]
+			mockResults.selectQueue = [...endpointsInWorkspace(createBody.source_id)]
 			mockResults.insert = [buildRelationship()]
 
 			const res = await app.request(
@@ -132,7 +132,7 @@ describe('Relationships Routes', () => {
 		it('returns 404 and writes nothing when the source is not in the workspace', async () => {
 			const createBody = buildCreateRelationshipBody()
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
-			mockResults.selectQueue = [endpointsInWorkspace(createBody.target_id)]
+			mockResults.selectQueue = [...endpointsInWorkspace(createBody.target_id)]
 			mockResults.insert = [buildRelationship()]
 
 			const res = await app.request(
@@ -160,7 +160,7 @@ describe('Relationships Routes', () => {
 			//   2) files lookup for source_type/target_type resolution → []
 			//   3) hook's `objects` lookup on the target → knowledge row
 			mockResults.selectQueue = [
-				endpointsInWorkspace(source.id, target.id),
+				...endpointsInWorkspace(source.id, target.id),
 				[],
 				[{ type: target.type, metadata: target.metadata }],
 			]
@@ -214,7 +214,7 @@ describe('Relationships Routes', () => {
 		it('does not auto-emit for non-derived_from edge types', async () => {
 			const rel = buildRelationship({ type: 'informs' })
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
-			mockResults.selectQueue = [endpointsInWorkspace(rel.sourceId, rel.targetId)]
+			mockResults.selectQueue = [...endpointsInWorkspace(rel.sourceId, rel.targetId)]
 			mockResults.insert = [rel]
 			capturePosthogEventMock.mockClear()
 
