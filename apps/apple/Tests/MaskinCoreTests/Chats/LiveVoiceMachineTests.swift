@@ -69,7 +69,7 @@ import Testing
 		// Still thinking; the rest arrives and is sent as one message.
 		_ = m.heard("Can you tell me what some people are working on", at: at(4.2))
 		#expect(m.tick(at: at(5.5)).isEmpty)
-		#expect(m.tick(at: at(6.8)) == [.resetTranscript, .send("Can you tell me what some people are working on")])
+		#expect(m.tick(at: at(7.5)) == [.resetTranscript, .send("Can you tell me what some people are working on")])
 	}
 
 	@Test("a trailing preposition waits about three seconds")
