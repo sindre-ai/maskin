@@ -71,6 +71,28 @@ export function matches(query: string, ...fields: (string | null | undefined)[])
 	return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
 }
 
+/** True when any whitespace-separated term of the query appears in the title. */
+export function titleMatches(query: string, title: string): boolean {
+	const haystack = title.toLowerCase()
+	return query
+		.toLowerCase()
+		.split(/\s+/)
+		.some((term) => term.length > 0 && haystack.includes(term))
+}
+
+/**
+ * Title matches first, content-only matches after. Stable, so the group order
+ * (and the server's rank order within objects) is kept inside each tier.
+ */
+export function rankTitleMatchesFirst(rows: SearchRow[], query: string): SearchRow[] {
+	const titleHits: SearchRow[] = []
+	const contentOnly: SearchRow[] = []
+	for (const row of rows) {
+		;(titleMatches(query, row.title) ? titleHits : contentOnly).push(row)
+	}
+	return [...titleHits, ...contentOnly]
+}
+
 export function useWorkspaceSearch(
 	workspaceId: string,
 	{ q, type, status }: { q: string; type?: string; status?: string },
@@ -96,7 +118,7 @@ export function useWorkspaceSearch(
 	const firstChatPage = conversations?.pages?.[0]?.conversations
 
 	return useMemo(() => {
-		const rows: SearchRow[] = []
+		let rows: SearchRow[] = []
 		const countsByGroup: Record<SearchGroup, number> = {
 			chats: 0,
 			loops: 0,
@@ -184,6 +206,8 @@ export function useWorkspaceSearch(
 				params: { workspaceId, triggerId: trigger.id },
 			})
 		}
+
+		rows = rankTitleMatchesFirst(rows, query)
 
 		for (const row of rows) countsByGroup[row.group] += 1
 
