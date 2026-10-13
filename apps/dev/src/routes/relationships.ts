@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { conversations, files, objects, relationships, sessions } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
-import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -14,7 +14,10 @@ import {
 	relationshipResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { derivePairEndpointKinds } from '../lib/relationships-endpoint-kind'
+import {
+	derivePairEndpointKinds,
+	findEndpointIdsInWorkspace,
+} from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -53,6 +56,10 @@ const createRelationshipRoute = createRoute({
 			description: 'Missing workspace header',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		404: {
+			description: 'Source or target not found in the workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Internal server error',
 			content: { 'application/json': { schema: errorSchema } },
@@ -66,6 +73,17 @@ app.openapi(createRelationshipRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const body = c.req.valid('json')
+
+	// Both endpoints must live in the caller's workspace. The table has no
+	// workspace column, so this is the only gate: a foreign id answers 404 before
+	// any row is written or read, and no foreign title can reach the response.
+	const knownEndpoints = await findEndpointIdsInWorkspace(db, workspaceId, [
+		body.source_id,
+		body.target_id,
+	])
+	if (!knownEndpoints.has(body.source_id) || !knownEndpoints.has(body.target_id)) {
+		return c.json(createApiError('NOT_FOUND', 'Source or target not found'), 404)
+	}
 
 	// Resolve sourceType/targetType server-side per T1 convention B:
 	// 'file' when the endpoint id lives in files, 'object' otherwise.
@@ -160,7 +178,7 @@ app.openapi(createRelationshipRoute, async (c) => {
 		db
 			.select({ id: objects.id, title: objects.title })
 			.from(objects)
-			.where(inArray(objects.id, endpointIdSet)),
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, endpointIdSet))),
 		db
 			.select({ id: files.id, name: files.name })
 			.from(files)
@@ -214,6 +232,9 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 
 	// Edges carry no workspace column, so scope them the way DELETE does: by the
 	// workspace that owns the source endpoint, whichever table it lives in.
+	// The target must not live in another workspace. A target that no longer
+	// exists anywhere stays visible (edges have no FK to their endpoints), so
+	// cleanup flows that list dangling edges keep working.
 	const conditions = [
 		or(
 			inArray(
@@ -237,6 +258,7 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 			),
 		),
 	]
+	conditions.push(targetNotInOtherWorkspace(workspaceId))
 	if (query.object_id) {
 		conditions.push(
 			or(eq(relationships.sourceId, query.object_id), eq(relationships.targetId, query.object_id)),
@@ -288,7 +310,7 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 	// scoped `files.name` batch, then merge with files > objects precedence
 	// (matches `deriveEndpointKinds`).
 	const [titleById, fileRows] = await Promise.all([
-		resolveEndpointTitles(db, {
+		resolveEndpointTitles(db, workspaceId, {
 			objectIds: [...objectIds],
 			conversationIds: [...conversationIds],
 			sessionIds: [...sessionIds],
@@ -297,7 +319,7 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 			? db
 					.select({ id: files.id, name: files.name })
 					.from(files)
-					.where(inArray(files.id, [...fileIds]))
+					.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...fileIds])))
 			: Promise.resolve([] as { id: string; name: string }[]),
 	])
 	for (const row of fileRows) titleById.set(row.id, row.name ?? null)
@@ -310,6 +332,21 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 		})) as z.infer<typeof relationshipResponseSchema>[],
 	)
 }) as RouteHandler<typeof listRelationshipsRoute, Env>)
+
+// Correlated NOT EXISTS over the four endpoint tables. Written as literal,
+// table-qualified SQL on purpose: Drizzle column objects interpolated into a
+// correlated sql template render unqualified (see known-pitfalls.md).
+function targetNotInOtherWorkspace(workspaceId: string) {
+	return sql`NOT EXISTS (
+		SELECT 1 FROM objects WHERE objects.id = relationships.target_id AND objects.workspace_id <> ${workspaceId}
+		UNION ALL
+		SELECT 1 FROM files WHERE files.id = relationships.target_id AND files.workspace_id <> ${workspaceId}
+		UNION ALL
+		SELECT 1 FROM conversations WHERE conversations.id = relationships.target_id AND conversations.workspace_id <> ${workspaceId}
+		UNION ALL
+		SELECT 1 FROM sessions WHERE sessions.id = relationships.target_id AND sessions.workspace_id <> ${workspaceId}
+	)`
+}
 
 function bucket(
 	kind: string,

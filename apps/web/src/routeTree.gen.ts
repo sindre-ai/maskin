@@ -17,6 +17,7 @@ import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
 import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
+import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
@@ -89,6 +90,11 @@ const ConnectSkjaldRoute = ConnectSkjaldRouteImport.update({
   id: '/connect/skjald',
   path: '/connect/skjald',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedWorkspacesRoute = AuthedWorkspacesRouteImport.update({
+  id: '/workspaces',
+  path: '/workspaces',
+  getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedWorkspaceIdRoute = AuthedWorkspaceIdRouteImport.update({
   id: '/$workspaceId',
@@ -285,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
+  '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
@@ -324,6 +331,7 @@ export interface FileRoutesByTo {
   '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
@@ -365,6 +373,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
+  '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
@@ -409,6 +418,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/$workspaceId'
+    | '/workspaces'
     | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
@@ -448,6 +458,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/login'
     | '/signup'
+    | '/workspaces'
     | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
@@ -488,6 +499,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/_authed/$workspaceId'
+    | '/_authed/workspaces'
     | '/connect/skjald'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
@@ -592,6 +604,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/connect/skjald'
       preLoaderRoute: typeof ConnectSkjaldRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authed/workspaces': {
+      id: '/_authed/workspaces'
+      path: '/workspaces'
+      fullPath: '/workspaces'
+      preLoaderRoute: typeof AuthedWorkspacesRouteImport
+      parentRoute: typeof AuthedRoute
     }
     '/_authed/$workspaceId': {
       id: '/_authed/$workspaceId'
@@ -928,11 +947,13 @@ const AuthedWorkspaceIdRouteWithChildren =
 
 interface AuthedRouteChildren {
   AuthedWorkspaceIdRoute: typeof AuthedWorkspaceIdRouteWithChildren
+  AuthedWorkspacesRoute: typeof AuthedWorkspacesRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedWorkspaceIdRoute: AuthedWorkspaceIdRouteWithChildren,
+  AuthedWorkspacesRoute: AuthedWorkspacesRoute,
   AuthedIndexRoute: AuthedIndexRoute,
 }
 
