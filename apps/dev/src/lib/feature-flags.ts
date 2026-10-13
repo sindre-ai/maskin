@@ -207,6 +207,17 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Gates the daily capability scan (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in
+	 * `services/capability-scanner.ts`. Off means no scanner work and no
+	 * `capability_*` event is written. On ({workspaceId}:capability-scan in
+	 * `FF_WORKSPACE_FEATURES`, then restart) the scan runs in shadow mode: it
+	 * writes snapshots and findings as events and messages nobody. Backend only,
+	 * no UI reads it. Retire once the scan is on for every workspace.
+	 */
+	CAPABILITY_SCAN: 'capability-scan',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

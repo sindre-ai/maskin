@@ -102,7 +102,7 @@ export async function redactActorToolsForCaller(
 
 // Rows saved before the schema defaulted `type` and `args` may lack them, while
 // the incoming body is always parsed, so compare the normalised form.
-function transportOf(server: JsonRecord): string {
+export function transportOf(server: JsonRecord): string {
 	return JSON.stringify([
 		server.type ?? (typeof server.url === 'string' ? 'http' : 'stdio'),
 		server.command ?? null,
