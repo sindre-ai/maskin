@@ -87,6 +87,8 @@ const ALL_TOOL_NAMES = [
 	'list_integration_providers',
 	'connect_integration',
 	'disconnect_integration',
+	'list_requestable_access',
+	'request_access',
 	'list_extensions',
 	'create_extension',
 	'update_extension',

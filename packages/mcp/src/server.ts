@@ -6345,6 +6345,48 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'list_requestable_access',
+		{
+			description: tools.list_requestable_access.description,
+			inputSchema: tools.list_requestable_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/access-requests/requestable', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('list_requestable_access', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'request_access',
+		{
+			description: tools.request_access.description,
+			inputSchema: tools.request_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/access-requests',
+				{ credential: args.credential, duration: args.duration, reason: args.reason },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('request_access', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
 	// ─── Extensions ──────────────────────────────────────────
 	registerAppTool(
 		server,
