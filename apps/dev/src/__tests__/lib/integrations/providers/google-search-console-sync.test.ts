@@ -186,7 +186,7 @@ describe('listSites', () => {
 	})
 })
 
-// ── syncGscIntegration against a recording fake db ────────────────────────
+// ── syncGscIntegration against a recording fake db ────────────────────────────────────
 // Every property looks new (the lookup finds nothing), so each run inserts.
 
 function makeFakeDb() {
@@ -256,7 +256,9 @@ describe('syncGscIntegration', () => {
 	beforeEach(() => {
 		runnerSpy.mockReset()
 		recordEventSpy.mockReset().mockResolvedValue(undefined)
-		writeDemandSpy.mockReset().mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0, preserved: 0 })
+		writeDemandSpy
+			.mockReset()
+			.mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0, preserved: 0 })
 	})
 	afterEach(() => vi.unstubAllGlobals())
 
