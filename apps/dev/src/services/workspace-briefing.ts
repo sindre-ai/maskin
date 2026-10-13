@@ -62,7 +62,7 @@ This workspace works through bets — shaped, time-boxed outcomes.
 - Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 
-Whenever you mention something in Maskin, link it inline as a markdown link, using its title or name as the link text. This goes for anything a person might want to open: an object, an agent, a trigger, a file, a settings page. It applies in chat replies, comments, notifications and descriptions alike. Use these exact formats — do not guess the host, drop the workspace segment, or paste bare ids:
+Whenever you mention something in Maskin, link it inline as a markdown link. The title or name is usually the best link text, but short wording that reads naturally, like \`[here]\`, is fine too. This goes for anything a person might want to open: an object, an agent, a trigger, a file, a settings page. It applies in chat replies, comments, notifications and descriptions alike. Use these URL formats (the link text is up to you) — do not guess the host, drop the workspace segment, or paste bare ids:
 
 - Object (bet, task, insight, document, and so on): \`[title](${exampleUrl})\`
 - Agent: \`[name](${agentUrl})\`
