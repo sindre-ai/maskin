@@ -727,7 +727,7 @@ function buildConversationReplyPrompt(ctx: {
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
 		'',
-		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. Keep it short and free of jargon. ${describeReplyExpectation(ctx)}`,
+		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. Keep it short and free of jargon, and never use the long dash (em dash). ${describeReplyExpectation(ctx)}`,
 		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
