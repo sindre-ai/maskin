@@ -986,6 +986,28 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// A default workspace is a personal preference: only the actor itself may set
+	// it, and only to a workspace it belongs to (null clears it).
+	if (body.default_workspace_id !== undefined) {
+		if (id !== actorId) {
+			return c.json(
+				createApiError('FORBIDDEN', 'Only an actor can change its own default workspace'),
+				403,
+			)
+		}
+		if (
+			body.default_workspace_id !== null &&
+			!(await isWorkspaceMember(db, id, body.default_workspace_id))
+		) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'You are not a member of that workspace', [
+					{ field: 'default_workspace_id', message: 'Not a member of this workspace' },
+				]),
+				400,
+			)
+		}
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1017,6 +1039,9 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
 			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
+			...(body.default_workspace_id !== undefined && {
+				defaultWorkspaceId: body.default_workspace_id,
+			}),
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1034,7 +1059,9 @@ app.openapi(updateActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
+			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
 	if (!updated) {
