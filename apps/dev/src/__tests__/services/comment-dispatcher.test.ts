@@ -454,8 +454,10 @@ describe('CommentDispatcher', () => {
 		await fire(baseEvent({ actor_id: 'agent-author' }))
 
 		expect(sessionManager.createSession).toHaveBeenCalledOnce()
-		const [, params] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock
-			.calls[0] as [string, Record<string, unknown>]
+		const [, params] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		]
 		expect(params.actorId).toBe(mentioned.id)
 		expect(params.triggerSource).toBe('comment_fallback')
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
