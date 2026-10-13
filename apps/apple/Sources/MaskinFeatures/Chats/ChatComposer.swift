@@ -64,7 +64,7 @@ struct ChatComposer: View {
 	@State var muted = false
 	/// The text from before the mic opened, put back by Discard.
 	@State var textBeforeDictation = ""
-	@State var dictationBase = ""
+	@State var dictationDraft = DictationDraft(base: "")
 	#if os(iOS)
 	@State var dictation = Dictation()
 	@State var live: LiveVoiceController?
@@ -399,9 +399,11 @@ extension ChatComposer {
 			return
 		}
 		textBeforeDictation = model.text
-		dictationBase = model.text
+		dictationDraft = DictationDraft(base: model.text)
 		Task {
-			await dictation.start(continuous: true) { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
+			await dictation.start(continuous: true) {
+				model.text = dictationDraft.apply(transcript: $0, field: model.text)
+			}
 			if case .unavailable(let message) = dictation.state {
 				voiceProblem = message
 				dictation.clearError()
@@ -416,7 +418,7 @@ extension ChatComposer {
 	/// Done: keep the text, ready to edit or send.
 	fileprivate func finishDictation() {
 		#if os(iOS)
-		dictation.stop()
+		dictation.stop(flush: true)
 		#endif
 		voice = .idle
 		focused = true
@@ -440,7 +442,8 @@ extension ChatComposer {
 		let controller = LiveVoiceController(
 			ports: LiveVoiceController.Ports(
 				startListening: { onText in
-					await dictation.start(onText: onText)
+					// Continuous: one pause must not end the recording and drop what was said before it.
+					await dictation.start(continuous: true, onText: onText)
 					if case .unavailable(let message) = dictation.state {
 						dictation.clearError()
 						return message
