@@ -626,6 +626,53 @@ describe('GET /api/access-requests/requestable', () => {
 	})
 })
 
+describe('GET /api/integrations/:id/audit-log detail', () => {
+	it('returns detail on tier_changed rows only, and null for every other action', async () => {
+		const w = await world()
+		const agent = await w.agent('Agent A')
+		const admin = await w.human('admin')
+		const cred = await credential(w)
+		const app = appFor(admin.id, 'human')
+		expect((await markTier(app, w.ws.id, cred.id, { tier: 2 })).status).toBe(200)
+		// A grant row carries approver and grant ids in detail; the route must not return them.
+		const grantId = '0a1b2c3d-0000-4000-8000-000000000000'
+		await db.transaction((tx) =>
+			insertCredentialAccessLog(tx, {
+				workspaceId: w.ws.id,
+				integrationId: cred.id,
+				actorId: agent.id,
+				action: 'grant_approved',
+				source: 'admin_ui',
+				requestId: 'test:grant_approved',
+				detail: `approver=${admin.id};grant=${grantId};tier=1;ext=`,
+			}),
+		)
+		await db.transaction((tx) =>
+			insertCredentialAccessLog(tx, {
+				workspaceId: w.ws.id,
+				integrationId: cred.id,
+				actorId: agent.id,
+				action: 'read',
+				source: 'admin_ui',
+				requestId: 'test:read',
+			}),
+		)
+
+		const res = await app.request(`/api/integrations/${cred.id}/audit-log`, {
+			headers: { 'x-workspace-id': w.ws.id },
+		})
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			entries: Array<{ action: string; detail: string | null }>
+		}
+		expect(body.entries.map((e) => [e.action, e.detail])).toEqual([
+			['read', null],
+			['grant_approved', null],
+			['tier_changed', 'approver=;grant=;tier=2;ext='],
+		])
+	})
+})
+
 describe('credential_access_log action CHECK (migration 0091)', () => {
 	it('accepts the new actions and the chain verifies across old and new rows', async () => {
 		const w = await world()

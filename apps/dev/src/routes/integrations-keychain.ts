@@ -738,6 +738,8 @@ const auditLogResponseSchema = z.object({
 			action: z.string(),
 			source: z.string(),
 			readAt: z.string(),
+			// Only tier_changed rows carry it (the new tier). Null for every other action.
+			detail: z.string().nullable(),
 		}),
 	),
 	nextBeforeId: z.string().nullable(),
@@ -789,6 +791,7 @@ app.openapi(auditLogRoute, (async (c) => {
 			action: credentialAccessLog.action,
 			source: credentialAccessLog.source,
 			readAt: credentialAccessLog.readAt,
+			detail: credentialAccessLog.detail,
 		})
 		.from(credentialAccessLog)
 		.where(and(...conditions))
@@ -809,6 +812,8 @@ app.openapi(auditLogRoute, (async (c) => {
 			action: r.action,
 			source: r.source,
 			readAt: r.readAt.toISOString(),
+			// Grant rows hold approver and grant ids, which this route does not expose.
+			detail: r.action === 'tier_changed' ? r.detail : null,
 		})),
 		nextBeforeId: rows.length > limit && last ? last.id.toString() : null,
 	})
