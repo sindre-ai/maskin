@@ -15,7 +15,6 @@ maskin_docker_absent_guard() {
 
 	case "$host" in
 		unix://*) socket="${host#unix://}" ;;
-		*://*) return 0 ;;
 		*) socket="$host" ;;
 	esac
 
