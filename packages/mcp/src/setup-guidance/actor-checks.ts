@@ -52,8 +52,7 @@ function skillsAttached(actor: ActorInput): SetupCheck | null {
 		return {
 			name: 'skills_attached',
 			status: 'warn',
-			message:
-				'This agent has only one skill attached — consider attaching more skills.',
+			message: 'This agent has only one skill attached — consider attaching more skills.',
 			fix: {
 				tool: 'update_actor',
 				args_hint: 'attach_skill_ids: ["<workspace skill id>"] (see list_workspace_skills)',
