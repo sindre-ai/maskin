@@ -52,7 +52,10 @@ function fakeBucket(opts: { denyList?: boolean } = {}) {
 			}
 		},
 	}
-	const store = new WormSnapshotStore({ bucket: 'worm', client: client as unknown as WormSnapshotStoreConfig['client'] })
+	const store = new WormSnapshotStore({
+		bucket: 'worm',
+		client: client as unknown as WormSnapshotStoreConfig['client'],
+	})
 	return { store, objects, sent, puts: () => sent.filter((n) => n === 'PutObjectCommand').length }
 }
 
@@ -143,9 +146,9 @@ describe('ChainSnapshotJob', () => {
 	it('listing returns no exact match: writes', async () => {
 		const s = await chainWorkspace()
 		const bucket = fakeBucket()
-		expect(await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(bucket.store, s.ws.id)).toBe(
-			'written',
-		)
+		expect(
+			await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(bucket.store, s.ws.id),
+		).toBe('written')
 		expect(bucket.puts()).toBe(1)
 	})
 
@@ -198,9 +201,11 @@ describe('ChainSnapshotJob', () => {
 
 	it('a broken chain fires the failure event and writes nothing', async () => {
 		const s = await chainWorkspace(3)
-		const second = (await sql<{ id: string }[]>`
+		const second = (
+			await sql<{ id: string }[]>`
 			SELECT id::text FROM credential_access_log WHERE workspace_id = ${s.ws.id} ORDER BY id OFFSET 1 LIMIT 1
-		`)[0] as { id: string }
+		`
+		)[0] as { id: string }
 		// Tamper as the table owner (the app role could not).
 		await sql`UPDATE credential_access_log SET request_id = 'edited' WHERE id = ${second.id}::bigint`
 		const bucket = fakeBucket()
@@ -249,7 +254,11 @@ describe('ChainSnapshotJob', () => {
 		const h = await head(s.ws.id)
 		bucket.objects.set(
 			snapshotKey(s.ws.id, '2026-10-01'),
-			JSON.stringify({ max_id: String(BigInt(h.id) + 1000n), row_hash: h.hash, date: '2026-10-01' }),
+			JSON.stringify({
+				max_id: String(BigInt(h.id) + 1000n),
+				row_hash: h.hash,
+				date: '2026-10-01',
+			}),
 		)
 
 		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(

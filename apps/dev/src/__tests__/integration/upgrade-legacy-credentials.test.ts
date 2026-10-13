@@ -164,7 +164,10 @@ describe('UpgradeLegacyCredentialsJob', () => {
 		// A token refresh lands between the job's read and its write.
 		beforeEncrypt = async (workspaceId) => {
 			if (workspaceId !== ws.id) return
-			await db.update(integrations).set({ credentials: refreshed }).where(eq(integrations.id, row.id))
+			await db
+				.update(integrations)
+				.set({ credentials: refreshed })
+				.where(eq(integrations.id, row.id))
 			beforeEncrypt = undefined
 		}
 
@@ -212,7 +215,9 @@ describe('UpgradeLegacyCredentialsJob', () => {
 	})
 
 	it('tick swallows a failing run', async () => {
-		const spy = vi.spyOn(UpgradeLegacyCredentialsJob.prototype, 'run').mockRejectedValue(new Error('boom'))
+		const spy = vi
+			.spyOn(UpgradeLegacyCredentialsJob.prototype, 'run')
+			.mockRejectedValue(new Error('boom'))
 		await expect(on().tick()).resolves.toBeUndefined()
 		spy.mockRestore()
 	})
