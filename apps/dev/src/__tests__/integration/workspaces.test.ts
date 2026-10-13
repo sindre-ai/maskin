@@ -339,6 +339,39 @@ describe('Workspaces Integration', () => {
 			expect(updated.settings.statuses).toBeDefined()
 		})
 
+		it('accepts and stores access_request_fallback_object_id, and rejects a non-uuid', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Fallback Object' }),
+			)
+			const ws = await createRes.json()
+			const objectId = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { access_request_fallback_object_id: objectId },
+				}),
+			)
+			expect(res.status).toBe(200)
+			expect((await res.json()).settings.access_request_fallback_object_id).toBe(objectId)
+
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, ws.id))
+			expect(
+				(row?.settings as { access_request_fallback_object_id?: string })
+					?.access_request_fallback_object_id,
+			).toBe(objectId)
+
+			const bad = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { access_request_fallback_object_id: 'not-a-uuid' },
+				}),
+			)
+			expect(bad.status).toBe(400)
+		})
+
 		it('returns 404 for nonexistent workspace', async () => {
 			const app = createApp()
 			const id = randomUUID()

@@ -83,6 +83,7 @@ import {
 	ScopeDeniedError,
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
+import { hasWorkspaceGrant, liveActorGrants } from '../lib/integrations/grants'
 import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
 import { getCredential } from '../lib/integrations/lookup'
 import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
@@ -2916,7 +2917,11 @@ export class SessionManager extends EventEmitter {
 	): Promise<Record<string, string>> {
 		const env: Record<string, string> = {}
 		const rows = await this.db
-			.select({ id: integrations.id, displayName: integrations.displayName })
+			.select({
+				id: integrations.id,
+				displayName: integrations.displayName,
+				scopeGrants: integrations.scopeGrants,
+			})
 			.from(integrations)
 			.where(
 				and(
@@ -2934,7 +2939,19 @@ export class SessionManager extends EventEmitter {
 			)
 			.orderBy(asc(integrations.createdAt))
 
-		for (const row of rows) {
+		// The SQL filter above matches an actor grant by containment, so it cannot see
+		// expiresAt. Drop a key whose only matching grants have expired, here, before
+		// getCredential would refuse it and log a denied read on every launch.
+		// Expiry is checked at launch only: a key already injected into a running
+		// session stays usable until that session ends (CTO-accepted Tier 1 limit).
+		const now = new Date()
+		const launchable = rows.filter(
+			(r) =>
+				hasWorkspaceGrant(r.scopeGrants) ||
+				liveActorGrants(r.scopeGrants, session.actorId, now).length > 0,
+		)
+
+		for (const row of launchable) {
 			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {

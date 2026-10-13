@@ -264,7 +264,7 @@ describe('PUT /api/integrations/:id/tier', () => {
 })
 
 describe('POST /api/access-requests', () => {
-	it('files a Tier 1 request: row at requested, tier stored, no approver, nothing on the chain', async () => {
+	it('files a Tier 1 request: row at requested, tier stored, no approver, one grant_requested row on the chain', async () => {
 		const w = await world()
 		const agent = await w.agent('Agent A')
 		const cred = await credential(w, { tier: 1 })
@@ -288,8 +288,15 @@ describe('POST /api/access-requests', () => {
 			grantId: null,
 			reason: 'blocked on the dashboard',
 		})
-		// Filing is not a grant event. The sibling approve task writes those.
-		expect(await chainRows(w.ws.id)).toHaveLength(0)
+		// A filed request is the first grant event. The approve and deny paths add the rest.
+		const chain = await chainRows(w.ws.id)
+		expect(chain).toHaveLength(1)
+		expect(chain[0]).toMatchObject({
+			action: 'grant_requested',
+			actorId: agent.id,
+			integrationId: cred.id,
+			detail: 'approver=;grant=;tier=1;ext=',
+		})
 	})
 
 	it('accepts session and a full seven days, and rejects eight', async () => {
@@ -353,7 +360,12 @@ describe('POST /api/access-requests', () => {
 		expect(stored).toMatchObject({ reason: injected, tier: 1, status: 'requested' })
 		const refusedRow = (await requestRows(w.ws.id)).find((r) => r.integrationId === unset.id)
 		expect(refusedRow).toMatchObject({ status: 'denied', tier: 2 })
-		expect(await chainRows(w.ws.id)).toHaveLength(0)
+		// Only the Tier 1 filing is on the chain, and its detail holds the tier from the record,
+		// not a word of the injected reason.
+		const chain = await chainRows(w.ws.id)
+		expect(chain.map((r) => [r.action, r.detail])).toEqual([
+			['grant_requested', 'approver=;grant=;tier=1;ext='],
+		])
 	})
 
 	it('reads the tier at request time and keeps the tier it saw at filing', async () => {
@@ -581,15 +593,15 @@ describe('POST /api/access-requests', () => {
 		}
 	})
 
-	it('writes nothing to the audit chain on any path, and the chain still verifies', async () => {
+	it('writes one chain row for a filed request and none for a refusal, and the chain still verifies', async () => {
 		const w = await world()
 		const agent = await w.agent('Agent A')
 		const app = appFor(agent.id, 'agent')
 		await request(app, w.ws.id, ask((await credential(w, { tier: 1 })).id))
 		await request(app, w.ws.id, ask((await credential(w)).id))
 		await request(app, w.ws.id, ask((await credential(w, { tier: 3 })).id))
-		expect(await chainRows(w.ws.id)).toHaveLength(0)
-		expect(await verifyCredentialAccessChain(db, w.ws.id)).toMatchObject({ ok: true, rows: 0 })
+		expect(await chainRows(w.ws.id)).toHaveLength(1)
+		expect(await verifyCredentialAccessChain(db, w.ws.id)).toMatchObject({ ok: true, rows: 1 })
 	})
 })
 

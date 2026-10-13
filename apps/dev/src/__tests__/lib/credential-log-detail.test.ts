@@ -58,10 +58,14 @@ describe('formatCredentialLogDetail', () => {
 
 describe('who may call the canonical writer', () => {
 	// The writer owns the text hashed into the audit chain. It is called from the
-	// getCredential and grant path and from the tier-marking route, which writes the
-	// tier only. A new caller is a decision, so it has to show up here on purpose.
+	// getCredential and grant path (grant-audit.ts, which every grant event goes
+	// through) and from the tier-marking route, which writes the tier only. A new
+	// caller is a decision, so it has to show up here on purpose.
 	const ALLOWED = new Set([
 		'lib/integrations/credential-log-detail.ts',
+		'jobs/keychain-grant-expiry-sweeper.ts',
+		'lib/integrations/grant-audit.ts',
+		'lib/integrations/lookup.ts',
 		'routes/integrations-keychain.ts',
 	])
 
