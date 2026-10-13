@@ -117,12 +117,19 @@ export LD_LIBRARY_PATH="$PG_VENDOR_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [ ! -d "$PG_DATA" ]; then
 	echo "bootstrap-local-devstack: initializing Postgres data dir..."
-	initdb -D "$PG_DATA" -U "$PG_USER" --auth=trust >"$LOG_DIR/initdb.log" 2>&1
+	# Force UTF8. Without it initdb inherits the sandbox locale, which is
+	# POSIX/C when LANG is unset, and picks SQL_ASCII. Migrations that use
+	# E'\uXXXX' escapes (0008_add_is_system_column.sql) then die with
+	# pg_unicode_to_server.
+	initdb -D "$PG_DATA" -U "$PG_USER" --auth=trust -E UTF8 --locale=C >"$LOG_DIR/initdb.log" 2>&1
 fi
 
 if ! pg_ctl -D "$PG_DATA" status >/dev/null 2>&1; then
 	echo "bootstrap-local-devstack: starting Postgres on port $PG_PORT..."
-	pg_ctl -D "$PG_DATA" -l "$LOG_DIR/postgres.log" -o "-p $PG_PORT" start
+	# Throwaway data: skip fsync. On an overlay-backed sandbox disk a
+	# checkpoint sync took 100 s and every integration test paid ~2.6 s for it.
+	pg_ctl -D "$PG_DATA" -l "$LOG_DIR/postgres.log" \
+		-o "-p $PG_PORT -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
 	for _ in $(seq 1 30); do
 		pg_isready -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" >/dev/null 2>&1 && break
 		sleep 0.5
@@ -133,12 +140,21 @@ if ! pg_ctl -D "$PG_DATA" status >/dev/null 2>&1; then
 	fi
 fi
 
-createdb_err="$(createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>&1)" || {
-	if ! grep -q "already exists" <<<"$createdb_err"; then
-		echo "bootstrap-local-devstack: createdb failed: $createdb_err" >&2
-		exit 1
-	fi
-}
+# A data dir created by an older run of this script is SQL_ASCII. The cluster
+# locale is C, so a UTF8 database can still be created from template0. Only
+# drop the old database when it is SQL_ASCII (this is a throwaway dev stack).
+# (psql is not usable here: the portable build needs libreadline, which a minimal
+# userland lacks. pg_dump only needs libpq, and -C prints the database's encoding.)
+db_encoding="$(pg_dump -C -s -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>/dev/null |
+	grep -m1 '^CREATE DATABASE' | sed -n "s/.*ENCODING = '\([A-Za-z0-9_]*\)'.*/\1/p" || true)"
+if [ -n "$db_encoding" ] && [ "$db_encoding" != "UTF8" ]; then
+	echo "bootstrap-local-devstack: database $PG_DB is $db_encoding, recreating as UTF8..."
+	dropdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" --force "$PG_DB"
+	db_encoding=""
+fi
+if [ -z "$db_encoding" ]; then
+	createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -T template0 -E UTF8 --locale=C "$PG_DB"
+fi
 
 # ---------------------------------------------------------------------------
 # SeaweedFS
@@ -169,7 +185,18 @@ s3_http_code() {
 	echo "$code"
 }
 
-if [ "$(s3_http_code)" = "000" ]; then
+weed_running() {
+	[ -f "$MASKIN_DEVSTACK_DIR/weed.pid" ] && kill -0 "$(cat "$MASKIN_DEVSTACK_DIR/weed.pid")" 2>/dev/null
+}
+
+# S3 only answers on its port once master, volume and filer are all up, which
+# can take well over 15 s on a loaded sandbox (pnpm install running alongside).
+# A second weed started while the first is still booting dies with
+# "bind: address already in use" on the master port and overwrites the log,
+# so only start one when no weed process of ours is alive.
+if [ "$(s3_http_code)" = "000" ] && weed_running; then
+	echo "bootstrap-local-devstack: SeaweedFS already starting (pid $(cat "$MASKIN_DEVSTACK_DIR/weed.pid")), waiting..."
+elif [ "$(s3_http_code)" = "000" ]; then
 	echo "bootstrap-local-devstack: starting SeaweedFS S3 on port $S3_PORT..."
 	mkdir -p "$WEED_DATA"
 	nohup "$WEED_DIR/weed" server \
@@ -184,14 +211,16 @@ if [ "$(s3_http_code)" = "000" ]; then
 		>"$LOG_DIR/seaweedfs.log" 2>&1 &
 	echo $! >"$MASKIN_DEVSTACK_DIR/weed.pid"
 	disown
-	for _ in $(seq 1 30); do
-		[ "$(s3_http_code)" != "000" ] && break
-		sleep 0.5
-	done
-	if [ "$(s3_http_code)" = "000" ]; then
-		echo "bootstrap-local-devstack: SeaweedFS did not become ready — see $LOG_DIR/seaweedfs.log" >&2
-		exit 1
-	fi
+fi
+
+for _ in $(seq 1 120); do
+	[ "$(s3_http_code)" != "000" ] && break
+	sleep 0.5
+done
+if [ "$(s3_http_code)" = "000" ]; then
+	echo "bootstrap-local-devstack: SeaweedFS did not become ready within 60 s — see $LOG_DIR/seaweedfs.log" >&2
+	grep -m1 '^F' "$LOG_DIR/seaweedfs.log" >&2 || true
+	exit 1
 fi
 
 # ---------------------------------------------------------------------------
