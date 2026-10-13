@@ -101,6 +101,23 @@ describe('ScopeEditorSheet', () => {
 		expect(onSave).toHaveBeenCalledWith([])
 	})
 
+	it('keeps the grants to people and loops when agents are changed', async () => {
+		const user = userEvent.setup()
+		const person = { kind: 'actor', actorId: 'a-person' } as const
+		const loop = { kind: 'loop', loopId: 'loop-1' } as const
+		const { onSave } = renderSheet({
+			grants: [person, loop, { kind: 'actor', actorId: 'agent-1' }],
+		})
+		await user.click(screen.getByRole('checkbox', { name: 'Infra & DevOps' }))
+		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
+		await user.click(screen.getByRole('button', { name: 'Save access' }))
+		expect(onSave).toHaveBeenLastCalledWith([person, loop, { kind: 'actor', actorId: 'agent-2' }])
+
+		await user.click(screen.getByRole('checkbox', { name: 'All agents in this workspace' }))
+		await user.click(screen.getByRole('button', { name: 'Save access' }))
+		expect(onSave).toHaveBeenLastCalledWith([person, loop, { kind: 'workspace' }])
+	})
+
 	it('shows a spinner state and disables the controls while saving', () => {
 		renderSheet({ saving: true })
 		expect(screen.getByRole('button', { name: 'Save access' })).toBeDisabled()

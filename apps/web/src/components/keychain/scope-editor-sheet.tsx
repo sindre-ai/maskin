@@ -92,9 +92,15 @@ function ScopeForm({
 			),
 	)
 
-	const next: KeychainScopeGrant[] = everyone
+	// The checklist only shows agents, so grants to people (the person who saved the key) and
+	// loops are not on screen. Saving replaces the list on the server, so send them back as they are.
+	const kept = grants.filter(
+		(g) => g.kind === 'loop' || (g.kind === 'actor' && !agents.some((a) => a.id === g.actorId)),
+	)
+	const ticked: KeychainScopeGrant[] = everyone
 		? [{ kind: 'workspace' }]
 		: agents.filter((a) => selected.has(a.id)).map((a) => ({ kind: 'actor', actorId: a.id }))
+	const next: KeychainScopeGrant[] = [...kept, ...ticked]
 	const count = countAgents(next, agents)
 
 	const toggle = (agentId: string) =>
