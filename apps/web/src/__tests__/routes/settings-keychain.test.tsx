@@ -424,6 +424,25 @@ describe('CredentialDetailPage', () => {
 		expect(screen.getByText('No reads yet')).toBeInTheDocument()
 	})
 
+	it('says No reads yet under the created row when nothing has read the credential', () => {
+		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
+		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
+		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
+		render(<CredentialDetailPage />)
+		expect(screen.getByText('Magnus added this credential.')).toBeInTheDocument()
+		expect(screen.getByText('No reads yet')).toBeInTheDocument()
+	})
+
+	it('does not say No reads yet once a read row exists', () => {
+		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
+		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
+		mockUseAuditLog.mockReturnValue(
+			auditLog([auditPage([{ action: 'read', actorId: 'agent-1', sessionId: 'aaaaaaaa-1' }])]),
+		)
+		render(<CredentialDetailPage />)
+		expect(screen.queryByText('No reads yet')).not.toBeInTheDocument()
+	})
+
 	it('says so when the audit log cannot load, without hiding the credential', () => {
 		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
 		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
