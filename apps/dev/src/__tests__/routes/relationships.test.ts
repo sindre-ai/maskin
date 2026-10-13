@@ -19,15 +19,24 @@ const { default: relationshipsRoutes } = await import('../../routes/relationship
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 
+// POST /api/relationships first asks which endpoint ids live in the caller's
+// workspace: one select on objects, one on files (queued in that order). Ids
+// found in objects need no further lookups.
+function endpointsInWorkspace(...ids: string[]) {
+	return [ids.map((id) => ({ id })), []]
+}
+
 describe('Relationships Routes', () => {
 	describe('POST /api/relationships', () => {
 		it('creates a relationship and returns 201', async () => {
 			const rel = buildRelationship()
-			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			const createBody = buildCreateRelationshipBody()
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [endpointsInWorkspace(createBody.source_id, createBody.target_id)]
 			mockResults.insert = [rel]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/relationships', buildCreateRelationshipBody(), {
+				jsonRequest('POST', '/api/relationships', createBody, {
 					'x-workspace-id': wsId,
 				}),
 			)
@@ -40,9 +49,15 @@ describe('Relationships Routes', () => {
 
 		it('resolves canonical types server-side, ignoring caller-supplied labels', async () => {
 			const rel = buildRelationship()
-			// No select mock needed — files query returns [] by default,
+			// After the workspace lookup the files query returns [] by default,
 			// so both endpoints resolve to 'object'
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [
+				endpointsInWorkspace(
+					'00000000-0000-0000-0000-000000000001',
+					'00000000-0000-0000-0000-000000000002',
+				),
+			]
 			mockResults.insert = [rel]
 
 			const res = await app.request(
@@ -76,11 +91,16 @@ describe('Relationships Routes', () => {
 			// then finds the existing row so the route returns 201 without
 			// firing the audit event or the ship-metric emit.
 			mockResults.insert = []
-			mockResults.selectQueue = [[], [rel]]
+			const createBody = buildCreateRelationshipBody()
+			mockResults.selectQueue = [
+				endpointsInWorkspace(createBody.source_id, createBody.target_id),
+				[], // files lookup for source_type/target_type resolution
+				[rel],
+			]
 			capturePosthogEventMock.mockClear()
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/relationships', buildCreateRelationshipBody(), {
+				jsonRequest('POST', '/api/relationships', createBody, {
 					'x-workspace-id': wsId,
 				}),
 			)
@@ -92,6 +112,35 @@ describe('Relationships Routes', () => {
 			// because that only fires when a fresh row comes back from the ON CONFLICT.
 			expect(calls.inserts).toHaveLength(1)
 			expect(capturePosthogEventMock).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 and writes nothing when the target is not in the workspace', async () => {
+			const createBody = buildCreateRelationshipBody()
+			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			// Only the source is found; the target lives in another workspace (or nowhere).
+			mockResults.selectQueue = [endpointsInWorkspace(createBody.source_id)]
+			mockResults.insert = [buildRelationship()]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/relationships', createBody, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 404 and writes nothing when the source is not in the workspace', async () => {
+			const createBody = buildCreateRelationshipBody()
+			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [endpointsInWorkspace(createBody.target_id)]
+			mockResults.insert = [buildRelationship()]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/relationships', createBody, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('auto-emits workspace_knowledge_referenced when a fresh derived_from targets a knowledge object', async () => {
@@ -107,9 +156,14 @@ describe('Relationships Routes', () => {
 			})
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
 			// Select order inside the handler:
-			//   1) files lookup for source_type/target_type resolution → []
-			//   2) hook's `objects` lookup on the target → knowledge row
-			mockResults.selectQueue = [[], [{ type: target.type, metadata: target.metadata }]]
+			//   1) objects + files lookup that scopes both endpoints to the workspace
+			//   2) files lookup for source_type/target_type resolution → []
+			//   3) hook's `objects` lookup on the target → knowledge row
+			mockResults.selectQueue = [
+				endpointsInWorkspace(source.id, target.id),
+				[],
+				[{ type: target.type, metadata: target.metadata }],
+			]
 			mockResults.insert = [rel]
 			capturePosthogEventMock.mockClear()
 
@@ -160,6 +214,7 @@ describe('Relationships Routes', () => {
 		it('does not auto-emit for non-derived_from edge types', async () => {
 			const rel = buildRelationship({ type: 'informs' })
 			const { app, mockResults, calls } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [endpointsInWorkspace(rel.sourceId, rel.targetId)]
 			mockResults.insert = [rel]
 			capturePosthogEventMock.mockClear()
 
