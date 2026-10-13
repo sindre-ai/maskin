@@ -24655,6 +24655,144 @@ public enum Operations {
                     }
                 }
             }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/relationships/POST/responses/404/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_relationships.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_relationships.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_relationships.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Source or target not found in the workspace
+            ///
+            /// - Remark: Generated from `#/paths//api/relationships/post/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.post_sol_api_sol_relationships.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.post_sol_api_sol_relationships.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
             public struct InternalServerError: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/relationships/POST/responses/500/content`.
                 @frozen public enum Body: Sendable, Hashable {
@@ -34189,6 +34327,8 @@ public enum Operations {
                         public var stripe_subscription_id: Swift.String?
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/credit_balance_cents`.
                         public var credit_balance_cents: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/credit_topup_available`.
+                        public var credit_topup_available: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon`.
                         public struct linkedin_identity_addonPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon/count`.
@@ -34232,6 +34372,7 @@ public enum Operations {
                         ///   - stripe_customer_id:
                         ///   - stripe_subscription_id:
                         ///   - credit_balance_cents:
+                        ///   - credit_topup_available:
                         ///   - linkedin_identity_addon:
                         public init(
                             plan: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.planPayload,
@@ -34243,6 +34384,7 @@ public enum Operations {
                             stripe_customer_id: Swift.String? = nil,
                             stripe_subscription_id: Swift.String? = nil,
                             credit_balance_cents: Swift.Int,
+                            credit_topup_available: Swift.Bool,
                             linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil
                         ) {
                             self.plan = plan
@@ -34254,6 +34396,7 @@ public enum Operations {
                             self.stripe_customer_id = stripe_customer_id
                             self.stripe_subscription_id = stripe_subscription_id
                             self.credit_balance_cents = credit_balance_cents
+                            self.credit_topup_available = credit_topup_available
                             self.linkedin_identity_addon = linkedin_identity_addon
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -34266,6 +34409,7 @@ public enum Operations {
                             case stripe_customer_id
                             case stripe_subscription_id
                             case credit_balance_cents
+                            case credit_topup_available
                             case linkedin_identity_addon
                         }
                     }
@@ -34920,7 +35064,7 @@ public enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/entity_id`.
                     public var entity_id: Swift.String
-                    /// Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
+                    /// Keep it short: lead with the point, keep only what changes the reader's decision, plain words, and never use the long dash (em dash). Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
                     ///
                     /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/content`.
                     public var content: Swift.String
@@ -35100,7 +35244,7 @@ public enum Operations {
                     ///
                     /// - Parameters:
                     ///   - entity_id: Object ID to post the comment on.
-                    ///   - content: Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
+                    ///   - content: Keep it short: lead with the point, keep only what changes the reader's decision, plain words, and never use the long dash (em dash). Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
                     ///   - mentions: Array of actor UUIDs. For each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. Every id must come from a live list_actors call — never retype a UUID from memory, from your system prompt, or from an earlier message, because a single wrong character silently mentions nobody. Ids that match no actor are dropped and reported back in the response's `unresolved_mentions`; if you see that field, look the actor up with list_actors and post a follow-up comment with the corrected mention.
                     ///   - parent_event_id: Set this to thread a reply under an existing comment (use the id returned by get_comments). If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply instead of one long comment.
                     ///   - attachment_file_ids: First upload files with create_file (or pick existing ones with list_files) and pass the returned file ids here (max 10). Attached files appear as clickable cards under the posted comment.

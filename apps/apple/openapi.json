@@ -15857,6 +15857,63 @@
 							}
 						}
 					},
+					"404": {
+						"description": "Source or target not found in the workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"500": {
 						"description": "Internal server error",
 						"content": {
@@ -22724,6 +22781,9 @@
 											"type": "integer",
 											"minimum": 0
 										},
+										"credit_topup_available": {
+											"type": "boolean"
+										},
 										"linkedin_identity_addon": {
 											"type": [
 												"object",
@@ -22760,6 +22820,7 @@
 										"stripe_customer_id",
 										"stripe_subscription_id",
 										"credit_balance_cents",
+										"credit_topup_available",
 										"linkedin_identity_addon"
 									]
 								}
@@ -24942,7 +25003,7 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 2000,
-										"description": "Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ \"type\": \"bar\" | \"line\" | \"area\", \"x\": \"<x-field>\", \"series\": [\"<series1>\", ...], \"data\": [{ \"<x-field>\": ..., \"<series1>\": <number>, ... }], \"caption\": \"optional short label\" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small \"couldn't render chart\" note without breaking the comment."
+										"description": "Keep it short: lead with the point, keep only what changes the reader's decision, plain words, and never use the long dash (em dash). Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ \"type\": \"bar\" | \"line\" | \"area\", \"x\": \"<x-field>\", \"series\": [\"<series1>\", ...], \"data\": [{ \"<x-field>\": ..., \"<series1>\": <number>, ... }], \"caption\": \"optional short label\" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small \"couldn't render chart\" note without breaking the comment."
 									},
 									"mentions": {
 										"type": "array",
@@ -30426,6 +30487,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -33957,7 +34075,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace not found",
+						"description": "Workspace, or an edge source or target, not found",
 						"content": {
 							"application/json": {
 								"schema": {

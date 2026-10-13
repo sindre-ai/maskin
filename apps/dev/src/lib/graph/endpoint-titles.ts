@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { conversations, objects, sessions } from '@maskin/db/schema'
-import { inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 // Batch-resolvable graph endpoint kinds. `file` is deliberately excluded —
 // Task 1 owns file title hydration through its own helper (colocated with the
@@ -22,11 +22,16 @@ export type EndpointKind = 'object' | 'conversation' | 'session'
  *    shape sessions can hit only for the internal "resume from snapshot"
  *    path today; kept as a defensive branch)
  *
+ * Every lookup is scoped to `workspaceId`: an id that belongs to another
+ * workspace resolves to no title, so a forged or legacy cross-workspace edge
+ * cannot leak a foreign title through the read paths.
+ *
  * File hydration is handled separately by Task 1's helper — this function is
  * additive to that path, not a replacement.
  */
 export async function resolveEndpointTitles(
 	dbOrTx: Database | Transaction,
+	workspaceId: string,
 	ids: {
 		objectIds?: readonly string[]
 		conversationIds?: readonly string[]
@@ -39,7 +44,7 @@ export async function resolveEndpointTitles(
 		const rows = await dbOrTx
 			.select({ id: objects.id, title: objects.title })
 			.from(objects)
-			.where(inArray(objects.id, [...ids.objectIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...ids.objectIds])))
 		for (const row of rows) out.set(row.id, row.title ?? null)
 	}
 
@@ -47,7 +52,12 @@ export async function resolveEndpointTitles(
 		const rows = await dbOrTx
 			.select({ id: conversations.id, title: conversations.title })
 			.from(conversations)
-			.where(inArray(conversations.id, [...ids.conversationIds]))
+			.where(
+				and(
+					eq(conversations.workspaceId, workspaceId),
+					inArray(conversations.id, [...ids.conversationIds]),
+				),
+			)
 		for (const row of rows) out.set(row.id, row.title ?? null)
 	}
 
@@ -55,7 +65,7 @@ export async function resolveEndpointTitles(
 		const rows = await dbOrTx
 			.select({ id: sessions.id, actionPrompt: sessions.actionPrompt })
 			.from(sessions)
-			.where(inArray(sessions.id, [...ids.sessionIds]))
+			.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.id, [...ids.sessionIds])))
 		for (const row of rows) out.set(row.id, sessionTitleFrom(row.actionPrompt, row.id))
 	}
 

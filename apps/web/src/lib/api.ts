@@ -1203,6 +1203,9 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// False when the credit top-up Price isn't configured on the server; the
+	// "Buy usage credits" entry points are hidden in that case.
+	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
 	// `linkedin-addon-visible` flag is off OR the workspace has no connected
@@ -2107,6 +2110,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {
