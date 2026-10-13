@@ -22,6 +22,7 @@ import {
 } from '../lib/openapi-schemas'
 import { deriveEndpointKinds, findEndpointIdsInWorkspace } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
+import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
 import { autoSubscribe } from '../services/subscriptions'
 
@@ -151,6 +152,14 @@ app.openapi(createGraphRoute, async (c) => {
 			)
 		}
 		resolvedStatuses.set(node.$id, resolved)
+
+		const taskStatusError = checkTaskInitialStatus({
+			type: node.type,
+			status: resolved,
+			actorId,
+			field: `nodes[${node.$id}].status`,
+		})
+		if (taskStatusError) return c.json(taskStatusError, 400)
 
 		const validStatuses = statuses?.[node.type]
 		if (validStatuses && !validStatuses.includes(resolved)) {
