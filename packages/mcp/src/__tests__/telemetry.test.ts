@@ -171,6 +171,8 @@ describe('MCP telemetry wrapper', () => {
 			'connect_integration',
 			'disconnect_integration',
 			'request_access',
+			'approve_access_request',
+			'deny_access_request',
 			'stop_session',
 			'pause_session',
 			'resume_session',

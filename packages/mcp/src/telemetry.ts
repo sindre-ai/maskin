@@ -439,6 +439,8 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
 	request_access: 'access_request',
+	approve_access_request: 'access_approve',
+	deny_access_request: 'access_deny',
 	// Sessions
 	create_session: 'session_create',
 	stop_session: 'session_stop',

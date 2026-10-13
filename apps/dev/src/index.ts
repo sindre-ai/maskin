@@ -8,6 +8,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { AccessRequestTimeoutJob } from './jobs/access-request-timeout'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainGrantExpirySweeperJob } from './jobs/keychain-grant-expiry-sweeper'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
@@ -240,6 +241,11 @@ const keychainGrantExpirySweeperJob = new KeychainGrantExpirySweeperJob(db)
 keychainGrantExpirySweeperJob.start()
 logger.info('Keychain grant expiry sweeper started')
 
+// Access requests: an unanswered Tier 1 request is closed after an hour and goes to a human.
+const accessRequestTimeoutJob = new AccessRequestTimeoutJob(db, sessionManager)
+accessRequestTimeoutJob.start()
+logger.info('Access request timeout job started')
+
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
 // unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
 const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
@@ -390,6 +396,8 @@ const shutdown = async (signal: string) => {
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
 	keychainGrantExpirySweeperJob.stop()
+
+	accessRequestTimeoutJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()

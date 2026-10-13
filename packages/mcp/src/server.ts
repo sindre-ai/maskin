@@ -6387,6 +6387,63 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'get_access_request',
+		{
+			description: tools.get_access_request.description,
+			inputSchema: tools.get_access_request.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', `/api/access-requests/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('get_access_request', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'approve_access_request',
+		{
+			description: tools.approve_access_request.description,
+			inputSchema: tools.approve_access_request.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'POST', `/api/access-requests/${args.id}/approve`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('approve_access_request', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'deny_access_request',
+		{
+			description: tools.deny_access_request.description,
+			inputSchema: tools.deny_access_request.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'POST', `/api/access-requests/${args.id}/deny`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('deny_access_request', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
 	// ─── Extensions ──────────────────────────────────────────
 	registerAppTool(
 		server,
