@@ -9,13 +9,16 @@ struct NewChatSheet: View {
 	let store: ConversationsStore
 	let currentActorID: String?
 	var prefill = ""
-	let onCreated: (ConversationSummary) -> Void
+	/// `live` is true when the person chose Live: the caller opens the conversation straight into a call.
+	let onCreated: (ConversationSummary, _ live: Bool) -> Void
 
 	@Environment(\.dismiss) private var dismiss
 	@State private var draft = NewConversationDraft()
 	@State private var message = ""
 	@State private var isCreating = false
 	@State private var error: String?
+	@State private var query = ""
+	@FocusState private var searchFocused: Bool
 	@FocusState private var messageFocused: Bool
 	#if os(iOS)
 	@State private var dictation = Dictation()
@@ -33,13 +36,32 @@ struct NewChatSheet: View {
 			&& message.count <= ChatLimits.maxMessageLength && !isCreating
 	}
 
+	/// People and agents still offered, narrowed and ranked by what was typed.
+	private var matches: [ChatActor] {
+		ActorSearch.filter(draft.addable(from: store.actors, excluding: currentActorID), query: query) {
+			$0.participant.name
+		}
+	}
+
+	private var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+	/// Live needs exactly one agent to talk to.
+	private var liveLead: ChatActor? {
+		recipients.count == 1 && recipients[0].participant.kind == .agent && !isCreating ? recipients[0] : nil
+	}
+
 	var body: some View {
 		NavigationStack {
 			ScrollView {
 				VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 					section("To") { toRow }
-					let addable = draft.addable(from: store.actors, excluding: currentActorID)
-					if !addable.isEmpty { section("Add someone") { addRow(addable) } }
+					searchField
+					let addable = matches
+					if !addable.isEmpty {
+						section(isSearching ? "Matches" : "Add someone") { addRow(addable) }
+					} else if isSearching {
+						Text("No matches.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					}
 					if let error { FormError(error) }
 					messageBox
 				}
@@ -59,7 +81,8 @@ struct NewChatSheet: View {
 				await store.loadActors()
 				draft.applyDefault(actors: store.actors, excluding: currentActorID)
 				if message.isEmpty { message = prefill }
-				messageFocused = true
+				// Type to find who to talk to; a prefilled message (a build request) goes straight to the text.
+				if prefill.isEmpty { searchFocused = true } else { messageFocused = true }
 			}
 			.onDisappear {
 				#if os(iOS)
@@ -108,6 +131,47 @@ struct NewChatSheet: View {
 		}
 	}
 
+	/// Type a name to narrow the row below. Return adds the best match; with nobody to add, it
+	/// sends (or moves to the message when there is nothing to send yet).
+	private var searchField: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			Image(systemName: "magnifyingglass").foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
+			TextField("Find a person or agent", text: $query)
+				.focused($searchFocused)
+				.submitLabel(isSearching ? .done : .send)
+				.autocorrectionDisabled()
+				#if os(iOS)
+				.textInputAutocapitalization(.never)
+				#endif
+				.onSubmit { submitSearch() }
+			if isSearching {
+				Button {
+					query = ""
+				} label: {
+					Image(systemName: "xmark.circle.fill").foregroundStyle(MaskinColor.ink5)
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Clear search")
+			}
+		}
+		.padding(.horizontal, MaskinSpace.s7)
+		.padding(.vertical, MaskinSpace.s5)
+		.background(MaskinSurface.fill, in: Capsule())
+	}
+
+	private func submitSearch() {
+		if isSearching {
+			guard let top = matches.first else { return }
+			draft.toggle(top.id)
+			query = ""
+			MaskinHaptics.play(.selection)
+		} else if canSend {
+			Task { await create() }
+		} else if !recipients.isEmpty {
+			messageFocused = true
+		}
+	}
+
 	/// Everyone else, one tap to add.
 	private func addRow(_ actors: [ChatActor]) -> some View {
 		ScrollView(.horizontal, showsIndicators: false) {
@@ -150,6 +214,15 @@ struct NewChatSheet: View {
 				HStack {
 					micButton
 					Spacer()
+					if liveLead != nil {
+						Button {
+							Task { await create(live: true) }
+						} label: {
+							Label("Live", systemImage: "waveform").labelStyle(.titleAndIcon)
+						}
+						.buttonStyle(.bordered)
+						.accessibilityLabel("Start live")
+					}
 					Button {
 						Task { await create() }
 					} label: {
@@ -244,9 +317,9 @@ struct NewChatSheet: View {
 		#endif
 	}
 
-	private func create() async {
+	private func create(live: Bool = false) async {
 		let people = recipients
-		guard !people.isEmpty else { return }
+		guard !people.isEmpty, !isCreating else { return }
 		#if os(iOS)
 		dictation.stop()
 		#endif
@@ -256,9 +329,9 @@ struct NewChatSheet: View {
 		do {
 			let created = try await store.create(
 				title: ThreadLayout.defaultTitle(for: people.map(\.participant.name)),
-				participantIDs: people.map(\.id), firstMessage: message)
+				participantIDs: people.map(\.id), firstMessage: live ? nil : message)
 			MaskinHaptics.play(.success)
-			onCreated(created)
+			onCreated(created, live)
 			dismiss()
 		} catch {
 			self.error = (error as? ChatsError)?.message ?? error.localizedDescription

@@ -55,6 +55,7 @@ private struct ChatsContainer: View {
 	@State private var showNewChat = false
 	@State private var pendingText = ""
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.liveMeeting) private var liveMeeting
 	@Binding var requestedConversationId: String?
 
 	init(
@@ -117,8 +118,15 @@ private struct ChatsContainer: View {
 		.sheet(isPresented: $showNewChat, onDismiss: { pendingText = "" }) {
 			NewChatSheet(
 				store: store, currentActorID: environment.auth.session?.actorId, prefill: pendingText
-			) { created in
+			) { created, live in
 				selection = created.id
+				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
+					// The cover opens once the sheet has finished dismissing.
+					Task {
+						try? await Task.sleep(for: .milliseconds(450))
+						liveMeeting.present(.conversation(id: created.id, lead: lead))
+					}
+				}
 			}
 			.presentationDetents([.medium, .large])
 		}
