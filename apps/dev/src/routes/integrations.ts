@@ -15,6 +15,10 @@ import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
+import {
+	trackSkjaldMeetingIngested,
+	trackSkjaldWebhookRejected,
+} from '../lib/analytics/skjald-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -2920,6 +2924,10 @@ webhookApp.post('/skjald/:token', async (c) => {
 		.limit(1)
 
 	if (!integration) {
+		void trackSkjaldWebhookRejected({
+			reason: 'unknown_token',
+			eventType: c.req.header('x-skjald-event'),
+		})
 		return c.json(createApiError('NOT_FOUND', 'Unknown webhook'), 404)
 	}
 
@@ -2927,6 +2935,12 @@ webhookApp.post('/skjald/:token', async (c) => {
 	const headers: Record<string, string> = {}
 	for (const [key, value] of Object.entries(c.req.header())) {
 		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+	const eventType = headers['x-skjald-event']
+	const rejectedBase = {
+		workspaceId: integration.workspaceId,
+		integrationId: integration.id,
+		eventType,
 	}
 
 	const secret = decrypt(integration.credentials)
@@ -2939,6 +2953,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 	})
 	if (!verified) {
 		logger.warn('Skjald webhook: signature verification failed', { integrationId: integration.id })
+		void trackSkjaldWebhookRejected({ ...rejectedBase, reason: 'invalid_signature' })
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
 
@@ -2955,10 +2970,10 @@ webhookApp.post('/skjald/:token', async (c) => {
 	try {
 		payload = JSON.parse(body)
 	} catch {
+		void trackSkjaldWebhookRejected({ ...rejectedBase, reason: 'invalid_json' })
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
 	}
 
-	const eventType = headers['x-skjald-event']
 	const deliveryId = headers['x-skjald-delivery-id'] ?? null
 
 	// Claim the delivery before processing so a retry that arrives while this
@@ -3048,6 +3063,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 	}
 	if (!upsertMeeting) {
 		await releaseClaim()
+		void trackSkjaldWebhookRejected({ ...rejectedBase, reason: 'invalid_payload' })
 		return c.json(createApiError('BAD_REQUEST', `Invalid ${eventType} payload`), 400)
 	}
 
@@ -3068,6 +3084,12 @@ webhookApp.post('/skjald/:token', async (c) => {
 			claimRowId,
 		})
 
+		void trackSkjaldMeetingIngested({
+			workspaceId: integration.workspaceId,
+			integrationId: integration.id,
+			eventType,
+			action: result.action,
+		})
 		return c.json({ ok: true })
 	} catch (err) {
 		if (err instanceof ClaimReleasedError) {
