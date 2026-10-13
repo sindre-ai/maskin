@@ -392,7 +392,8 @@ export class AwsKmsProvider implements KmsProvider {
 					return
 				} catch (err) {
 					const mapped = this.mapError(err)
-					if (!(mapped instanceof KmsAccessError) || Date.now() + intervalMs > deadline) throw mapped
+					if (!(mapped instanceof KmsAccessError) || Date.now() + intervalMs > deadline)
+						throw mapped
 					await sleep(intervalMs)
 				}
 			}

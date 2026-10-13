@@ -439,6 +439,7 @@ export type CredentialAccessAction =
 	| 'undone'
 	| 'rotated'
 	| 'sweeper_activated'
+	| 'scope_changed'
 	| 'tier_changed'
 	| 'grant_requested'
 	| 'grant_approved'
@@ -492,7 +493,7 @@ export type AccessRequestStatus = 'requested' | 'approved' | 'denied' | 'expired
  * and is never interpreted: no route decision, approver rule or audit detail is
  * derived from it. session_id is the blocked run and is a hint only, never an
  * input to a decision. A request the route refuses itself is written as denied
- * with no approver. See migration 0091.
+ * with no approver. See migration 0092.
  */
 export const accessRequests = pgTable(
 	'access_requests',

@@ -1,11 +1,11 @@
--- Rollback for 0091_access_requests.sql.
+-- Rollback for 0092_access_requests.sql.
 --
 -- PRECONDITION: DESTRUCTIVE for two things.
 --   1. access_requests is dropped with all its rows.
---   2. Restoring the five-action CHECK FAILS while credential_access_log holds a
---      row with tier_changed or a grant_* action. That table is the tamper-evident
---      audit chain and its rows are never deleted or edited, so there is no
---      automatic answer: leave the wider CHECK in place (skip the last two
+--   2. Restoring the six-action CHECK (the one 0091_credential_access_log_scope_changed
+--      leaves) FAILS while credential_access_log holds a row with tier_changed or a
+--      grant_* action. That table is the tamper-evident audit chain and its rows
+--      are never deleted or edited, so there is no automatic answer: leave the wider CHECK in place (skip the last two
 --      statements) rather than touch the chain.
 --
 -- Lives under drizzle/down/ so the forward runner never sees it.
@@ -23,4 +23,4 @@ ALTER TABLE "integrations"
 --> statement-breakpoint
 ALTER TABLE "credential_access_log" DROP CONSTRAINT IF EXISTS "credential_access_log_action_enum";
 --> statement-breakpoint
-ALTER TABLE "credential_access_log" ADD CONSTRAINT "credential_access_log_action_enum" CHECK ("action" IN ('read', 'create', 'undone', 'rotated', 'sweeper_activated'));
+ALTER TABLE "credential_access_log" ADD CONSTRAINT "credential_access_log_action_enum" CHECK ("action" IN ('read', 'create', 'undone', 'rotated', 'sweeper_activated', 'scope_changed'));

@@ -8,6 +8,7 @@ import {
 } from '@/components/keychain/keychain-parts'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
@@ -41,7 +42,7 @@ function AddCredentialButton({ workspaceId, label }: { workspaceId: string; labe
 function KeychainPage() {
 	useDocumentTitle('Keychain')
 	const { workspaceId } = useWorkspace()
-	const { data: integrations, isLoading } = useIntegrations(workspaceId)
+	const { data: integrations, isLoading, isError, error, refetch } = useIntegrations(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const actorName = (actorId: string) => actors?.find((a) => a.id === actorId)?.name
 
@@ -64,6 +65,12 @@ function KeychainPage() {
 
 			{isLoading ? (
 				<ListSkeleton />
+			) : isError && !integrations ? (
+				<QueryStateError
+					title="Couldn't load your credentials"
+					error={error}
+					onRetry={() => refetch()}
+				/>
 			) : credentials.length === 0 ? (
 				<div className="flex flex-col items-center rounded-lg border border-border px-4 py-10 text-center">
 					<div className="text-4xl" aria-hidden>
@@ -95,7 +102,7 @@ function KeychainPage() {
 								Connect a service you own; bring your OAuth app, we run the dance.
 							</p>
 						</li>
-						<li className="rounded-lg border border-primary bg-muted p-3">
+						<li className="rounded-lg border border-brand/40 bg-brand-subtle p-3">
 							<div aria-hidden>💬</div>
 							<div className="mt-2 flex items-center gap-1.5 text-sm font-semibold">
 								Chat capture <Badge className="px-1.5 py-0 text-[10px]">NEW</Badge>

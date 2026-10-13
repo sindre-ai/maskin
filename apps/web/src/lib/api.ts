@@ -499,6 +499,12 @@ export const api = {
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
 				{ workspaceId },
 			),
+		updateScope: (id: string, workspaceId: string, scopeGrants: KeychainScopeGrant[]) =>
+			request<{ id: string; scopeGrants: KeychainScopeGrant[] }>(`/integrations/${id}/scope`, {
+				method: 'PUT',
+				body: { scopeGrants },
+				workspaceId,
+			}),
 		undo: (id: string, workspaceId: string) =>
 			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(`/integrations/${id}/undo`, {
 				method: 'POST',
@@ -1685,6 +1691,7 @@ export interface CredentialAuditEntry {
 		| 'undone'
 		| 'rotated'
 		| 'sweeper_activated'
+		| 'scope_changed'
 		| 'tier_changed'
 		| 'grant_requested'
 		| 'grant_approved'
@@ -2201,6 +2208,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {
