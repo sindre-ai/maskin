@@ -296,7 +296,10 @@ struct ChatComposer: View {
 					switch slot {
 					case .mic: micButton.transition(.opacity)
 					case .send: sendButton.transition(.opacity)
-					case .stop: stopButton.transition(.opacity)
+					case .stop:
+						// Stopping the agent must not take dictation away: with an empty field, both stay.
+						if showsVoiceControls && onGoLive == nil { micButton.transition(.opacity) }
+						stopButton.transition(.opacity)
 					}
 				}
 			}
