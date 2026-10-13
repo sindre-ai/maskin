@@ -125,7 +125,7 @@ describe('default workspace', () => {
 		await db.update(actors).set({ defaultWorkspaceId: ws.id }).where(eq(actors.id, me.id))
 
 		await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, ws.id))
-	await db.delete(workspaces).where(eq(workspaces.id, ws.id))
+		await db.delete(workspaces).where(eq(workspaces.id, ws.id))
 
 		const [row] = await db
 			.select({ id: actors.defaultWorkspaceId })
