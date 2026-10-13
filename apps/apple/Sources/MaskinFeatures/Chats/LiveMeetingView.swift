@@ -53,6 +53,15 @@ struct LiveMeetingScreen: View {
 				LiveMeetingSession(
 					kind: .adHoc, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
 				ownsChat: false)
+		case .conversation(let id, let lead):
+			guard let chat = BriefingChat.chatStore(conversationID: id, environment: environment) else {
+				phase = .failed("Choose a workspace first.")
+				return
+			}
+			phase = .ready(
+				LiveMeetingSession(
+					kind: .adHoc, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
+				ownsChat: true)
 		case .dailyBriefing, .chiefOfStaff:
 			let kind: LiveMeetingKind
 			if case .chiefOfStaff = request { kind = .adHoc } else { kind = .dailyBriefing }
@@ -113,6 +122,17 @@ enum BriefingChat {
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
 			cache: environment.snapshotCache)
 		return (chat, chief.participant)
+	}
+
+	/// The thread store for a conversation that already exists. Nil without a workspace or sign-in.
+	static func chatStore(conversationID: String, environment: AppEnvironment) -> ChatStore? {
+		guard let workspaceID = environment.workspaceId, let session = environment.auth.session else { return nil }
+		return ChatStore(
+			conversationID: conversationID, currentActorID: session.actorId,
+			currentActorName: session.name,
+			api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
+			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
+			cache: environment.snapshotCache)
 	}
 }
 
