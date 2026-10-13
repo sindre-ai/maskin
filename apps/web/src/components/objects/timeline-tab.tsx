@@ -341,10 +341,11 @@ export function TimelineTab({
 	}, [graph?.files])
 
 	// Replies are bucketed under their parent comment so threads stay intact
-	// inside the single stream.
+	// inside the single stream. Events arrive newest-first, but a thread reads
+	// top-down, so replies are bucketed oldest-first (parents stay newest-first).
 	const repliesByParent = useMemo(() => {
 		const replies = new Map<number, EventResponse[]>()
-		for (const event of events ?? []) {
+		for (const event of [...(events ?? [])].reverse()) {
 			if (event.action !== 'commented') continue
 			const parentId = event.data?.parentEventId as number | undefined
 			if (!parentId) continue
