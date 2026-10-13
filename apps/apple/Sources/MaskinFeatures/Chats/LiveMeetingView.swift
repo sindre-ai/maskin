@@ -121,18 +121,23 @@ enum BriefingChat {
 			currentActorName: session.name, api: source,
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
 			cache: environment.snapshotCache)
+		chat.trace = ActivityStore(
+			source: HTTPSessionActivitySource(environment: environment), cache: environment.snapshotCache)
 		return (chat, chief.participant)
 	}
 
 	/// The thread store for a conversation that already exists. Nil without a workspace or sign-in.
 	static func chatStore(conversationID: String, environment: AppEnvironment) -> ChatStore? {
 		guard let workspaceID = environment.workspaceId, let session = environment.auth.session else { return nil }
-		return ChatStore(
+		let chat = ChatStore(
 			conversationID: conversationID, currentActorID: session.actorId,
 			currentActorName: session.name,
 			api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
 			cache: environment.snapshotCache)
+		chat.trace = ActivityStore(
+			source: HTTPSessionActivitySource(environment: environment), cache: environment.snapshotCache)
+		return chat
 	}
 }
 

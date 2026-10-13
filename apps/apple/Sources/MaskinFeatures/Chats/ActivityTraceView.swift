@@ -150,29 +150,64 @@ struct LiveActivityView: View {
 	/// Indent of the steps: past the 26pt avatar.
 	static let stepIndent: CGFloat = MaskinSpace.s13 + MaskinSpace.s4
 
+	/// The turn whose step list is open; opening is remembered per turn while it is live.
+	@State private var openTurnID: String?
+
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			header
-			Group {
-				if let turn, !turn.steps.isEmpty {
-					let shown = Array(turn.steps.suffix(Self.visibleSteps))
-					ActivitySteps {
-						if turn.steps.count > shown.count {
-							Text("\(turn.steps.count - shown.count) earlier")
-								.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-						}
-						ForEach(shown) { step in
-							ActivityStepRow(step: step, emphasized: step.id == turn.currentStep?.id)
-						}
-					}
-				} else if let fallbackActivity, !fallbackActivity.isEmpty {
-					Text(fallbackActivity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
-				}
+			TimelineView(.periodic(from: .now, by: 5)) { context in
+				line(LiveActivityLine.resolve(
+					turn: turn, fallbackActivity: fallbackActivity, startedAt: startedAt, now: context.date))
 			}
 			.padding(.leading, Self.stepIndent)
+			if isOpen, let turn, !turn.steps.isEmpty {
+				let shown = Array(turn.steps.suffix(Self.visibleSteps))
+				ActivitySteps {
+					if turn.steps.count > shown.count {
+						Text("\(turn.steps.count - shown.count) earlier")
+							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+					}
+					ForEach(shown) { step in
+						ActivityStepRow(step: step, emphasized: step.id == turn.currentStep?.id)
+					}
+				}
+				.padding(.leading, Self.stepIndent)
+				.transition(.opacity)
+			}
 		}
 		.animation(MaskinMotion.quick, value: turn?.steps.map(\.id))
 		.accessibilityElement(children: .contain)
+	}
+
+	private var turnKey: String { turn?.id ?? "none" }
+	private var canOpen: Bool { turn?.steps.isEmpty == false }
+	private var isOpen: Bool { canOpen && openTurnID == turnKey }
+
+	/// One line: the newest step (or Starting… / Still working…), a chevron once there is a list to
+	/// open. Tap opens the steps in place; tap again closes.
+	private func line(_ line: LiveActivityLine) -> some View {
+		Button {
+			withAnimation(MaskinMotion.quick) { openTurnID = isOpen ? nil : turnKey }
+		} label: {
+			HStack(spacing: MaskinSpace.s3) {
+				Text(line.text).maskinText(.caption)
+					.foregroundStyle(line.phase == .stalled ? MaskinColor.ink5 : MaskinColor.ink4)
+					.lineLimit(1).truncationMode(.tail)
+				if canOpen {
+					Image(systemName: "chevron.down").font(.caption2)
+						.rotationEffect(.degrees(isOpen ? 180 : 0))
+						.foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
+				}
+				Spacer(minLength: 0)
+			}
+			.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s8, alignment: .leading)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.disabled(!canOpen)
+		.accessibilityLabel("Latest activity, \(line.text)")
+		.accessibilityHint(canOpen ? (isOpen ? "Hide steps" : "Show steps") : "")
 	}
 
 	/// "is writing a reply" while the newest step is the agent's own words, else "is working on it".
