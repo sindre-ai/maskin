@@ -14,12 +14,20 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { accountDeletionPreviewSchema, deleteAccountSchema } from '@maskin/shared'
-import { and, count, eq, inArray, ne } from 'drizzle-orm'
-import { type MembershipFacts, accountDeletionPreview } from '../lib/account-deletion'
+import type { StorageProvider } from '@maskin/storage'
+import { eq } from 'drizzle-orm'
+import { accountDeletionPreview, isSoleHuman } from '../lib/account-deletion'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { loadMembershipFacts } from '../lib/membership-facts'
 import { errorSchema } from '../lib/openapi-schemas'
+import {
+	type WorkspacePurgeResult,
+	evictPurgedWorkspace,
+	purgeWorkspace,
+	purgeWorkspaceStorage,
+} from '../lib/workspace-purge'
 
 // Deleting your own account (App Store guideline 5.1.1(v): an app that offers sign-up must let the
 // person delete the account from inside the app).
@@ -31,6 +39,8 @@ import { errorSchema } from '../lib/openapi-schemas'
 //   - It does NOT delete what they wrote or created. Objects, comments, messages and files belong
 //     to the workspaces they were made in; they stay, attributed to "Deleted user". Rewriting other
 //     people's workspaces is not ours to do, and the actor row is what keeps those records intact.
+//   - Opt-in (`delete_sole_workspaces`): every workspace the person is the only human in is
+//     erased with them, content and all, via `purgeWorkspace`. Without the flag those stay.
 //   - It refuses while the person is the billing owner of a workspace other people use (transfer
 //     ownership first) or of a workspace with a live plan (cancel it first).
 
@@ -39,6 +49,7 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -47,49 +58,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 /** What a deleted person is called everywhere their name still appears. */
 export const DELETED_ACTOR_NAME = 'Deleted user'
 
-async function loadMemberships(db: Database, actorId: string): Promise<MembershipFacts[]> {
-	const mine = await db
-		.select({
-			workspaceId: workspaces.id,
-			workspaceName: workspaces.name,
-			billingOwnerId: workspaces.billingOwnerId,
-			settings: workspaces.settings,
-		})
-		.from(workspaceMembers)
-		.innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
-		.where(eq(workspaceMembers.actorId, actorId))
-	if (mine.length === 0) return []
-
-	const others = await db
-		.select({ workspaceId: workspaceMembers.workspaceId, n: count() })
-		.from(workspaceMembers)
-		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
-		.where(
-			and(
-				inArray(
-					workspaceMembers.workspaceId,
-					mine.map((m) => m.workspaceId),
-				),
-				eq(actors.type, 'human'),
-				ne(workspaceMembers.actorId, actorId),
-			),
-		)
-		.groupBy(workspaceMembers.workspaceId)
-	const otherCount = new Map(others.map((o) => [o.workspaceId, Number(o.n)]))
-
-	return mine.map((m) => {
-		const settings = m.settings as { billing?: MembershipFacts['billing'] } | null
-		const billing = settings?.billing
-		return {
-			workspaceId: m.workspaceId,
-			workspaceName: m.workspaceName,
-			billingOwnerId: m.billingOwnerId,
-			otherHumanMembers: otherCount.get(m.workspaceId) ?? 0,
-			billing: billing && typeof billing === 'object' ? billing : null,
-		}
-	})
-}
-
 // MARK: preview
 
 const previewRoute = createRoute({
@@ -97,6 +65,15 @@ const previewRoute = createRoute({
 	path: '/deletion-preview',
 	tags: ['Account'],
 	summary: 'What deleting my account would do, and what stops it',
+	request: {
+		query: z.object({
+			// Same flag the delete request carries, so the blockers match what that request would decide.
+			delete_sole_workspaces: z
+				.enum(['true', 'false'])
+				.optional()
+				.transform((v) => v === 'true'),
+		}),
+	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: accountDeletionPreviewSchema } },
@@ -110,8 +87,12 @@ app.openapi(previewRoute, async (c) => {
 	if (c.get('actorType') !== 'human') {
 		return c.json(createApiError('FORBIDDEN', 'Only a person has an account to delete'), 403)
 	}
-	const memberships = await loadMemberships(c.get('db'), c.get('actorId'))
-	return c.json(accountDeletionPreview(c.get('actorId'), memberships), 200)
+	const { delete_sole_workspaces: deleteSoleWorkspaces } = c.req.valid('query')
+	const memberships = await loadMembershipFacts(c.get('db'), c.get('actorId'))
+	return c.json(
+		accountDeletionPreview(c.get('actorId'), memberships, { deleteSoleWorkspaces }),
+		200,
+	)
 })
 
 // MARK: delete
@@ -149,7 +130,7 @@ app.openapi(deleteRoute, async (c) => {
 	if (c.get('actorType') !== 'human') {
 		return c.json(createApiError('FORBIDDEN', 'Only a person has an account to delete'), 403)
 	}
-	const { password } = c.req.valid('json')
+	const { password, delete_sole_workspaces: deleteSoleWorkspaces } = c.req.valid('json')
 
 	const [actor] = await db.select().from(actors).where(eq(actors.id, actorId)).limit(1)
 	if (!actor || actor.type !== 'human' || !actor.passwordHash) {
@@ -169,12 +150,34 @@ app.openapi(deleteRoute, async (c) => {
 			.limit(1)
 		if (!locked) return { kind: 'gone' as const }
 
+		// Workspaces about to be erased are locked too, so nobody can be added to one between the
+		// "only human" check and the purge.
+		if (deleteSoleWorkspaces) {
+			await tx
+				.select({ id: workspaces.id })
+				.from(workspaceMembers)
+				.innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+				.where(eq(workspaceMembers.actorId, actorId))
+				.orderBy(workspaces.id)
+				.for('update', { of: workspaces })
+		}
+
 		// Decided inside the lock, from the same facts the preview shows.
-		const memberships = await loadMemberships(tx as unknown as Database, actorId)
-		const preview = accountDeletionPreview(actorId, memberships)
+		const memberships = await loadMembershipFacts(tx as unknown as Database, actorId)
+		const preview = accountDeletionPreview(actorId, memberships, { deleteSoleWorkspaces })
 		if (!preview.can_delete) return { kind: 'blocked' as const, preview }
 
+		const purged: { workspaceId: string; result: WorkspacePurgeResult }[] = []
+		if (deleteSoleWorkspaces) {
+			for (const m of memberships.filter(isSoleHuman)) {
+				purged.push({ workspaceId: m.workspaceId, result: await purgeWorkspace(tx, m.workspaceId) })
+			}
+		}
+		const purgedIds = new Set(purged.map((p) => p.workspaceId))
+
 		for (const m of memberships) {
+			// A purged workspace takes its audit trail with it; its deletion is logged after commit.
+			if (purgedIds.has(m.workspaceId)) continue
 			await recordEvent(tx, {
 				workspaceId: m.workspaceId,
 				actorId,
@@ -216,7 +219,8 @@ app.openapi(deleteRoute, async (c) => {
 		return {
 			kind: 'deleted' as const,
 			oldApiKey: locked.apiKey,
-			workspaceIds: memberships.map((m) => m.workspaceId),
+			workspaceIds: memberships.map((m) => m.workspaceId).filter((id) => !purgedIds.has(id)),
+			purged,
 		}
 	})
 
@@ -236,7 +240,16 @@ app.openapi(deleteRoute, async (c) => {
 	evictApiKey(result.oldApiKey)
 	evictActor(actorId)
 	for (const workspaceId of result.workspaceIds) evictMembership(actorId, workspaceId)
-	logger.info('account: deleted', { actorId, workspaces: result.workspaceIds.length })
+	for (const p of result.purged) {
+		evictPurgedWorkspace(p.workspaceId, p.result)
+		logger.info('account: workspace deleted with account', { actorId, workspaceId: p.workspaceId })
+		await purgeWorkspaceStorage(c.get('storageProvider'), p.workspaceId, p.result)
+	}
+	logger.info('account: deleted', {
+		actorId,
+		workspaces: result.workspaceIds.length,
+		deletedWorkspaces: result.purged.length,
+	})
 	return c.json({ deleted: true as const }, 200)
 })
 

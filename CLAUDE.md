@@ -120,8 +120,8 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `POST /api/actors` — signup, returns API key (agents: caller API key + workspace_id, born as a member)
 
 ### Account (`/api/account`, signed-in humans only)
-- `GET /api/account/deletion-preview` — the workspaces you would leave and anything blocking deletion
-- `POST /api/account/delete` — delete your own account (password required): erases name, email, password and key; what you wrote stays, attributed to "Deleted user"
+- `GET /api/account/deletion-preview` — the workspaces you would leave (with `will_delete` for ones only you are in) and anything blocking deletion; optional `?delete_sole_workspaces=true`
+- `POST /api/account/delete` — delete your own account (password required): erases name, email, password and key; what you wrote stays, attributed to "Deleted user"; with `delete_sole_workspaces: true` the workspaces only you are in are hard-deleted too
 
 ### Actors (`/api/actors`)
 - `GET /api/actors` — list actors
@@ -142,6 +142,8 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `POST /api/workspaces` — create workspace
 - `GET /api/workspaces` — list workspaces for current actor
 - `PATCH /api/workspaces/:id` — update workspace
+- `GET /api/workspaces/:id/deletion-preview` — what deleting the workspace would do and what blocks it (billing owner only; live plan blocks)
+- `POST /api/workspaces/:id/delete` — hard-delete the workspace and everything in it (billing owner only, human only; body `{ confirm_name }` must equal the workspace name; 400 on mismatch, 403 non-owner, 409 live plan). Purge logic and its coverage guard: `apps/dev/src/lib/workspace-purge.ts`
 - `POST /api/workspaces/:id/members` — add member
 - `GET /api/workspaces/:id/members` — list members
 

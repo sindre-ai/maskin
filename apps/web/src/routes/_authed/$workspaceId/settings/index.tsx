@@ -1,9 +1,11 @@
+import { DeleteWorkspaceDialog } from '@/components/settings/delete-workspace-dialog'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -58,6 +60,41 @@ function GeneralPage() {
 
 			<Separator className="my-6" />
 			<PrivacySection />
+
+			{workspace.billingOwnerId !== null && workspace.billingOwnerId === getStoredActor()?.id && (
+				<>
+					<Separator className="my-6" />
+					<DangerSection />
+				</>
+			)}
+		</div>
+	)
+}
+
+function DangerSection() {
+	const { workspace, workspaceId } = useWorkspace()
+	const [open, setOpen] = useState(false)
+
+	return (
+		<div>
+			<h2 className="settings-label mb-1.5">DANGER ZONE</h2>
+			<div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+				<div className="min-w-0">
+					<span className="block text-[12.5px] font-semibold">Delete this workspace</span>
+					<span className="text-xs text-muted-foreground">
+						Permanently deletes the workspace and everything in it.
+					</span>
+				</div>
+				<Button variant="destructive" onClick={() => setOpen(true)}>
+					Delete workspace
+				</Button>
+			</div>
+			<DeleteWorkspaceDialog
+				workspaceId={workspaceId}
+				workspaceName={workspace.name}
+				open={open}
+				onOpenChange={setOpen}
+			/>
 		</div>
 	)
 }

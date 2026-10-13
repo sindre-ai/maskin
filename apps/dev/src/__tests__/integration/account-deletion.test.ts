@@ -201,4 +201,95 @@ describe('account deletion (integration)', () => {
 		})
 		expect((await del()).status).toBe(200)
 	})
+
+	describe('with delete_sole_workspaces', () => {
+		const delAll = (a = app) =>
+			a.request(
+				jsonRequest('POST', '/api/account/delete', {
+					password: PASSWORD,
+					delete_sole_workspaces: true,
+				}),
+			)
+
+		async function workspaceRows(workspaceId: string) {
+			return db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		}
+
+		it('erases the workspaces only you are in, with their content, and leaves shared ones', async () => {
+			const solo = await insertWorkspace(db, me.id, { name: 'Solo' })
+			const soloObj = await insertObject(db, solo.id, me.id)
+			const colleague = await insertActor(db, { type: 'human' })
+			const shared = await insertWorkspace(db, colleague.id, { name: 'Shared' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: shared.id, actorId: me.id, role: 'member' })
+			const sharedObj = await insertObject(db, shared.id, me.id)
+
+			const preview = await app.request(
+				jsonGet('/api/account/deletion-preview?delete_sole_workspaces=true'),
+			)
+			const body = (await preview.json()) as {
+				can_delete: boolean
+				leaving: Array<{ workspace_name: string; will_delete: boolean }>
+			}
+			expect(body.can_delete).toBe(true)
+			expect(
+				Object.fromEntries(body.leaving.map((l) => [l.workspace_name, l.will_delete])),
+			).toEqual({ Solo: true, Shared: false })
+
+			const res = await delAll()
+			expect(res.status).toBe(200)
+
+			expect(await workspaceRows(solo.id)).toEqual([])
+			expect(await db.select().from(objects).where(eq(objects.id, soloObj.id))).toEqual([])
+			expect(await workspaceRows(shared.id)).toHaveLength(1)
+			expect(await db.select().from(objects).where(eq(objects.id, sharedObj.id))).toHaveLength(1)
+			const [after] = await db.select().from(actors).where(eq(actors.id, me.id))
+			expect(after?.name).toBe('Deleted user')
+		})
+
+		it('keeps a sole workspace when the flag is not set', async () => {
+			const solo = await insertWorkspace(db, me.id)
+			expect((await del()).status).toBe(200)
+			expect(await workspaceRows(solo.id)).toHaveLength(1)
+		})
+
+		it('is blocked by a live plan on a workspace it would delete, and deletes nothing', async () => {
+			const solo = await insertWorkspace(db, me.id, { name: 'Free' })
+			const paid = await insertWorkspace(db, me.id, {
+				name: 'Paid',
+				settings: { billing: { plan: 'pro', stripe_subscription_id: 'sub_1', status: 'active' } },
+			})
+			const res = await delAll()
+			expect(res.status).toBe(409)
+			expect(await workspaceRows(solo.id)).toHaveLength(1)
+			expect(await workspaceRows(paid.id)).toHaveLength(1)
+			const [after] = await db.select().from(actors).where(eq(actors.id, me.id))
+			expect(after?.name).not.toBe('Deleted user')
+		})
+
+		it('still needs a transfer for a shared workspace you pay for', async () => {
+			const solo = await insertWorkspace(db, me.id, { name: 'Free' })
+			const team = await insertWorkspace(db, me.id, { name: 'Team' })
+			const colleague = await insertActor(db, { type: 'human' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: team.id, actorId: colleague.id, role: 'member' })
+			const res = await delAll()
+			expect(res.status).toBe(409)
+			expect(await workspaceRows(solo.id)).toHaveLength(1)
+		})
+
+		it('rolls back the purge if the wrong password was given', async () => {
+			const solo = await insertWorkspace(db, me.id)
+			const res = await app.request(
+				jsonRequest('POST', '/api/account/delete', {
+					password: 'nope',
+					delete_sole_workspaces: true,
+				}),
+			)
+			expect(res.status).toBe(401)
+			expect(await workspaceRows(solo.id)).toHaveLength(1)
+		})
+	})
 })

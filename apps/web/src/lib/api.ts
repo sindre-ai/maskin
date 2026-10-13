@@ -1,4 +1,5 @@
 import type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
@@ -14,9 +15,11 @@ import type {
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 } from '@maskin/shared'
 
 export type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
@@ -31,6 +34,7 @@ export type {
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -304,6 +308,15 @@ export const api = {
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
+	account: {
+		deletionPreview: (deleteSoleWorkspaces = false) =>
+			request<AccountDeletionPreview>(
+				`/account/deletion-preview${deleteSoleWorkspaces ? '?delete_sole_workspaces=true' : ''}`,
+			),
+		delete: (data: { password: string; delete_sole_workspaces?: boolean }) =>
+			request<{ deleted: true }>('/account/delete', { method: 'POST', body: data }),
+	},
+
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
@@ -428,6 +441,13 @@ export const api = {
 					method: 'DELETE',
 				}),
 		},
+		deletionPreview: (workspaceId: string) =>
+			request<WorkspaceDeletionPreview>(`/workspaces/${workspaceId}/deletion-preview`),
+		delete: (workspaceId: string, confirmName: string) =>
+			request<{ deleted: true }>(`/workspaces/${workspaceId}/delete`, {
+				method: 'POST',
+				body: { confirm_name: confirmName },
+			}),
 		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
 			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
 				method: 'POST',

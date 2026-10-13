@@ -20,6 +20,11 @@ export function hasLiveSubscription(billing: MembershipFacts['billing']): boolea
 	return billing.status !== 'canceled'
 }
 
+/** Nobody else human is in the workspace, so it is the one the person can take with them. */
+export function isSoleHuman(m: Pick<MembershipFacts, 'otherHumanMembers'>): boolean {
+	return m.otherHumanMembers === 0
+}
+
 /**
  * What stops this person deleting their account.
  *
@@ -31,9 +36,22 @@ export function hasLiveSubscription(billing: MembershipFacts['billing']): boolea
 export function accountDeletionPreview(
 	actorId: string,
 	memberships: MembershipFacts[],
+	options: { deleteSoleWorkspaces?: boolean } = {},
 ): AccountDeletionPreview {
 	const blockers: AccountDeletionBlocker[] = []
 	for (const m of memberships) {
+		// A workspace that will be deleted with the account takes its plan with it, whoever pays:
+		// the subscription must be cancelled first or it would bill a workspace that no longer exists.
+		if (options.deleteSoleWorkspaces && isSoleHuman(m) && m.billingOwnerId !== actorId) {
+			if (hasLiveSubscription(m.billing)) {
+				blockers.push({
+					code: 'cancel_plan',
+					workspace_id: m.workspaceId,
+					workspace_name: m.workspaceName,
+				})
+			}
+			continue
+		}
 		if (m.billingOwnerId !== actorId) continue
 		if (m.otherHumanMembers > 0) {
 			blockers.push({
@@ -56,6 +74,7 @@ export function accountDeletionPreview(
 			workspace_id: m.workspaceId,
 			workspace_name: m.workspaceName,
 			other_members: m.otherHumanMembers,
+			will_delete: isSoleHuman(m),
 		})),
 	}
 }

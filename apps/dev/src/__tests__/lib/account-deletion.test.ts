@@ -42,7 +42,12 @@ describe('accountDeletionPreview', () => {
 		expect(preview.can_delete).toBe(true)
 		expect(preview.blockers).toEqual([])
 		expect(preview.leaving).toEqual([
-			{ workspace_id: expect.any(String), workspace_name: 'Acme', other_members: 3 },
+			{
+				workspace_id: expect.any(String),
+				workspace_name: 'Acme',
+				other_members: 3,
+				will_delete: false,
+			},
 		])
 	})
 
@@ -108,5 +113,55 @@ describe('accountDeletionPreview', () => {
 			'A:transfer_ownership',
 			'B:cancel_plan',
 		])
+	})
+})
+
+describe('accountDeletionPreview with delete_sole_workspaces', () => {
+	it('marks only the workspaces nobody else is in as will_delete', () => {
+		const preview = accountDeletionPreview(ME, [
+			membership({ workspaceName: 'Solo', otherHumanMembers: 0 }),
+			membership({ workspaceName: 'Team', billingOwnerId: 'other', otherHumanMembers: 2 }),
+		])
+		expect(preview.leaving.map((l) => `${l.workspace_name}:${l.will_delete}`)).toEqual([
+			'Solo:true',
+			'Team:false',
+		])
+	})
+
+	it('blocks on a live plan in a sole workspace someone else pays for, only when it would be deleted', () => {
+		const facts = membership({
+			billingOwnerId: 'someone-else',
+			billing: { stripe_subscription_id: 'sub_1', status: 'active' },
+		})
+		expect(accountDeletionPreview(ME, [facts]).can_delete).toBe(true)
+		const preview = accountDeletionPreview(ME, [facts], { deleteSoleWorkspaces: true })
+		expect(preview.blockers.map((b) => b.code)).toEqual(['cancel_plan'])
+	})
+
+	it('does not block a shared workspace you do not pay for, flag or not', () => {
+		const facts = membership({
+			billingOwnerId: 'someone-else',
+			otherHumanMembers: 1,
+			billing: { stripe_subscription_id: 'sub_1', status: 'active' },
+		})
+		expect(accountDeletionPreview(ME, [facts], { deleteSoleWorkspaces: true }).can_delete).toBe(
+			true,
+		)
+	})
+
+	it('still demands a transfer for a shared workspace you pay for', () => {
+		const preview = accountDeletionPreview(ME, [membership({ otherHumanMembers: 1 })], {
+			deleteSoleWorkspaces: true,
+		})
+		expect(preview.blockers.map((b) => b.code)).toEqual(['transfer_ownership'])
+	})
+
+	it('reports a cancel_plan blocker once, for a sole workspace you pay for', () => {
+		const preview = accountDeletionPreview(
+			ME,
+			[membership({ billing: { stripe_subscription_id: 'sub_1', status: 'active' } })],
+			{ deleteSoleWorkspaces: true },
+		)
+		expect(preview.blockers.map((b) => b.code)).toEqual(['cancel_plan'])
 	})
 })
