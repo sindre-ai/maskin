@@ -73,6 +73,8 @@ private struct MeetingLockScreenView: View {
 				MeetingTimer(state: state).maskinText(.headline)
 			}
 			.accessibilityElement(children: .combine)
+			// Spec 1-iPhone: lock screen shows name, timer and level bars above Mute and End.
+			LiveActivityLevelBars(muted: state.muted)
 			MeetingActions(state: state, openURL: openURL)
 		}
 	}
