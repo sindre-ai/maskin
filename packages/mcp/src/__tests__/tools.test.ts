@@ -76,7 +76,6 @@ const ALL_TOOL_NAMES = [
 	'stop_session',
 	'pause_session',
 	'resume_session',
-	'run_agent',
 	'create_notification',
 	'list_notifications',
 	'get_notification',
@@ -629,61 +628,46 @@ describe('update_actor schema', () => {
 
 describe('create_session schema', () => {
 	const schema = tools.create_session.inputSchema
+	const base = { workspace_id: uuid, actor_id: uuid, action_prompt: 'Test' }
 
-	it('requires actor_id and action_prompt', () => {
-		const result = schema.parse({
-			actor_id: uuid,
-			action_prompt: 'Fix bugs',
-		})
+	it('requires workspace_id, actor_id and action_prompt', () => {
+		const result = schema.parse({ ...base, action_prompt: 'Fix bugs' })
 		expect(result.actor_id).toBe(uuid)
-		expect(result.auto_start).toBe(true)
-	})
-
-	it('defaults auto_start to true', () => {
-		const result = schema.parse({ actor_id: uuid, action_prompt: 'Test' })
-		expect(result.auto_start).toBe(true)
+		expect(() => schema.parse({ actor_id: uuid, action_prompt: 'Test' })).toThrow()
 	})
 
 	it('rejects empty action_prompt', () => {
-		expect(() => schema.parse({ actor_id: uuid, action_prompt: '' })).toThrow()
+		expect(() => schema.parse({ ...base, action_prompt: '' })).toThrow()
 	})
 
-	it('accepts optional config', () => {
-		const result = schema.parse({
-			actor_id: uuid,
-			action_prompt: 'Test',
-			config: { runtime: 'codex', timeout_seconds: 300 },
-		})
-		expect(result.config?.runtime).toBe('codex')
+	it('no longer exposes config, trigger_id, auto_start or the wait tuning fields', () => {
+		const keys = Object.keys(schema.shape)
+		for (const gone of [
+			'config',
+			'trigger_id',
+			'auto_start',
+			'initiated_from_object_type',
+			'depends_on_session_ids',
+			'poll_interval_seconds',
+			'wait_timeout_seconds',
+		]) {
+			expect(keys).not.toContain(gone)
+		}
 	})
 
-	it('rejects timeout below 30', () => {
-		expect(() =>
-			schema.parse({
-				actor_id: uuid,
-				action_prompt: 'Test',
-				config: { timeout_seconds: 10 },
-			}),
-		).toThrow()
+	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
+		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
+		expect(schema.parse(base).notify_on_complete).toBeUndefined()
+		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
 	})
 
-	it('accepts previewGuestPorts alongside browserRequired', () => {
-		const result = schema.parse({
-			actor_id: uuid,
-			action_prompt: 'Test',
-			config: { browserRequired: true, previewGuestPorts: [5173] },
-		})
-		expect(result.config?.previewGuestPorts).toEqual([5173])
+	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {
+		expect(schema.parse({ ...base, wait: true }).wait).toBe(true)
+		expect(schema.parse(base).wait).toBeUndefined()
 	})
 
-	it('rejects previewGuestPorts entries above 65535', () => {
-		expect(() =>
-			schema.parse({
-				actor_id: uuid,
-				action_prompt: 'Test',
-				config: { previewGuestPorts: [70000] },
-			}),
-		).toThrow()
+	it('accepts spawned_by_message_id', () => {
+		expect(schema.parse({ ...base, spawned_by_message_id: 42 }).spawned_by_message_id).toBe(42)
 	})
 })
 
@@ -761,26 +745,6 @@ describe('list_sessions schema', () => {
 		if (!result.success) {
 			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
 		}
-	})
-})
-
-describe('run_agent schema', () => {
-	const schema = tools.run_agent.inputSchema
-
-	it('requires actor_id and action_prompt', () => {
-		const result = schema.parse({ actor_id: uuid, action_prompt: 'Do task' })
-		expect(result.poll_interval_seconds).toBe(5)
-		expect(result.timeout_seconds).toBe(660)
-	})
-
-	it('rejects poll_interval below 2', () => {
-		expect(() =>
-			schema.parse({
-				actor_id: uuid,
-				action_prompt: 'Do',
-				poll_interval_seconds: 1,
-			}),
-		).toThrow()
 	})
 })
 
@@ -972,6 +936,41 @@ describe('create_trigger schema', () => {
 				target_actor_id: uuid,
 			}),
 		).toThrow()
+	})
+})
+
+describe('trigger prompt guidance', () => {
+	const guidance = 'A good trigger prompt starts with what the run is for.'
+	// create_loop wraps steps in a default, update_loop in an optional.
+	// biome-ignore lint/suspicious/noExplicitAny: unwrapping zod wrappers by shape
+	const stepPrompt = (steps: any): string =>
+		(steps.removeDefault?.() ?? steps.unwrap()).element.shape.prompt.description
+
+	it('is suggested on create_trigger and update_trigger action_prompt', () => {
+		expect(tools.create_trigger.inputSchema.shape.action_prompt.description).toContain(guidance)
+		expect(tools.update_trigger.inputSchema.shape.action_prompt.description).toContain(guidance)
+	})
+
+	it('is suggested on the inline step prompt of create_loop and update_loop', () => {
+		expect(stepPrompt(tools.create_loop.inputSchema.shape.steps)).toContain(guidance)
+		expect(stepPrompt(tools.update_loop.inputSchema.shape.add_steps)).toContain(guidance)
+	})
+
+	it('is suggested on the close_condition of create_loop and update_loop', () => {
+		const text = 'Runs in this loop are shown this text, so say what done looks like.'
+		expect(tools.create_loop.inputSchema.shape.close_condition.description).toContain(text)
+		expect(tools.update_loop.inputSchema.shape.close_condition.description).toContain(text)
+	})
+
+	it('does not reject a prompt that ignores it', () => {
+		const result = tools.create_trigger.inputSchema.parse({
+			name: 'Daily',
+			type: 'cron',
+			config: { expression: '0 0 * * *' },
+			action_prompt: 'Check',
+			target_actor_id: uuid,
+		})
+		expect(result.action_prompt).toBe('Check')
 	})
 })
 

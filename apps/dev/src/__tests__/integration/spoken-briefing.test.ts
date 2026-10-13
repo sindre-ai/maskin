@@ -95,10 +95,8 @@ describe('spoken briefing', () => {
 				title: 'Support tickets spike on Mondays',
 			})
 
-			const facts = await collectBriefingFacts(db, storage, workspaceId)
-			expect(formatAgentBriefing(facts)).toBe(
-				await renderWorkspaceBriefing(db, storage, workspaceId),
-			)
+			const facts = await collectBriefingFacts(db, workspaceId)
+			expect(formatAgentBriefing(facts)).toBe(await renderWorkspaceBriefing(db, workspaceId))
 		})
 
 		it('carries child-task progress only on active bets', async () => {
@@ -136,13 +134,13 @@ describe('spoken briefing', () => {
 				type: 'breaks_into',
 			})
 
-			const facts = await collectBriefingFacts(db, storage, workspaceId)
+			const facts = await collectBriefingFacts(db, workspaceId)
 			expect(facts.activeBets[0]?.progress).toEqual({ done: 1, total: 2 })
 			expect(facts.pausedBets[0]?.progress).toBeNull()
 		})
 
 		it('degrades rather than throwing for a workspace that does not exist', async () => {
-			const facts = await collectBriefingFacts(db, storage, '00000000-0000-4000-8000-000000000000')
+			const facts = await collectBriefingFacts(db, '00000000-0000-4000-8000-000000000000')
 			expect(facts.found).toBe(false)
 			expect(formatAgentBriefing(facts)).toContain('Workspace not found.')
 		})
@@ -257,15 +255,15 @@ describe('spoken briefing', () => {
 			expect(storage.files.has(briefCacheKey(workspaceId, today))).toBe(true)
 		})
 
-		it('leaves the workspace learnings ledger untouched', async () => {
-			// The ledger lives under agents/, not briefs/ — a sweep that used a
-			// looser prefix would silently eat every session's learnings.
-			const ledgerKey = `agents/${workspaceId}/_workspace/learnings.md`
-			await storage.put(ledgerKey, Buffer.from('a prior learning\n'))
+		it('leaves agent files untouched', async () => {
+			// Agent files live under agents/, not briefs/ — a sweep that used a
+			// looser prefix would silently eat them.
+			const agentFileKey = `agents/${workspaceId}/some-actor/memory/notes.md`
+			await storage.put(agentFileKey, Buffer.from('a prior note\n'))
 
 			await new BriefCacheCleaner(storage).tick(new Date())
 
-			expect(storage.files.has(ledgerKey)).toBe(true)
+			expect(storage.files.has(agentFileKey)).toBe(true)
 		})
 	})
 })

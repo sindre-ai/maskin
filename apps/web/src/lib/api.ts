@@ -486,7 +486,7 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string },
+			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
 		) =>
 			request<{
 				install_url?: string
@@ -504,6 +504,21 @@ export const api = {
 				// The response carries the Set-Cookie that binds this browser to the
 				// OAuth `state`; without `include` it is dropped and the callback 400s.
 				credentials: 'include',
+			}),
+		/** "Connect with Maskin" from the Skjald app: approve it for this workspace and get the redirect that carries the one-time code back. */
+		skjaldAuthorize: (
+			workspaceId: string,
+			body: {
+				state: string
+				redirect_uri: string
+				code_challenge: string
+				code_challenge_method: 'S256'
+			},
+		) =>
+			request<{ redirect_url: string; workspace_name: string }>('/integrations/skjald/authorize', {
+				method: 'POST',
+				body,
+				workspaceId,
 			}),
 		resendDnsPrecheck: (workspaceId: string, domain: string) =>
 			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
@@ -1413,6 +1428,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {

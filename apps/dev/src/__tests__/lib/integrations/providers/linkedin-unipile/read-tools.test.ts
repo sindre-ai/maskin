@@ -269,6 +269,25 @@ describe('getLinkedInProfile', () => {
 		})
 	})
 
+	// v2 moved the provider-specific fields under `specifics`. Reading only the
+	// top-level key returned '' on every live profile — which is what
+	// fail-closed the rep lanes' DNC rule 3.
+	it('reads network_distance from specifics when v2 nests it', async () => {
+		stubClient({ ...LIVE_PROFILE, specifics: { network_distance: 'SECOND_DEGREE' } })
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera' })
+		expect(person.network_distance).toBe('SECOND_DEGREE')
+	})
+
+	it('prefers a top-level network_distance when both are present', async () => {
+		stubClient({
+			...LIVE_PROFILE,
+			network_distance: 'FIRST_DEGREE',
+			specifics: { network_distance: 'SECOND_DEGREE' },
+		})
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera' })
+		expect(person.network_distance).toBe('FIRST_DEGREE')
+	})
+
 	it('requires an identifier', async () => {
 		const calls = stubClient(LIVE_PROFILE)
 		await expect(getLinkedInProfile(ctx, {})).rejects.toMatchObject({ code: 'INVALID_INPUT' })

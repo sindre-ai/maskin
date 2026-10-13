@@ -133,6 +133,9 @@ export function dispatchIdempotencyKey(sessionId: string): string {
 const DISPATCH_FAILED_MESSAGE =
 	'This session could not be started — no agent server accepted it after several attempts. Nothing was run. Start a new session to try again.'
 
+/** The only statuses a dispatch failure may still turn into a failed session. */
+const DISPATCHABLE_STATUSES: readonly string[] = ['pending', 'queued', 'starting']
+
 export class SessionDispatchQueue {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
@@ -497,6 +500,21 @@ export class SessionDispatchQueue {
 		// actually flipped it.
 		let settled: Awaited<ReturnType<typeof settleSession>>
 		try {
+			// settleSession only refuses the four terminal statuses, so without
+			// this check a running, paused or waiting_for_input session would be
+			// overwritten to failed by a dispatch worker that lost the race for it.
+			const [current] = await this.db
+				.select({ status: sessions.status })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (current && !DISPATCHABLE_STATUSES.includes(current.status)) {
+				logger.info('Dispatch failure ignored — session already left the dispatchable states', {
+					sessionId,
+					status: current.status,
+				})
+				return null
+			}
 			settled = await settleSession(
 				sessionId,
 				{
