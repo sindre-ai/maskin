@@ -140,6 +140,11 @@ export function SecretDetectedCard({
 						Send as-is
 					</Button>
 				)}
+				{high && onSendAsIs ? (
+					<Button type="button" variant="outline" disabled={busy} onClick={onSendAsIs}>
+						Not a secret — send as-is
+					</Button>
+				) : null}
 				{!high && onEdit ? (
 					<Button type="button" variant="outline" disabled={busy} onClick={onEdit}>
 						Edit message

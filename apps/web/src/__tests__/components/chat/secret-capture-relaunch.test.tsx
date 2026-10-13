@@ -340,9 +340,7 @@ describe('7c-4: undo ends the session', () => {
 		await vault(user)
 		await user.click(await screen.findByRole('button', { name: 'Undo' }))
 		expect(
-			await screen.findByText(
-				"Couldn't undo. The undo window has closed. Revoke it from Settings > Keychain.",
-			),
+			await screen.findByText("Couldn't undo. The undo window has closed."),
 		).toBeInTheDocument()
 		expect(screen.getByText(/Vaulted\. Cloudflare key is now available/)).toBeInTheDocument()
 	})

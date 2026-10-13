@@ -81,7 +81,7 @@ export function CapturedViaChatBadge({
 	return (
 		<Badge
 			variant="secondary"
-			className={cn('shrink-0 gap-1', className)}
+			className={cn('shrink-0 gap-1 bg-brand-subtle text-brand hover:bg-brand-subtle', className)}
 			title="This credential was captured through an in-chat message and vaulted automatically"
 		>
 			<span aria-hidden>💬</span>

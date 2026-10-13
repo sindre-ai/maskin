@@ -311,9 +311,7 @@ export function SecretCaptureFlow({
 				)
 				queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			} catch {
-				setCardError(
-					"Couldn't undo. The undo window has closed. Revoke it from Settings > Keychain.",
-				)
+				setCardError("Couldn't undo. The undo window has closed.")
 			} finally {
 				setUndoingId(null)
 			}

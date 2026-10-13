@@ -164,6 +164,22 @@ describe('KeychainPage', () => {
 		expect(screen.queryByText(/were vaulted from a live session/)).not.toBeInTheDocument()
 	})
 
+	it('says the list could not load instead of showing the first-run empty state', () => {
+		const refetch = vi.fn()
+		mockUseIntegrations.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			error: new Error('boom'),
+			refetch,
+		})
+		render(<KeychainPage />)
+		expect(screen.getByText("Couldn't load your credentials")).toBeInTheDocument()
+		expect(
+			screen.queryByRole('heading', { name: 'One place for every credential your agents need' }),
+		).not.toBeInTheDocument()
+	})
+
 	it('shows no empty state while the list is loading', () => {
 		mockUseIntegrations.mockReturnValue({ data: undefined, isLoading: true })
 		render(<KeychainPage />)
@@ -398,6 +414,14 @@ describe('CredentialDetailPage', () => {
 		render(<CredentialDetailPage />)
 		await user.click(screen.getByRole('button', { name: 'Load more entries' }))
 		expect(fetchNextPage).toHaveBeenCalledTimes(1)
+	})
+
+	it('says No reads yet when a credential has no audit rows', () => {
+		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
+		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
+		mockUseAuditLog.mockReturnValue(auditLog([auditPage([])]))
+		render(<CredentialDetailPage />)
+		expect(screen.getByText('No reads yet')).toBeInTheDocument()
 	})
 
 	it('says so when the audit log cannot load, without hiding the credential', () => {

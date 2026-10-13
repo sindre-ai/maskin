@@ -280,6 +280,21 @@ describe('Composer secret guard', () => {
 		expect(screen.getByRole('button', { name: 'Cancel message' })).toBeInTheDocument()
 	})
 
+	it('red match: Not a secret sends the text as typed, reports a false positive and never vaults', async () => {
+		const props = renderComposer()
+		const user = await typeAndSend(FAKE_CF)
+		await screen.findByText('Maskin detected a secret in your message.')
+		expect(props.onSend).not.toHaveBeenCalled()
+
+		await user.click(screen.getByRole('button', { name: 'Not a secret — send as-is' }))
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(FAKE_CF))
+		expect(chatCaptureMock).not.toHaveBeenCalled()
+		expect(trackEventMock).toHaveBeenCalledWith(
+			'keychain_secret_false_positive_reported',
+			expect.objectContaining({ pattern_id: expect.any(String) }),
+		)
+	})
+
 	it('amber match: Send as-is sends the text, reports a false positive and mutes the pattern', async () => {
 		const props = renderComposer()
 		const user = await typeAndSend(`ray ${FAKE_BLOB}`)

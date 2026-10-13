@@ -152,6 +152,13 @@ function CredentialDetailPage() {
 						<p className="p-3 text-sm text-error" role="alert">
 							Could not load the audit log.
 						</p>
+					) : entries.length === 0 ? (
+						<div className="p-3">
+							<p className="text-sm font-medium">No reads yet</p>
+							<p className="text-xs text-muted-foreground">
+								When an agent uses this credential, the read shows up here.
+							</p>
+						</div>
 					) : (
 						<ul className="divide-y divide-border">
 							{entries.map((entry) => (
