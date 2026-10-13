@@ -177,12 +177,9 @@ describe('Objects Routes', () => {
 				mockResults.insert = [obj]
 
 				const res = await app.request(
-					jsonRequest(
-						'POST',
-						'/api/objects',
-						buildCreateObjectBody({ status: 'awaiting_legal' }),
-						{ 'x-workspace-id': wsId },
-					),
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody({ status: 'awaiting_legal' }), {
+						'x-workspace-id': wsId,
+					}),
 				)
 
 				expect(res.status).toBe(201)
