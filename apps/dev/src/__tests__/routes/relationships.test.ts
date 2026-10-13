@@ -32,7 +32,9 @@ describe('Relationships Routes', () => {
 			const rel = buildRelationship()
 			const createBody = buildCreateRelationshipBody()
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
-			mockResults.selectQueue = [...endpointsInWorkspace(createBody.source_id, createBody.target_id)]
+			mockResults.selectQueue = [
+				...endpointsInWorkspace(createBody.source_id, createBody.target_id),
+			]
 			mockResults.insert = [rel]
 
 			const res = await app.request(
