@@ -1,11 +1,21 @@
 import { createHmac, randomUUID } from 'node:crypto'
 import { events, integrations, objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { beforeEach, vi } from 'vitest'
 import { decrypt } from '../../lib/crypto'
 import integrationsRoutes, { webhookApp } from '../../routes/integrations'
 import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
+
+// Capture the PostHog sends so the analytics events are observable without HTTP.
+// Hoisted because the mocked module is reached transitively through the route.
+const { capturePosthogMock } = vi.hoisted(() => ({
+	capturePosthogMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogMock,
+}))
 
 function buildApp() {
 	return createIntegrationApp(
@@ -544,5 +554,190 @@ describe('POST /api/webhooks/skjald/:token with outcome events (integration)', (
 		const res = await deliver(app, token, 'outcome.deleted', buildOutcomePayload(randomUUID()))
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual({ ok: true, skipped: 'unhandled_event' })
+	})
+})
+
+describe('POST /api/webhooks/skjald/:token analytics events (integration)', () => {
+	const SECRET = 'skjald-analytics-secret-321'
+	const TRANSCRIPT = 'confidential-transcript-words'
+	const TITLE = 'confidential-meeting-title'
+	const SPEAKER = 'Confidential Speaker'
+
+	beforeEach(() => {
+		capturePosthogMock.mockClear()
+		capturePosthogMock.mockResolvedValue(undefined)
+	})
+
+	function eventsNamed(name: string) {
+		return capturePosthogMock.mock.calls.filter((call) => call[0] === name)
+	}
+
+	function signedRequest(token: string, body: string, event: string, secret = SECRET) {
+		const timestamp = String(Math.floor(Date.now() / 1000))
+		return skjaldWebhookRequest(token, body, {
+			'x-skjald-event': event,
+			'x-skjald-timestamp': timestamp,
+			'x-skjald-signature': signSkjaldBody(secret, timestamp, body),
+			'x-skjald-delivery-id': randomUUID(),
+		})
+	}
+
+	function expectNoSensitiveData(token: string) {
+		const sent = JSON.stringify(capturePosthogMock.mock.calls)
+		for (const secretValue of [TRANSCRIPT, TITLE, SPEAKER, SECRET, token]) {
+			expect(sent).not.toContain(secretValue)
+		}
+	}
+
+	it('sends skjald_meeting_ingested on create and on update, without content', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token, integrationId } = await connectAndActivate(app, ws.id, SECRET)
+		const meetingId = randomUUID()
+		const body = buildTranscriptionPayload({
+			meeting_id: meetingId,
+			meeting_title: TITLE,
+			transcript_text: TRANSCRIPT,
+			speaker_segments: [
+				{
+					transcript_id: randomUUID(),
+					speaker_id: 'speaker-1',
+					speaker_name: SPEAKER,
+					audio_start_time: 0,
+					audio_end_time: 1,
+				},
+			],
+		})
+
+		const first = await app.request(signedRequest(token, body, 'transcription.completed'))
+		const second = await app.request(signedRequest(token, body, 'transcription.completed'))
+		expect(first.status).toBe(200)
+		expect(second.status).toBe(200)
+
+		const ingested = eventsNamed('skjald_meeting_ingested')
+		expect(ingested).toHaveLength(2)
+		expect(ingested[0]).toEqual([
+			'skjald_meeting_ingested',
+			ws.id,
+			{
+				workspace_id: ws.id,
+				integration_id: integrationId,
+				event_type: 'transcription.completed',
+				action: 'created',
+			},
+		])
+		expect(ingested[1][2]).toMatchObject({ action: 'updated' })
+		expect(eventsNamed('skjald_webhook_rejected')).toHaveLength(0)
+		expectNoSensitiveData(token)
+	})
+
+	it('sends skjald_meeting_ingested for an outcome.created delivery', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+		const body = JSON.stringify({
+			session: {
+				id: randomUUID(),
+				title: TITLE,
+				startedAt: '2026-10-07T09:00:00Z',
+				duration: 60,
+				languages: [],
+				tag: null,
+			},
+			outcome: { summary: TRANSCRIPT, decisions: [], actions: [], notes: [] },
+			consent: { recordedBy: SPEAKER },
+			device: { model: 'iPhone16,2', appVersion: '1.4.0' },
+			sentAt: '2026-10-07T09:30:00Z',
+		})
+
+		const res = await app.request(signedRequest(token, body, 'outcome.created'))
+		expect(res.status).toBe(200)
+
+		const ingested = eventsNamed('skjald_meeting_ingested')
+		expect(ingested).toHaveLength(1)
+		expect(ingested[0][2]).toMatchObject({ event_type: 'outcome.created', action: 'created' })
+		expectNoSensitiveData(token)
+	})
+
+	it('sends skjald_webhook_rejected with reason unknown_token and no workspace', async () => {
+		const app = buildApp()
+		const token = randomUUID()
+		const body = buildTranscriptionPayload({ transcript_text: TRANSCRIPT })
+
+		const res = await app.request(signedRequest(token, body, 'transcription.completed'))
+		expect(res.status).toBe(404)
+
+		const rejected = eventsNamed('skjald_webhook_rejected')
+		expect(rejected).toHaveLength(1)
+		expect(rejected[0][2]).toEqual({
+			reason: 'unknown_token',
+			event_type: 'transcription.completed',
+			workspace_id: null,
+			integration_id: null,
+		})
+		expect(rejected[0][1]).toBeTruthy()
+		expectNoSensitiveData(token)
+	})
+
+	it('sends skjald_webhook_rejected with reason invalid_signature', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token, integrationId } = await connectAndActivate(app, ws.id, SECRET)
+		const body = buildTranscriptionPayload({ transcript_text: TRANSCRIPT })
+
+		const res = await app.request(signedRequest(token, body, 'transcription.completed', 'wrong'))
+		expect(res.status).toBe(401)
+
+		const rejected = eventsNamed('skjald_webhook_rejected')
+		expect(rejected).toHaveLength(1)
+		expect(rejected[0][1]).toBe(ws.id)
+		expect(rejected[0][2]).toEqual({
+			reason: 'invalid_signature',
+			event_type: 'transcription.completed',
+			workspace_id: ws.id,
+			integration_id: integrationId,
+		})
+		expect(eventsNamed('skjald_meeting_ingested')).toHaveLength(0)
+		expectNoSensitiveData(token)
+	})
+
+	it('sends skjald_webhook_rejected with reason invalid_json', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+
+		const res = await app.request(signedRequest(token, 'not json', 'transcription.completed'))
+		expect(res.status).toBe(400)
+
+		const rejected = eventsNamed('skjald_webhook_rejected')
+		expect(rejected).toHaveLength(1)
+		expect(rejected[0][2]).toMatchObject({ reason: 'invalid_json', workspace_id: ws.id })
+	})
+
+	it('sends skjald_webhook_rejected with reason invalid_payload when the schema fails', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+		const body = JSON.stringify({ meeting_id: randomUUID(), transcript_text: TRANSCRIPT })
+
+		const res = await app.request(signedRequest(token, body, 'transcription.completed'))
+		expect(res.status).toBe(400)
+
+		const rejected = eventsNamed('skjald_webhook_rejected')
+		expect(rejected).toHaveLength(1)
+		expect(rejected[0][2]).toMatchObject({ reason: 'invalid_payload', workspace_id: ws.id })
+		expect(eventsNamed('skjald_meeting_ingested')).toHaveLength(0)
+		expectNoSensitiveData(token)
+	})
+
+	it('sends neither event for an event type it does not handle', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+
+		const body = buildTranscriptionPayload()
+		const skipped = await app.request(signedRequest(token, body, 'outcome.deleted'))
+		expect(skipped.status).toBe(200)
+		expect(capturePosthogMock).not.toHaveBeenCalled()
 	})
 })
