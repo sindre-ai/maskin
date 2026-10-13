@@ -105,6 +105,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'mention-object', objectId] as const,
 		byConversation: (workspaceId: string, conversationId: string) =>
 			['sessions', workspaceId, 'conversation', conversationId] as const,
+		firstOutput: (workspaceId: string, sessionId: string) =>
+			['sessions', workspaceId, 'first-output', sessionId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,

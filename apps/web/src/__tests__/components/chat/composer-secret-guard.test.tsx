@@ -262,7 +262,7 @@ describe('Composer secret guard', () => {
 			undoUrl: '/api/integrations/int-3/undo',
 			relaunch: 'stopped',
 		})
-		undoMock.mockResolvedValue({ id: 'int-3', status: 'undone' })
+		undoMock.mockResolvedValue({ id: 'int-3', status: 'undone', sessionEnded: true })
 		renderComposer()
 		const user = await typeAndSend(FAKE_CF)
 		await user.click(await screen.findByRole('button', { name: /Vault \+ assign scope/ }))

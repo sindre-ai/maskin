@@ -1,14 +1,20 @@
 import { InlineScopePicker, type ScopeAgent } from '@/components/chat/inline-scope-picker'
-import { SecretDetectedCard, VaultedCard } from '@/components/chat/secret-detected-card'
+import {
+	SecretDetectedCard,
+	VaultedCard,
+	type VaultedPhase,
+} from '@/components/chat/secret-detected-card'
 import { TranscriptRedactedRow } from '@/components/chat/transcript-redacted-row'
 import { useActors } from '@/hooks/use-actors'
+import { type RelaunchWatch, useRelaunchProgress } from '@/hooks/use-relaunch-progress'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
 import { ApiError, type ChatCaptureProvider, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { scanComposerText } from '@/lib/secret-scanner'
 import { type SecretMatch, redactSecrets, redactionMarker } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const PROVIDER_LABEL: Record<ChatCaptureProvider, string> = {
 	cloudflare: 'Cloudflare',
@@ -32,7 +38,9 @@ interface VaultRecord {
 	agentCount: number
 	marker: string
 	undoExpiresAt: number
-	undone: boolean
+	phase: VaultedPhase
+	/** False when the session that held the key could not be stopped on undo. */
+	sessionEnded: boolean
 }
 
 export interface SecretCaptureFlowProps {
@@ -41,8 +49,10 @@ export interface SecretCaptureFlowProps {
 	content: string
 	matches: SecretMatch[]
 	/** The live session to vault into. Null on a composer with no session. */
-	capture: { sessionId: string; agent: ScopeAgent } | null
+	capture: { sessionId: string; conversationId?: string; agent: ScopeAgent } | null
 	agentName: string
+	/** The agent is restarting after an earlier vault: vaulting another secret waits for it. */
+	restarting?: boolean
 	/** Sends the final (redacted or as-is) body. */
 	onSend: (content: string) => Promise<void>
 	/** Drop the message. */
@@ -63,8 +73,9 @@ export function SecretCaptureFlow({
 	workspaceId,
 	content,
 	matches,
-	capture,
+	capture: liveCapture,
 	agentName,
+	restarting = false,
 	onSend,
 	onCancel,
 	onEdit,
@@ -72,6 +83,10 @@ export function SecretCaptureFlow({
 	onMute,
 }: SecretCaptureFlowProps) {
 	const queryClient = useQueryClient()
+	// Vaulting stops the session this card was opened for, so the live capture target goes
+	// away mid-flow. The card keeps the one it started with: the server only needs the
+	// session id, which outlives the session.
+	const [capture] = useState(liveCapture)
 	const high = useMemo(() => matches.filter((m) => m.confidence === 'high'), [matches])
 	const target = high[0] ?? null
 	const provider = (target?.provider ?? null) as ChatCaptureProvider | null
@@ -88,8 +103,27 @@ export function SecretCaptureFlow({
 	const [error, setError] = useState<string | null>(null)
 	const [vaults, setVaults] = useState<VaultRecord[]>([])
 	const [undoingId, setUndoingId] = useState<string | null>(null)
-	const [undoError, setUndoError] = useState<string | null>(null)
+	const [retryingId, setRetryingId] = useState<string | null>(null)
+	const [cardError, setCardError] = useState<string | null>(null)
 	const [now, setNow] = useState(() => Date.now())
+	// The redacted message of a vault whose relaunch failed. It is held back until Retry
+	// stops the old session, because the message is what respawns it.
+	const withheld = useRef<string | null>(null)
+	const [watch, setWatch] = useState<(RelaunchWatch & { integrationId: string }) | null>(null)
+	const { data: conversationSessions } = useActiveSessionsForConversation(
+		workspaceId,
+		capture?.conversationId ?? null,
+	)
+	const progress = useRelaunchProgress(workspaceId, watch)
+	// Every session the conversation has right now, and the same set frozen when the vault
+	// (or Retry) went out. A relaunch is watched for the session that is not in the frozen one.
+	const sessionIds = useMemo(
+		() => new Set((conversationSessions ?? []).map((x) => x.id)),
+		[conversationSessions],
+	)
+	const sessionIdsNow = useRef<ReadonlySet<string>>(sessionIds)
+	sessionIdsNow.current = sessionIds
+	const sessionIdsAtRelaunch = useRef<ReadonlySet<string>>(new Set())
 
 	const { data: actors } = useActors(workspaceId, { enabled: !!capture })
 	const otherAgents = useMemo(
@@ -108,12 +142,44 @@ export function SecretCaptureFlow({
 	}, [currentProvider])
 
 	// Ticks only while an undo window is open, so the button disappears on time.
-	const nextExpiry = Math.max(0, ...vaults.filter((v) => !v.undone).map((v) => v.undoExpiresAt))
+	const nextExpiry = Math.max(
+		0,
+		...vaults.filter((v) => v.phase !== 'undone').map((v) => v.undoExpiresAt),
+	)
 	useEffect(() => {
 		if (nextExpiry <= Date.now()) return
 		const t = setInterval(() => setNow(Date.now()), 1000)
 		return () => clearInterval(t)
 	}, [nextExpiry])
+
+	const clearResuming = useCallback((integrationId: string) => {
+		setWatch((w) => (w?.integrationId === integrationId ? null : w))
+		setVaults((prev) =>
+			prev.map((v) =>
+				v.integrationId === integrationId && v.phase === 'resuming' ? { ...v, phase: 'live' } : v,
+			),
+		)
+	}, [])
+	useEffect(() => {
+		if (progress && watch) clearResuming(watch.integrationId)
+	}, [progress, watch, clearResuming])
+
+	/** The marker message is out and the old session is gone: the new session is on its way. */
+	const startResuming = useCallback(
+		(integrationId: string) => {
+			setVaults((prev) =>
+				prev.map((v) => (v.integrationId === integrationId ? { ...v, phase: 'resuming' } : v)),
+			)
+			if (!capture?.conversationId) return
+			setWatch({
+				integrationId,
+				conversationId: capture.conversationId,
+				agentId: capture.agent.id,
+				knownSessionIds: sessionIdsAtRelaunch.current,
+			})
+		},
+		[capture],
+	)
 
 	const sendBody = useCallback(
 		async (body: string) => {
@@ -138,6 +204,7 @@ export function SecretCaptureFlow({
 			setBusy(true)
 			setError(null)
 			const displayName = name.trim()
+			sessionIdsAtRelaunch.current = sessionIdsNow.current
 			try {
 				const res = await api.integrations.chatCapture(workspaceId, {
 					sessionId: capture.sessionId,
@@ -158,7 +225,8 @@ export function SecretCaptureFlow({
 						agentCount: grants === 'none' ? 0 : selected.size,
 						marker,
 						undoExpiresAt: new Date(res.undoExpiresAt).getTime(),
-						undone: false,
+						phase: res.relaunch === 'failed' ? 'failed' : 'live',
+						sessionEnded: true,
 					},
 				])
 				const redacted = redactSecrets(current.content, [currentTarget], displayName)
@@ -171,9 +239,18 @@ export function SecretCaptureFlow({
 					setStage('detected')
 					return
 				}
+				if (res.relaunch === 'failed') {
+					// The old session is still running without the key. The message is what
+					// respawns a session, so hold it until Retry has stopped the old one.
+					withheld.current = redacted
+					setFinished(true)
+					onDone(true)
+					return
+				}
 				if (await sendBody(redacted)) {
 					setFinished(true)
 					onDone(true)
+					startResuming(res.integrationId)
 				}
 			} catch (err) {
 				setError(
@@ -196,6 +273,7 @@ export function SecretCaptureFlow({
 			queryClient,
 			sendBody,
 			onDone,
+			startResuming,
 		],
 	)
 
@@ -219,15 +297,21 @@ export function SecretCaptureFlow({
 	const undo = useCallback(
 		async (record: VaultRecord) => {
 			setUndoingId(record.integrationId)
-			setUndoError(null)
+			setCardError(null)
 			try {
-				await api.integrations.undo(record.integrationId, workspaceId)
+				const res = await api.integrations.undo(record.integrationId, workspaceId)
+				withheld.current = null
+				setWatch((w) => (w?.integrationId === record.integrationId ? null : w))
 				setVaults((prev) =>
-					prev.map((v) => (v.integrationId === record.integrationId ? { ...v, undone: true } : v)),
+					prev.map((v) =>
+						v.integrationId === record.integrationId
+							? { ...v, phase: 'undone', sessionEnded: res.sessionEnded }
+							: v,
+					),
 				)
 				queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			} catch {
-				setUndoError(
+				setCardError(
 					"Couldn't undo. The undo window has closed. Revoke it from Settings > Keychain.",
 				)
 			} finally {
@@ -235,6 +319,37 @@ export function SecretCaptureFlow({
 			}
 		},
 		[queryClient, workspaceId],
+	)
+
+	/** Retry on 7c-3: repeat stop and wait; on success send the held message, which respawns. */
+	const retry = useCallback(
+		async (record: VaultRecord) => {
+			setRetryingId(record.integrationId)
+			setCardError(null)
+			sessionIdsAtRelaunch.current = sessionIdsNow.current
+			try {
+				const res = await api.integrations.relaunch(record.integrationId, workspaceId)
+				if (res.relaunch === 'failed') return
+				const body = withheld.current
+				if (body === null || (await sendBody(body))) {
+					withheld.current = null
+					if (body === null) {
+						setVaults((prev) =>
+							prev.map((v) =>
+								v.integrationId === record.integrationId ? { ...v, phase: 'live' } : v,
+							),
+						)
+					} else {
+						startResuming(record.integrationId)
+					}
+				}
+			} catch {
+				// Same state as a failed stop: the line stays and Retry is offered again.
+			} finally {
+				setRetryingId(null)
+			}
+		},
+		[workspaceId, sendBody, startResuming],
 	)
 
 	const toggle = useCallback((id: string) => {
@@ -252,11 +367,15 @@ export function SecretCaptureFlow({
 			<VaultedCard
 				credentialName={v.name}
 				agentCount={v.agentCount}
+				agentName={agentName}
+				phase={v.phase}
 				undoAvailable={v.undoExpiresAt > now}
 				undoing={undoingId === v.integrationId}
-				undone={v.undone}
-				error={undoError}
+				retrying={retryingId === v.integrationId}
+				sessionEnded={v.sessionEnded}
+				error={cardError}
 				onUndo={() => undo(v)}
+				onRetry={() => retry(v)}
 			/>
 		</div>
 	))
@@ -312,6 +431,7 @@ export function SecretCaptureFlow({
 				service={currentProvider ? PROVIDER_LABEL[currentProvider] : undefined}
 				agentName={agentName}
 				canVault={!!capture && isHigh}
+				restarting={restarting}
 				busy={busy}
 				error={error}
 				onVault={() => setStage('scope')}

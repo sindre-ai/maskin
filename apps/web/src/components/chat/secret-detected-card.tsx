@@ -17,6 +17,8 @@ interface SecretDetectedCardProps {
 	agentName: string
 	/** False when this composer has no session to vault into. */
 	canVault: boolean
+	/** The agent is restarting after a vault; vaulting another secret waits for it. */
+	restarting?: boolean
 	busy?: boolean
 	error?: string | null
 	onVault?: () => void
@@ -37,6 +39,7 @@ export function SecretDetectedCard({
 	service,
 	agentName,
 	canVault,
+	restarting = false,
 	busy = false,
 	error = null,
 	onVault,
@@ -107,7 +110,9 @@ export function SecretDetectedCard({
 				)}
 				{high && !canVault ? (
 					<p className="text-xs text-muted-foreground">
-						This chat can't vault a key yet. Cancel, then add it from a chat with a live session.
+						{restarting
+							? `Messages still send. Vaulting another secret waits until ${agentName} is back.`
+							: "This chat can't vault a key yet. Cancel, then add it from a chat with a live session."}
 					</p>
 				) : null}
 			</div>
@@ -169,33 +174,57 @@ export function SecretDetectedCard({
 	)
 }
 
+/** The four moments of the green card (SPEC 7c-1 to 7c-4). The card never changes shape, only its status line. */
+export type VaultedPhase = 'resuming' | 'live' | 'failed' | 'undone'
+
 interface VaultedCardProps {
 	credentialName: string
 	agentCount: number
+	agentName: string
+	phase: VaultedPhase
 	undoAvailable: boolean
 	undoing: boolean
-	undone: boolean
+	retrying: boolean
+	/** Undone only: false when the session holding the key could not be stopped. */
+	sessionEnded: boolean
 	error: string | null
 	onUndo: () => void
+	onRetry: () => void
 }
 
-/** 7c-2 (vaulted) and 7c-4 (undone). Relaunch states belong to PR #4. */
+const PILL = 'rounded-full border px-2 py-0.5 text-xs font-medium'
+
+/** 7c-1 resuming, 7c-2 resumed, 7c-3 relaunch failed, 7c-4 undone. */
 export function VaultedCard({
 	credentialName,
 	agentCount,
+	agentName,
+	phase,
 	undoAvailable,
 	undoing,
-	undone,
+	retrying,
+	sessionEnded,
 	error,
 	onUndo,
+	onRetry,
 }: VaultedCardProps) {
-	if (undone) {
+	if (phase === 'undone') {
 		return (
 			<output className="flex flex-col gap-1 rounded-xl border border-border bg-muted p-4 text-sm">
-				<h3 className="font-semibold">Undone. {credentialName} is removed.</h3>
+				<div className="flex items-center justify-between gap-2">
+					<h3 className="font-semibold">Undone. {credentialName} is removed.</h3>
+					<span className={cn(PILL, 'border-border text-muted-foreground')}>Ended</span>
+				</div>
+				{sessionEnded ? (
+					<p className="text-xs text-muted-foreground">
+						This session has ended. Your next message starts a new one without the credential.
+					</p>
+				) : null}
 			</output>
 		)
 	}
+	const resuming = phase === 'resuming' || retrying
+	const failed = phase === 'failed' && !retrying
 	return (
 		<output className="flex flex-col gap-2 rounded-xl border border-success/40 bg-success/10 p-4 text-sm">
 			<div className="flex items-center justify-between gap-2">
@@ -203,13 +232,35 @@ export function VaultedCard({
 					Vaulted. {credentialName} is now available to {agentCount}{' '}
 					{agentCount === 1 ? 'agent' : 'agents'}.
 				</h3>
-				<span className="rounded-full border border-success/40 px-2 py-0.5 text-xs font-medium">
-					Live
-				</span>
+				{resuming ? (
+					<span className={cn(PILL, 'border-brand/40 text-brand')}>Restarting</span>
+				) : (
+					<span className={cn(PILL, 'border-success/40')}>Live</span>
+				)}
 			</div>
 			<p className="text-xs text-muted-foreground">
 				Encrypted. Redacted from this transcript. Every read shows up in the audit log.
 			</p>
+			{resuming ? (
+				<output className="flex flex-col gap-0.5" aria-live="polite">
+					<p className="flex items-center gap-2 text-sm">
+						<Spinner />
+						Resuming with the new credential…
+					</p>
+					<p className="text-xs text-muted-foreground">
+						Restarting {agentName}. Your messages still send.
+					</p>
+				</output>
+			) : null}
+			{failed ? (
+				<p
+					role="alert"
+					className="rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error"
+				>
+					Couldn't restart {agentName}. The credential is saved, but the session is still running
+					without it.
+				</p>
+			) : null}
 			{error ? (
 				<p
 					role="alert"
@@ -218,14 +269,26 @@ export function VaultedCard({
 					{error}
 				</p>
 			) : null}
-			{undoAvailable ? (
+			{failed || undoAvailable ? (
 				<div className="flex flex-col gap-1">
-					<div>
-						<Button type="button" variant="outline" size="sm" disabled={undoing} onClick={onUndo}>
-							{undoing ? 'Undoing…' : 'Undo'}
-						</Button>
+					<div className="flex flex-wrap gap-2">
+						{failed ? (
+							<Button type="button" size="sm" onClick={onRetry}>
+								Retry
+							</Button>
+						) : null}
+						{undoAvailable ? (
+							<Button type="button" variant="outline" size="sm" disabled={undoing} onClick={onUndo}>
+								{undoing ? 'Undoing…' : 'Undo'}
+							</Button>
+						) : null}
 					</div>
-					<p className="text-xs text-muted-foreground">Undo within 5 min.</p>
+					{undoAvailable ? (
+						<p className="text-xs text-muted-foreground">
+							Undo within 5 min. Undoing ends this session; your next message starts a new one
+							without it.
+						</p>
+					) : null}
 				</div>
 			) : null}
 		</output>
