@@ -223,6 +223,9 @@ jobs:
       - name: Fresh bootstrap is UTF8 and migrates
         run: bash scripts/checks/fresh-db-utf8.sh
 
+      - name: A busy SeaweedFS master port is routed around
+        run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
+
   verify-e2e:
     runs-on: ubuntu-latest
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
