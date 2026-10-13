@@ -113,15 +113,16 @@ function ScopeForm({
 			</SheetHeader>
 
 			<div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
-				<fieldset className="flex min-h-0 flex-col gap-1.5">
-					<legend className="sr-only">Agents that can use this key</legend>
-					<ScopeRow
-						label="All agents in this workspace"
-						checked={everyone}
-						disabled={saving}
-						onToggle={() => setEveryone((v) => !v)}
-					/>
-					<div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">
+				{/* The list scrolls on a short screen; the count, the note and any error stay put. */}
+				<div className="min-h-0 flex-1 overflow-y-auto">
+					<fieldset className="flex flex-col gap-1.5">
+						<legend className="sr-only">Agents that can use this key</legend>
+						<ScopeRow
+							label="All agents in this workspace"
+							checked={everyone}
+							disabled={saving}
+							onToggle={() => setEveryone((v) => !v)}
+						/>
 						{agents.map((agent) => (
 							<ScopeRow
 								key={agent.id}
@@ -131,8 +132,8 @@ function ScopeForm({
 								onToggle={() => toggle(agent.id)}
 							/>
 						))}
-					</div>
-				</fieldset>
+					</fieldset>
+				</div>
 
 				<output className="block text-sm font-medium" aria-live="polite">
 					{count === 0 ? NO_AGENT_LINE : agentCountLine(count)}
