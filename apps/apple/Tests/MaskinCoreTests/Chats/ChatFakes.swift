@@ -115,7 +115,12 @@ actor FakeChatAPI: ChatAPI {
 	}
 
 	func sessions(conversationID: String) async throws -> [ChatAgentSession] { sessionList }
-	func stopSession(sessionID: String) async throws { stopped.append(sessionID) }
+	private var stopFails = false
+	func failStop(_ fails: Bool) { stopFails = fails }
+	func stopSession(sessionID: String) async throws {
+		if stopFails { throw URLError(.notConnectedToInternet) }
+		stopped.append(sessionID)
+	}
 	func resumeSession(sessionID: String) async throws { resumed.append(sessionID) }
 	func removeParticipant(conversationID: String, actorID: String) async throws {
 		if failMutations { throw ChatsError("nope") }

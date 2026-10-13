@@ -80,6 +80,12 @@ public final class ChatStore {
 	@ObservationIgnored private let knownLastMessageAt: Date?
 	@ObservationIgnored private let spawnGrace: TimeInterval
 	@ObservationIgnored private let staleSessionAfter: TimeInterval
+	/// Sessions the reader stopped, and when. The server's stop only tears the sandbox down for a
+	/// remote session; its row keeps saying `running` until a later settle, so a refresh straight
+	/// after Stop would show the same "working" state and Stop would look like it did nothing.
+	/// For `stopGrace` the session is treated as stopped; past it, the server's word wins again.
+	@ObservationIgnored private var stopRequested: [String: Date] = [:]
+	@ObservationIgnored private let stopGrace: TimeInterval = 90
 	@ObservationIgnored private let pollInterval: Duration?
 	@ObservationIgnored private let retryDelays: [Duration]
 	@ObservationIgnored private var retryTask: Task<Void, Never>?
@@ -223,6 +229,7 @@ public final class ChatStore {
 		var seen: Set<String> = []
 		return agentSessions.filter { session in
 			guard session.status.isLive else { return false }
+			if let stopped = stopRequested[session.id], t.timeIntervalSince(stopped) < stopGrace { return false }
 			if let touched = session.updatedAt ?? session.startedAt,
 				t.timeIntervalSince(touched) > staleSessionAfter
 			{
@@ -730,6 +737,9 @@ public final class ChatStore {
 	public func stopSession(_ id: String) async {
 		do {
 			try await api.stopSession(sessionID: id)
+			stopRequested[id] = now()
+			// The agent is no longer expected to answer: no spawn-grace "working" row either.
+			awaitingReplySince = nil
 		} catch {
 			notice = Self.message(error)
 		}

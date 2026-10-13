@@ -399,6 +399,34 @@ struct ChatStoreTests {
 		#expect(await h.api.stopped == ["s2"])
 	}
 
+	@Test("Stop takes effect at once even when the server still reports the session running")
+	func stopIsImmediate() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		// The server's stop only tears the sandbox down: the row stays `running` until a later settle.
+		await h.api.setSessions([
+			ChatAgentSession(id: "s1", actorID: "relay", status: .running, startedAt: chatT0, updatedAt: chatT0)
+		])
+		await h.store.start()
+		#expect(h.store.liveSessions().map(\.id) == ["s1"])
+		await h.store.stopSession("s1")
+		#expect(await h.api.stopped == ["s1"])
+		#expect(h.store.liveSessions().isEmpty)
+		#expect(h.store.workingAgents().isEmpty)
+	}
+
+	@Test("a failed Stop keeps the session live and says why")
+	func stopFailureKeepsSession() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([
+			ChatAgentSession(id: "s1", actorID: "relay", status: .running, startedAt: chatT0, updatedAt: chatT0)
+		])
+		await h.api.failStop(true)
+		await h.store.start()
+		await h.store.stopSession("s1")
+		#expect(h.store.liveSessions().map(\.id) == ["s1"])
+		#expect(h.store.notice != nil)
+	}
+
 	@Test("read cursor advances to the newest message, once, and never while inactive")
 	func markRead() async {
 		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)])
