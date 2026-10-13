@@ -3,31 +3,48 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The mono label for a step, as the web's trace draws it (`message-activity.tsx`): what the agent
-/// thought, read (any tool call), wrote (its own words) or failed at.
+/// The mono label for a step: what the agent thought, did (a tool call, worded by its category:
+/// READ / EDIT / RUN / FIND ...), wrote (its own words) or failed at. The web says "Using <tool>"
+/// for every call; this keeps the mockup's step-label column and says what the call was.
 extension ActivityStep {
 	var traceLabel: String {
 		if status == .failed { return "FAILED" }
 		switch kind {
 		case .thinking: return "THOUGHT"
-		case .toolUse: return "READ"
+		case .toolUse: return (category ?? .other).word
 		case .text: return "WROTE"
 		case .error: return "FAILED"
 		}
 	}
 
-	fileprivate var isFailure: Bool { status == .failed || kind == .error }
+	var isFailure: Bool { status == .failed || kind == .error }
 }
 
-/// One line of the trace: a 52pt mono label column, then the step. The step still going is in
-/// full ink, earlier ones grey; a failure takes the warning colour. The detail (a path, a
-/// command) sits under the label in the muted role, never an id.
+/// One line of the trace: a mono label column, then the step and, at the trailing edge, where it
+/// stands (a spinner while it runs, a check once done, a warning mark if it failed). The step
+/// still going is in full ink, earlier ones grey; a failure takes the warning colour. The detail
+/// (a path, a command) sits under the label in the muted role, never an id. A step that has more
+/// to say (full command, what the tool returned) opens on tap.
 struct ActivityStepRow: View {
 	let step: ActivityStep
 	var emphasized = false
+	@State private var open: Bool
+
+	init(step: ActivityStep, emphasized: Bool = false, expanded: Bool = false) {
+		self.step = step
+		self.emphasized = emphasized
+		_open = State(initialValue: expanded)
+	}
 
 	/// The kind column: wide enough for "THOUGHT".
 	static let labelWidth: CGFloat = MaskinSpace.s14 + MaskinSpace.s11 + MaskinSpace.s5
+
+	/// Lines of detail / output shown when a step is opened.
+	static let openLines = 8
+
+	private var hasMore: Bool {
+		(step.detail?.isEmpty == false) || (step.output?.isEmpty == false)
+	}
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
@@ -37,28 +54,58 @@ struct ActivityStepRow: View {
 				.lineLimit(1).minimumScaleFactor(0.8)
 				.frame(width: Self.labelWidth, alignment: .leading)
 				.accessibilityHidden(true)
-			VStack(alignment: .leading, spacing: 0) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(step.label)
 					.maskinText(.subhead).fontWeight(emphasized ? .semibold : .regular)
 					.foregroundStyle(color)
-					.lineLimit(emphasized ? 3 : 1)
+					.lineLimit(emphasized || open ? 3 : 1)
 				if let detail = step.detail, !detail.isEmpty {
-					Text(detail).maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-						.lineLimit(emphasized ? 3 : 1).truncationMode(.middle)
+					Text(detail).maskinText(open ? .mono : .caption).foregroundStyle(MaskinColor.ink5)
+						.lineLimit(open ? Self.openLines : (emphasized ? 3 : 1)).truncationMode(.middle)
+				}
+				if open, let output = step.output, !output.isEmpty {
+					Text(output).maskinText(.mono)
+						.foregroundStyle(step.status == .failed ? MaskinColor.warningStrong : MaskinColor.ink4)
+						.lineLimit(Self.openLines).truncationMode(.tail)
 				}
 			}
 			Spacer(minLength: 0)
+			statusMark
+		}
+		.contentShape(Rectangle())
+		.onTapGesture {
+			guard hasMore else { return }
+			withAnimation(MaskinMotion.quick) { open.toggle() }
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityText)
+		.accessibilityHint(hasMore ? (open ? "Hide details" : "Show details") : "")
+		.accessibilityAddTraits(hasMore ? .isButton : [])
 	}
 
+	@ViewBuilder private var statusMark: some View {
+		switch step.status {
+		case .running:
+			ProgressView().controlSize(.mini).accessibilityHidden(true)
+		case .failed:
+			Image(systemName: "xmark.circle.fill").font(.caption)
+				.foregroundStyle(MaskinColor.warning).accessibilityHidden(true)
+		case .completed:
+			if step.kind == .toolUse {
+				Image(systemName: "checkmark").font(.caption2.weight(.semibold))
+					.foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
+			}
+		}
+	}
+
+	private var isFailure: Bool { step.isFailure }
+
 	private var color: Color {
-		if step.isFailure { return MaskinColor.warningStrong }
+		if isFailure { return MaskinColor.warningStrong }
 		return emphasized ? MaskinColor.ink : MaskinColor.ink4
 	}
 
-	private var labelColor: Color { step.isFailure ? MaskinColor.warning : MaskinColor.ink5 }
+	private var labelColor: Color { isFailure ? MaskinColor.warning : MaskinColor.ink5 }
 
 	private var accessibilityText: String {
 		let state =
