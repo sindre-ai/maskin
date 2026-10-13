@@ -121,6 +121,14 @@ struct ChatThreadView: View {
 						} label: {
 							Label("Rename", systemImage: "pencil")
 						}
+						if !store.idleSessions().isEmpty {
+							Button(role: .destructive) {
+								let ids = store.idleSessions().map(\.id)
+								Task { for id in ids { await store.stopSession(id) } }
+							} label: {
+								Label("End background session", systemImage: "stop.circle")
+							}
+						}
 						Toggle(isOn: $handsFree) {
 							Label("Read replies aloud", systemImage: "speaker.wave.2")
 						}

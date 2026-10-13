@@ -164,6 +164,11 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 		metadata?["final_output"]?["is_error"]?.boolValue == true
 	}
 
+	/// The agent's end-of-turn reply (the web's `metadata.source == 'final_output'`).
+	public var isFinalOutput: Bool {
+		metadata?["source"]?.stringValue == "final_output" || metadata?["final_output"] != nil
+	}
+
 	/// One to three emoji and nothing else: shown large, without a bubble, as chat apps do.
 	public var isEmojiOnly: Bool {
 		let text = content.trimmingCharacters(in: .whitespacesAndNewlines)

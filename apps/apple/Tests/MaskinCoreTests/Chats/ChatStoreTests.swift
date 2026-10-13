@@ -767,3 +767,35 @@ struct ChatStoreIdleTests {
 		h.store.stop()
 	}
 }
+
+@Suite("ChatStore final_output idle rule")
+@MainActor
+struct ChatStoreFinalOutputTests {
+	private let running = ChatAgentSession(
+		id: "s1", actorID: "relay", status: .running, startedAt: chatT0.addingTimeInterval(-900))
+	private let finalMeta: JSONValue = .object(["source": .string("final_output")])
+
+	@Test("a final_output reply newer than the user's message means idle without a trace")
+	func idle() async {
+		let h = ChatHarness(
+			server: [chatMsg(1, at: -600), chatMsg(2, by: "relay", agent: true, "done", at: -590, metadata: finalMeta)],
+			detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		await h.store.start()
+		#expect(h.store.workingAgents().isEmpty)
+		#expect(h.store.idleSessions().map(\.id) == ["s1"])
+		h.store.stop()
+	}
+
+	@Test("a user message after the reply means the next turn is due")
+	func newerUserMessage() async {
+		let h = ChatHarness(
+			server: [chatMsg(2, by: "relay", agent: true, "done", at: -590, metadata: finalMeta), chatMsg(3, at: -5)],
+			detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		await h.store.start()
+		#expect(h.store.workingAgents().map(\.id) == ["relay"])
+		#expect(h.store.idleSessions().isEmpty)
+		h.store.stop()
+	}
+}
