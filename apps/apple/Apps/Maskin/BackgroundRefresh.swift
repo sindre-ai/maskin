@@ -3,8 +3,9 @@
 	import MaskinCore
 	import MaskinFeatures
 
-	/// Lets iOS wake the app now and then to refetch For You, so the feed, its cache and the
-	/// widgets are current when the app is opened. iOS picks the time; this is a best-effort
+	/// Lets iOS wake the app now and then to refetch For You (so the feed, its cache and the
+	/// widgets are current when the app is opened) and the running sessions behind the "Agents
+	/// working" Live Activity. iOS picks the time; this is a best-effort
 	/// top-up, not a guarantee (silent push is the prompt path).
 	@MainActor
 	enum BackgroundRefresh {
@@ -38,6 +39,7 @@
 			runtime.store.widgetReloader = makeWidgetReloader()
 			let work = Task { @MainActor in
 				await runtime.store.refresh()
+				await AgentsActivityRuntime.shared?.refresh()
 				task.setTaskCompleted(success: !Task.isCancelled)
 			}
 			task.expirationHandler = { work.cancel() }

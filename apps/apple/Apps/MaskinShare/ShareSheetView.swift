@@ -84,6 +84,8 @@ struct ShareSheetView: View {
 				.foregroundStyle(MaskinColor.ink3)
 				.frame(minHeight: MaskinSpace.touchMin)
 			Spacer(minLength: MaskinSpace.s4)
+			MaskinLogoTile(size: MaskinSpace.s12)
+				.accessibilityHidden(true)
 		}
 		.padding(.horizontal, MaskinSpace.s10)
 		.padding(.top, MaskinSpace.s2)

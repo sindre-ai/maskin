@@ -70,7 +70,7 @@ struct TVThread: View {
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 		.ignoresSafeArea(edges: embedded ? [] : .all)
 		.alert(dictating ? "Dictate" : "Type a reply", isPresented: $composing) {
-			TextField(dictating ? "Hold the mic and speak" : "Your reply", text: $draft)
+			TextField(dictating ? "Hold the mic on the remote and speak" : "Your reply", text: $draft)
 			Button("Send") {
 				let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
 				draft = ""
@@ -88,7 +88,23 @@ struct TVThread: View {
 				.font(.system(size: 34, weight: .bold)).foregroundStyle(MaskinColor.avFg)
 				.frame(width: 76, height: 76)
 				.background(MaskinGradient.avatar, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-			Text(chat.title).font(.system(size: 48, weight: .bold)).lineLimit(1)
+			VStack(alignment: .leading, spacing: 4) {
+				Text(chat.title).font(.system(size: 48, weight: .bold)).lineLimit(1)
+				if let kind = kindLabel {
+					Text(kind).font(.system(size: 24, weight: .semibold, design: .monospaced))
+						.foregroundStyle(MaskinColor.ink4)
+				}
+			}
+		}
+	}
+
+	/// What this conversation is with: one agent, one person, or a group.
+	private var kindLabel: String? {
+		let others = chat.participants.filter { $0.id != chat.currentActorID }
+		switch others.count {
+		case 0: return nil
+		case 1: return others[0].kind == .agent ? "AGENT" : "HUMAN"
+		default: return "\(others.count) PARTICIPANTS"
 		}
 	}
 

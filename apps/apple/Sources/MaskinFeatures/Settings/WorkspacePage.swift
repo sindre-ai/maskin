@@ -43,7 +43,11 @@ struct PageRowModel: Identifiable {
 	let id: String
 	var title: String
 	var subtitle: String?
+	/// The subtitle is a value the person copies (a URL, a masked key): mono, truncated in the middle.
+	var subtitleIsMono = false
 	var avatar: (name: String, isAgent: Bool)?
+	/// Working agents get the Patina ring on their avatar.
+	var avatarWorking = false
 	var accessory: Accessory = .none
 	var showsChevron = false
 	var action: (() -> Void)?
@@ -94,7 +98,9 @@ private struct PageRow: View {
 	private var content: some View {
 		HStack(spacing: MaskinSpace.s7) {
 			if let avatar = model.avatar {
-				ActorAvatar(name: avatar.name, kind: avatar.isAgent ? .agent : .human, size: MaskinSpace.s14)
+				ActorAvatar(
+					name: avatar.name, kind: avatar.isAgent ? .agent : .human, size: MaskinSpace.s14,
+					working: model.avatarWorking)
 			}
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(model.title)
@@ -103,9 +109,13 @@ private struct PageRow: View {
 					.lineLimit(1)
 				if let subtitle = model.subtitle {
 					Text(subtitle)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13))
+						.font(
+							model.subtitleIsMono
+								? MaskinTypeface.mono(MaskinFontSize.t12, relativeTo: .footnote)
+								: MaskinTypeface.sans(MaskinFontSize.t13))
 						.foregroundStyle(MaskinColor.ink4)
 						.lineLimit(2)
+						.truncationMode(model.subtitleIsMono ? .middle : .tail)
 						.multilineTextAlignment(.leading)
 				}
 			}
@@ -166,11 +176,13 @@ struct WorkspacePage<Content: View>: View {
 	}
 }
 
+/// A group header on a pushed page ("PEOPLE · 3", "MCP SERVER"): 12pt mono, the handoff's
+/// section-header size (11pt is for labels inside content).
 struct PageGroupLabel: View {
 	let text: String
 	var body: some View {
 		Text(text)
-			.maskinText(.microLabel)
+			.maskinText(.microLabelLarge)
 			.textCase(.uppercase)
 			.foregroundStyle(MaskinColor.ink4)
 			.padding(.horizontal, MaskinSpace.s2)

@@ -43,10 +43,9 @@ const briefingRoute = createRoute({
 
 app.openapi(briefingRoute, async (c) => {
 	const db = c.get('db')
-	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const markdown = await renderWorkspaceBriefing(db, storage, workspaceId)
+	const markdown = await renderWorkspaceBriefing(db, workspaceId)
 	return c.json({ workspace_id: workspaceId, markdown }, 200)
 })
 

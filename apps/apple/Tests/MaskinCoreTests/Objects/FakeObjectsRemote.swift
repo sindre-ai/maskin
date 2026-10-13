@@ -15,6 +15,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	private var _commentRefs: [[String]] = []
 	private var _commentFiles: [[String]] = []
 	private var _updateKeys: [String] = []
+	private var _relationshipKeys: [String] = []
 	private var _commentCalls = 0
 	private var _graphCalls = 0
 	private var _nextEventId = 900
@@ -30,7 +31,8 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 		set { lock.withLock { _objects = newValue } }
 	}
 	func setGraph(_ graph: ObjectGraph) { lock.withLock { _graphs[graph.object.id] = graph } }
-	/// Operations named here throw: "list", "graph", "create", "update", "delete", "star", "comment".
+	/// Operations named here throw: "list", "graph", "create", "update", "delete", "star", "comment",
+	/// "relationship".
 	func fail(_ ops: String...) { lock.withLock { _failures = Set(ops) } }
 	func heal() { lock.withLock { _failures = [] } }
 	func goOffline(_ value: Bool) { lock.withLock { _offline = value } }
@@ -42,6 +44,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	var commentRefs: [[String]] { lock.withLock { _commentRefs } }
 	var commentFiles: [[String]] { lock.withLock { _commentFiles } }
 	var updateKeys: [String] { lock.withLock { _updateKeys } }
+	var relationshipKeys: [String] { lock.withLock { _relationshipKeys } }
 
 	private func check(_ op: String) throws {
 		let (failing, offline) = lock.withLock { (_failures.contains(op), _offline) }
@@ -133,6 +136,21 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 		return ObjectEvent(
 			id: id, actorId: "me", action: "commented", data: .object(["content": .string(content)]),
 			createdAt: Date())
+	}
+
+	func createRelationship(
+		sourceId: String, sourceType: String, targetId: String, targetType: String, type: String,
+		idempotencyKey: String
+	) async throws -> ObjectLink {
+		lock.withLock { _relationshipKeys.append(idempotencyKey) }
+		try check("relationship")
+		let other = objects.first { $0.id == targetId } ?? lock.withLock { _graphs[targetId]?.object }
+		let link = ObjectLink(
+			id: "rel-\(UUID().uuidString)", relation: type, isOutgoing: true, otherId: targetId,
+			otherType: other?.type ?? targetType, otherTitle: other?.displayTitle ?? "Untitled",
+			otherStatus: other?.status)
+		lock.withLock { _graphs[sourceId]?.links.append(link) }
+		return link
 	}
 
 	func actors() async throws -> [ActorRef] { Fixtures.actors }

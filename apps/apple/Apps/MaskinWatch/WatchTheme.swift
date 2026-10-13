@@ -26,7 +26,7 @@ enum WatchType {
 	static func name() -> Font { MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline) }
 	static func row() -> Font { MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .footnote) }
 	static func caption() -> Font { MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .caption) }
-	static func mono() -> Font { MaskinTypeface.mono(MaskinFontSize.t12, weight: .medium, relativeTo: .caption2) }
+	static func mono() -> Font { MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold, relativeTo: .caption2) }
 	static func microMono() -> Font { MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2) }
 }
 

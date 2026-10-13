@@ -1,16 +1,18 @@
 import MaskinDesign
 import SwiftUI
 
-private let composerControlSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s3
+/// The composer bar's shape for plain text hosts that cannot depend on `ChatComposerModel`
+/// (object comments today): one glass bar, radius 26, with the attach circle inside on the left,
+/// the field, and one trailing control that is the mic while there is nothing to send and the send
+/// arrow once there is. Callers supply the controls; this owns layout. Same geometry as
+/// `MaskinComposer` (spec 7 §1), so the two read as one component until every host has switched.
+public enum ComposerMetrics {
+	/// 40pt circles inside 44pt hit frames.
+	public static let control: CGFloat = MaskinSpace.touchMin - MaskinSpace.s2
+}
 
-/// The composer's shape, shared by every thread: ONE glass pill (corner 26) holding, left to right,
-/// the attach circle, the field, and a trailing control that is the mic while there is nothing to
-/// send and the send arrow once there is. Every control is a 38pt filled circle. Callers supply the
-/// controls; this owns layout.
 public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
-	public static var control: CGFloat { composerControlSize }
-	/// The pill's corner: a single line reads as a capsule, a tall field stays a rounded card.
-	public static var corner: CGFloat { MaskinRadius.hero + MaskinSpace.s4 }
+	public static var control: CGFloat { ComposerMetrics.control }
 
 	private let leading: Leading
 	private let field: Field
@@ -18,6 +20,7 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 	private let canSend: Bool
 	private let showsMic: Bool
 	private let onSend: () -> Void
+	private let shape = RoundedRectangle(cornerRadius: MaskinRadius.composer, style: .continuous)
 
 	/// `showsMic` is true while the mic should keep the trailing slot (nothing to send, or listening).
 	public init(
@@ -36,22 +39,30 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 		HStack(alignment: .bottom, spacing: MaskinSpace.s2) {
 			leading
 			field
-				.maskinText(.body)
+				.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
 				.foregroundStyle(MaskinColor.ink)
+				.padding(.vertical, MaskinSpace.s4)
 				.frame(minHeight: Self.control)
-				.padding(.horizontal, MaskinSpace.s3)
+				.padding(.vertical, MaskinSpace.s1)
+				.padding(.leading, MaskinSpace.s2)
+				.frame(maxWidth: .infinity)
 			trailing
 		}
-		.padding(MaskinSpace.s4)
-		.maskinGlass(in: RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+		.padding(MaskinSpace.s2)
+		.background {
+			shape.fill(.clear)
+				.maskinGlass(in: shape)
+				.overlay(shape.strokeBorder(MaskinSurface.glassBorder, lineWidth: 0.5))
+				.shadow(color: MaskinColor.overlayDim.opacity(0.35), radius: MaskinSpace.s10, y: MaskinSpace.s7)
+		}
 		.animation(MaskinMotion.quick, value: showsMic)
 	}
 
 	@ViewBuilder private var trailing: some View {
 		if showsMic {
-			mic
+			mic.transition(.opacity)
 		} else {
-			sendButton.transition(.scale.combined(with: .opacity))
+			sendButton.transition(.opacity)
 		}
 	}
 
@@ -61,13 +72,15 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 			onSend()
 		} label: {
 			Image(systemName: "arrow.up")
-				.maskinSymbol(MaskinFontSize.t15, weight: .bold)
+				.maskinSymbol(MaskinFontSize.t17, weight: .heavy)
 				.foregroundStyle(MaskinSurface.onInverse)
 				.frame(width: Self.control, height: Self.control)
 				.background(MaskinSurface.inverse, in: Circle())
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.contentShape(Circle())
 				.opacity(canSend ? 1 : 0.35)
 		}
-		.buttonStyle(.maskinPressed(.shrink))
+		.buttonStyle(.maskinPressed)
 		.disabled(!canSend)
 		#if !os(watchOS) && !os(tvOS)
 		.keyboardShortcut(.return, modifiers: .command)
@@ -76,31 +89,34 @@ public struct ComposerSurface<Leading: View, Field: View, Mic: View>: View {
 	}
 }
 
-/// The attach control's face; the surface draws the glass behind it.
+/// A quiet 40pt circle (`fill` / `fg3`) in a 44pt hit frame: the attach control's face.
 public struct ComposerCircleLabel: View {
 	private let symbol: String
 	public init(_ symbol: String) { self.symbol = symbol }
 	public var body: some View {
 		Image(systemName: symbol)
-			.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
+			.maskinSymbol(MaskinFontSize.t17, weight: .semibold)
 			.foregroundStyle(MaskinColor.ink3)
-			.frame(width: composerControlSize, height: composerControlSize)
+			.frame(width: ComposerMetrics.control, height: ComposerMetrics.control)
 			.background(MaskinSurface.fill, in: Circle())
+			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 			.contentShape(Circle())
 	}
 }
 
-/// The mic as the composer draws it: quiet while idle, a pulsing red disc while listening.
+/// The mic as the composer draws it: a quiet circle while idle, a pulsing red disc while listening.
 public struct ComposerMicLabel: View {
 	private let listening: Bool
 	public init(listening: Bool) { self.listening = listening }
 	public var body: some View {
 		Image(systemName: listening ? "waveform" : "mic")
-			.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
+			.maskinSymbol(MaskinFontSize.t17, weight: listening ? .semibold : .regular)
 			.symbolEffect(.pulse, isActive: listening)
-			.foregroundStyle(listening ? Color.white : MaskinColor.ink3)
-			.frame(width: composerControlSize, height: composerControlSize)
+			.foregroundStyle(listening ? MaskinSurface.onInverse : MaskinColor.ink3)
+			.frame(width: ComposerMetrics.control, height: ComposerMetrics.control)
 			.background(listening ? MaskinColor.dangerMic : MaskinSurface.fill, in: Circle())
+			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+			.contentShape(Circle())
 	}
 }
 
@@ -119,6 +135,8 @@ public struct GlassComposer<Mic: View>: View {
 		canSendOverride ?? !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 	}
 
+	private var hasContent: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
 	public init(
 		text: Binding<String>, placeholder: String = "Message", canSend: Bool? = nil,
 		onAttach: @escaping () -> Void = {}, onSend: @escaping () -> Void,
@@ -135,16 +153,19 @@ public struct GlassComposer<Mic: View>: View {
 
 	public var body: some View {
 		ComposerSurface(
-			canSend: canSend, showsMic: !canSend || listening, onSend: onSend,
+			canSend: canSend, showsMic: (!hasContent || listening) && Mic.self != EmptyView.self, onSend: onSend,
 			leading: {
 				Button(action: onAttach) { ComposerCircleLabel("plus") }
 					.buttonStyle(.maskinPressed)
 					.accessibilityLabel("Attach")
 			},
 			field: {
-				TextField(placeholder, text: $text, axis: .vertical)
-					.lineLimit(1...5)
-					.accessibilityLabel(placeholder)
+				TextField(text: $text, prompt: Text(placeholder).foregroundStyle(MaskinColor.ink5), axis: .vertical) {
+					Text("Message")
+				}
+				.textFieldStyle(.plain)
+				.lineLimit(1...6)
+				.accessibilityLabel(placeholder)
 			},
 			mic: { mic })
 	}

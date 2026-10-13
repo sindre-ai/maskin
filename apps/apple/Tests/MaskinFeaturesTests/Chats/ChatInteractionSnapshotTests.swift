@@ -107,15 +107,13 @@ struct ChatInteractionSnapshotTests {
 		let message = agentMessage("Before I deploy I need two answers.", metadata: questionMetadata)
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-				MessageRow(
-					message: message, isOwn: false, showsAuthor: true, onRetrySend: {}, onDiscard: {},
-					onRetryAgent: {})
+				MessageRow(message: message, isOwn: false, showsAuthor: true)
 				MessageRow(
 					message: message, isOwn: false, showsAuthor: false,
 					questionAnswers: [
 						.init(header: "Environment", selected: ["Production"]),
 						.init(header: "Summary", selected: ["Changelog", "Risks"]),
-					], onRetrySend: {}, onDiscard: {}, onRetryAgent: {})
+					])
 			}
 			try render(view, width: width, dark: dark, name: "question")
 		}
@@ -132,13 +130,14 @@ struct ChatInteractionSnapshotTests {
 			let view = VStack(alignment: .trailing, spacing: MaskinSpace.s7) {
 				MessageRow(
 					message: ownMessage("Sending right now", status: .sending), isOwn: true, showsAuthor: false,
-					onRetrySend: {}, onDiscard: {}, onRetryAgent: {})
+					sendStatus: .sending)
 				MessageRow(
 					message: ownMessage("Typed on the plane", status: .waiting("Waiting for a connection"), metadata: files),
-					isOwn: true, showsAuthor: false, mentionNames: ["Relay"], onRetrySend: {}, onDiscard: {}, onRetryAgent: {})
+					isOwn: true, showsAuthor: false, mentionNames: ["Relay"], sendStatus: .notSent)
 				MessageRow(
 					message: ownMessage("This one was refused by the server", status: .failed("This conversation no longer exists.")),
-					isOwn: true, showsAuthor: false, onRetrySend: {}, onDiscard: {}, onRetryAgent: {})
+					isOwn: true, showsAuthor: false, sendStatus: .notSent)
+				MessageRow(message: ownMessage("Landed and read", status: .sent), isOwn: true, showsAuthor: false, sendStatus: .read(by: "Relay"))
 			}
 			try render(view, width: width, dark: dark, name: "send-states")
 		}
@@ -181,15 +180,75 @@ struct ChatInteractionSnapshotTests {
 		}
 	}
 
-	@Test("working indicator with activity and stop, and the resume banner", arguments: [false, true])
+	@Test("working indicator, typing bubble, streaming and stopped replies, and the resume banner", arguments: [false, true])
 	func agentActivity(dark: Bool) throws {
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				TypingBubble(agent: relay)
 				TypingBubble(agent: forge)
+				WorkingIndicator(agent: relay, activity: "Reading the Q4 pipeline brief")
+				WorkingIndicator(agent: forge)
+				TypingIndicator(agent: relay)
+				StreamingReplyBubble(agent: forge, text: "Three things moved since Friday. The importer")
+				StreamingReplyBubble(agent: forge, text: "I was halfway through the", stopped: true)
+				StreamingReplyBubble(agent: relay, stopped: true)
 				ResumeBanner(agent: forge, onResume: {})
 			}
 			try render(view, width: width, dark: dark, name: "agent-activity")
 		}
+	}
+
+	@Test("the nav title variants: direct quiet, live, group, flow", arguments: [false, true])
+	func navTitle(dark: Bool) throws {
+		let flow = ChatFlowContext(loopID: "l1", name: "Q4 launch", leadID: "relay", memberIDs: ["relay", "forge", "sam"])
+		for width in Self.widths {
+			let view = VStack(spacing: MaskinSpace.s7) {
+				ThreadNavTitle(title: "Relay")
+				ThreadNavTitle(title: "Relay", status: .live("typing…"))
+				ThreadNavTitle(title: "Relay, Sam Berg, Forge", status: .live("working"))
+				HStack {
+					ThreadNavTitle(title: "Q4 launch", status: .quiet("Q4 launch flow"), onTap: {})
+					ThreadNavAvatars(participants: [relay, forge, sam], leadID: "relay", limit: 3)
+				}
+				ThreadNavAvatars(participants: [relay, forge, sam, relay], limit: 4)
+			}
+			try render(view, width: width, dark: dark, name: "nav-title")
+		}
+		#expect(ThreadNav.title(participants: [relay, sam], currentActorID: "me", fallback: "Chat", flow: nil) == "Relay, Sam Berg")
+		#expect(ThreadNav.title(participants: [relay], currentActorID: "me", fallback: "Chat", flow: nil) == "Relay")
+		#expect(ThreadNav.title(participants: [], currentActorID: "me", fallback: "Chat", flow: flow) == "Q4 launch")
+		#expect(ThreadNav.status(presences: [], flow: nil) == nil)
+		#expect(ThreadNav.status(presences: [(relay, .working)], flow: nil) == .live("working"))
+		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .typing)], flow: nil) == .live("typing…"))
+		#expect(ThreadNav.status(presences: [], flow: flow) == .quiet("Q4 launch flow"))
+		#expect(ThreadNav.status(presences: [(relay, .typing)], flow: flow) == .live("Relay is typing…"))
+		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .working)], flow: flow) == .live("▮ 2 working"))
+		#expect(!ThreadNav.showsMemberStack(participants: [relay, sam], flow: nil))
+		#expect(ThreadNav.showsMemberStack(participants: [relay, sam, forge], flow: nil))
+	}
+
+	@Test("jump-to-latest, pinned strip, quick replies and the search bar render", arguments: [false, true])
+	func chrome(dark: Bool) throws {
+		let pinned = agentMessage("Decision: we ship the importer fix on Thursday, legal has signed off on the addendum.")
+		for width in Self.widths {
+			struct SearchHost: View {
+				@State var text = "importer"
+				var body: some View {
+					ThreadSearchBar(text: $text, matchCount: 5, index: 1, onStep: { _ in }, onClose: {})
+				}
+			}
+			let view = VStack(alignment: .trailing, spacing: MaskinSpace.s7) {
+				JumpToLatest(unseen: 0) {}
+				JumpToLatest(unseen: 3) {}
+				PinnedMessageStrip(message: pinned, onOpen: {}, onUnpin: {})
+				QuickReplyChips(replies: QuickReplyRules.replies(for: .permission), onPick: { _ in })
+				SearchHost()
+			}
+			try render(view, width: width, dark: dark, name: "thread-chrome")
+		}
+		#expect(JumpToLatest.accessibilityLabel(unseen: 3) == "Jump to latest, 3 new messages")
+		#expect(SwipeToReply.offset(for: 40) == 28)
+		#expect(SwipeToReply.offset(for: 200) == SwipeToReply.cap)
+		#expect(SwipeToReply.offset(for: -30) == 0)
 	}
 }

@@ -124,6 +124,59 @@ import Testing
 		#expect(sections[0].items.contains { if case .unreadDivider = $0 { true } else { false } })
 	}
 
+	// MARK: Spec 7 grouping gap, TODAY divider, status-line owner
+
+	@Test func aMessageContinuingItsRunIsGroupedAndEverythingElseKeepsTheListGap() {
+		let items = ThreadLayout.items(for: [
+			message(1, "a", at: 0), message(2, "a", at: 30), message(3, "me", at: 60), message(4, "me", at: 70),
+			message(5, "a", at: 80),
+		])
+		let gaps = items.map(ThreadLayout.gap(before:))
+		// day separator, a1, a2 (grouped), me3, me4 (grouped: your own consecutive messages too), a5
+		#expect(gaps == [.list, .list, .grouped, .list, .grouped, .list])
+	}
+
+	@Test func aDividerBetweenTwoMessagesFromOneSenderBreaksTheGrouping() {
+		let items = ThreadLayout.items(
+			for: [message(1, "a", at: 0), message(2, "a", at: 10)], unreadAfter: 1, currentActorID: "me")
+		let gaps = items.map(ThreadLayout.gap(before:))
+		#expect(gaps.filter { $0 == .grouped }.isEmpty)
+	}
+
+	@Test func anOlderChatThatContinuesTodayGetsATodayDivider() {
+		var calendar = Calendar(identifier: .gregorian)
+		calendar.timeZone = TimeZone(identifier: "UTC")!
+		let now = Date(timeIntervalSince1970: 1_700_000_000 + 3 * 86_400 + 3600)
+		let items = ThreadLayout.items(
+			for: [message(1, "a", at: 0), message(2, "a", at: 3 * 86_400)], calendar: calendar)
+		let days = items.compactMap { item -> Date? in
+			if case .daySeparator(let day) = item { return day }
+			return nil
+		}
+		#expect(days.count == 2)
+		#expect(ThreadLayout.dayLabel(days[1], now: now, calendar: calendar) == "Today")
+		#expect(ThreadLayout.dayLabel(days[0], now: now, calendar: calendar) != "Today")
+		// The run breaks at the divider, so the second message shows its header again.
+		#expect(ThreadLayout.runs(in: items)["m2"]?.previousID == nil)
+	}
+
+	@Test func onlyTheNewestOwnMessageCarriesAStatusLine() {
+		let rows = [message(1, "me", at: 0), message(2, "a", at: 10), message(3, "me", at: 20), message(4, "a", at: 30)]
+		#expect(ThreadLayout.latestOwnMessageID(in: rows, currentActorID: "me") == "m3")
+		#expect(ThreadLayout.latestOwnMessageID(in: [message(1, "a", at: 0)], currentActorID: "me") == nil)
+	}
+
+	@Test func aReplyQuoteIsSplitFromTheBody() {
+		let content = ChatQuote.make(author: "Relay", content: "First line\nSecond line") + "Sounds right to me"
+		let quote = try! #require(QuotedReply.parse(content))
+		#expect(quote.author == "Relay")
+		#expect(quote.text == "First line Second line")
+		#expect(quote.body == "Sounds right to me")
+		#expect(QuotedReply.parse("> a plain blockquote\n\nbody") == nil)
+		#expect(QuotedReply.parse("no quote here") == nil)
+		#expect(message(1, "a", content, at: 0).quotedReply?.author == "Relay")
+	}
+
 	@Test func itemsBeforeAnyDayFormAnUndatedSection() {
 		let items: [ThreadItem] = [.message(message(1, "a", at: 0), showsAuthor: true)]
 		let sections = ThreadLayout.sections(for: items)

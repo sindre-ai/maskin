@@ -32,16 +32,20 @@ public struct ShellActions {
 	public var display: ShellDisplayMenu?
 	/// The Display menu's glyph: three lines (filter / sort) or sliders (display options).
 	public var displaySymbol: String
+	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
+	public var displayActive: Bool
 
 	public init(
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
-		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol
+		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
+		displayActive: Bool = false
 	) {
 		self.displaySymbol = displaySymbol
 		self.new = new
 		self.newLabel = newLabel
 		self.live = live
 		self.display = display
+		self.displayActive = displayActive
 	}
 }
 
@@ -85,6 +89,8 @@ private struct ShellToolbarModifier: ViewModifier {
 	func body(content: Content) -> some View {
 		content
 			.shellTitle(title)
+			// Every push from a root screen gets the arrow-only back button (user decision).
+			.backChevronOnly()
 			.trackScrolled($scrolled)
 			.toolbar {
 				// One group, one glass capsule: the tools and the avatar share it (separate items or a
@@ -95,7 +101,11 @@ private struct ShellToolbarModifier: ViewModifier {
 							display.content
 						} label: {
 							Label("Display", systemImage: actions.displaySymbol)
-								.foregroundStyle(MaskinColor.ink)
+								.foregroundStyle(actions.displayActive ? MaskinColor.sigInk : MaskinColor.ink)
+								.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+								.background(
+									Circle().fill(actions.displayActive ? MaskinColor.sigTint : Color.clear))
+								.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
 						}
 					}
 					if actions.live {

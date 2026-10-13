@@ -14,6 +14,12 @@ import WidgetKit
 // The rectangular entry carries `relevance`, which lifts the card in the Smart Stack when a
 // decision is waiting. Patina is signal only: the gauge and ring are the only accent drawn.
 
+/// The URL a complication opens; the watch app's `onOpenURL` selects the Needs you page for it.
+/// Duplicated in `WatchHome` because the two targets share no source file for it.
+private enum WatchLink {
+	static let needsYou = URL(string: "maskin-watch://needs-you")!
+}
+
 @main
 struct MaskinWatchWidgetBundle: WidgetBundle {
 	var body: some Widget {
@@ -27,6 +33,8 @@ struct NeedsYouComplication: Widget {
 	var body: some WidgetConfiguration {
 		StaticConfiguration(kind: Self.kind, provider: WatchComplicationProvider()) { entry in
 			ComplicationView(entry: entry)
+				// Tapping any family opens the watch app on its Needs you page.
+				.widgetURL(WatchLink.needsYou)
 				.containerBackground(for: .widget) { AccessoryWidgetBackground() }
 		}
 		.configurationDisplayName("Needs you")

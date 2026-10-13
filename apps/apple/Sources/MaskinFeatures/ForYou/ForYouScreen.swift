@@ -56,8 +56,20 @@ public struct ForYouScreen: View {
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()
 			async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
-			_ = await (feed, stories)
+			async let names: Void = loadTypeNames()
+			_ = await (feed, stories, names)
 		}
+	}
+
+	/// The workspace schema's type names, so footers read "Flow" or a custom type's own name.
+	private func loadTypeNames() async {
+		guard environment.auth.session != nil else { return }
+		let auth = environment.auth
+		let directory = ObjectsDirectory(
+			remote: APIObjectsRemote(client: environment.client, credentials: auth.credentialsProvider),
+			workspaceId: { auth.session?.workspaceId })
+		await directory.load()
+		runtime.store.typeDisplayNames = directory.schema.displayNames
 	}
 
 	/// The one For you menu: take every suggested option, filter by kind of ask, show what has been
@@ -141,6 +153,8 @@ struct ForYouFeedView: View {
 	var openAgent: ((String) -> Void)?
 	@State private var openStory: StoryCard?
 	/// Which cards the reader opened with Discuss; the rest stay compact.
+	/// Width of the feed, to pick the briefing card size with or without the sidebar open.
+	@State private var feedWidth: CGFloat = 0
 	@State private var expansion = CardExpansion()
 	/// The card whose Later presets are showing (the Later pill, or a swipe left).
 	@State private var laterOpenId: String?
@@ -156,6 +170,8 @@ struct ForYouFeedView: View {
 	private var rowWidth: CGFloat { wide ? .infinity : readableWidth }
 	/// Row side padding: 16 on iPhone, 36 in the wide feed (spec: 36 to 40).
 	private var rowInset: CGFloat { wide ? MaskinSpace.s14 + MaskinSpace.s2 : MaskinSpace.s9 }
+	/// Below this feed width the sidebar is taking room: briefing cards shrink to 150.
+	private let sidebarFeedWidth: CGFloat = 780
 
 	private static let topId = "forYou.top"
 	private static let intents: [ForYouIntent?] = [nil] + ForYouIntent.allCases
@@ -164,46 +180,57 @@ struct ForYouFeedView: View {
 		let entries = store.entries
 		let layoutKey: [String] = entries.map { "\($0.id)-\($0.bucket.rawValue)" }
 		let cardIds: [String] = entries.map { $0.card.id }
-		ScrollViewReader { proxy in
-			List {
-				Color.clear.frame(height: 0).id(Self.topId)
-					.listRowSeparator(.hidden).listRowBackground(Color.clear)
-					.listRowInsets(EdgeInsets())
-				if let stories, !stories.cards.isEmpty {
-					StoryRow(stories: stories, open: { card in openStory = card }, metrics: wide ? .regular : .forYou)
-					.listRowSeparator(.hidden)
-					.listRowBackground(Color.clear)
-					.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: rowInset, bottom: MaskinSpace.s3, trailing: rowInset))
+		presentations(
+			ScrollViewReader { proxy in
+				List {
+					Color.clear.frame(height: 0).id(Self.topId)
+						.listRowSeparator(.hidden).listRowBackground(Color.clear)
+						.listRowInsets(EdgeInsets())
+					if let stories, !stories.cards.isEmpty {
+						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
+						.listRowSeparator(.hidden)
+						.listRowBackground(Color.clear)
+						.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: rowInset, bottom: MaskinSpace.s3, trailing: rowInset))
+					}
+					if store.options.filterBarOn { intentPills }
+					headerRows(entries: entries)
+					feedRows(entries: entries)
 				}
-				if store.options.filterBarOn { intentPills }
-				headerRows(entries: entries)
-				feedRows(entries: entries)
+				.listStyle(.plain)
+				.scrollContentBackground(.hidden)
+				.ambientBackground()
+				.background(
+					GeometryReader { geometry in
+						Color.clear.onChange(of: geometry.size.width, initial: true) { _, width in feedWidth = width }
+					}
+				)
+				.refreshable { await store.refresh() }
+				.overlay(alignment: .top) { newAsksPill(proxy: proxy) }
 			}
-			.listStyle(.plain)
-			.scrollContentBackground(.hidden)
-			.ambientBackground()
-			.refreshable { await store.refresh() }
-			.overlay(alignment: .top) { newAsksPill(proxy: proxy) }
-		}
-		.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
-		.onChange(of: cardIds) { _, ids in expansion.prune(keeping: Set(ids)) }
-		.onChange(of: scenePhase) { _, phase in
-			switch phase {
-			case .active:
-				outbox.appDidBecomeActive()
-				store.later.reload()
-			case .background: store.decisions.commitHeld()
-			default: break
+			.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
+			.onChange(of: cardIds) { _, ids in expansion.prune(keeping: Set(ids)) }
+			.onChange(of: scenePhase) { _, phase in
+				switch phase {
+				case .active:
+					outbox.appDidBecomeActive()
+					store.later.reload()
+				case .background: store.decisions.commitHeld()
+				default: break
+				}
 			}
-		}
+		)
+	}
+
+	/// The sheet, the briefing cover and the notice alert over the feed.
+	private func presentations<Content: View>(_ content: Content) -> some View {
+		content
 		.sheet(item: presentedBinding) { presented in
 			if let chief, let environment {
 				ChiefOfStaffSheet(
 					environment: environment, desk: chief, presented: presented,
 					card: wide ? sheetCard(for: presented.card.id) : nil
 				)
-					.presentationDetents([.medium, .large])
-					.presentationDragIndicator(.visible)
+				.askSheetSizing(wide: wide)
 			}
 		}
 		.storyCover(item: $openStory) { card in
@@ -222,6 +249,12 @@ struct ForYouFeedView: View {
 			Text(chief?.notice ?? "")
 		}
 		.undoToast(undoOffer)
+	}
+
+	/// Briefing cards: 128 wide on compact, 204 on iPad, 150 when the sidebar takes room (4-iPad.md).
+	private var storyMetrics: StoryCardMetrics {
+		guard wide else { return .forYou }
+		return feedWidth > 0 && feedWidth < sidebarFeedWidth ? .regularWithSidebar : .regular
 	}
 
 	private var presentedBinding: Binding<ChiefOfStaffDesk.Presented?> {
@@ -526,7 +559,8 @@ struct ForYouFeedView: View {
 			entry: entry, sender: store.senderName(of: entry.card),
 			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
 			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
-			laterOpen: laterOpenId == id, acceptsReturnKey: wide)
+			laterOpen: laterOpenId == id, acceptsReturnKey: wide,
+			typeLabel: store.typeLabel(for:))
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 	}
 
@@ -541,7 +575,7 @@ struct ForYouFeedView: View {
 			DecisionCardView(
 				entry: entry, sender: store.senderName(of: entry.card), expanded: false,
 				now: fixedNow ?? Date(), actions: actions, chief: nil, threadInDetail: true,
-				agent: store.agent(of: entry.card)))
+				agent: store.agent(of: entry.card), typeLabel: store.typeLabel(for:)))
 	}
 }
 
@@ -690,7 +724,8 @@ extension View {
 				self.presentationDetents([.large])
 			}
 		} else {
-			self.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+			// The Chief of Staff sheet opens at the large detent only (spec 7).
+			self.presentationDetents([.large]).presentationDragIndicator(.visible)
 		}
 	}
 }

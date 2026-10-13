@@ -50,6 +50,33 @@ enum ChatByteFormat {
 	}
 }
 
+/// The chips' shared frame: 36pt tall, `fill`, radius 12, a 15pt glyph, a 14pt semibold label and
+/// a ✕ on the right. Spec 7 §1 → "A picked attachment becomes a 36pt chip inside the bar".
+private enum ComposerChipStyle {
+	static let height: CGFloat = MaskinSpace.s14 + MaskinSpace.s2
+	static let shape = RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+	static let label = MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline)
+	static let detail = MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption)
+}
+
+/// The ✕ on a chip. The chip is 36pt, so the hit area is the chip's own height.
+private struct ChipRemoveButton: View {
+	let label: String
+	let action: () -> Void
+
+	var body: some View {
+		Button(action: action) {
+			Image(systemName: "xmark")
+				.maskinSymbol(MaskinFontSize.t11, weight: .heavy)
+				.foregroundStyle(MaskinColor.ink4)
+				.frame(width: ComposerChipStyle.height, height: ComposerChipStyle.height)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.accessibilityLabel(label)
+	}
+}
+
 /// One attachment in the composer: uploading, ready, or failed (retry / remove).
 struct AttachmentChip: View {
 	let draft: ChatAttachmentDraft
@@ -58,31 +85,25 @@ struct AttachmentChip: View {
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s3) {
-			leading
-			VStack(alignment: .leading, spacing: 0) {
-				Text(draft.name).maskinText(.caption).foregroundStyle(MaskinColor.ink)
-					.lineLimit(1).truncationMode(.middle)
-				if let detail { Text(detail).maskinText(.microLabel).foregroundStyle(detailColor) }
-			}
+			leading.frame(width: MaskinSpace.s9)
+			Text(draft.name).font(ComposerChipStyle.label).foregroundStyle(MaskinColor.ink2)
+				.lineLimit(1).truncationMode(.middle)
+			if let detail { Text(detail).font(ComposerChipStyle.detail).foregroundStyle(detailColor).lineLimit(1) }
 			if case .failed = draft.state {
-				Button("Retry", action: onRetry).maskinText(.caption).buttonStyle(.maskinPressed)
+				Button("Retry", action: onRetry).font(ComposerChipStyle.label).buttonStyle(.maskinPressed)
 					.foregroundStyle(MaskinColor.ink)
 			}
-			Button(action: onRemove) {
-				Image(systemName: "xmark.circle.fill").foregroundStyle(MaskinColor.ink5)
-					.frame(width: MaskinSpace.touchMin - MaskinSpace.s4, height: MaskinSpace.touchMin - MaskinSpace.s4)
-					.contentShape(Rectangle())
-			}
-			.buttonStyle(.maskinPressed)
-			.accessibilityLabel("Remove \(draft.name)")
+			ChipRemoveButton(label: "Remove \(draft.name)", action: onRemove)
 		}
-		.padding(.leading, MaskinSpace.s5)
-		.padding(.vertical, MaskinSpace.s1)
+		.padding(.leading, MaskinSpace.s6)
+		.frame(height: ComposerChipStyle.height)
 		.frame(maxWidth: 260, alignment: .leading)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
-		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
-				.strokeBorder(borderColor, lineWidth: 1))
+		.background(MaskinSurface.fill, in: ComposerChipStyle.shape)
+		.overlay {
+			if case .failed = draft.state {
+				ComposerChipStyle.shape.strokeBorder(MaskinColor.danger, lineWidth: 1)
+			}
+		}
 		.accessibilityElement(children: .contain)
 	}
 
@@ -92,11 +113,11 @@ struct AttachmentChip: View {
 		case .uploading:
 			ProgressView().controlSize(.small)
 		case .failed:
-			Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(MaskinColor.danger)
-				.accessibilityHidden(true)
+			Image(systemName: "exclamationmark.triangle").maskinSymbol(MaskinFontSize.t15, weight: .semibold)
+				.foregroundStyle(MaskinColor.danger).accessibilityHidden(true)
 		case .uploaded:
-			Image(systemName: draft.isImage ? "photo" : "doc").foregroundStyle(MaskinColor.ink3)
-				.accessibilityHidden(true)
+			Image(systemName: draft.isImage ? "photo" : "doc").maskinSymbol(MaskinFontSize.t15, weight: .regular)
+				.foregroundStyle(MaskinColor.ink3).accessibilityHidden(true)
 		}
 	}
 
@@ -104,18 +125,13 @@ struct AttachmentChip: View {
 		switch draft.state {
 		case .uploading: "Uploading…"
 		case .failed(let reason): reason
-		case .uploaded(let ref): ChatByteFormat.string(ref.sizeBytes)
+		case .uploaded: nil
 		}
 	}
 
 	private var detailColor: Color {
 		if case .failed = draft.state { return MaskinColor.danger }
 		return MaskinColor.ink4
-	}
-
-	private var borderColor: Color {
-		if case .failed = draft.state { return MaskinColor.danger }
-		return MaskinSurface.line
 	}
 }
 
@@ -126,24 +142,18 @@ struct MentionChip: View {
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s2) {
-			Image(systemName: "at").maskinSymbol(MaskinFontSize.t11, weight: .semibold)
-				.accessibilityHidden(true)
-			Text(mention.name).maskinText(.caption).lineLimit(1)
+			Image(systemName: "at").maskinSymbol(MaskinFontSize.t13, weight: .semibold)
+				.foregroundStyle(MaskinColor.ink3).accessibilityHidden(true)
+			Text(mention.name).font(ComposerChipStyle.label).foregroundStyle(MaskinColor.ink2).lineLimit(1)
 			if let onRemove {
-				Button(action: onRemove) {
-					Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t10, weight: .bold)
-						.frame(width: MaskinSpace.touchMin - MaskinSpace.s5, height: MaskinSpace.touchMin - MaskinSpace.s5)
-						.contentShape(Rectangle())
-				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityLabel("Remove mention of \(mention.name)")
+				ChipRemoveButton(label: "Remove mention of \(mention.name)", action: onRemove)
 			}
 		}
-		.foregroundStyle(MaskinColor.sigInk)
-		.padding(.leading, MaskinSpace.s4)
-		.padding(.trailing, onRemove == nil ? MaskinSpace.s4 : 0)
-		.frame(minHeight: MaskinSpace.s12 + MaskinSpace.s2)
-		.background(MaskinColor.sigTint, in: Capsule())
+		.padding(.leading, MaskinSpace.s6)
+		.padding(.trailing, onRemove == nil ? MaskinSpace.s6 : 0)
+		.frame(height: ComposerChipStyle.height)
+		.background(MaskinSurface.fill, in: ComposerChipStyle.shape)
+		.accessibilityElement(children: .contain)
 	}
 }
 
@@ -164,7 +174,7 @@ struct ComposerChips: View {
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
-			.padding(.horizontal, MaskinSpace.s4)
+			.padding(.horizontal, MaskinSpace.s2)
 		}
 	}
 }

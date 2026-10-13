@@ -43,6 +43,10 @@ struct WatchHome: View {
 			if signedOut { watch.clear() }
 		}
 		.tabViewStyle(.verticalPage)
+		// A complication tap lands on Needs you, whichever page was showing last.
+		.onOpenURL { url in
+			if url.scheme == "maskin-watch", url.host == "needs-you" { page = .needsYou }
+		}
 		// Actions are ink; the system accent would otherwise paint titles and links indigo.
 		.tint(MaskinColor.ink)
 		.task(id: environment.auth.credentials) { await startLoops() }

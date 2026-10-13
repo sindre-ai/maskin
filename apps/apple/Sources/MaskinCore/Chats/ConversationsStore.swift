@@ -2,8 +2,15 @@ import Foundation
 import MaskinAPI
 import Observation
 
-/// The Chats list: conversations grouped by recency, per-user unread state, live updates, and
-/// creating a conversation. One per workspace; the screen rebuilds it when the workspace changes.
+/// A list API that can also delete a conversation. The HTTP API has no such route yet, so
+/// `ConversationsStore.delete` removes the row locally when a source lacks this.
+public protocol ConversationDeleting: Sendable {
+	func delete(conversationID: String) async throws
+}
+
+/// The Team list: conversations, flow rooms, archived rows, per-user unread state, live updates,
+/// and creating a conversation. One per workspace; the screen rebuilds it when the workspace
+/// changes.
 @MainActor
 @Observable
 public final class ConversationsStore {
@@ -17,6 +24,10 @@ public final class ConversationsStore {
 	public enum Filter: Sendable, CaseIterable { case all, unread, pinned }
 
 	public private(set) var conversations: [ConversationSummary] = []
+	/// Archived conversations, for the Archived row at the bottom of Team.
+	public private(set) var archivedConversations: [ConversationSummary] = []
+	/// Flow rooms for the FLOWS section; empty with no `FlowRoomsSource`.
+	public private(set) var flowRooms: [TeamFlowRoom] = []
 	public private(set) var phase: Phase = .idle
 	public private(set) var freshness = Freshness()
 	public private(set) var hasMore = false
@@ -30,13 +41,7 @@ public final class ConversationsStore {
 	/// Narrows the loaded list to conversations an agent takes part in (client-side).
 	public var agentFilterID: String?
 	/// The Display menu's layout: by person, or one list (the screen remembers the choice).
-	public var groupBy: ConversationGroupBy = .time
-	/// The filter chip (All · Unread · People · Agents · Groups), applied on the loaded list. The
-	/// screen only offers the chips when the Display menu has them on, and resets this to `.all` when
-	/// they are turned off.
-	public var chip: ConversationChip = .all
-	/// Who is signed in, so People, Agents and Groups can tell a chat from a group. Set by the screen.
-	public var currentActorID: String?
+	public var groupBy: ConversationGroupBy = .person
 	public var filter: Filter = .all {
 		didSet {
 			guard filter != oldValue else { return }
@@ -45,23 +50,56 @@ public final class ConversationsStore {
 		}
 	}
 
+	// MARK: Team display state (spec 7 §6)
+
+	/// The Display menu's choices, persisted per user.
+	public var displayOptions: TeamDisplayOptions {
+		didSet {
+			preferences?.displayOptions = displayOptions
+			if !displayOptions.showsFilterChips { chip = .all }
+		}
+	}
+	/// The active filter chip; only meaningful while chips are shown.
+	public var chip: TeamFilterChip = .all
+	/// Pinned tiles in the order the user dragged them into, persisted per user.
+	public private(set) var pinOrder: [String]
+	/// Flows pinned on this device (flows have no server-side pin yet).
+	public private(set) var pinnedFlowIDs: Set<String>
+	/// Conversations where an agent is typing. No API reports this yet; the thread screen may set
+	/// it for the conversation it has open.
+	public var typingConversationIDs: Set<String> = []
+	/// Conversations whose unread messages mention you. No API reports this yet.
+	public var mentionConversationIDs: Set<String> = []
+
 	/// Told after every successful reload of the active, unfiltered list (first load, events,
 	/// pull-to-refresh). The thread prefetcher hangs off this.
 	@ObservationIgnored public var onListLoaded: (@MainActor ([ConversationSummary]) -> Void)?
 
 	@ObservationIgnored private let api: any ConversationsAPI
+	@ObservationIgnored private let flowSource: (any FlowRoomsSource)?
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private let cache: SnapshotCache?
+	@ObservationIgnored private let preferences: TeamPreferences?
 	@ObservationIgnored private let pageSize = 30
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var generation = 0
+	/// Rows deleted here while the API has no delete: hidden from every later page.
+	@ObservationIgnored private var locallyDeleted: Set<String> = []
 
-	public init(api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil) {
+	public init(
+		api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil,
+		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil
+	) {
 		self.api = api
 		self.events = events
 		self.cache = cache
+		self.flowSource = flowRooms
+		self.preferences = preferences
+		self.displayOptions = preferences?.displayOptions ?? .default
+		self.pinOrder = preferences?.pinOrder ?? []
+		self.pinnedFlowIDs = preferences?.pinnedFlowIDs ?? []
 		hydrateIfNeeded()
 	}
 
@@ -87,7 +125,8 @@ public final class ConversationsStore {
 	public var totalUnread: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
 
 	public func groups(query: String = "", now: Date = Date()) -> [ConversationGroup] {
-		let filtered = ConversationGrouping.filter(narrowed, query: query)
+		let filtered = ConversationGrouping.filter(
+			ConversationGrouping.filter(conversations, agentID: agentFilterID), query: query)
 		if scope == .archived {
 			return filtered.isEmpty
 				? [] : [ConversationGroup(key: .earlier, label: "Archived", items: filtered)]
@@ -105,26 +144,56 @@ public final class ConversationsStore {
 	public func sections(query: String = "", now: Date = Date()) -> ConversationListSections {
 		let flat = groups(query: query, now: now)
 		if scope == .archived || isSearching(query) { return ConversationListSections(pinned: [], groups: flat) }
-		// A chip other than All shows one time-grouped list (Groups always does), never the person view.
-		return ConversationGrouping.sections(narrowed, now: now)
+		return ConversationGrouping.sections(
+			ConversationGrouping.filter(conversations, agentID: agentFilterID), now: now)
 	}
 
 	/// The person view: pinned tiles, UNREAD, PEOPLE & AGENTS. Nil in the archive and while
 	/// searching, which show one flat list (`sections`).
 	public func teamSections(query: String = "", currentActorID: String?) -> TeamSections? {
-		guard scope == .active, !isSearching(query), chip == .all || chip == .people || chip == .agents
-		else { return nil }
-		return ConversationGrouping.teamSections(narrowed, currentActorID: currentActorID)
-	}
-
-	/// The loaded list after the agent token and the filter chip.
-	private var narrowed: [ConversationSummary] {
-		chip.apply(
-			to: ConversationGrouping.filter(conversations, agentID: agentFilterID), currentActorID: currentActorID)
+		guard scope == .active, !isSearching(query) else { return nil }
+		return ConversationGrouping.teamSections(
+			ConversationGrouping.filter(conversations, agentID: agentFilterID),
+			currentActorID: currentActorID)
 	}
 
 	private func isSearching(_ query: String) -> Bool {
 		!query.trimmingCharacters(in: .whitespaces).isEmpty
+	}
+
+	/// The Team list for the current options, chip and query (spec 7 §6).
+	public func layout(
+		query: String = "", currentActorID: String?, expandedSectionIDs: Set<String> = [], now: Date = Date()
+	) -> TeamLayout {
+		let working = workingAgentIDs
+		// A flow works when any of its agents runs; the source may not know run state itself.
+		let rooms = flowRooms.map { room in
+			var room = room
+			room.workingCount = max(room.workingCount, room.loop?.agentIDs.filter(working.contains).count ?? 0)
+			return room
+		}
+		return TeamLayout.build(
+			TeamLayout.Input(
+				conversations: ConversationGrouping.filter(conversations, agentID: agentFilterID), flowRooms: rooms,
+				archived: archivedConversations, options: displayOptions,
+				chip: displayOptions.showsFilterChips ? chip : .all, query: query, currentActorID: currentActorID,
+				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs, now: now))
+	}
+
+	/// Agents running right now, from the workspace actor list.
+	public var workingAgentIDs: Set<String> {
+		Set(actors.filter { $0.participant.kind == .agent && $0.agentState == .running }.map(\.id))
+	}
+
+	/// The second line of a conversation's row. `draft` and `tick` come from the screen (the draft
+	/// store and the send queue live outside this store).
+	public func status(
+		for conversation: ConversationSummary, draft: String? = nil, tick: ConversationRowStatus.Tick? = nil
+	) -> ConversationRowStatus {
+		let working = conversation.participants.filter { workingAgentIDs.contains($0.id) }.count
+		return ConversationRowStatus.make(
+			conversation: conversation, draft: draft, typing: typingConversationIDs.contains(conversation.id),
+			workingAgents: working, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id))
 	}
 
 	/// The filter menu only lists agents in the current list, so a filter on an agent that is no
@@ -149,7 +218,7 @@ public final class ConversationsStore {
 	}
 
 	public func conversation(id: String) -> ConversationSummary? {
-		conversations.first { $0.id == id }
+		conversations.first { $0.id == id } ?? archivedConversations.first { $0.id == id }
 	}
 
 	// MARK: - Loading
@@ -165,15 +234,24 @@ public final class ConversationsStore {
 					switch signal {
 					case .reconnected:
 						await self.refresh()
+						await self.refreshArchived()
 					case .event(let event) where event.entityType == .conversation:
 						await self.refresh()
+					case .event(let event) where event.entityType == .session || event.entityType == .actor:
+						// Working state on rows and avatars follows the agents' runs.
+						await self.refreshActors()
+						await self.refreshFlowRooms()
 					case .event:
 						break
 					}
 				}
 			}
 		}
-		await refresh()
+		async let main: Void = refresh()
+		async let archived: Void = refreshArchived()
+		async let flows: Void = refreshFlowRooms()
+		async let people: Void = refreshActors()
+		_ = await (main, archived, flows, people)
 	}
 
 	public func stop() {
@@ -204,6 +282,7 @@ public final class ConversationsStore {
 				// Re-read what's on screen (capped by the server) so paged-in rows survive an event.
 				let keptTail = conversations.count > limit
 				conversations = ServerLimits.mergeHead(head: page.conversations, previous: conversations)
+					.filter { !locallyDeleted.contains($0.id) }
 				hasMore = keptTail ? hasMore || page.hasMore : page.hasMore
 				phase = .loaded
 				reconcileAgentFilter()
@@ -226,7 +305,7 @@ public final class ConversationsStore {
 				archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
 				limit: pageSize, offset: conversations.count)
 			let known = Set(conversations.map(\.id))
-			conversations += page.conversations.filter { !known.contains($0.id) }
+			conversations += page.conversations.filter { !known.contains($0.id) && !locallyDeleted.contains($0.id) }
 			hasMore = page.hasMore
 		} catch {
 			notice = Self.message(error)
@@ -235,7 +314,24 @@ public final class ConversationsStore {
 
 	public func loadActors() async {
 		guard actors.isEmpty else { return }
-		actors = (try? await api.actors()) ?? []
+		await refreshActors()
+	}
+
+	public func refreshActors() async {
+		if let fresh = try? await api.actors() { actors = fresh }
+	}
+
+	/// The archived list (first page) for the Archived row. Failure keeps what was shown.
+	public func refreshArchived() async {
+		guard scope == .active else { return }
+		if let page = try? await api.list(archived: true, limit: pageSize, offset: 0) {
+			archivedConversations = page.conversations.filter { !locallyDeleted.contains($0.id) }
+		}
+	}
+
+	public func refreshFlowRooms() async {
+		guard let flowSource else { return }
+		if let rooms = try? await flowSource.flowRooms() { flowRooms = rooms }
 	}
 
 	// MARK: - Create
@@ -261,25 +357,106 @@ public final class ConversationsStore {
 
 	@discardableResult
 	public func setPinned(_ id: String, _ pinned: Bool) async -> Bool {
-		await mutate(id, apply: { $0.pinned = pinned }) {
+		let ok = await mutate(id, apply: { $0.pinned = pinned }) {
 			try await self.api.updateState(
 				conversationID: id, pinned: pinned, archived: nil, lastReadMessageID: nil, markUnread: false)
 		}
+		// The order follows the server's answer: a refused pin leaves the tiles as they were.
+		if ok, pinned, !pinOrder.contains(id) { setPinOrder(pinOrder + [id]) }
+		if ok, !pinned { setPinOrder(pinOrder.filter { $0 != id }) }
+		return ok
 	}
 
+	/// Flows pin on this device only until the API has a pin for them.
+	public func setFlowPinned(_ flowID: String, _ pinned: Bool) {
+		let key = TeamLayout.flowPinKey(flowID)
+		if pinned {
+			pinnedFlowIDs.insert(flowID)
+			if !pinOrder.contains(key) { setPinOrder(pinOrder + [key]) }
+		} else {
+			pinnedFlowIDs.remove(flowID)
+			setPinOrder(pinOrder.filter { $0 != key })
+		}
+		preferences?.pinnedFlowIDs = pinnedFlowIDs
+	}
+
+	/// Drag reorder of the pinned tiles: moves the tile with `id` to where `target` sits. Tiles
+	/// not yet in the order are appended first, so a partial order is always well defined.
+	public func movePin(_ id: String, before target: String, tiles: [String]) {
+		var order = pinOrder
+		for key in tiles where !order.contains(key) { order.append(key) }
+		guard let from = order.firstIndex(of: id), let to = order.firstIndex(of: target), from != to else { return }
+		order.remove(at: from)
+		order.insert(id, at: to)
+		setPinOrder(order)
+	}
+
+	private func setPinOrder(_ order: [String]) {
+		pinOrder = order
+		preferences?.pinOrder = order
+	}
+
+	/// Moves a conversation between the active and archived lists, and back if the server refuses.
 	@discardableResult
 	public func setArchived(_ id: String, _ archived: Bool) async -> Bool {
-		let before = conversations
-		conversations.removeAll { $0.id == id }
+		let beforeActive = conversations
+		let beforeArchived = archivedConversations
+		if archived, let index = conversations.firstIndex(where: { $0.id == id }) {
+			var row = conversations.remove(at: index)
+			row.archived = true
+			if scope == .active { archivedConversations.insert(row, at: 0) }
+		} else if !archived, let index = archivedConversations.firstIndex(where: { $0.id == id }) {
+			var row = archivedConversations.remove(at: index)
+			row.archived = false
+			conversations.insert(row, at: 0)
+		} else if archived {
+			conversations.removeAll { $0.id == id }
+		} else {
+			// The archive scope lists archived rows in `conversations`: unarchiving drops the row there.
+			conversations.removeAll { $0.id == id }
+			archivedConversations.removeAll { $0.id == id }
+		}
 		reconcileAgentFilter()
 		do {
 			try await api.updateState(
 				conversationID: id, pinned: nil, archived: archived, lastReadMessageID: nil, markUnread: false)
 			return true
 		} catch {
-			conversations = before
+			conversations = beforeActive
+			archivedConversations = beforeArchived
 			notice = Self.message(error)
 			return false
+		}
+	}
+
+	/// Drops the row after the reader left the conversation. The server already removed them, so
+	/// nothing is asked of it; the row just stays out of every later page.
+	public func hideAfterLeaving(_ id: String) {
+		conversations.removeAll { $0.id == id }
+		archivedConversations.removeAll { $0.id == id }
+		locallyDeleted.insert(id)
+		setPinOrder(pinOrder.filter { $0 != id })
+		reconcileAgentFilter()
+	}
+
+	/// Removes the row for good. Sources that can delete are asked to; otherwise the row is hidden
+	/// on this device only (API follow-up: `DELETE /api/conversations/{id}`).
+	public func delete(_ id: String) async {
+		let beforeActive = conversations
+		let beforeArchived = archivedConversations
+		conversations.removeAll { $0.id == id }
+		archivedConversations.removeAll { $0.id == id }
+		locallyDeleted.insert(id)
+		setPinOrder(pinOrder.filter { $0 != id })
+		reconcileAgentFilter()
+		guard let deleting = api as? any ConversationDeleting else { return }
+		do {
+			try await deleting.delete(conversationID: id)
+		} catch {
+			conversations = beforeActive
+			archivedConversations = beforeArchived
+			locallyDeleted.remove(id)
+			notice = Self.message(error)
 		}
 	}
 
@@ -376,17 +553,19 @@ public final class ConversationsStore {
 	}
 
 	private func update(_ id: String, _ change: (inout ConversationSummary) -> Void) {
-		guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
-		change(&conversations[index])
+		if let index = conversations.firstIndex(where: { $0.id == id }) {
+			change(&conversations[index])
+		} else if let index = archivedConversations.firstIndex(where: { $0.id == id }) {
+			change(&archivedConversations[index])
+		}
 	}
 
 	@discardableResult
 	private func mutate(
 		_ id: String, apply: (inout ConversationSummary) -> Void, request: () async throws -> Void
 	) async -> Bool {
-		guard let index = conversations.firstIndex(where: { $0.id == id }) else { return false }
-		let before = conversations[index]
-		apply(&conversations[index])
+		guard let before = conversation(id: id) else { return false }
+		update(id, apply)
 		do {
 			try await request()
 			return true

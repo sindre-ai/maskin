@@ -185,3 +185,15 @@ struct ObjectsBoardMoveTests {
 		#expect(ObjectsBoardMoves.moving("x", to: "done", in: columns)?.columns[1].total == 1)
 	}
 }
+
+@Suite("StatusFlow done target")
+struct StatusFlowDoneTests {
+	@Test("Done is the first finished status of the type, in workspace order")
+	func doneTarget() {
+		let schema = ObjectsSchema.fallback
+		#expect(StatusFlow.doneTarget(in: schema.statuses(for: "task")) == "validated")
+		#expect(StatusFlow.doneTarget(in: schema.statuses(for: "bet")) == "succeeded")
+		#expect(StatusFlow.doneTarget(in: schema.statuses(for: "insight")) == "scored")
+		#expect(StatusFlow.doneTarget(in: ["open", "closed"]) == nil)
+	}
+}

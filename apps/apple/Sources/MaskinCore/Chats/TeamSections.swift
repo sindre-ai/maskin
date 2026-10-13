@@ -14,6 +14,16 @@ public struct TeamPerson: Identifiable, Equatable, Sendable {
 	/// Newest activity first.
 	public var conversations: [ConversationSummary]
 
+	public init(
+		id: String, name: String, kind: Kind, participants: [ChatParticipant], conversations: [ConversationSummary]
+	) {
+		self.id = id
+		self.name = name
+		self.kind = kind
+		self.participants = participants
+		self.conversations = conversations
+	}
+
 	/// The conversation with the newest activity: what the row previews.
 	public var latest: ConversationSummary { conversations[0] }
 	public var unreadCount: Int { conversations.reduce(0) { $0 + $1.unreadCount } }

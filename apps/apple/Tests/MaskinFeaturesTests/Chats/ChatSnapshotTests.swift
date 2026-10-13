@@ -209,7 +209,7 @@ struct ChatSnapshotTests {
 		for width in Self.widths {
 			let content = ThreadTranscript(store: store, lazy: false)
 				.padding(MaskinSpace.s9)
-			_ = try render(content, width: width, dark: dark, name: "thread-streaming", canvas: MaskinSurface.card)
+			_ = try render(content, width: width, dark: dark, name: "thread-streaming", canvas: MaskinSurface.grouped)
 		}
 		#expect(store.workingAgents().map(\.id) == ["relay"])
 	}
@@ -218,7 +218,7 @@ struct ChatSnapshotTests {
 	func failedReply(dark: Bool) async throws {
 		let store = await threadStore(streaming: false)
 		for width in Self.widths {
-			_ = try render(ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9), width: width, dark: dark, name: "thread-failed", canvas: MaskinSurface.card)
+			_ = try render(ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9), width: width, dark: dark, name: "thread-failed", canvas: MaskinSurface.grouped)
 		}
 		#expect(store.messages.last?.isErrorReply == true)
 	}
@@ -239,7 +239,7 @@ struct ChatSnapshotTests {
 									: MarkdownLinkInfo(symbol: "checkmark.square", kindLabel: "Task")
 							})
 							.frame(height: 3200, alignment: .top)
-						_ = try render(content, width: width, dark: dark, name: "thread-rich", canvas: MaskinSurface.card)
+						_ = try render(content, width: width, dark: dark, name: "thread-rich", canvas: MaskinSurface.grouped)
 		}
 		#expect(store.messages.count == 12)
 	}
@@ -247,7 +247,7 @@ struct ChatSnapshotTests {
 	@Test("the thread skeleton renders", arguments: [false, true])
 	func skeleton(dark: Bool) throws {
 		for width in Self.widths {
-			_ = try render(ThreadSkeleton().frame(height: 560), width: width, dark: dark, name: "thread-skeleton", canvas: MaskinSurface.card)
+			_ = try render(ThreadSkeleton().frame(height: 560), width: width, dark: dark, name: "thread-skeleton", canvas: MaskinSurface.grouped)
 		}
 	}
 

@@ -65,4 +65,9 @@ struct ObjectDecisionSection: View {
 	static func entry(for objectId: String, in entries: [FeedEntry]) -> FeedEntry? {
 		entries.first { $0.id == objectId && ($0.bucket != .fyi) }
 	}
+
+	/// A decision on this object is still waiting on the reader (the Overview tab's Patina dot).
+	static func needsYou(objectId: String, in entries: [FeedEntry]) -> Bool {
+		entries.contains { $0.id == objectId && $0.section == .needs }
+	}
 }

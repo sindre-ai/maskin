@@ -11,6 +11,8 @@ import UniformTypeIdentifiers
 ///     FileScreen(environment: env, fileId: id)
 public struct FileScreen: View {
 	@State private var store: FileStore
+	@State private var showFileInfo = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	public init(environment: AppEnvironment, fileId: String) {
 		_store = State(
@@ -32,12 +34,28 @@ public struct FileScreen: View {
 			.toolbar {
 				if let file = store.file {
 					ToolbarItem(placement: .primaryAction) {
-						// The bytes are written only when the person actually shares.
-						ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
-							Label("Share", systemImage: "square.and.arrow.up")
+						Menu {
+							// Changing a page is asking for it in chat; Versions and Fork need file history
+							// and copy routes that main's API does not have yet.
+							Button {
+								runtime?.buildInChat("I'd like to change the page \(file.name). ")
+							} label: {
+								Label("Change this page", systemImage: "bubble.left")
+							}
+							.disabled(runtime == nil)
+							Button { showFileInfo = true } label: { Label("File", systemImage: "info.circle") }
+							// The bytes are written only when the person actually shares.
+							ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
+								Label("Share", systemImage: "square.and.arrow.up")
+							}
+						} label: {
+							Label("More", systemImage: "ellipsis.circle")
 						}
 					}
 				}
+			}
+			.sheet(isPresented: $showFileInfo) {
+				if let file = store.file { FileInfoSheet(file: file) }
 			}
 			.onDisappear { FileStore.clearExports() }
 			.task { await store.load() }
@@ -236,5 +254,35 @@ struct FileExport: Transferable {
 		FileRepresentation(exportedContentType: .data) { export in
 			SentTransferredFile(try FileExporter.write(export.file))
 		}
+	}
+}
+
+/// The "File" sheet: what the artefact is, in the viewer's words.
+struct FileInfoSheet: View {
+	let file: FileDetail
+	@Environment(\.dismiss) private var dismiss
+
+	var body: some View {
+		NavigationStack {
+			List {
+				row("Name", file.name)
+				row("Type", file.mimeType)
+				row("Size", ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file))
+				if let created = file.createdAt { row("Created", created.formatted(date: .abbreviated, time: .shortened)) }
+				if let updated = file.updatedAt { row("Updated", updated.formatted(date: .abbreviated, time: .shortened)) }
+				if let description = file.description, !description.isEmpty { row("About", description) }
+			}
+			.navigationTitle("File")
+			#if os(iOS)
+			.navigationBarTitleDisplayMode(.inline)
+			#endif
+			.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+		}
+		.presentationDetents([.medium, .large])
+	}
+
+	private func row(_ label: String, _ value: String) -> some View {
+		LabeledContent(label) { Text(value).multilineTextAlignment(.trailing) }
+			.maskinText(.subhead)
 	}
 }

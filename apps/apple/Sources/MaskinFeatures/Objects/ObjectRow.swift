@@ -15,7 +15,29 @@ extension ObjectsStatusTone {
 	}
 }
 
-/// "Needs you": the Patina marker the lists use, a dot on rows and the words on board cards.
+/// The type as a mono pill with its dot (the one place a type keeps its hue). Kept for the
+/// detail header; rows no longer carry it (handoff spec 8).
+struct ObjectTypeTag: View {
+	let type: String
+	let name: String
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+				.fill(MaskinObjectType.dotColor(for: type))
+				.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+				.accessibilityHidden(true)
+			MonoLabel(name, color: MaskinColor.ink2, size: .chip)
+				.padding(.horizontal, MaskinSpace.s3)
+				.padding(.vertical, MaskinSpace.s1)
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.inputSm, style: .continuous))
+				.lineLimit(1)
+		}
+		.fixedSize()
+	}
+}
+
+/// "Needs you": the Patina marker the lists use.
 struct NeedsYouDot: View {
 	var body: some View {
 		Circle().fill(MaskinColor.sig)
@@ -24,90 +46,110 @@ struct NeedsYouDot: View {
 	}
 }
 
-/// The driver's coded avatar (people are circles, agents their own shapes). Nothing when the
-/// driver can't be resolved: no initials of an id.
+/// The driver's coded avatar (people are circles, agents their own shapes), with the Patina
+/// working ring while an agent runs on the object. An empty quiet slot when the driver can't be
+/// resolved: no initials of an id.
 struct ObjectDriverAvatar: View {
 	let name: String?
 	let isAgent: Bool
 	let seed: String?
 	var working = false
-	var size: CGFloat = MaskinSpace.s11
+	var size: CGFloat = MaskinSpace.s10
 
 	var body: some View {
-		if let name {
+		if let name, !name.isEmpty {
 			ActorAvatar(name: name, kind: isAgent ? .agent : .human, size: size, seed: seed, working: working)
+		} else {
+			Circle()
+				.fill(MaskinSurface.fill)
+				.frame(width: size, height: size)
+				.overlay {
+					Image(systemName: "person")
+						.maskinSymbol(MaskinFontSize.t10, weight: .semibold)
+						.foregroundStyle(MaskinColor.ink5)
+				}
+				.accessibilityLabel("No driver")
 		}
 	}
 }
 
-/// Three pulsing bars: an agent is working on this object right now.
-struct ObjectWorkingGlyph: View {
+/// Three small Patina bars that say "an agent is working here now". Still under Reduce Motion.
+struct ObjectWorkingBars: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var phase = false
+
+	private let heights: [CGFloat] = [5, 11, 7]
 
 	var body: some View {
-		Image(systemName: "waveform")
-			.maskinSymbol(MaskinFontSize.t11, weight: .bold)
-			.foregroundStyle(MaskinColor.sigInk)
-			.symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
-			.accessibilityHidden(true)
+		HStack(alignment: .center, spacing: 1.5) {
+			ForEach(0..<3, id: \.self) { i in
+				RoundedRectangle(cornerRadius: 1, style: .continuous)
+					.fill(MaskinColor.sigInk)
+					.frame(width: 2, height: phase && !reduceMotion ? heights[(i + 1) % 3] : heights[i])
+			}
+		}
+		.frame(height: 11)
+		.onAppear {
+			guard !reduceMotion else { return }
+			withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) { phase = true }
+		}
+		.accessibilityLabel("Agent working")
 	}
 }
 
-/// One object in the list (handoff 8): a type glyph (only when the list mixes types) and the title,
-/// the agent's ask in Patina only when it needs the person, then driver, working bars, status and
-/// time. No type tag, no ID, no flow, no due date or priority: those live on the object page. Pure
-/// values in, so it renders in previews and snapshots; the surrounding card belongs to the list.
+/// One object in the list or on the board, to the handoff's anatomy (`specs/8-Objects.md`):
+/// - line 1: type glyph (only when the list mixes types) + title (2 lines) + unseen dot
+/// - line 2: the ask in Patina, "Strategist: …", only when it needs you
+/// - line 3: driver avatar 18 (Patina ring while an agent works) · working bars · status · time
+/// No type tag, mono id, flow, due or priority: those live on the object page.
+/// Pure values in, so it renders in previews and snapshots; the card belongs to the list.
 struct ObjectRow: View {
 	let object: WorkObject
 	let typeName: String
-	/// The driver's resolved name; no avatar when it can't be resolved.
-	let ownerName: String?
-	var ownerIsAgent = false
-	/// The open ask, as "Strategist: Post text only…". Only passed while it needs the person.
+	/// The list mixes types, so the row says which one this is.
+	var showsGlyph = true
+	/// An open ask for the reader, when the object needs them.
 	var ask: ObjectAsk?
-	/// Whether the object wants the person (the ask, or a status that does).
-	var needsYou = false
-	/// The type glyph shows only when the list mixes types.
-	var showsTypeGlyph = false
+	/// The driver's resolved name; an empty slot when it can't be resolved.
+	var ownerName: String?
+	var ownerIsAgent = false
 	var showsStatus = true
 	var showsDriver = true
 	var showsUpdated = true
-	/// Regular width: the driver's name beside the avatar, for the extra room.
-	var showsDriverName = false
+
+	private var unseen: Bool { object.unreadCount > 0 }
+	private var needsYou: Bool { ask != nil || ObjectsUrgency.needsYou(object) }
 
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s7) {
-			if showsTypeGlyph {
-				Image(systemName: ObjectTypeOrder.symbol(for: object.type))
-					.maskinSymbol(MaskinFontSize.t16)
+			if showsGlyph {
+				Image(systemName: MaskinObjectType.glyph(for: object.type))
+					.maskinSymbol(MaskinFontSize.t17, weight: .regular)
 					.foregroundStyle(MaskinColor.ink4)
-					.frame(width: MaskinSpace.s11, height: MaskinSpace.s11)
+					.frame(width: MaskinSpace.s11 + MaskinSpace.s1, height: MaskinSpace.s11 + MaskinSpace.s1)
 					.accessibilityHidden(true)
 			}
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				HStack(alignment: .top, spacing: MaskinSpace.s3) {
 					Text(object.displayTitle)
 						.maskinText(.headline)
-						.fontWeight(object.unreadCount > 0 ? .bold : .semibold)
+						.fontWeight(unseen ? .bold : .semibold)
 						.foregroundStyle(MaskinColor.ink)
 						.lineLimit(2)
 						.multilineTextAlignment(.leading)
-					if object.isStarred {
-						Image(systemName: "star.fill")
-							.maskinSymbol(MaskinFontSize.t11)
-							.foregroundStyle(MaskinColor.ink5)
+						.frame(maxWidth: .infinity, alignment: .leading)
+					if unseen {
+						Circle()
+							.fill(MaskinColor.sig)
+							.frame(width: MaskinSpace.s3 + 1, height: MaskinSpace.s3 + 1)
+							.padding(.top, MaskinSpace.s3)
 							.accessibilityHidden(true)
-					}
-					if object.unreadCount > 0 {
-						Circle().fill(MaskinColor.sig)
-							.frame(width: MaskinSpace.s3 + MaskinSpace.s1 / 2, height: MaskinSpace.s3 + MaskinSpace.s1 / 2)
-							.accessibilityLabel("Changed since you last looked")
 					}
 				}
 				if let ask {
 					askLine(ask)
 				}
-				footer
+				metaLine
 			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
@@ -119,8 +161,8 @@ struct ObjectRow: View {
 
 	private func askLine(_ ask: ObjectAsk) -> some View {
 		Group {
-			if let by = ask.by {
-				Text(by).fontWeight(.bold) + Text(": \(ask.text)")
+			if let who = ask.askedBy, !who.isEmpty {
+				Text("\(who): ").fontWeight(.bold) + Text(ask.text)
 			} else {
 				Text(ask.text)
 			}
@@ -128,104 +170,105 @@ struct ObjectRow: View {
 		.maskinText(.subhead)
 		.foregroundStyle(MaskinColor.sigInk)
 		.lineLimit(1)
+		.padding(.top, MaskinSpace.s1)
 	}
 
-	@ViewBuilder private var footer: some View {
-		let hasDriver = showsDriver && ownerName != nil
-		if hasDriver || showsStatus || showsUpdated || object.hasActiveSession {
-			HStack(alignment: .center, spacing: MaskinSpace.s4) {
+	@ViewBuilder private var metaLine: some View {
+		if showsDriver || showsStatus || showsUpdated || object.hasActiveSession {
+			HStack(spacing: MaskinSpace.s3 + 1) {
 				if showsDriver {
 					ObjectDriverAvatar(
 						name: ownerName, isAgent: ownerIsAgent, seed: object.driverId,
-						working: object.hasActiveSession, size: MaskinSpace.s10)
-					if showsDriverName, let ownerName {
-						Text(ownerName)
-							.maskinText(.caption)
-							.foregroundStyle(MaskinColor.ink3)
-							.lineLimit(1)
-					}
+						working: object.hasActiveSession)
 				}
-				if object.hasActiveSession { ObjectWorkingGlyph() }
+				if object.hasActiveSession {
+					ObjectWorkingBars()
+				}
 				if showsStatus {
-					StatusWord(status: object.status, tone: ObjectsStatusTone.of(object).color)
+					Text(MaskinStatus.sentenceLabel(for: object.status))
+						.maskinText(.caption)
+						.foregroundStyle(ObjectsStatusTone.of(object).color)
+						.lineLimit(1)
 				}
-				Spacer(minLength: MaskinSpace.s3)
+				Spacer(minLength: 0)
 				if showsUpdated {
 					RelativeTime(object.updatedAt, style: .compact)
 						.maskinText(.caption)
+						.monospacedDigit()
 						.foregroundStyle(MaskinColor.ink5)
 				}
 			}
+			.padding(.top, MaskinSpace.s2)
 		}
 	}
 
 	private var accessibilityLabel: String {
-		var parts = [typeName, object.displayTitle, MaskinStatus.label(for: object.status)]
+		var parts = [typeName, object.displayTitle]
+		if unseen { parts.append("Changed since you last looked") }
+		if let ask { parts.append("Needs you. \(ask.line)") } else if needsYou { parts.append("Needs you") }
 		if let ownerName, showsDriver { parts.append("driven by \(ownerName)") }
-		if let ask { parts.append("Needs you: \(ask.line)") } else if needsYou { parts.append("Needs you") }
-		if object.isStarred { parts.append("Starred") }
-		if object.hasActiveSession { parts.append("Agents working") }
-		if object.unreadCount > 0 { parts.append("Changed since you last looked") }
+		if object.hasActiveSession { parts.append("Agent working") }
+		parts.append(MaskinStatus.sentenceLabel(for: object.status))
 		return parts.joined(separator: ", ")
 	}
 }
 
-/// Section header for a group (handoff 8): the status mark, the name in sentence case, the count,
-/// and a chevron; tapping folds the group. A type or driver group shows its name alone.
+/// Foldable header for a group: the status category's mark (or the type glyph) + name + count,
+/// a chevron at the end. Tap to fold.
 struct ObjectGroupHeader: View {
 	let group: ObjectGroup
-	var isCollapsed = false
-	/// Nil makes the header static (snapshots).
-	var toggle: (() -> Void)?
+	var collapsed = false
+	var onToggle: (() -> Void)?
 
 	var body: some View {
-		let label = HStack(spacing: MaskinSpace.s4) {
-			if group.isType {
-				Image(systemName: ObjectTypeOrder.symbol(for: group.id))
-					.maskinSymbol(MaskinFontSize.t13)
-					.foregroundStyle(MaskinColor.ink4)
-					.accessibilityHidden(true)
-			} else if !group.isAttention, !group.id.isEmpty, Self.isStatus(group) {
-				StatusCategoryGlyph(category: StatusCategory.of(group.id), size: MaskinSpace.s8)
-			}
-			Text(Self.title(group))
-				.maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinColor.ink2)
-			Text("\(group.objects.count)")
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink5)
-			Spacer()
-			if toggle != nil {
-				Image(systemName: "chevron.down")
-					.maskinSymbol(MaskinFontSize.t11, weight: .semibold)
+		Button {
+			onToggle?()
+		} label: {
+			HStack(spacing: MaskinSpace.s4) {
+				icon
+				Text(group.title ?? "")
+					.maskinText(.subhead)
+					.fontWeight(.semibold)
+					.foregroundStyle(MaskinColor.ink2)
+					.lineLimit(1)
+				Text("\(group.objects.count)")
+					.maskinText(.caption)
+					.monospacedDigit()
 					.foregroundStyle(MaskinColor.ink5)
-					.rotationEffect(.degrees(isCollapsed ? -90 : 0))
-					.accessibilityHidden(true)
+				Spacer(minLength: 0)
+				if onToggle != nil {
+					Image(systemName: "chevron.down")
+						.maskinSymbol(MaskinFontSize.t11, weight: .bold)
+						.foregroundStyle(MaskinColor.ink5)
+						.rotationEffect(.degrees(collapsed ? -90 : 0))
+				}
 			}
+			.padding(.horizontal, MaskinSpace.s4)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
 		}
+		.buttonStyle(.plain)
+		.disabled(onToggle == nil)
 		.textCase(nil)
-		.frame(minHeight: MaskinSpace.touchMin)
-		.contentShape(Rectangle())
-		if let toggle {
-			Button(action: toggle) { label }
-				.buttonStyle(.maskinPressed)
-				.accessibilityHint(isCollapsed ? "Shows the group" : "Folds the group")
-				.accessibilityAddTraits(.isHeader)
-		} else {
-			label
-				.accessibilityElement(children: .combine)
-				.accessibilityAddTraits(.isHeader)
+		.accessibilityAddTraits(.isHeader)
+		.accessibilityLabel("\(group.title ?? ""), \(group.objects.count)")
+		.accessibilityHint(onToggle == nil ? "" : (collapsed ? "Expands the group" : "Folds the group"))
+	}
+
+	@ViewBuilder private var icon: some View {
+		if group.isType {
+			Image(systemName: MaskinObjectType.glyph(for: group.id))
+				.maskinSymbol(MaskinFontSize.t14, weight: .medium)
+				.foregroundStyle(MaskinColor.ink4)
+				.frame(width: MaskinSpace.s8, height: MaskinSpace.s8)
+		} else if group.isAttention {
+			Circle().fill(MaskinColor.sigInk)
+				.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+				.accessibilityHidden(true)
+		} else if let status = group.status, !status.isEmpty {
+			StatusCategoryGlyph(category: StatusCategory.of(status), size: MaskinSpace.s8)
+		} else if !group.id.isEmpty {
+			StatusCategoryGlyph(category: StatusCategory.of(group.id), size: MaskinSpace.s8)
 		}
-	}
-
-	/// A status group's `id` is the raw status key, and its title the key with spaces.
-	private static func isStatus(_ group: ObjectGroup) -> Bool {
-		group.title == group.id.replacingOccurrences(of: "_", with: " ")
-	}
-
-	/// "in progress" -> "In progress": sentence case through the shared label table.
-	static func title(_ group: ObjectGroup) -> String {
-		if isStatus(group) { return MaskinStatus.label(for: group.id) }
-		return group.title ?? group.id
 	}
 }

@@ -5,7 +5,8 @@ import SwiftUI
 
 /// One flow in the list as a glanceable card: icon tile, name, "cycle · stage", a Patina "Needs you"
 /// chip when the viewer is the blocker, the newest thing an agent said as one line of secondary
-/// text, and the flow's first target inline. Stats live on the flow page, not here. Pure values in,
+/// text (one line, Decision 1), and the flow's first target inline. The stats row is gone: those
+/// counts live on the flow page. Pure values in,
 /// so it renders in previews and snapshots.
 struct LoopCard: View {
 	let loop: LoopSummary
@@ -18,10 +19,8 @@ struct LoopCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
-			if let target { targetBlock(target) }
-			Divider().overlay(MaskinSurface.separator)
 			if let update { latest(update) }
-			stats
+			if let target { targetBlock(target) }
 		}
 		.padding(.vertical, MaskinSpace.s9)
 		.padding(.horizontal, MaskinSpace.s10)
@@ -75,31 +74,7 @@ struct LoopCard: View {
 		}
 		.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
 		.foregroundStyle(MaskinColor.ink4)
-		.lineLimit(2)
-		.fixedSize(horizontal: false, vertical: true)
-		.frame(maxWidth: .infinity, alignment: .leading)
-	}
-
-	/// Three real counts the API has: work in flight, cycles closed, decisions waiting on the viewer.
-	private var stats: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s4) {
-			stat("\(loop.inProgressCount)", "in progress")
-			stat("\(loop.closedCount)", "cycles done")
-			stat("\(loop.waitingCount)", "decisions for you")
-		}
-	}
-
-	private func stat(_ value: String, _ label: String) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-			Text(value)
-				.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.w750, relativeTo: .title3))
-				.tracking(-0.02 * MaskinFontSize.t20)
-				.foregroundStyle(MaskinColor.ink)
-			Text(label)
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-				.foregroundStyle(MaskinColor.ink5)
-				.lineLimit(2)
-		}
+		.lineLimit(1)
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 

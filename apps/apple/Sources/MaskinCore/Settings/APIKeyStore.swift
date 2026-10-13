@@ -102,3 +102,80 @@ public final class APIKeyStore {
 
 	public func dismissError() { error = nil }
 }
+
+/// The Keys & MCP page's view of the workspace MCP server: its URL (derived, always known), what
+/// it exposes, how clients sign in, and which clients are connected. Disconnecting a client is
+/// optimistic and rolls back when the server refuses.
+///
+/// The listing and revoke calls are stubbed in `APISettingsSource` until the API offers them; a
+/// stubbed call surfaces as `clientsPhase == .unavailable`, which the page states plainly.
+@MainActor
+@Observable
+public final class MCPStore {
+	public enum Phase: Equatable, Sendable {
+		case idle, loading, loaded
+		/// The server does not list this yet (or could not): the message says which.
+		case unavailable(String)
+	}
+
+	public let serverURL: URL
+	public private(set) var info: MCPServerInfo?
+	public private(set) var clients: [MCPClient] = []
+	public private(set) var clientsPhase: Phase = .idle
+	public private(set) var actionError: String?
+	public private(set) var busyIDs: Set<String> = []
+	/// Only managers disconnect clients.
+	public let canManage: Bool
+
+	@ObservationIgnored private let api: any MCPAPI
+
+	public init(api: any MCPAPI, serverURL: URL, currentRole: MemberRole) {
+		self.api = api
+		self.serverURL = serverURL
+		self.canManage = currentRole.canManage
+	}
+
+	/// "24", or nil when the server does not say how many tools it exposes.
+	public var toolCountText: String? { info?.toolCount.map(String.init) }
+
+	/// How a client gets in. A bearer API key always works; OAuth only when the server says so.
+	public var authLabel: String {
+		info?.supportsOAuth == true
+			? "OAuth sign-in, or your API key as a bearer token"
+			: "Your API key as a bearer token"
+	}
+
+	public func load() async {
+		if clients.isEmpty { clientsPhase = .loading }
+		async let infoResult: MCPServerInfo? = try? api.mcpServerInfo()
+		do {
+			let list = try await api.mcpClients()
+			clients = list.sorted { ($0.lastCallAt ?? .distantPast) > ($1.lastCallAt ?? .distantPast) }
+			clientsPhase = .loaded
+		} catch {
+			let message = (error as? SettingsError)?.message ?? "Couldn't load connected clients."
+			if clients.isEmpty { clientsPhase = .unavailable(message) } else { actionError = message }
+		}
+		info = await infoResult
+	}
+
+	@discardableResult
+	public func disconnect(_ client: MCPClient) async -> Bool {
+		guard canManage, !busyIDs.contains(client.id) else { return false }
+		let previous = clients
+		clients.removeAll { $0.id == client.id }
+		busyIDs.insert(client.id)
+		actionError = nil
+		defer { busyIDs.remove(client.id) }
+		do {
+			try await api.disconnectMCPClient(id: client.id, idempotencyKey: UUID().uuidString)
+			return true
+		} catch {
+			clients = previous
+			actionError = (error as? SettingsError)?.message ?? "Couldn't disconnect \(client.name)."
+			return false
+		}
+	}
+
+	public func dismissError() { actionError = nil }
+}

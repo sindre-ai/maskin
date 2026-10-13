@@ -31,6 +31,21 @@ public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 }
 
 /// The call an agent cannot make alone (`decision` on the comment that put a card in the feed).
+/// An outbound message the agent drafted and wants approved (an email, a post). Shown as a bordered
+/// preview inside the decision card. Nothing in the API sends this yet, so it is nil in practice.
+public struct DecisionDraft: Sendable, Equatable, Codable {
+	/// What kind of draft it is ("Draft email").
+	public var label: String
+	public var to: String?
+	public var body: String
+
+	public init(label: String, to: String? = nil, body: String) {
+		self.label = label
+		self.to = to
+		self.body = body
+	}
+}
+
 public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var title: String
 	/// State of the world and what is already done.
@@ -38,12 +53,17 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	/// The single call that belongs to the human, first person.
 	public var ask: String
 	public var options: [DecisionOption]
+	public var draft: DecisionDraft?
 
-	public init(title: String, summary: String, ask: String, options: [DecisionOption]) {
+	public init(
+		title: String, summary: String, ask: String, options: [DecisionOption],
+		draft: DecisionDraft? = nil
+	) {
 		self.title = title
 		self.summary = summary
 		self.ask = ask
 		self.options = options
+		self.draft = draft
 	}
 
 	public var recommended: DecisionOption? { options.first(where: \.recommended) }

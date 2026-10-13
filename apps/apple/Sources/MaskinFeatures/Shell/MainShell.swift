@@ -133,6 +133,10 @@ private struct AdaptiveTabs: View {
 		.tabViewStyle(.sidebarAdaptable)
 		// The sidebar opens with the workspace and a Switch button (4-iPad.md).
 		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
+		// The profile lives at the foot of the sidebar too (4-iPad.md).
+		.tabViewSidebarFooter {
+			SidebarProfileRow(name: environment.auth.session?.name) { runtime.showProfile = true }
+		}
 		.sheet(isPresented: $showWorkspaces) {
 			WorkspaceSwitcher(environment: environment)
 				.presentationDetents([.medium, .large])
@@ -161,6 +165,28 @@ private struct SidebarWorkspaceHeader: View {
 				.controlSize(.small)
 		}
 		.padding(.vertical, MaskinSpace.s3)
+	}
+}
+
+/// The signed-in person at the foot of the iPad sidebar; opens the profile.
+private struct SidebarProfileRow: View {
+	let name: String?
+	let open: () -> Void
+
+	var body: some View {
+		if let name {
+			Button(action: open) {
+				HStack(spacing: MaskinSpace.s5) {
+					ShellNavAvatar(name: name)
+					Text(name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
+					Spacer(minLength: 0)
+				}
+				.frame(minHeight: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.accessibilityLabel("Profile, \(name)")
+		}
 	}
 }
 

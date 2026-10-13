@@ -16,7 +16,7 @@ struct TVStoryRow: View {
 				LazyHStack(spacing: 32) {
 					ForEach(stories.cards) { card in
 						Button { open(card) } label: { TVStoryCard(card: card, isSeen: stories.isSeen(card)) }
-							.buttonStyle(TVFocusStyle(scale: 1.06, cornerRadius: 32))
+							.buttonStyle(TVFocusStyle(scale: 1.06, cornerRadius: 44))
 					}
 				}
 				.padding(.vertical, 32)
@@ -50,9 +50,11 @@ private struct TVStoryCard: View {
 				.lineLimit(3)
 		}
 		.padding(34)
-		.frame(width: 460, height: 260, alignment: .leading)
+		// 480 x 260, radius 44: the TV prototype's measurements. The spec text says 460 x 290 r40 in
+		// one place and 260 tall in its layout section; the prototype is the tie-breaker.
+		.frame(width: 480, height: 260, alignment: .leading)
 		.background(isSeen ? AnyShapeStyle(MaskinSurface.card) : AnyShapeStyle(MaskinGradient.unseenBrief),
-			in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+			in: RoundedRectangle(cornerRadius: 44, style: .continuous))
 	}
 }
 
@@ -61,6 +63,7 @@ struct TVSlide: Equatable {
 	var unit: String
 	var text: String
 	var isPage: Bool
+	var kind: TVSlideKind = .text
 }
 
 /// Turns the story cards into screens. The daily briefing is split into sentences-sized slides; a
@@ -85,6 +88,8 @@ enum TVSlides {
 				owner.append(index)
 			}
 		}
+		let kinds = TVSlideClassifier.kinds(for: slides.map(\.text))
+		for index in slides.indices { slides[index].kind = kinds[index] }
 		return (slides, owner)
 	}
 }
@@ -148,6 +153,9 @@ struct TVBriefingPlayer: View {
 	let stories: StoriesStore
 	let chief: ChiefOfStaffDesk?
 	let sequence: BriefSequence
+	/// The primary action offered on the last slide for the briefing it belongs to.
+	var action: (StoryCard) -> TVBriefingAction? = { _ in nil }
+	var onAction: (TVBriefingAction) -> Void = { _ in }
 	let close: () -> Void
 
 	@State private var narrator = TVNarrator()
@@ -158,7 +166,7 @@ struct TVBriefingPlayer: View {
 	@State private var thread: TVThreadRoute?
 	@State private var opening = false
 
-	private enum Control { case pause, more, close }
+	private enum Control { case pause, more, act, close }
 
 	var body: some View {
 		NavigationStack { player }
@@ -180,10 +188,7 @@ struct TVBriefingPlayer: View {
 						Text("Narrated · \(index + 1) of \(slides.count)")
 							.font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
 					}
-					Text(slides[index].text)
-						.font(.system(size: slides[index].isPage ? 56 : 52, weight: .bold))
-						.foregroundStyle(MaskinColor.stFg)
-						.frame(maxWidth: .infinity, alignment: .leading)
+					slideBody(slides[index])
 						.id(index)
 				}
 				Spacer(minLength: 0)
@@ -195,6 +200,13 @@ struct TVBriefingPlayer: View {
 					}
 					.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
 					.focused($focus, equals: .pause)
+					if isLast, let act = lastAction {
+						Button { finishAndAct(act) } label: {
+							TVCapsuleLabel(title: act.title, prominent: true, slim: true)
+						}
+						.buttonStyle(TVFocusStyle(scale: 1.05, cornerRadius: 48))
+						.focused($focus, equals: .act)
+					}
 					if chief != nil {
 						Button(action: tellMeMore) {
 							TVCapsuleLabel(title: opening ? "Opening…" : "Tell me more", slim: true)
@@ -231,6 +243,49 @@ struct TVBriefingPlayer: View {
 		.onDisappear { narrator.stop() }
 	}
 
+	private var isLast: Bool { !slides.isEmpty && index == slides.count - 1 }
+
+	/// The action for the briefing the last slide came from.
+	private var lastAction: TVBriefingAction? {
+		guard let last = owner.last, sequence.slides.indices.contains(last) else { return nil }
+		return action(sequence.slides[last])
+	}
+
+	/// Big figure (stat), line of text, and on the last slide the prompt to act.
+	@ViewBuilder private func slideBody(_ slide: TVSlide) -> some View {
+		VStack(alignment: .leading, spacing: 28) {
+			if case .stat(let big, let rest) = slide.kind {
+				Text(big)
+					.font(.system(size: 240, weight: .bold))
+					.tracking(-9.6)
+					.minimumScaleFactor(0.5).lineLimit(1)
+					.foregroundStyle(MaskinPatina.viewerAccent)
+				bodyText(rest, size: slide.isPage ? 56 : TVSlideClassifier.textSize(for: rest))
+			} else {
+				bodyText(slide.text, size: slide.isPage ? 56 : TVSlideClassifier.textSize(for: slide.text))
+			}
+			if slide.kind == .cta, lastAction != nil {
+				Text("Act now, or close to keep it for later.")
+					.font(.system(size: 36)).foregroundStyle(MaskinColor.stLab)
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	private func bodyText(_ text: String, size: CGFloat) -> some View {
+		Text(text)
+			.font(.system(size: size, weight: .bold))
+			.foregroundStyle(MaskinColor.stFg)
+			.minimumScaleFactor(0.7)
+			.frame(maxWidth: 1400, alignment: .leading)
+	}
+
+	private func finishAndAct(_ act: TVBriefingAction) {
+		narrator.stop()
+		close()
+		onAction(act)
+	}
+
 	private var progress: some View {
 		HStack(spacing: 8) {
 			ForEach(slides.indices, id: \.self) { i in
@@ -258,7 +313,8 @@ struct TVBriefingPlayer: View {
 	}
 
 	private func advance() {
-		if index + 1 < slides.count { go(to: index + 1) } else { finish() }
+		// The last slide stops: it waits for the action or Close instead of closing itself.
+		if index + 1 < slides.count { go(to: index + 1) } else { focus = lastAction == nil ? .close : .act }
 	}
 
 	/// Opens a conversation with the Chief of Staff about the slide's briefing. Narration stops: the

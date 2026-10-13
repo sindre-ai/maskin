@@ -25,6 +25,9 @@ struct WatchNeedsYou: View {
 			content
 				.navigationTitle("Needs you")
 				.toolbar {
+					ToolbarItem(placement: .topBarLeading) {
+						MaskinLogoTile(size: MaskinSpace.s10).accessibilityHidden(true)
+					}
 					if count > 0 {
 						ToolbarItem(placement: .topBarTrailing) { WatchCountBadge(count: count) }
 					}
@@ -71,6 +74,9 @@ private struct WatchMessage: View {
 	let at: Date?
 	let text: String
 	let ask: String?
+	/// The object the decision is about; underlined where the message names it, else shown as a
+	/// link line under the message.
+	var objectName: String?
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
@@ -83,15 +89,39 @@ private struct WatchMessage: View {
 						.font(WatchType.mono()).foregroundStyle(MaskinColor.ink4)
 				}
 			}
-			Text(text)
+			linked
 				.font(WatchType.body())
 				.lineSpacing(MaskinSpace.s1 + 1)
 				.lineLimit(4)
 				.foregroundStyle(MaskinColor.ink)
+			if let objectName = unlinkedObjectName(objectName) {
+				link(objectName).font(WatchType.caption()).lineLimit(1)
+			}
 			if let ask, !ask.isEmpty {
 				Text(ask).font(WatchType.question()).foregroundStyle(MaskinColor.ink3)
 			}
 		}
+	}
+}
+
+extension WatchMessage {
+	/// The message with the object's name underlined in the `sigHi` link colour.
+	fileprivate var linked: Text {
+		guard let name = objectName?.nonEmpty, let range = text.range(of: name, options: .caseInsensitive)
+		else { return Text(text) }
+		let before = String(text[..<range.lowerBound])
+		let after = String(text[range.upperBound...])
+		return Text("\(before)\(link(String(text[range])))\(after)")
+	}
+
+	/// The object's name when the message does not already say it.
+	fileprivate func unlinkedObjectName(_ name: String?) -> String? {
+		guard let name = name?.nonEmpty, text.range(of: name, options: .caseInsensitive) == nil else { return nil }
+		return name
+	}
+
+	fileprivate func link(_ name: String) -> Text {
+		Text(name).underline(true, color: MaskinColor.sigHi)
 	}
 }
 
@@ -120,7 +150,8 @@ private struct WatchDecisionPage: View {
 				} else {
 					WatchMessage(
 						sender: store.senderName(of: card) ?? "Chief of Staff", at: card.latestActivityAt,
-						text: card.decision?.summary.nonEmpty ?? card.headline, ask: card.decision?.ask)
+						text: card.decision?.summary.nonEmpty ?? card.headline, ask: card.decision?.ask,
+						objectName: card.objectTitle)
 					optionList
 					Label("Open on iPhone", systemImage: "iphone")
 						.font(WatchType.caption())
@@ -252,7 +283,8 @@ private struct WatchSnapshotPage: View {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 				WatchMessage(
 					sender: card.sender, at: card.at,
-					text: card.summary.nonEmpty ?? card.headline, ask: card.ask)
+					text: card.summary.nonEmpty ?? card.headline, ask: card.ask,
+					objectName: card.objectTitle)
 				Label(offline ? "Offline. Decide on iPhone." : "Open on iPhone", systemImage: "iphone")
 					.font(WatchType.caption())
 					.foregroundStyle(MaskinColor.ink4)

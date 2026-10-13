@@ -6,7 +6,7 @@ import OpenAPIRuntime
 /// inside this file. Error messages are fixed sentences: no response bodies, ids or keys are
 /// interpolated into anything that could be logged or shown.
 public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, IntegrationsAPI,
-	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI
+	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI
 {
 	private let client: Client
 	public let workspaceID: String
@@ -201,6 +201,18 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		case .ok(let ok): return SecretValue(try ok.body.json.api_key)
 		default: throw SettingsError("Couldn't regenerate the key.")
 		}
+	}
+
+	// MARK: MCP (STUB — no endpoints in openapi.json)
+
+	// The API exposes the MCP server at `POST /mcp` but has no route that lists its tools, its
+	// connected clients, or revokes one. These throw a fixed sentence so the page says plainly
+	// that the information is not available, instead of inventing a route. Replace each body when
+	// the endpoint lands (see the API follow-ups in the handoff report).
+	public func mcpServerInfo() async throws -> MCPServerInfo { throw SettingsError.mcpNotAvailable }
+	public func mcpClients() async throws -> [MCPClient] { throw SettingsError.mcpNotAvailable }
+	public func disconnectMCPClient(id: String, idempotencyKey: String) async throws {
+		throw SettingsError.mcpNotAvailable
 	}
 
 	// MARK: Skills

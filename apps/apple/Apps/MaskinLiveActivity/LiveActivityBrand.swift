@@ -7,8 +7,6 @@ import SwiftUI
 struct LiveActivityMarkTile: View {
 	var size: CGFloat = 22
 
-	private static let tile = Color(light: RGBA(0x18181B), dark: RGBA(0x18181B))
-
 	var body: some View {
 		let markScale = size <= 18 ? 0.62 : 0.58
 		let mark = size * markScale
@@ -16,7 +14,7 @@ struct LiveActivityMarkTile: View {
 			.stroke(Color.white, style: StrokeStyle(lineWidth: mark * 9 / 64, lineCap: .square, lineJoin: .miter))
 			.frame(width: mark, height: mark)
 			.frame(width: size, height: size)
-			.background(Self.tile, in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
+			.background(MaskinBrand.tile, in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
 			.accessibilityHidden(true)
 	}
 }

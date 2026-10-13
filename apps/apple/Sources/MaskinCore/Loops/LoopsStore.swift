@@ -94,11 +94,19 @@ public final class LoopsStore {
 		loop.agentIDs.compactMap { directory.name($0) }
 	}
 
-	/// Every loop in the chosen order, narrowed by the search text.
+	/// The "{n} need you ›" pill in the Flows header: on, the list shows only the flows that need
+	/// the viewer. Not remembered: it is a glance, not a view.
+	public var needsYouOnly = false
+
+	/// Every loop in the chosen order, narrowed by the search text and, when the pill is on, to the
+	/// flows that need the viewer.
 	public func filtered(query: String = "") -> [LoopSummary] {
 		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
 		return sort.apply(
-			to: loops.filter { text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text) })
+			to: loops.filter {
+				(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
+					&& (!needsYouOnly || ($0.status.isLive && needsYou($0)))
+			})
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }
@@ -109,12 +117,8 @@ public final class LoopsStore {
 	}
 
 	/// Running loops that need the viewer (a paused loop is not in motion, so it is not counted).
+	/// This is the number on the header pill.
 	public var needYouCount: Int { loops.filter { $0.status.isLive && needsYou($0) }.count }
-
-	/// "Three outcomes in motion. Two need you." Nil when no loop is running.
-	public var summaryLine: String? {
-		FlowsSummary.line(running: loops.filter { $0.status.isLive }.count, needYou: needYouCount)
-	}
 
 	/// How many cards get a latest update: the most recently touched flows that are not drafts.
 	public static let latestUpdateBound = 10
@@ -235,6 +239,7 @@ public final class LoopsStore {
 				freshness.refreshed(at: cache?.now() ?? Date())
 				SyncLog.revalidated(Self.cacheName, ok: true, since: started)
 				persist()
+				CycleActivityController.shared?.sync(loops: loops, needsYou: { [self] in needsYou($0) })
 				Task { await loadLatestUpdates() }
 			} catch {
 				freshness.revalidateFailed()

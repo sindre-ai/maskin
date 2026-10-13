@@ -164,6 +164,25 @@ public enum ThreadLayout {
 		}
 	}
 
+	/// How far a row sits from the one above it (spec 7 §3 grouping): a message that continues
+	/// its sender's run is pulled close; everything else keeps the list gap.
+	public enum RowGap: Equatable, Sendable {
+		/// Consecutive messages from one sender: the 5pt gap.
+		case grouped
+		/// A new sender, a divider, a handoff card, or anything that is not a message: the 16pt list gap.
+		case list
+	}
+
+	public static func gap(before item: ThreadItem) -> RowGap {
+		if case .message(_, let showsAuthor) = item, !showsAuthor { return .grouped }
+		return .list
+	}
+
+	/// The reader's own newest message: the only one that carries a status line.
+	public static func latestOwnMessageID(in messages: [ChatMessage], currentActorID: String) -> String? {
+		messages.last { $0.actorID == currentActorID && !$0.isSystem }?.id
+	}
+
 	/// Run position of every message in `items`, by message id.
 	public static func runs(in items: [ThreadItem]) -> [String: Run] {
 		var result: [String: Run] = [:]

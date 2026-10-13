@@ -122,13 +122,52 @@ public struct APIObjectsRemote: ObjectsRemote {
 						body: .json(
 							.init(
 								title: patch.title, content: patch.content, status: patch.status,
-								driver: patch.driver))))
+								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver))))
 			}
 			switch output {
 			case .ok(let ok): return try Self.convert(ok.body.json, as: ObjectDTO.self).model
 			case .notFound: throw ObjectsError(ObjectsRemoteMessages.notFound)
 			default: throw Self.failure(output)
 			}
+		} catch {
+			throw Self.wrap(error)
+		}
+	}
+
+	/// Only the changed keys (the server shallow-merges); an empty string becomes JSON null so
+	/// the key is cleared.
+	static func metadataPatch(
+		_ metadata: [String: String]?
+	) throws -> Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.metadataPayload? {
+		guard let metadata, !metadata.isEmpty else { return nil }
+		var values: [String: OpenAPIValueContainer] = [:]
+		for (key, value) in metadata {
+			values[key] = try OpenAPIValueContainer(unvalidatedValue: value.isEmpty ? nil : value)
+		}
+		return .init(additionalProperties: values)
+	}
+
+	public func createRelationship(
+		sourceId: String, sourceType: String, targetId: String, targetType: String, type: String,
+		idempotencyKey: String
+	) async throws -> ObjectLink {
+		let workspace = await workspaceHeader()
+		do {
+			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+				try await client.post_sol_api_sol_relationships(
+					.init(
+						headers: .init(x_hyphen_workspace_hyphen_id: workspace),
+						body: .json(
+							.init(
+								source_type: sourceType, source_id: sourceId, target_type: targetType,
+								target_id: targetId, _type: type))))
+			}
+			guard case .created(let created) = output else { throw Self.failure(output) }
+			let dto = try Self.convert(created.body.json, as: RelationshipDTO.self)
+			let title = dto.targetTitle?.isEmpty == false ? dto.targetTitle : nil
+			return ObjectLink(
+				id: dto.id, relation: dto.type, isOutgoing: true, otherId: dto.targetId,
+				otherType: dto.targetType, otherTitle: title ?? "Untitled")
 		} catch {
 			throw Self.wrap(error)
 		}

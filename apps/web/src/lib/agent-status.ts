@@ -68,8 +68,42 @@ export function getLatestSession<T extends SessionLike>(
 	return sessions[0]
 }
 
+const COST_WINDOW_MS = 30 * 86_400_000
+
+export interface AgentSessionStats {
+	total: number
+	active: number
+	totalCostUsd: number
+	/** Cost of sessions completed in the last 30 days (same `completed_at` basis as /sessions/usage). */
+	last30dCostUsd: number
+}
+
+interface StatsSessionLike extends SessionLike {
+	completedAt: string | null
+	totalCostUsd?: string | number | null
+}
+
+export function summarizeAgentSessions(
+	sessions: StatsSessionLike[] | undefined,
+	now: number = Date.now(),
+): AgentSessionStats {
+	const stats: AgentSessionStats = { total: 0, active: 0, totalCostUsd: 0, last30dCostUsd: 0 }
+	for (const s of sessions ?? []) {
+		stats.total++
+		if (ACTIVE_STATUSES.has(s.status)) stats.active++
+		const cost = Number(s.totalCostUsd ?? 0)
+		if (!Number.isFinite(cost) || cost <= 0) continue
+		stats.totalCostUsd += cost
+		const completed = s.completedAt ? new Date(s.completedAt).getTime() : Number.NaN
+		if (Number.isFinite(completed) && completed >= now - COST_WINDOW_MS) {
+			stats.last30dCostUsd += cost
+		}
+	}
+	return stats
+}
+
 /**
- * Agent kind = the first line of the description (the one-line role label the
+ * Agent kind =the first line of the description (the one-line role label the
  * actors list returns), fallback 'Agent'. The detail surface has the full
  * system_prompt, but the index only ever sees list items, so kind derives
  * from the field both surfaces carry.

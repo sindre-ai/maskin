@@ -355,3 +355,242 @@ struct ServerLimitsTests {
 		#expect(ServerLimits.refreshLimit(minimum: 50, loaded: 500) == 100)
 	}
 }
+
+// MARK: - Team list state (spec 7 §6)
+
+/// A list API that keeps active and archived rows apart, like the server does.
+private actor TeamFakeAPI: ConversationsAPI, ConversationDeleting {
+	var active: [ConversationSummary]
+	var archived: [ConversationSummary]
+	var actorList: [ChatActor] = []
+	var failState = false
+	var failDelete = false
+	var deleted: [String] = []
+	var stateCalls: [String] = []
+
+	init(active: [ConversationSummary], archived: [ConversationSummary] = []) {
+		self.active = active
+		self.archived = archived
+	}
+
+	func set(active: [ConversationSummary]) { self.active = active }
+	func set(actors: [ChatActor]) { actorList = actors }
+	func setFailState(_ v: Bool) { failState = v }
+	func setFailDelete(_ v: Bool) { failDelete = v }
+
+	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
+		let rows = archived ? self.archived : active
+		return ConversationPage(conversations: Array(rows.dropFirst(offset).prefix(limit)), hasMore: false)
+	}
+
+	func create(title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String) async throws -> ConversationSummary {
+		chatConvo("new", title: title)
+	}
+
+	func updateState(conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?, markUnread: Bool) async throws {
+		if failState { throw ChatsError("nope") }
+		stateCalls.append("\(conversationID) pinned=\(pinned.map(String.init) ?? "-") archived=\(archived.map(String.init) ?? "-") read=\(lastReadMessageID.map(String.init) ?? "-") unread=\(markUnread)")
+		if let archived {
+			if archived, let i = active.firstIndex(where: { $0.id == conversationID }) {
+				var row = active.remove(at: i)
+				row.archived = true
+				self.archived.insert(row, at: 0)
+			} else if !archived, let i = self.archived.firstIndex(where: { $0.id == conversationID }) {
+				var row = self.archived.remove(at: i)
+				row.archived = false
+				active.insert(row, at: 0)
+			}
+		}
+	}
+
+	func actors() async throws -> [ChatActor] { actorList }
+	func latestMessageID(conversationID: String) async throws -> Int? { 100 }
+
+	func delete(conversationID: String) async throws {
+		if failDelete { throw ChatsError("no delete") }
+		deleted.append(conversationID)
+		active.removeAll { $0.id == conversationID }
+		archived.removeAll { $0.id == conversationID }
+	}
+}
+
+private func freshDefaults() -> UserDefaults {
+	UserDefaults(suiteName: "ConversationsStoreTeamTests.\(UUID().uuidString)")!
+}
+
+private struct FixedFlows: FlowRoomsSource {
+	let rooms: [TeamFlowRoom]
+	init(_ rooms: [TeamFlowRoom]) { self.rooms = rooms }
+	func flowRooms() async throws -> [TeamFlowRoom] { rooms }
+}
+
+private extension TeamLayout {
+	func section(_ id: String) -> TeamLayout.Section? { sections.first { $0.id == id } }
+}
+
+@Suite("ConversationsStore Team list")
+@MainActor
+struct ConversationsStoreTeamTests {
+	@Test("start loads the archived list too; archive moves a row across and unarchive brings it back")
+	func archiveRoundTrip() async {
+		let api = TeamFakeAPI(active: [chatConvo("a"), chatConvo("b")], archived: [chatConvo("z")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		#expect(store.archivedConversations.map(\.id) == ["z"])
+		await store.setArchived("a", true)
+		#expect(store.conversations.map(\.id) == ["b"])
+		#expect(store.archivedConversations.map(\.id) == ["a", "z"])
+		#expect(store.archivedConversations.first?.archived == true)
+		await store.setArchived("z", false)
+		#expect(store.conversations.map(\.id) == ["z", "b"])
+		#expect(store.archivedConversations.map(\.id) == ["a"])
+		#expect(await api.stateCalls == ["a pinned=- archived=true read=- unread=false", "z pinned=- archived=false read=- unread=false"])
+	}
+
+	@Test("a refused archive puts both lists back the way they were")
+	func archiveRollback() async {
+		let api = TeamFakeAPI(active: [chatConvo("a")], archived: [chatConvo("z")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		await api.setFailState(true)
+		await store.setArchived("a", true)
+		#expect(store.conversations.map(\.id) == ["a"])
+		#expect(store.archivedConversations.map(\.id) == ["z"])
+		#expect(store.notice == "nope")
+	}
+
+	@Test("delete removes the row, asks a source that can delete, and stays hidden through a refresh")
+	func delete() async {
+		let api = TeamFakeAPI(active: [chatConvo("a"), chatConvo("b")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		await store.delete("a")
+		#expect(store.conversations.map(\.id) == ["b"])
+		#expect(await api.deleted == ["a"])
+		// A source that lags behind still can't bring the row back.
+		await api.set(active: [chatConvo("a"), chatConvo("b")])
+		await store.refresh()
+		#expect(store.conversations.map(\.id) == ["b"])
+	}
+
+	@Test("a refused delete restores the row")
+	func deleteRollback() async {
+		let api = TeamFakeAPI(active: [chatConvo("a")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		await api.setFailDelete(true)
+		await store.delete("a")
+		#expect(store.conversations.map(\.id) == ["a"])
+		#expect(store.notice == "no delete")
+	}
+
+	@Test("a source without delete still drops the row locally (the stub path)")
+	func deleteStub() async {
+		let api = FakeListAPI([chatConvo("a"), chatConvo("b")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		await store.delete("b")
+		#expect(store.conversations.map(\.id) == ["a"])
+		await store.refresh()
+		#expect(store.conversations.map(\.id) == ["a"])
+		#expect(store.notice == nil)
+	}
+
+	@Test("pin order follows pins, drag reorders it, and it persists per user")
+	func pinOrder() async {
+		let defaults = freshDefaults()
+		let prefs = TeamPreferences(defaults: defaults, actorID: "me", workspaceID: "w")
+		let api = TeamFakeAPI(active: [chatConvo("a"), chatConvo("b"), chatConvo("c")])
+		let store = ConversationsStore(api: api, events: nil, preferences: prefs)
+		await store.start()
+		await store.setPinned("a", true)
+		await store.setPinned("b", true)
+		#expect(store.pinOrder == ["a", "b"])
+		store.setFlowPinned("f", true)
+		#expect(store.pinOrder == ["a", "b", "flow:f"])
+		#expect(store.pinnedFlowIDs == ["f"])
+		store.movePin("flow:f", before: "a", tiles: ["a", "b", "flow:f"])
+		#expect(store.pinOrder == ["flow:f", "a", "b"])
+		await store.setPinned("a", false)
+		#expect(store.pinOrder == ["flow:f", "b"])
+		store.setFlowPinned("f", false)
+		#expect(store.pinOrder == ["b"])
+		#expect(prefs.pinOrder == ["b"])
+		#expect(prefs.pinnedFlowIDs.isEmpty)
+
+		let again = ConversationsStore(api: api, events: nil, preferences: TeamPreferences(defaults: defaults, actorID: "me", workspaceID: "w"))
+		#expect(again.pinOrder == ["b"])
+	}
+
+	@Test("a refused pin leaves the order alone")
+	func pinOrderRollback() async {
+		let api = TeamFakeAPI(active: [chatConvo("a")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		await api.setFailState(true)
+		await store.setPinned("a", true)
+		#expect(store.pinOrder.isEmpty)
+		#expect(store.conversation(id: "a")?.pinned == false)
+	}
+
+	@Test("display options persist; hiding the chips resets the chip and the layout ignores it")
+	func displayOptions() async {
+		let defaults = freshDefaults()
+		let api = TeamFakeAPI(active: [chatConvo("a", unread: 1), chatConvo("b")])
+		let store = ConversationsStore(
+			api: api, events: nil, preferences: TeamPreferences(defaults: defaults, actorID: "me", workspaceID: "w"))
+		await store.start()
+		#expect(store.displayOptions == .default)
+		store.displayOptions.showsFilterChips = true
+		store.chip = .unread
+		#expect(store.layout(currentActorID: "me").sections.map(\.id) == ["unread"])
+		store.displayOptions.showsFilterChips = false
+		#expect(store.chip == .all)
+		store.displayOptions.layout = .oneList
+		#expect(store.layout(currentActorID: "me").sections.map(\.id) == ["all"])
+		let again = ConversationsStore(api: api, events: nil, preferences: TeamPreferences(defaults: defaults, actorID: "me", workspaceID: "w"))
+		#expect(again.displayOptions.layout == .oneList)
+	}
+
+	@Test("working agents come from the actor list and show on rows and flows")
+	func working() async {
+		let api = TeamFakeAPI(active: [chatConvo("a", snippet: "On it", participants: [chatMe, chatRelay])])
+		await api.set(actors: [ChatActor(participant: chatRelay, agentState: .running), ChatActor(participant: chatSam)])
+		let source = FixedFlows([TeamFlowRoom(id: "f", name: "Launch", loop: LoopSummary(id: "f", name: "Launch", agentIDs: ["relay"]))])
+		let store = ConversationsStore(api: api, events: nil, flowRooms: source)
+		await store.start()
+		#expect(store.workingAgentIDs == ["relay"])
+		#expect(store.status(for: store.conversations[0]).prefix == .working(1))
+		let layout = store.layout(currentActorID: "me")
+		guard case .flow(let room)? = layout.section("flows")?.rows.first?.kind else {
+			Issue.record("no flow row")
+			return
+		}
+		#expect(room.workingCount == 1)
+		store.typingConversationIDs = ["a"]
+		#expect(store.status(for: store.conversations[0]).prefix == .typing)
+	}
+
+	@Test("flow rooms load from the source and the archived list is part of the layout")
+	func flowsAndArchived() async {
+		let api = TeamFakeAPI(active: [chatConvo("a")], archived: [chatConvo("z")])
+		let store = ConversationsStore(api: api, events: nil, flowRooms: FixedFlows([TeamFlowRoom(id: "f", name: "Launch")]))
+		await store.start()
+		let layout = store.layout(currentActorID: "me")
+		#expect(layout.section("flows")?.rows.map(\.id) == ["flow:f"])
+		#expect(layout.showsArchived)
+		#expect(layout.archivedCount == 1)
+	}
+
+	@Test("the unread section's ids feed Mark all read, which records the newest message per chat")
+	func markAllReadFromLayout() async {
+		let api = TeamFakeAPI(active: [chatConvo("u1", unread: 2), chatConvo("u2", unread: 1), chatConvo("r")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		let ids = store.layout(currentActorID: "me").section("unread")?.unreadConversationIDs ?? []
+		#expect(Set(ids) == ["u1", "u2"])
+		await store.markRead(ids)
+		#expect(store.totalUnread == 0)
+		#expect(await api.stateCalls.allSatisfy { $0.contains("read=100") })
+	}
+}

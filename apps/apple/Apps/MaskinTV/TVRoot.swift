@@ -14,6 +14,8 @@ struct TVRoot: View {
 	@State private var tab: Tab = Tab.demoStart
 	/// A decision a Top Shelf item (or any maskin:// link) asked to open.
 	@State private var openDecision: String?
+	/// A flow a briefing's last slide asked to open.
+	@State private var openFlow: String?
 
 	enum Tab: Hashable {
 		case forYou, team, flows, objects, search, profile
@@ -69,6 +71,7 @@ struct TVRoot: View {
 			async let briefings: Void = startStories()
 			_ = await (flows, briefings)
 		}
+		.onChange(of: openFlow) { _, id in if id != nil { tab = .flows } }
 		.onDisappear { loops?.stop() }
 	}
 
@@ -76,9 +79,9 @@ struct TVRoot: View {
 		switch tab {
 		case .forYou:
 			TVForYou(environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision,
-				chromeHidden: $chromeHidden)
+				chromeHidden: $chromeHidden, openFlow: $openFlow)
 		case .team: TVTeam(environment: environment)
-		case .flows: TVFlows(environment: environment, loops: loops, chromeHidden: $chromeHidden)
+		case .flows: TVFlows(environment: environment, loops: loops, chromeHidden: $chromeHidden, openFlow: $openFlow)
 		case .objects: TVObjects(environment: environment, forYou: forYou)
 		case .search: TVSearch(environment: environment, forYou: forYou, loops: loops)
 		case .profile: TVProfile(environment: environment, resetToForYou: { tab = .forYou })

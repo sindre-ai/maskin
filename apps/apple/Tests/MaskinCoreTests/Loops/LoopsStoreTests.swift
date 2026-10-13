@@ -19,15 +19,6 @@ struct LoopsStoreTests {
 		#expect(store.waitingCount == 2)
 	}
 
-	@Test("the subtitle counts running loops and those that need you")
-	func summaryLine() async {
-		let store = LoopsStore(
-			api: FakeLoopsAPI([
-				loopRow("a"), loopRow("b", status: .supervised, waiting: 1), loopRow("c", status: .paused),
-			]), events: nil)
-		await store.start()
-		#expect(store.summaryLine == "Two outcomes in motion. One needs you.")
-	}
 
 	@Test("search filters by name")
 	func search() async {
@@ -324,5 +315,52 @@ struct LoopProgressTests {
 		#expect(LoopSummary(id: "a", name: "A").ringProgress == 0)
 		#expect(LoopSummary(id: "b", name: "B", inProgressCount: 3, closedCount: 1).ringProgress == 0.25)
 		#expect(LoopSummary(id: "c", name: "C", inProgressCount: 0, closedCount: 5).ringProgress == 1)
+	}
+}
+
+@MainActor
+@Suite("Flows that need you")
+struct FlowsNeedsYouTests {
+	private func store(_ loops: [LoopSummary]) async -> LoopsStore {
+		let store = LoopsStore(api: FakeLoopsAPI(loops), events: nil)
+		await store.start()
+		return store
+	}
+
+	@Test("the pill counts running flows that need you, not open items or paused flows")
+	func count() async {
+		let s = await store([
+			loopRow("a", status: .supervised, waiting: 3), loopRow("b", status: .learning, waiting: 1),
+			loopRow("c", status: .learning), loopRow("d", status: .paused, waiting: 2),
+		])
+		#expect(s.needYouCount == 2)
+		#expect(s.waitingCount == 6)
+	}
+
+	@Test("the filter narrows the list to flows that need you and lifts cleanly")
+	func filter() async {
+		let s = await store([
+			loopRow("a", status: .supervised, waiting: 1), loopRow("b", status: .learning),
+			loopRow("c", status: .paused, waiting: 2),
+		])
+		#expect(!s.needsYouOnly)
+		s.needsYouOnly = true
+		#expect(s.filtered().map(\.id) == ["a"])
+		s.needsYouOnly = false
+		#expect(s.filtered().count == 3)
+	}
+
+	@Test("the filter composes with search and keeps the chosen sort")
+	func composes() async {
+		let s = await store([
+			loopRow("1", name: "Sales rep", status: .learning, waiting: 1),
+			loopRow("2", name: "Sales digest", status: .learning),
+			loopRow("3", name: "Ops triage", status: .learning, waiting: 2),
+			loopRow("4", name: "Alpha ask", status: .learning, waiting: 1),
+		])
+		s.needsYouOnly = true
+		#expect(s.filtered(query: "sales").map(\.id) == ["1"])
+		s.sort = .name
+		#expect(s.filtered().map(\.id) == ["4", "3", "1"])
 	}
 }

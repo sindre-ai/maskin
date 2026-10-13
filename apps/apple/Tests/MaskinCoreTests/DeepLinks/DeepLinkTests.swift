@@ -15,6 +15,8 @@ struct DeepLinkTests {
 		#expect(DeepLink(string: "maskin://\(ws)/notifications") == .notifications(workspaceId: ws))
 		#expect(DeepLink(string: "maskin://\(ws)") == .notifications(workspaceId: ws))
 		#expect(DeepLink(string: "maskin://\(ws)/objects/\(id)/") == .object(workspaceId: ws, id: id))
+		#expect(DeepLink(string: "maskin://\(ws)/agents") == .agents(workspaceId: ws))
+		#expect(DeepLink(string: "maskin://\(ws)/agents/\(id)") == .agent(workspaceId: ws, id: id))
 	}
 
 	@Test("parses the web app's universal-link routes")
@@ -22,6 +24,8 @@ struct DeepLinkTests {
 		#expect(DeepLink(string: "https://maskin.io/\(ws)/objects/\(id)") == .object(workspaceId: ws, id: id))
 		#expect(DeepLink(string: "https://maskin.io/\(ws)/chats/\(id)") == .chat(workspaceId: ws, id: id))
 		#expect(DeepLink(string: "https://maskin.io/\(ws)") == .notifications(workspaceId: ws))
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/agents") == .agents(workspaceId: ws))
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/agents/\(id)") == .agent(workspaceId: ws, id: id))
 		#expect(DeepLink(string: "https://MASKIN.io/\(ws)/objects/\(id)") != nil)
 		#expect(DeepLink(string: "https://maskin.io/\(ws)/objects/\(id)?tab=comments#x") == .object(workspaceId: ws, id: id))
 	}
@@ -42,13 +46,15 @@ struct DeepLinkTests {
 	func roundTrip() {
 		for link in [
 			DeepLink.object(workspaceId: ws, id: id), .chat(workspaceId: ws, id: id),
-			.notifications(workspaceId: ws),
+			.notifications(workspaceId: ws), .agents(workspaceId: ws), .agent(workspaceId: ws, id: id),
 		] {
 			#expect(DeepLink(url: link.url) == link)
 			#expect(DeepLink(url: link.universalURL()) == link)
 		}
 		#expect(DeepLink.chat(workspaceId: ws, id: id).url.absoluteString == "maskin://\(ws)/chats/\(id)")
 		#expect(DeepLink.object(workspaceId: ws, id: id).universalURL().absoluteString == "https://maskin.io/\(ws)/objects/\(id)")
+		#expect(DeepLink.agents(workspaceId: ws).url.absoluteString == "maskin://\(ws)/agents")
+		#expect(DeepLink.agent(workspaceId: ws, id: id).universalURL().absoluteString == "https://maskin.io/\(ws)/agents/\(id)")
 	}
 
 	@Test("rejects foreign schemes and hosts")
@@ -71,6 +77,8 @@ struct DeepLinkTests {
 		#expect(DeepLink(string: "maskin://\(ws)/objects/") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/objects/\(id)/extra") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/settings/keys") == nil)
+		#expect(DeepLink(string: "maskin://\(ws)/agents/\(id)/runs") == nil)
+		#expect(DeepLink(string: "maskin://\(ws)/agents/") == .agents(workspaceId: ws))
 		#expect(DeepLink(string: "maskin://\(ws)//objects/\(id)") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/objects/..") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/objects/.") == nil)

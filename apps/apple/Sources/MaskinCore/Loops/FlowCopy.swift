@@ -1,32 +1,5 @@
 import Foundation
 
-/// The Flows list subtitle: "Three outcomes in motion. Two need you." Counts up to twelve are
-/// spelled out like the handoff copy; larger ones stay digits.
-public enum FlowsSummary {
-	private static let words = [
-		"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-		"eleven", "twelve",
-	]
-
-	static func count(_ n: Int) -> String {
-		words.indices.contains(n) ? words[n] : "\(n)"
-	}
-
-	private static func capitalised(_ text: String) -> String {
-		text.prefix(1).uppercased() + text.dropFirst()
-	}
-
-	/// Nil when nothing is running. `needYou` is the share of the running flows that wait on the
-	/// viewer, so it never reads larger than `running`.
-	public static func line(running: Int, needYou: Int) -> String? {
-		guard running > 0 else { return nil }
-		let moving = "\(capitalised(count(running))) \(running == 1 ? "outcome" : "outcomes") in motion."
-		let needs = min(needYou, running)
-		guard needs > 0 else { return moving }
-		return moving + " \(capitalised(count(needs))) \(needs == 1 ? "needs" : "need") you."
-	}
-}
-
 /// The flow card's LATEST UPDATE: the newest thing an agent posted, cut to one sentence.
 public enum LoopLatestUpdate {
 	/// The author is shown in bold ahead of the sentence; nil when the name did not resolve.

@@ -212,7 +212,7 @@ struct LoopScheduleSection: View {
 							Spacer(minLength: MaskinSpace.s3)
 							if let next = item.next {
 								Text(next.formatted(date: .abbreviated, time: .shortened))
-									.font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .medium))
+									.font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold))
 									.foregroundStyle(MaskinColor.ink5)
 									.multilineTextAlignment(.trailing)
 							}

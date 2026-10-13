@@ -88,6 +88,13 @@ struct ChiefOfStaffSheet: View {
 						.frame(maxHeight: 280)
 						.fixedSize(horizontal: false, vertical: true)
 				}
+				if card != nil {
+					QuickQuestionChips(questions: ForYouQuickQuestions.chips(for: presented.card)) { question in
+						_ = built.chat.send(question, metadata: nil)
+					}
+					.padding(.horizontal, MaskinSpace.s9)
+					.padding(.bottom, MaskinSpace.s4)
+				}
 				Divider()
 				ChatThreadView(
 					store: built.chat, composer: built.composer, conversations: desk.conversations,

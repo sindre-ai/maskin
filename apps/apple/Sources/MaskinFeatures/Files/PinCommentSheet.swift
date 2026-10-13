@@ -26,6 +26,8 @@ struct PinCommentSheet: View {
 	let onDelete: (() -> Void)?
 
 	@State private var text: String
+	/// The shared composer (spec 7 §1: inline, no attach, no send; the sheet's button commits).
+	@State private var model: ChatComposerModel
 	@FocusState private var focused: Bool
 	@Environment(\.dismiss) private var dismiss
 
@@ -39,6 +41,9 @@ struct PinCommentSheet: View {
 		self.onSave = onSave
 		self.onDelete = onDelete
 		_text = State(initialValue: initialComment)
+		let model = ChatComposerModel(uploader: nil, selfActorID: "")
+		model.text = initialComment
+		_model = State(initialValue: model)
 	}
 
 	private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -58,18 +63,18 @@ struct PinCommentSheet: View {
 				Spacer(minLength: 0)
 			}
 
-			TextField("Add a comment…", text: $text, axis: .vertical)
-				.maskinText(.body)
-				.foregroundStyle(MaskinColor.ink)
-				.lineLimit(3...8)
-				.focused($focused)
-				.padding(MaskinSpace.s9)
-				.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
-				.onChange(of: text) { _, new in
-					if new.count > FileAnnotationRules.maxComment {
-						text = String(new.prefix(FileAnnotationRules.maxComment))
-					}
+			MaskinComposer(
+				model: model,
+				config: MaskinComposerConfig(
+					variant: .inline, placeholder: "Add a comment…", showsAttach: false, showsSend: false),
+				onSend: {}
+			)
+			.onChange(of: model.text) { _, new in
+				if new.count > FileAnnotationRules.maxComment {
+					model.text = String(new.prefix(FileAnnotationRules.maxComment))
 				}
+				text = model.text
+			}
 
 			HStack {
 				if remaining < 80 {

@@ -7060,7 +7060,7 @@ public enum Operations {
             }
         }
     }
-    /// Create actor (signup)
+    /// Create actor (human signup, or an agent created by an authenticated caller)
     ///
     /// - Remark: HTTP `POST /api/actors`.
     /// - Remark: Generated from `#/paths//api/actors/post`.
@@ -7327,6 +7327,8 @@ public enum Operations {
                     public var llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/auto_create_workspace`.
                     public var auto_create_workspace: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/workspace_id`.
+                    public var workspace_id: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -7341,6 +7343,7 @@ public enum Operations {
                     ///   - llm_provider:
                     ///   - llm_config:
                     ///   - auto_create_workspace:
+                    ///   - workspace_id:
                     public init(
                         id: Swift.String? = nil,
                         _type: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload._typePayload,
@@ -7352,7 +7355,8 @@ public enum Operations {
                         tools: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.toolsPayload? = nil,
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload? = nil,
-                        auto_create_workspace: Swift.Bool? = nil
+                        auto_create_workspace: Swift.Bool? = nil,
+                        workspace_id: Swift.String? = nil
                     ) {
                         self.id = id
                         self._type = _type
@@ -7365,6 +7369,7 @@ public enum Operations {
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
                         self.auto_create_workspace = auto_create_workspace
+                        self.workspace_id = workspace_id
                     }
                     public enum CodingKeys: String, CodingKey {
                         case id
@@ -7378,6 +7383,7 @@ public enum Operations {
                         case llm_provider
                         case llm_config
                         case auto_create_workspace
+                        case workspace_id
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/content/application\/json`.
@@ -7805,6 +7811,420 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Unauthorized: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/actors/POST/responses/401/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body
+                /// Creates a new `Unauthorized`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_actors.Output.Unauthorized.Body) {
+                    self.body = body
+                }
+            }
+            /// Agent creation without a valid API key
+            ///
+            /// - Remark: Generated from `#/paths//api/actors/post/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Operations.post_sol_api_sol_actors.Output.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            public var unauthorized: Operations.post_sol_api_sol_actors.Output.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Forbidden: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/actors/POST/responses/403/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_actors.Output.Forbidden.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_actors.Output.Forbidden.Body
+                /// Creates a new `Forbidden`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_actors.Output.Forbidden.Body) {
+                    self.body = body
+                }
+            }
+            /// Only a human workspace admin or owner can set tools or llm_config on a new agent
+            ///
+            /// - Remark: Generated from `#/paths//api/actors/post/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Operations.post_sol_api_sol_actors.Output.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Operations.post_sol_api_sol_actors.Output.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/actors/POST/responses/404/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_actors.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_actors.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_actors.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace not found, or the caller is not a member of it
+            ///
+            /// - Remark: Generated from `#/paths//api/actors/post/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.post_sol_api_sol_actors.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.post_sol_api_sol_actors.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
                             response: self
                         )
                     }
@@ -34500,7 +34920,7 @@ public enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/entity_id`.
                     public var entity_id: Swift.String
-                    /// Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
+                    /// Keep it short and free of jargon, and never use the long dash (em dash). Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
                     ///
                     /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/content`.
                     public var content: Swift.String
@@ -34680,7 +35100,7 @@ public enum Operations {
                     ///
                     /// - Parameters:
                     ///   - entity_id: Object ID to post the comment on.
-                    ///   - content: Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
+                    ///   - content: Keep it short and free of jargon, and never use the long dash (em dash). Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link `[title](link)` — never paste partial UUIDs. Hard limit: 2000 characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced ```chart block whose body is a JSON spec — `{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.
                     ///   - mentions: Array of actor UUIDs. For each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. Every id must come from a live list_actors call — never retype a UUID from memory, from your system prompt, or from an earlier message, because a single wrong character silently mentions nobody. Ids that match no actor are dropped and reported back in the response's `unresolved_mentions`; if you see that field, look the actor up with list_actors and post a follow-up comment with the corrected mention.
                     ///   - parent_event_id: Set this to thread a reply under an existing comment (use the id returned by get_comments). If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply instead of one long comment.
                     ///   - attachment_file_ids: First upload files with create_file (or pick existing ones with list_files) and pass the returned file ids here (max 10). Attached files appear as clickable cards under the posted comment.
@@ -41239,12 +41659,12 @@ public enum Operations {
                     public var entry_agent_role: Swift.String?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/initiated_from_object_id`.
                     public var initiated_from_object_id: Swift.String?
-                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/initiated_from_object_type`.
-                    public var initiated_from_object_type: Swift.String?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/spawned_by_message_id`.
                     public var spawned_by_message_id: Swift.Int?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/depends_on_session_ids`.
                     public var depends_on_session_ids: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/notify_on_complete`.
+                    public var notify_on_complete: Swift.Bool?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -41256,9 +41676,9 @@ public enum Operations {
                     ///   - source_session_id:
                     ///   - entry_agent_role:
                     ///   - initiated_from_object_id:
-                    ///   - initiated_from_object_type:
                     ///   - spawned_by_message_id:
                     ///   - depends_on_session_ids:
+                    ///   - notify_on_complete:
                     public init(
                         actor_id: Swift.String,
                         action_prompt: Swift.String,
@@ -41268,9 +41688,9 @@ public enum Operations {
                         source_session_id: Swift.String? = nil,
                         entry_agent_role: Swift.String? = nil,
                         initiated_from_object_id: Swift.String? = nil,
-                        initiated_from_object_type: Swift.String? = nil,
                         spawned_by_message_id: Swift.Int? = nil,
-                        depends_on_session_ids: [Swift.String]? = nil
+                        depends_on_session_ids: [Swift.String]? = nil,
+                        notify_on_complete: Swift.Bool? = nil
                     ) {
                         self.actor_id = actor_id
                         self.action_prompt = action_prompt
@@ -41280,9 +41700,9 @@ public enum Operations {
                         self.source_session_id = source_session_id
                         self.entry_agent_role = entry_agent_role
                         self.initiated_from_object_id = initiated_from_object_id
-                        self.initiated_from_object_type = initiated_from_object_type
                         self.spawned_by_message_id = spawned_by_message_id
                         self.depends_on_session_ids = depends_on_session_ids
+                        self.notify_on_complete = notify_on_complete
                     }
                     public enum CodingKeys: String, CodingKey {
                         case actor_id
@@ -41293,9 +41713,9 @@ public enum Operations {
                         case source_session_id
                         case entry_agent_role
                         case initiated_from_object_id
-                        case initiated_from_object_type
                         case spawned_by_message_id
                         case depends_on_session_ids
+                        case notify_on_complete
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/content/application\/json`.
@@ -42236,15 +42656,23 @@ public enum Operations {
                 public struct jsonPayload: Codable, Hashable, Sendable {
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/requestBody/json/current_activity`.
                     public var current_activity: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/requestBody/json/notify_on_complete`.
+                    public var notify_on_complete: Swift.Bool?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - current_activity:
-                    public init(current_activity: Swift.String? = nil) {
+                    ///   - notify_on_complete:
+                    public init(
+                        current_activity: Swift.String? = nil,
+                        notify_on_complete: Swift.Bool? = nil
+                    ) {
                         self.current_activity = current_activity
+                        self.notify_on_complete = notify_on_complete
                     }
                     public enum CodingKeys: String, CodingKey {
                         case current_activity
+                        case notify_on_complete
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/requestBody/content/application\/json`.
@@ -42345,6 +42773,16 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
+                        @frozen public enum notify_on_completePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case registered = "registered"
+                            case delivered = "delivered"
+                            case skipped = "skipped"
+                        }
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
+                        public var notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_skip_reason`.
+                        public var notify_skip_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -42366,6 +42804,8 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - notify_on_complete:
+                        ///   - notify_skip_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -42384,7 +42824,9 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload? = nil,
+                            notify_skip_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -42404,6 +42846,8 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.notify_on_complete = notify_on_complete
+                            self.notify_skip_reason = notify_skip_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -42424,6 +42868,8 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case notify_on_complete
+                            case notify_skip_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/application\/json`.

@@ -221,22 +221,32 @@ public struct ObjectPatch: Sendable, Equatable {
 	public var status: String?
 	/// The actor to drive the object (assign). Nil leaves the driver alone.
 	public var driver: String?
+	/// Shallow-merged into `metadata` (as the server does); an empty-string value removes that
+	/// key. `nil` leaves metadata alone.
+	public var metadata: [String: String]?
 
 	public init(
-		title: String? = nil, content: String? = nil, status: String? = nil, driver: String? = nil
+		title: String? = nil, content: String? = nil, status: String? = nil, driver: String? = nil,
+		metadata: [String: String]? = nil
 	) {
 		self.title = title
 		self.content = content
 		self.status = status
 		self.driver = driver
+		self.metadata = metadata
 	}
 
-	func applied(to object: WorkObject) -> WorkObject {
+	public func applied(to object: WorkObject) -> WorkObject {
 		var copy = object
 		if let title { copy.title = title }
 		if let content { copy.content = content }
 		if let status { copy.status = status }
 		if let driver { copy.driverId = driver }
+		if let metadata {
+			for (key, value) in metadata {
+				if value.isEmpty { copy.metadata.removeValue(forKey: key) } else { copy.metadata[key] = value }
+			}
+		}
 		return copy
 	}
 }

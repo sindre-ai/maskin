@@ -11,12 +11,12 @@ struct HoldReasonSheet: View {
 	/// Called with the reason, or nil for Skip. The sheet dismisses itself afterwards.
 	let commit: (String?) -> Void
 
-	@State private var text = ""
-	@State private var listening = false
-	@FocusState private var focused: Bool
+	/// The shared composer's model: spec 7 §1 puts the Hold reason on the inline variant, with
+	/// dictation and no send button (the sheet's own buttons commit).
+	@State private var model = ChatComposerModel(uploader: nil, selfActorID: "")
 	@Environment(\.dismiss) private var dismiss
 
-	private var reason: String? { HoldReason.normalized(text) }
+	private var reason: String? { HoldReason.normalized(model.text) }
 
 	var body: some View {
 		ScrollView {
@@ -32,7 +32,7 @@ struct HoldReasonSheet: View {
 					ForEach(HoldReason.presets, id: \.self) { preset in
 						Button {
 							MaskinHaptics.play(.selection)
-							text = preset
+							model.text = preset
 						} label: {
 							Text(preset).maskinText(.body).foregroundStyle(MaskinColor.ink2)
 								.multilineTextAlignment(.leading)
@@ -69,21 +69,11 @@ struct HoldReasonSheet: View {
 	}
 
 	private var field: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-			TextField("Not until\u{2026}", text: $text, axis: .vertical)
-				.lineLimit(3...6)
-				.maskinText(.body)
-				.focused($focused)
-				.frame(minHeight: MaskinSpace.touchMin * 1.5, alignment: .topLeading)
-			HStack(spacing: MaskinSpace.s4) {
-				DictationButton(text: $text, listening: $listening)
-				Text("Say it out loud if that\u{2019}s faster")
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-				Spacer(minLength: 0)
-			}
-		}
-		.padding(MaskinSpace.s7)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+		MaskinComposer(
+			model: model,
+			config: MaskinComposerConfig(
+				variant: .inline, placeholder: "Not until\u{2026}", showsAttach: false, showsSend: false),
+			onSend: {})
 	}
 
 	private func finish(_ reason: String?) {

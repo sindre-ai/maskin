@@ -52,11 +52,16 @@ private struct ChatsContainer: View {
 	@State private var store: ConversationsStore
 	@State private var selection: String?
 	@State private var search = ""
-	@State private var showNewChat = false
-	@State private var pendingText = ""
+	@State private var newChat: NewChatRequest?
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
 	@Binding var requestedConversationId: String?
+
+	private struct NewChatRequest: Identifiable {
+		let id = UUID()
+		var prefill = ""
+		var recipient: ChatParticipant?
+	}
 
 	init(
 		environment: AppEnvironment, workspaceID: String, requestedConversationId: Binding<String?>
@@ -66,31 +71,39 @@ private struct ChatsContainer: View {
 		_store = State(
 			initialValue: ConversationsStore(
 				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
-				events: environment.events, cache: environment.snapshotCache))
+				events: environment.events, cache: environment.snapshotCache,
+				flowRooms: LoopFlowRoomsSource(api: APILoopsSource(client: environment.client, workspaceID: workspaceID)),
+				preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID)))
 	}
+
+	private var session: StoredSession? { environment.auth.session }
 
 	var body: some View {
 		NavigationSplitView {
 			ConversationListView(
 				store: store, selection: $selection, search: $search,
-				currentActorID: environment.auth.session?.actorId,
+				currentActorID: session?.actorId,
 				isLive: environment.events.connection != .failed,
-				onNewChat: { showNewChat = true },
-				pinnedOrder: environment.workspaceId.flatMap { workspace in
-					environment.auth.session.map { PinnedOrderStore(workspaceID: workspace, actorID: $0.actorId) }
-				}
+				sendTick: sendTick,
+				onNewChat: { recipient in newChat = NewChatRequest(recipient: recipient) },
+				onSearchEverywhere: { _ in runtime?.selectedTab = .search }
 			)
 			.shellToolbar(
-				environment: environment, title: store.scope == .archived ? "Archived" : "Team",
+				environment: environment, title: "Team",
 				actions: ShellActions(
-					new: { showNewChat = true }, newLabel: "New conversation",
+					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
-                    displaySymbol: ShellActions.slidersSymbol))
-			.navigationSplitViewColumnWidth(min: 300, ideal: 430, max: 440)
+					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault))
+			// iPad spec: the Team column is 430 wide.
+			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {
-			if let selection {
+			if let selection, let flowID = Self.flowID(from: selection) {
+				FlowRoomHost(environment: environment, store: store, flowID: flowID)
+					.id(selection)
+			} else if let selection {
 				ChatThreadHost(
-					environment: environment, conversations: store, conversationID: selection
+					environment: environment, conversations: store, conversationID: selection,
+					onLeft: { self.selection = nil }
 				)
 				.id(selection)
 			} else {
@@ -105,7 +118,7 @@ private struct ChatsContainer: View {
 		.onChange(of: runtime?.newConversationRequested, initial: true) {
 			guard runtime?.newConversationRequested == true else { return }
 			runtime?.newConversationRequested = false
-			showNewChat = true
+			newChat = NewChatRequest()
 		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
 			// A build request from Agents or Loops: agents and loops are set up by the Chief of Staff.
@@ -115,9 +128,10 @@ private struct ChatsContainer: View {
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
-		.sheet(isPresented: $showNewChat, onDismiss: { pendingText = "" }) {
+		.sheet(item: $newChat) { request in
 			NewChatSheet(
-				store: store, currentActorID: environment.auth.session?.actorId, prefill: pendingText
+				store: store, currentActorID: session?.actorId, prefill: request.prefill,
+				initialRecipient: request.recipient
 			) { created, live in
 				selection = created.id
 				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
@@ -128,8 +142,25 @@ private struct ChatsContainer: View {
 					}
 				}
 			}
-			.presentationDetents([.medium, .large])
+			.presentationDetents([.large])
 		}
+	}
+
+	/// A flow row's selection key is `flow:<id>`; everything else is a conversation id.
+	static func flowID(from selection: String) -> String? {
+		let prefix = TeamLayout.flowPinKey("")
+		guard selection.hasPrefix(prefix) else { return nil }
+		return String(selection.dropFirst(prefix.count))
+	}
+
+	/// What your latest message in a conversation is doing, from the send queue and the snippet.
+	private func sendTick(_ conversation: ConversationSummary) -> ConversationRowStatus.Tick? {
+		let pending = ChatsRuntime.shared(environment: environment).queue.pending(in: conversation.id)
+		if pending.contains(where: { if case .failed = $0.state { return true } else { return false } }) { return .failed }
+		if !pending.isEmpty { return .sending }
+		guard let me = session?.actorId, conversation.snippetActorID == me else { return nil }
+		// Read receipts are not in the API yet, so a delivered message stops at one tick.
+		return .sent
 	}
 }
 
@@ -144,8 +175,7 @@ extension ChatsContainer {
 				$0.isSystem && $0.participant.kind == .agent && $0.participant.name == "Chief of Staff"
 			})
 		else {
-			pendingText = text
-			showNewChat = true
+			newChat = NewChatRequest(prefill: text)
 			return
 		}
 		do {
@@ -155,8 +185,54 @@ extension ChatsContainer {
 			MaskinHaptics.play(.success)
 			selection = created.id
 		} catch {
-			pendingText = text
-			showNewChat = true
+			newChat = NewChatRequest(prefill: text)
+		}
+	}
+}
+
+/// Flow rooms for the Team list, from the flows API: the flow, its latest post and who wrote it.
+/// Conversations carry no flow link yet, so this is the only source of FLOWS rows.
+struct LoopFlowRoomsSource: FlowRoomsSource {
+	let api: any LoopsAPI
+	/// The latest post is fetched per flow, so only this many of the most recent flows get one.
+	var previewLimit = 8
+
+	func flowRooms() async throws -> [TeamFlowRoom] {
+		let loops = try await api.loops().filter { $0.status != .draft }
+			.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+		let directory = ActorDirectory((try? await api.actors()) ?? [])
+		let previewed = Set(loops.prefix(previewLimit).map(\.id))
+		return await withTaskGroup(of: TeamFlowRoom.self, returning: [TeamFlowRoom].self) { group in
+			for loop in loops {
+				group.addTask {
+					var room = TeamFlowRoom(
+						id: loop.id, name: loop.displayName, lastActivity: loop.updatedAt, loop: loop)
+					if previewed.contains(loop.id), let last = try? await api.latestPost(loopID: loop.id) {
+						room.lastPostAuthor = directory.name(last.actorID)
+						room.lastPostText = last.text
+						room.lastActivity = last.date ?? loop.updatedAt
+					}
+					return room
+				}
+			}
+			var rooms: [TeamFlowRoom] = []
+			for await room in group { rooms.append(room) }
+			return rooms.sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
+		}
+	}
+}
+
+/// A flow opened from the Team list: its channel, which is the flow's timeline.
+private struct FlowRoomHost: View {
+	let environment: AppEnvironment
+	let store: ConversationsStore
+	let flowID: String
+
+	var body: some View {
+		if let room = store.flowRooms.first(where: { $0.id == flowID }) {
+			FlowChannelScreen(environment: environment, store: store, room: room)
+		} else {
+			EmptyState(symbol: "arrow.triangle.2.circlepath", title: "This flow isn't here any more")
 		}
 	}
 }
@@ -166,6 +242,7 @@ private struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
 	let conversationID: String
+	var onLeft: () -> Void = {}
 	/// The store and composer are built once, on first render. They were `@State(initialValue:)`
 	/// built in `init`, which runs on every parent re-render (each list update) and paid for a
 	/// disk-cache decode and a store each time before SwiftUI discarded the result.
@@ -174,7 +251,11 @@ private struct ChatThreadHost: View {
 	/// Opens the People sheet straight on its picker ("Invite people").
 	@State private var inviting = false
 
-	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
+	init(
+		environment: AppEnvironment, conversations: ConversationsStore, conversationID: String,
+		onLeft: @escaping () -> Void = {}
+	) {
+		self.onLeft = onLeft
 		self.environment = environment
 		self.conversations = conversations
 		self.conversationID = conversationID
@@ -200,7 +281,7 @@ private struct ChatThreadHost: View {
 		chat.onMarkedRead = { [conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
 		}
-		chat.onSessionsRefreshed = { [weak chat, weak environment, conversations] sessions in
+		chat.onSessionsRefreshed = { [weak chat, weak environment] sessions in
 			// Foreground fallback for the Live Activity; background updates come from APNs.
 			guard let coordinator = TurnActivityCoordinator.shared, let chat,
 				let workspaceId = environment?.workspaceId
@@ -208,14 +289,11 @@ private struct ChatThreadHost: View {
 			let turns = LiveTurn.turns(
 				from: sessions.filter { !chat.isIdle($0) }, workspaceId: workspaceId, conversationId: conversationID,
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
-				topic: conversations.conversation(id: conversationID)?.title, now: Date())
-			Task {
-				await coordinator.reconcile(turns)
-				await coordinator.sweep()
-			}
+				now: Date())
+			Task { await coordinator.reconcile(turns) }
 		}
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
-		composer.text = ChatDraftStore.text(for: conversationID)
+		composer.bind(conversationID: conversationID)
 		return (chat, composer)
 	}
 
@@ -230,11 +308,8 @@ private struct ChatThreadHost: View {
 				inviting = true
 				showParticipants = true
 			})
-			// Drafts are saved on every keystroke and come back when the chat opens.
-			.onChange(of: composer.text) { _, text in ChatDraftStore.set(text, for: chat.conversationID) }
-			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
-				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting)
+				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting, onLeft: onLeft)
 				.presentationDetents([.medium, .large])
 			}
 	}

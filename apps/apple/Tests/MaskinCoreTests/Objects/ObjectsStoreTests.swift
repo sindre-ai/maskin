@@ -4,12 +4,29 @@ import Testing
 
 @testable import MaskinCore
 
+/// A throwaway `UserDefaults` so saved views never leak between tests.
+private func isolatedDefaults() -> UserDefaults {
+	UserDefaults(suiteName: "ObjectsStoreTests.\(UUID().uuidString)")!
+}
+
 @MainActor
 private func makeStore(
-	_ remote: FakeObjectsRemote = FakeObjectsRemote(objects: Fixtures.objects)
+	_ remote: FakeObjectsRemote = FakeObjectsRemote(objects: Fixtures.objects),
+	defaults: UserDefaults = isolatedDefaults(), workspace: String? = "ws-1"
 ) -> (ObjectsStore, FakeObjectsRemote) {
 	let directory = ObjectsDirectory(remote: remote, actors: Fixtures.actors)
-	return (ObjectsStore(remote: remote, directory: directory), remote)
+	let store = ObjectsStore(remote: remote, directory: directory, defaults: defaults)
+	store.bindWorkspace(workspace)
+	return (store, remote)
+}
+
+private func ask(_ objectId: String, by name: String? = "Forge", text: String = "Ship it?") -> ObjectAsk {
+	ObjectAsk(
+		objectId: objectId, askedBy: name, text: text, parentEventId: 9, latestEventId: 12,
+		options: [
+			DecisionOption(label: "Ship", recommended: true), DecisionOption(label: "Hold"),
+			DecisionOption(label: "Send to everyone", destructive: true),
+		])
 }
 
 @MainActor
@@ -21,11 +38,12 @@ struct ObjectsStoreTests {
 		await store.load()
 		#expect(store.phase == .loaded)
 		#expect(store.objects.count == 5)
-		store.grouping = .status
+		#expect(store.grouping == .status)
 		let groups = store.groups
-		// Schema order across types: insight statuses, then bet, then task.
-		#expect(groups.map(\.id) == ["new", "active", "todo", "in_progress"])
-		#expect(groups.first { $0.id == "in_progress" }?.objects.map(\.id) == ["t1", "t3"])
+		// Product order across types (Bets, Insights, Tasks), each type's own statuses under it.
+		#expect(groups.map(\.id) == ["bet/active", "insight/new", "task/todo", "task/in_progress"])
+		#expect(groups.first?.title == "Bets · Active")
+		#expect(groups.first { $0.id == "task/in_progress" }?.objects.map(\.id) == ["t1", "t3"])
 		store.grouping = .none
 		#expect(store.groups.count == 1)
 		#expect(store.groups[0].objects.map(\.id) == ["t1", "b1", "t2", "t3", "i1"])
@@ -36,17 +54,19 @@ struct ObjectsStoreTests {
 		let (store, _) = makeStore()
 		await store.load()
 		store.grouping = .type
-		#expect(store.groups.map(\.id) == ["insight", "bet", "task"])
-		#expect(store.groups.map(\.title) == ["Insight", "Bet", "Task"])
+		#expect(store.groups.map(\.id) == ["bet", "insight", "task"])
+		#expect(store.groups.map(\.title) == ["Bets", "Insights", "Tasks"])
 		#expect(store.groups.allSatisfy { $0.isType })
 	}
 
-	@Test("groups by status by default, one group per status, none empty")
-	func groupsByStatusByDefault() async {
+	@Test("groups by attention: processing, then needs you, never empty buckets")
+	func groupsByAttention() async {
 		let (store, _) = makeStore()
 		await store.load()
-		#expect(store.grouping == .status)
-		#expect(store.groups.allSatisfy { !$0.objects.isEmpty && !$0.isAttention && !$0.isType })
+		store.grouping = .attention
+		let ids = store.groups.map(\.id)
+		#expect(ids == ids.filter { ["processing", "needs_you", "other"].contains($0) })
+		#expect(ids == ["processing", "needs_you", "other"].filter(ids.contains))
 		#expect(store.groups.flatMap(\.objects).count == store.objects.count)
 	}
 
@@ -68,7 +88,7 @@ struct ObjectsStoreTests {
 	func presentTypes() async {
 		let remote = FakeObjectsRemote(objects: Fixtures.objects.filter { $0.type != "bet" })
 		let (store, _) = makeStore(remote)
-		#expect(store.presentTypes == ["bet", "insight", "task"])  // nothing loaded yet, handoff order
+		#expect(store.presentTypes == ["bet", "insight", "task"])  // nothing loaded yet
 		await store.load()
 		#expect(store.presentTypes == ["insight", "task"])
 		await store.setType("task")
@@ -230,11 +250,12 @@ struct ObjectsStoreTests {
 		continuation.yield(.event(WorkspaceEvent(id: "2", action: "deleted", entityType: .object, entityId: "t1")))
 		try await waitUntil { !store.objects.contains { $0.id == "t1" } }
 
-		// Unrelated entity types don't refetch.
+		// Unrelated entity types don't refetch; a reconnect re-reads the list and the inventory.
 		let calls = remote.listQueries.count
 		continuation.yield(.event(WorkspaceEvent(id: "3", action: "updated", entityType: .conversation, entityId: "c")))
 		continuation.yield(.reconnected)
-		try await waitUntil { remote.listQueries.count == calls + 1 }
+		try await waitUntil { remote.listQueries.count == calls + 2 }
+		#expect(Set(remote.listQueries.suffix(2).map(\.limit)) == [ObjectsStore.pageSize, ObjectsStore.inventoryLimit])
 		continuation.finish()
 		await task.value
 	}
@@ -296,6 +317,282 @@ struct ObjectsStoreTests {
 		let ok = await store.delete(["t1", "b1"])
 		#expect(ok == BulkResult(succeeded: 2, failed: 0))
 		#expect(store.objects.map(\.id).sorted() == ["i1", "t2", "t3"])
+	}
+}
+
+@MainActor
+@Suite("ObjectsStore: scope, counts and needs you")
+struct ObjectsStoreScopeTests {
+	@Test("type summaries count the inventory per type in product order, with plural labels")
+	func typeSummaries() async {
+		let (store, _) = makeStore()
+		await store.load()
+		let summaries = store.typeSummaries
+		#expect(summaries.map(\.id) == ["bet", "insight", "task"])
+		#expect(summaries.map(\.label) == ["Bets", "Insights", "Tasks"])
+		#expect(summaries.map(\.count) == [1, 1, 3])
+		#expect(summaries.allSatisfy { !$0.isCapped })
+		#expect(store.totalCount == 5)
+		#expect(store.totalCountLabel == "5")
+	}
+
+	@Test("a full inventory page marks every count as a floor")
+	func cappedInventory() async {
+		let many = (0..<120).map {
+			WorkObject(id: "o\($0)", type: "task", title: "Task \($0)", status: "todo", updatedAt: Fixtures.date($0))
+		}
+		let (store, _) = makeStore(FakeObjectsRemote(objects: many))
+		await store.load()
+		#expect(store.inventory.count == ObjectsStore.inventoryLimit)
+		#expect(store.inventoryCapped)
+		#expect(store.typeSummaries.first?.countLabel == "100+")
+	}
+
+	@Test("needs you comes from an open ask or the data's own signals, and the Needs you scope shows only those")
+	func needsYou() async {
+		var objects = Fixtures.objects
+		objects.append(WorkObject(id: "x1", type: "task", title: "Review the copy", status: "in_review", updatedAt: Fixtures.date(3)))
+		let (store, _) = makeStore(FakeObjectsRemote(objects: objects))
+		await store.load()
+		#expect(store.needsYouCount == 1)
+		store.applyAsks([ask("b1")])
+		#expect(store.needsYouCount == 2)
+		#expect(store.needsYou(store.objects.first { $0.id == "b1" }!))
+		#expect(store.ask(for: "b1")?.line == "Forge: Ship it?")
+		#expect(store.typeSummaries.first { $0.id == "bet" }?.needsYou == 1)
+		#expect(store.typeSummaries.first { $0.id == "task" }?.needsYou == 1)
+
+		await store.setScope(.needsYou)
+		#expect(store.title == "Needs you")
+		#expect(store.isFiltered)
+		#expect(Set(store.visibleObjects.map(\.id)) == ["b1", "x1"])
+		#expect(store.typeFilter == nil)
+		#expect(store.groups.map(\.id) == ["bet/active", "task/in_review"])
+
+		store.applyAsks([])
+		#expect(store.visibleObjects.map(\.id) == ["x1"])
+	}
+
+	@Test("an ask without a resolved name never shows an id, and picks its options")
+	func askLine() {
+		#expect(ask("b1", by: nil).line == "Ship it?")
+		let a = ask("b1")
+		#expect(a.approveOption?.label == "Ship")
+		#expect(a.holdOption?.label == "Hold")
+		#expect(ObjectAsk(objectId: "z", askedBy: "Quill", text: "Ok?", options: [DecisionOption(label: "Send", destructive: true)]).approveOption == nil)
+	}
+
+	@Test("an ask is built from a feed entry that needs the reader, and not from an FYI")
+	func askFromFeedEntry() {
+		let card = ForYouCard(
+			id: "b1", objectTitle: "Native iOS app", objectType: "bet", latestEventId: 40,
+			mention: ForYouMention(
+				eventId: 31, actorId: "forge", content: "ask",
+				decision: DecisionPrompt(
+					title: "Ship the beta to TestFlight?", summary: "", ask: "",
+					options: [DecisionOption(label: "Ship", recommended: true)])))
+		let needs = ObjectAsk(FeedEntry(card: card, bucket: .needs), senderName: "Forge")
+		#expect(needs?.text == "Ship the beta to TestFlight?")
+		#expect(needs?.parentEventId == 31)
+		#expect(needs?.latestEventId == 40)
+		#expect(needs?.options.count == 1)
+		#expect(ObjectAsk(FeedEntry(card: card, bucket: .fyi), senderName: "Forge") == nil)
+	}
+
+	@Test("scopes map to the server filters and the large title")
+	func scopes() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		#expect(store.title == "Objects")
+		#expect(store.mixesTypes)
+		await store.setScope(.type("insight"))
+		#expect(store.title == "Insights")
+		#expect(!store.mixesTypes)
+		#expect(remote.listQueries.last?.type == "insight")
+		#expect(store.objects.map(\.id) == ["i1"])
+		await store.setScope(.favourites)
+		#expect(store.title == "Favourites")
+		#expect(store.starredOnly)
+		#expect(store.typeFilter == nil)
+		await store.setScope(.all)
+		#expect(!store.isFiltered)
+		#expect(store.objects.count == 5)
+	}
+
+	@Test("folded groups are remembered per grouping and persist")
+	func foldPersists() async {
+		let storage = InMemoryObjectsDisplayStorage()
+		let remote = FakeObjectsRemote(objects: Fixtures.objects)
+		let directory = ObjectsDirectory(remote: remote, actors: Fixtures.actors)
+		let store = ObjectsStore(remote: remote, directory: directory, displayStorage: storage, defaults: isolatedDefaults())
+		await store.load()
+		store.toggleGroup("task/todo")
+		#expect(store.display.isCollapsed("task/todo"))
+		store.grouping = .type
+		#expect(!store.display.isCollapsed("task/todo"))
+		let again = ObjectsStore(remote: remote, directory: directory, displayStorage: storage, defaults: isolatedDefaults())
+		#expect(again.display.groupBy == .type)
+		again.grouping = .status
+		#expect(again.display.isCollapsed("task/todo"))
+	}
+}
+
+@MainActor
+@Suite("ObjectsStore: saved views")
+struct ObjectsStoreSavedViewsTests {
+	@Test("saving the current view keeps its filters, switches to it and survives a relaunch")
+	func saveAndReload() async {
+		let defaults = isolatedDefaults()
+		let (store, remote) = makeStore(defaults: defaults)
+		await store.load()
+		await store.setScope(.type("task"))
+		await store.setStatus("in_progress")
+		store.grouping = .none
+		let view = store.saveCurrentView(named: "  Doing now ")
+		#expect(view?.name == "Doing now")
+		#expect(view?.scope == .type("task"))
+		#expect(view?.statusFilter == "in_progress")
+		#expect(view?.groupBy == ObjectsGrouping.none)
+		#expect(store.scope == .saved(view!.id))
+		#expect(store.title == "Doing now")
+		#expect(store.count(of: view!) == 2)
+		#expect(store.saveCurrentView(named: "   ") == nil)
+
+		let (again, _) = makeStore(remote, defaults: defaults)
+		await again.load()
+		#expect(again.savedViews.views.map(\.name) == ["Doing now"])
+		await again.setScope(.saved(view!.id))
+		#expect(again.typeFilter == "task")
+		#expect(again.statusFilter == "in_progress")
+		#expect(again.display.groupBy == ObjectsGrouping.none)
+		#expect(again.objects.map(\.id) == ["t1", "t3"])
+
+		let (other, _) = makeStore(remote, defaults: defaults, workspace: "ws-2")
+		#expect(other.savedViews.views.isEmpty)
+	}
+
+	@Test("removing a saved view hands back what restores it, in place")
+	func removeAndRestore() async {
+		let (store, _) = makeStore()
+		await store.load()
+		let a = store.saveCurrentView(named: "A")!
+		await store.setScope(.favourites)
+		let b = store.saveCurrentView(named: "B")!
+		let removed = store.removeSavedView(a.id)
+		#expect(removed?.view.name == "A")
+		#expect(store.savedViews.views.map(\.id) == [b.id])
+		store.restoreSavedView(removed!.view, at: removed!.index)
+		#expect(store.savedViews.views.map(\.id) == [a.id, b.id])
+		// Removing the view you are on drops you to its filters.
+		_ = store.removeSavedView(b.id)
+		#expect(store.scope == .favourites)
+	}
+
+	@Test("a saved view counts the objects that match it")
+	func savedViewMatching() {
+		let view = SavedView(name: "Mine", scope: .favourites, statusFilter: "todo", search: "migr")
+		var o = WorkObject(id: "a", type: "task", title: "Write migration", status: "todo", isStarred: true)
+		#expect(view.matches(o, needsYou: false))
+		o.isStarred = false
+		#expect(!view.matches(o, needsYou: false))
+		let needs = SavedView(name: "Asks", scope: .needsYou)
+		#expect(needs.matches(o, needsYou: true))
+		#expect(!needs.matches(o, needsYou: false))
+	}
+}
+
+@MainActor
+@Suite("ObjectsStore: swipe actions with Undo")
+struct ObjectsStoreSwipeTests {
+	@Test("Done moves to the type's finished status and the undo puts it back")
+	func markDone() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		let task = store.objects.first { $0.id == "t2" }!
+		#expect(store.doneTarget(for: task) == "validated")
+		let undo = await store.markDone("t2")
+		#expect(store.objects.first { $0.id == "t2" }?.status == "validated")
+		#expect(store.inventory.first { $0.id == "t2" }?.status == "validated")
+		#expect(remote.updateKeys.count == 1)
+		await store.undo(try! #require(undo))
+		#expect(store.objects.first { $0.id == "t2" }?.status == "todo")
+	}
+
+	@Test("archiving one object uses its type's archive status")
+	func archiveOne() async {
+		let (store, _) = makeStore()
+		await store.load()
+		let undo = await store.archive("b1")
+		#expect(store.objects.first { $0.id == "b1" }?.status == "archived")
+		#expect(undo?.changes.first?.from == "active")
+		#expect(await store.archive("b1") == nil)
+	}
+
+	@Test("a held delete is not sent until the window closes, and Undo cancels it")
+	func heldDelete() async throws {
+		let (store, remote) = makeStore()
+		await store.load()
+		await store.delete("t2", holdFor: .seconds(5))
+		#expect(!store.objects.contains { $0.id == "t2" })
+		#expect(!store.inventory.contains { $0.id == "t2" })
+		#expect(remote.objects.contains { $0.id == "t2" })
+		#expect(store.undoDelete("t2"))
+		#expect(store.objects.map(\.id) == Fixtures.objects.map(\.id))
+		#expect(store.inventory.contains { $0.id == "t2" })
+
+		await store.delete("t2", holdFor: .milliseconds(20))
+		try await waitUntil { !remote.objects.contains { $0.id == "t2" } }
+		#expect(!store.undoDelete("t2"))
+	}
+
+	@Test("a refused held delete puts the row back")
+	func heldDeleteFails() async throws {
+		let (store, remote) = makeStore()
+		await store.load()
+		remote.fail("delete")
+		await store.delete("t2", holdFor: .milliseconds(20))
+		try await waitUntil { store.objects.contains { $0.id == "t2" } }
+		#expect(store.actionError != nil)
+	}
+}
+
+@Suite("Object type catalogue")
+struct ObjectTypeCatalogTests {
+	@Test("types sort into the prototype order, then alphabetically by label")
+	func order() {
+		let sorted = ObjectTypeCatalog.sorted(["zebra", "task", "account", "meeting", "apple", "bet"]) {
+			$0 == "zebra" ? "Zebra" : nil
+		}
+		#expect(sorted == ["bet", "task", "account", "meeting", "apple", "zebra"])
+		#expect(ObjectTypeCatalog.pluralLabel(for: "person") == "People")
+		#expect(ObjectTypeCatalog.pluralLabel(for: "account") == "Companies")
+		#expect(ObjectTypeCatalog.pluralLabel(for: "knowledge") == "Knowledge")
+		#expect(ObjectTypeCatalog.pluralLabel(for: "release_note", displayName: "Release note") == "Release notes")
+	}
+
+	@Test("the scope titles read as the handoff says")
+	func titles() {
+		#expect(ObjectsScope.all.title(schema: .fallback) == "Objects")
+		#expect(ObjectsScope.needsYou.title(schema: .fallback) == "Needs you")
+		#expect(ObjectsScope.type("task").title(schema: .fallback) == "Tasks")
+		#expect(ObjectsScope.saved("x").title(schema: .fallback) { _ in "Doing now" } == "Doing now")
+		#expect(ObjectsScope.saved("x").title(schema: .fallback) == "Saved view")
+	}
+
+	@Test("display options saved before a field existed still decode")
+	func displayOptionsDecode() throws {
+		let data = Data(#"{"layout":"board","sort":"name"}"#.utf8)
+		let options = try JSONDecoder().decode(ObjectsDisplay.self, from: data)
+		#expect(options.layout == .board)
+		#expect(options.sort == .name)
+		#expect(options.groupBy == .status)
+		#expect(options.shown == Set(ObjectsProperty.allCases))
+		var round = options
+		round.toggleCollapsed("x")
+		let again = try JSONDecoder().decode(ObjectsDisplay.self, from: JSONEncoder().encode(round))
+		#expect(again == round)
+		#expect(round.isCustomised)
+		#expect(!ObjectsDisplay().isCustomised)
 	}
 }
 

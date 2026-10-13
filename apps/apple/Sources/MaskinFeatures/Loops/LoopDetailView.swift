@@ -13,14 +13,14 @@ struct LoopDetailView: View {
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmDelete = false
 	@State private var underTheHood = false
-	@State private var draft = ""
-	@State private var dictating = false
+	@State private var timeline: FlowTimelineModel?
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				LoopDetailContent(
-					store: store, install: install, underTheHood: underTheHood, onOpenTrigger: onOpenTrigger)
+					store: store, install: install, underTheHood: underTheHood, timeline: timeline,
+					onOpenTrigger: onOpenTrigger)
 				if underTheHood { manage }
 			}
 			.padding(MaskinSpace.s9)
@@ -33,7 +33,13 @@ struct LoopDetailView: View {
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
 		.refreshable { await store.refresh() }
-		.safeAreaInset(edge: .bottom, spacing: 0) { composer }
+		.safeAreaInset(edge: .bottom, spacing: 0) {
+			if let timeline {
+				FlowTimelineComposer(model: timeline)
+					.padding(.horizontal, MaskinSpace.s7)
+					.padding(.bottom, MaskinSpace.s3)
+			}
+		}
 		.toolbar {
 			// One gear: it opens the Under the hood page (and closes it again).
 			ToolbarItem(placement: .primaryAction) {
@@ -54,6 +60,12 @@ struct LoopDetailView: View {
 			Text("Its agents and triggers stay. This can't be undone.")
 		}
 		.task { await store.start() }
+		.task {
+			if timeline == nil, let environment = runtime?.environment {
+				timeline = FlowTimelineModel(environment: environment, flowID: store.loop.id, flowName: store.loop.displayName)
+			}
+			await timeline?.start()
+		}
 		// The loop's briefing cards come from the store For you shares; load it if nothing has yet.
 		.task {
 			if let stories = runtime?.storiesStore(), !stories.hasLoaded { await stories.load() }
@@ -101,31 +113,11 @@ struct LoopDetailView: View {
 		}
 		.buttonStyle(.maskinPressed)
 	}
-
-	/// "Change this flow by talking...": hands what you type to a new chat about this flow.
-	private var composer: some View {
-		GlassComposer(
-			text: $draft, placeholder: "Change this flow by talking…",
-			onAttach: { startChat("") },
-			onSend: {
-				let text = draft
-				draft = ""
-				startChat(text)
-			},
-			listening: $dictating, mic: { DictationButton(text: $draft, listening: $dictating) }
-		)
-		.padding(.horizontal, MaskinSpace.s7)
-		.padding(.bottom, MaskinSpace.s3)
-	}
-
-	private func startChat(_ text: String) {
-		runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). \(text)")
-	}
 }
 
 /// The loop page's three tabs.
 enum LoopDetailTab: String, CaseIterable, Identifiable {
-	case outcome = "Outcomes"
+	case outcome = "Outcome"
 	case actions = "Actions"
 	case activity = "Activity"
 	var id: String { rawValue }
@@ -138,16 +130,21 @@ struct LoopDetailContent: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
 	var underTheHood = false
+	/// The flow's timeline (comments and events). Nil in previews and tests: the Activity tab then
+	/// shows the agents' posts and the run feed instead.
+	var timeline: FlowTimelineModel?
 	var onOpenTrigger: (String) -> Void = { _ in }
 	@State private var tab: LoopDetailTab
 
 	init(
 		store: LoopDetailStore, install: LoopInstall? = nil, underTheHood: Bool = false,
+		timeline: FlowTimelineModel? = nil,
 		initialTab: LoopDetailTab = .outcome, onOpenTrigger: @escaping (String) -> Void = { _ in }
 	) {
 		self.store = store
 		self.install = install
 		self.underTheHood = underTheHood
+		self.timeline = timeline
 		self.onOpenTrigger = onOpenTrigger
 		_tab = State(initialValue: initialTab)
 	}
@@ -177,8 +174,12 @@ struct LoopDetailContent: View {
 				case .actions:
 					LoopActionsSection(store: store)
 				case .activity:
-					LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
-					activity
+					if let timeline {
+						FlowTimelineView(model: timeline)
+					} else {
+						LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
+						activity
+					}
 				}
 			}
 		}

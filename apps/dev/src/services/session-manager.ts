@@ -23,6 +23,7 @@ import {
 } from '@maskin/db/schema'
 import {
 	AGENT_PUSH_DIRECTORIES,
+	HUMAN_MESSAGE_STYLE,
 	type SessionResult,
 	type SessionResultFailureReason,
 	buildSetModelRequest,
@@ -52,6 +53,7 @@ import {
 	trackAgentSessionStartedWithPrompt,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackSessionAiGeneration } from '../lib/analytics/ai-generation-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
@@ -145,11 +147,7 @@ import {
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
-import {
-	buildWorkspaceStartupBlock,
-	loadSenderLine,
-	renderWorkspaceBriefing,
-} from './workspace-briefing'
+import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
 /**
  * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
@@ -266,15 +264,13 @@ export interface CreateSessionParams {
 	/**
 	 * The object this session was started for (bet, task, insight, or any
 	 * first-class object). Required-optional shape: every call site MUST pass
-	 * both `initiatedFromObjectId` and `initiatedFromObjectType`, either as
-	 * real values or as explicit `null`. tsc catches a missed site; NULL is
-	 * still an acceptable value (direct API creates, onboarding, cron
+	 * `initiatedFromObjectId`, either as a real value or as explicit `null`.
+	 * tsc catches a missed site; NULL is still an acceptable value (direct API creates, onboarding, cron
 	 * triggers, conversation-only spawns). Read back at session_failed emit
 	 * time and at every terminal PostHog `runtime_session_ended` emit; see
 	 * spec §3.3 / §3.5 of the sessions-inspectable bet.
 	 */
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }
 
 /**
@@ -736,7 +732,6 @@ export class SessionManager extends EventEmitter {
 				sourceSessionId: params.sourceSessionId,
 				spawnedBySessionId: params.spawnedBySessionId ?? null,
 				initiatedFromObjectId: params.initiatedFromObjectId,
-				initiatedFromObjectType: params.initiatedFromObjectType,
 				spawnedByMessageId: params.spawnedByMessageId ?? null,
 				dependsOnSessionIds: params.dependsOnSessionIds ?? null,
 			})
@@ -1015,7 +1010,6 @@ export class SessionManager extends EventEmitter {
 					durationMs: elapsedMs(null, session.createdAt),
 					agentServerUrl: LOCAL_RUNTIME_BUCKET,
 					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
 				})
 				throw err
 			}
@@ -1040,7 +1034,6 @@ export class SessionManager extends EventEmitter {
 				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Restore workspace from a prior session if requested. Overwrites
 			// the staged agent files with the prior session's full /agent/ snapshot,
@@ -1218,7 +1211,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: session.initiatedFromObjectId,
-				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1731,7 +1723,6 @@ export class SessionManager extends EventEmitter {
 				// carries the enrichment, so the telemetry payload is the only
 				// place Criterion 3 can see the context on this branch.
 				initiatedFromObjectId: sessions.initiatedFromObjectId,
-				initiatedFromObjectType: sessions.initiatedFromObjectType,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -1775,7 +1766,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: existing.initiatedFromObjectId,
-				contextObjectType: existing.initiatedFromObjectType,
 			})
 		}
 
@@ -1850,7 +1840,6 @@ export class SessionManager extends EventEmitter {
 				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -1921,7 +1910,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: session.initiatedFromObjectId,
-				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -2147,7 +2135,9 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
+		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+
+${HUMAN_MESSAGE_STYLE}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -3501,7 +3491,6 @@ export class SessionManager extends EventEmitter {
 			// session that fails over onto a fresh id would drop out of the
 			// numerator.
 			initiatedFromObjectId: session.initiatedFromObjectId,
-			initiatedFromObjectType: session.initiatedFromObjectType,
 			await: 'none',
 		})
 	}
@@ -3532,9 +3521,7 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir, {
-						actionPrompt: session.actionPrompt,
-					})
+					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir)
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
@@ -3685,6 +3672,11 @@ export class SessionManager extends EventEmitter {
 		if (status === 'completed' || status === 'failed' || status === 'timeout') {
 			void this.emitCompletedWithSkills(session, status)
 		}
+		void this.emitAiGenerationAfterCompletion(
+			session,
+			this.stopRequested.has(sessionId) ? 'user_stopped' : status,
+			usage,
+		)
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
@@ -3761,7 +3753,6 @@ export class SessionManager extends EventEmitter {
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
-			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Clear active session link on object
@@ -4204,7 +4195,6 @@ export class SessionManager extends EventEmitter {
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
-			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
@@ -4432,7 +4422,6 @@ export class SessionManager extends EventEmitter {
 						durationMs: elapsedMs(session.startedAt, session.createdAt),
 						agentServerUrl: LOCAL_RUNTIME_BUCKET,
 						contextObjectId: session.initiatedFromObjectId,
-						contextObjectType: session.initiatedFromObjectType,
 					})
 				}
 
@@ -4861,7 +4850,6 @@ export class SessionManager extends EventEmitter {
 						durationMs: elapsedMs(session.startedAt, session.createdAt),
 						agentServerUrl: LOCAL_RUNTIME_BUCKET,
 						contextObjectId: session.initiatedFromObjectId,
-						contextObjectType: session.initiatedFromObjectType,
 					})
 				}
 
@@ -5058,6 +5046,49 @@ export class SessionManager extends EventEmitter {
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.
 			logger.warn('Failed to emit dev-side agent_session_completed', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+	}
+
+	/**
+	 * `$ai_generation` for the local completion path. `session` is the row as it
+	 * was read before this completion wrote anything, and `usage` is the segment
+	 * `accumulateSessionUsage` just added on top of it, so the cumulative totals
+	 * are rebuilt here rather than re-reading the row (an extra select per
+	 * completion). Best-effort, like every other analytics emit on this path.
+	 */
+	private async emitAiGenerationAfterCompletion(
+		session: typeof sessions.$inferSelect,
+		outcome: 'completed' | 'failed' | 'user_stopped',
+		usage: SessionUsage | null,
+	): Promise<void> {
+		try {
+			const config = (session.config as Record<string, unknown>) ?? {}
+			const route = typeof config.llm_route === 'string' ? config.llm_route : ''
+			const segmentCostUsd = usage
+				? await resolveSessionCostUsd({ route, modelName: session.modelName, usage })
+				: null
+			await trackSessionAiGeneration({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				outcome,
+				config,
+				modelName: session.modelName,
+				inputTokens: (session.inputTokens ?? 0) + (usage?.inputTokens ?? 0),
+				outputTokens: (session.outputTokens ?? 0) + (usage?.outputTokens ?? 0),
+				cacheReadTokens: (session.cacheReadInputTokens ?? 0) + (usage?.cacheReadInputTokens ?? 0),
+				cacheCreationTokens:
+					(session.cacheCreationInputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0),
+				costUsd: Number(session.totalCostUsd ?? 0) + (segmentCostUsd ?? 0),
+				activeMs: (session.durationMs ?? 0) + (usage?.durationMs ?? 0),
+				startedAt: session.startedAt,
+				completedAt: new Date(),
+			})
+		} catch (err) {
+			logger.warn('Failed to emit $ai_generation after local completion', {
 				sessionId: session.id,
 				error: String(err),
 			})
@@ -5288,29 +5319,6 @@ export class SessionManager extends EventEmitter {
 				return true
 			}
 			return false
-		}
-	}
-
-	/**
-	 * Generate the workspace briefing and write it to `/agent/workspace/WORKSPACE.md`
-	 * (inside the container) by writing to the mounted tempDir before launch.
-	 * Briefing failures never block session start — the agent can still fall back
-	 * to direct MCP queries.
-	 */
-	private async writeWorkspaceBriefing(
-		workspaceId: string,
-		tempDir: string,
-		sessionId: string,
-	): Promise<void> {
-		try {
-			const briefing = await renderWorkspaceBriefing(this.db, this.storage, workspaceId)
-			await writeFile(join(tempDir, 'workspace', 'WORKSPACE.md'), briefing)
-		} catch (err) {
-			logger.warn('Failed to write workspace briefing', {
-				sessionId,
-				workspaceId,
-				error: String(err),
-			})
 		}
 	}
 
@@ -5830,6 +5838,29 @@ export class SessionManager extends EventEmitter {
 		// on both the started and completed events. Best-effort.
 		void this.emitCompletedWithSkills(updated, status)
 
+		// `$ai_generation` for the finished session. Skipped for stopSession()'s
+		// provisional write: its usage is not known yet and the genuine report
+		// that overwrites it is the one that carries the totals, so emitting on
+		// both would count one session twice. `updated` is the row as persisted.
+		if (!stoppedByUser) {
+			void trackSessionAiGeneration({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
+				outcome: status,
+				config: updated.config as Record<string, unknown> | null,
+				modelName: updated.modelName,
+				inputTokens: updated.inputTokens,
+				outputTokens: updated.outputTokens,
+				cacheReadTokens: updated.cacheReadInputTokens,
+				cacheCreationTokens: updated.cacheCreationInputTokens,
+				costUsd: updated.totalCostUsd,
+				activeMs: updated.durationMs,
+				startedAt: updated.startedAt,
+				completedAt: updated.completedAt ?? new Date(),
+			})
+		}
+
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({
 				session: updated,
@@ -5886,7 +5917,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(updated.startedAt, updated.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: updated.initiatedFromObjectId,
-				contextObjectType: updated.initiatedFromObjectType,
 			})
 		} catch (err) {
 			logger.warn('Failed to record runtime_session_ended for remote session', {

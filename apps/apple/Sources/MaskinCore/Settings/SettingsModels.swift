@@ -4,6 +4,9 @@ import Foundation
 public struct SettingsError: Error, Equatable, Sendable {
 	public var message: String
 	public init(_ message: String) { self.message = message }
+
+	/// The server has no MCP client or tool listing yet (see `MCPAPI`).
+	public static let mcpNotAvailable = SettingsError("Not available on this server yet.")
 }
 
 /// A secret that never prints itself. `description`, `debugDescription`, `dump` and string
@@ -137,6 +140,110 @@ public struct ConnectedIntegration: Identifiable, Sendable, Equatable {
 		default: state = .disconnected
 		}
 		self.init(id: id, provider: provider, state: state, externalId: externalId)
+	}
+}
+
+/// One row of the AGENTS group in Members. Agents come from `AgentsStore` (so their live status
+/// is known); a workspace member of type agent that the agents list has not resolved yet is
+/// still listed, with no status.
+public struct MemberAgentRow: Identifiable, Sendable, Equatable {
+	public var id: String
+	public var name: String
+	public var role: String
+	public var status: AgentStatus?
+
+	public init(id: String, name: String, role: String, status: AgentStatus?) {
+		self.id = id
+		self.name = name
+		self.role = role
+		self.status = status
+	}
+
+	/// "Working" / "Idle" / "Paused" / "Failed"; nil while the status is unknown.
+	public var statusLabel: String? { status?.label }
+	/// Only a working agent is a signal; everything else is quiet grey.
+	public var isWorking: Bool { status == .running }
+}
+
+/// Members = people from the workspace member list + agents from `AgentsStore`, in two groups.
+/// Pure, so the merge is testable without either store.
+public enum MembersRoster {
+	public struct Groups: Sendable, Equatable {
+		public var people: [WorkspaceMember]
+		public var agents: [MemberAgentRow]
+		public init(people: [WorkspaceMember], agents: [MemberAgentRow]) {
+			self.people = people
+			self.agents = agents
+		}
+	}
+
+	/// People keep the member order (owner, admins, members). Agents are the agents list, working
+	/// first, then paused, idle and failed, alphabetical within a state; a member of type agent
+	/// missing from the agents list is appended with an unknown status, so nobody disappears while
+	/// the agents list is still loading.
+	public static func groups(members: [WorkspaceMember], agents: [AgentSummary]) -> Groups {
+		let people = members.filter { !$0.isAgent }
+		var rows = agents.map {
+			MemberAgentRow(id: $0.id, name: $0.name, role: $0.role, status: $0.status)
+		}
+		let known = Set(rows.map(\.id))
+		for member in members where member.isAgent && !known.contains(member.id) {
+			rows.append(MemberAgentRow(id: member.id, name: member.name, role: "Agent", status: nil))
+		}
+		rows.sort { a, b in
+			let ra = rank(a.status), rb = rank(b.status)
+			if ra != rb { return ra < rb }
+			return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+		}
+		return Groups(people: people, agents: rows)
+	}
+
+	private static func rank(_ status: AgentStatus?) -> Int {
+		switch status {
+		case .running: 0
+		case .paused: 1
+		case .idle: 2
+		case .failed: 3
+		case nil: 4
+		}
+	}
+}
+
+/// A tool connected to the workspace's MCP server (Claude Desktop, Cursor, …).
+public struct MCPClient: Identifiable, Sendable, Equatable {
+	public enum Access: Sendable, Equatable {
+		case readWrite, readOnly
+		public var label: String {
+			switch self {
+			case .readWrite: "Read + write"
+			case .readOnly: "Read only"
+			}
+		}
+	}
+
+	public var id: String
+	public var name: String
+	public var access: Access
+	public var lastCallAt: Date?
+
+	public init(id: String, name: String, access: Access, lastCallAt: Date? = nil) {
+		self.id = id
+		self.name = name
+		self.access = access
+		self.lastCallAt = lastCallAt
+	}
+}
+
+/// What the MCP server exposes and how a client may sign in.
+public struct MCPServerInfo: Sendable, Equatable {
+	/// Number of tools the server lists; nil when the server does not say.
+	public var toolCount: Int?
+	/// Clients can sign in with OAuth. A bearer API key always works.
+	public var supportsOAuth: Bool
+
+	public init(toolCount: Int?, supportsOAuth: Bool) {
+		self.toolCount = toolCount
+		self.supportsOAuth = supportsOAuth
 	}
 }
 

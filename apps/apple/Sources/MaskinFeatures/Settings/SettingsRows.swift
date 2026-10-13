@@ -45,6 +45,24 @@ enum SecretPasteboard {
 	}
 }
 
+/// Copying a value that is not a secret (the MCP server URL): the ordinary pasteboard, no expiry.
+@MainActor
+enum PlainPasteboard {
+	@discardableResult
+	static func copy(_ text: String) -> Bool {
+		#if canImport(UIKit) && !os(tvOS) && !os(watchOS)
+			UIPasteboard.general.string = text
+			return true
+		#elseif canImport(AppKit) && os(macOS)
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(text, forType: .string)
+			return true
+		#else
+			return false
+		#endif
+	}
+}
+
 extension View {
 	/// The Settings look: dark-first grouped surface, big rounded card rows, generous spacing.
 	func settingsListStyle() -> some View {

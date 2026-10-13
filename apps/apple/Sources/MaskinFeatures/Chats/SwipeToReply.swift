@@ -56,10 +56,19 @@ import SwiftUI
 /// Swipe right on a bubble to reply to it. The bubble follows the finger at 0.7x up to 84pt, a
 /// selection tick marks the 56pt threshold, and releasing past it calls `onReply`. It springs back
 /// over 0.28s. Vertical drags never reach this: the recognizer refuses to begin for them.
-private struct SwipeToReply: ViewModifier {
+struct SwipeToReply: ViewModifier {
 	let onReply: () -> Void
 	@State private var offset: Double = 0
 	@State private var armed = false
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	/// Max row travel; mirrors `SwipeReply.cap` for callers and tests.
+	static let cap = CGFloat(SwipeReply.cap)
+
+	/// Row travel for a finger travel of `translation` points.
+	static func offset(for translation: CGFloat) -> CGFloat {
+		CGFloat(SwipeReply.offset(forDrag: Double(translation)))
+	}
 
 	func body(content: Content) -> some View {
 		let visual = content
@@ -96,7 +105,7 @@ private struct SwipeToReply: ViewModifier {
 	private func finish(_ completed: Bool) {
 		let reply = armed && completed
 		armed = false
-		withAnimation(.timingCurve(0.32, 0.72, 0, 1, duration: 0.28)) { offset = 0 }
+		withAnimation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.28)) { offset = 0 }
 		if reply { onReply() }
 	}
 }

@@ -110,7 +110,7 @@ private struct OptionChip: View {
 	var body: some View {
 		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous)
 		Text(label)
-			.font(MaskinTypeface.sans(MaskinFontSize.t11, weight: .medium, relativeTo: .caption2))
+			.font(MaskinTypeface.sans(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2))
 			.lineLimit(1)
 			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
 			.padding(.horizontal, MaskinSpace.s4)
@@ -415,7 +415,7 @@ private struct LargeView: View {
 			HStack {
 				if snapshot.unreadCount > 0 {
 					Label("\(snapshot.unreadLabel) unread", systemImage: "bell.badge")
-						.font(.caption2.weight(.medium))
+						.font(MaskinTypeface.sans(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2))
 						.foregroundStyle(MaskinColor.ink3)
 				}
 				Spacer()
@@ -472,7 +472,7 @@ private struct RowCapsule: View {
 			.lineLimit(1)
 			.frame(maxWidth: 96)
 			.padding(.horizontal, MaskinSpace.s6)
-			.padding(.vertical, MaskinSpace.s4)
+			.frame(minHeight: MaskinSpace.touchMin)
 			.background {
 				if renderingMode == .fullColor {
 					if recommended {

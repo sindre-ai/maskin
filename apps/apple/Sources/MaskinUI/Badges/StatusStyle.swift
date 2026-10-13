@@ -112,15 +112,74 @@ public enum MaskinObjectType {
 	}
 
 	/// SF Symbol for built-in types; nil for module / custom types (callers show an initial).
+	/// Handoff `specs/8-Objects.md` → Object types.
 	public static func symbol(for type: String) -> String? {
-		switch type {
+		switch canonical(type) {
 		case "insight": "lightbulb"
-		case "bet": "scope"
+		case "bet": "hexagon"
 		case "task": "checkmark.square"
-		case "file": "doc.text"
+		case "knowledge": "book.closed"
+		case "doc", "document", "file": "doc.text"
+		case "person": "person"
+		case "company": "building.2"
+		case "article": "newspaper"
+		case "meeting": "calendar"
 		case "conversation": "bubble.left"
 		case "session": "shippingbox"
 		default: nil
+		}
+	}
+
+	/// The glyph every type gets: the symbol above, or `square` for a type the product does not
+	/// know. Use this in rows, tabs and tiles.
+	public static func glyph(for type: String) -> String { symbol(for: type) ?? "square" }
+
+	/// Older data says "account" where the product now says "company".
+	public static func canonical(_ type: String) -> String {
+		type == "account" ? "company" : type
+	}
+
+	/// Display order for type tabs and the Go to grid. Types not listed sort after these,
+	/// alphabetically by display name. Mirrors `ObjectTypeCatalog` in MaskinCore.
+	public static let order: [String] = [
+		"bet", "insight", "task", "knowledge", "doc", "person", "company", "article", "meeting",
+	]
+
+	/// Plural label for a tab or count ("Bets", "People"); falls back to the workspace display
+	/// name, or the raw key, with a plain "s".
+	public static func pluralLabel(for type: String, displayName: String? = nil) -> String {
+		switch canonical(type) {
+		case "bet": return "Bets"
+		case "insight": return "Insights"
+		case "task": return "Tasks"
+		case "knowledge": return "Knowledge"
+		case "doc", "document", "file": return "Docs"
+		case "person": return "People"
+		case "company": return "Companies"
+		case "article": return "Articles"
+		case "meeting": return "Meetings"
+		default:
+			let base = displayName ?? type.replacingOccurrences(of: "_", with: " ").capitalized
+			return base.hasSuffix("s") ? base : base + "s"
+		}
+	}
+
+	/// Sorts type keys into the product order, then the rest alphabetically by label.
+	public static func sorted(_ types: [String], displayName: (String) -> String? = { _ in nil })
+		-> [String]
+	{
+		types.sorted { a, b in
+			let ia = order.firstIndex(of: canonical(a))
+			let ib = order.firstIndex(of: canonical(b))
+			switch (ia, ib) {
+			case let (x?, y?): return x < y
+			case (.some, .none): return true
+			case (.none, .some): return false
+			case (.none, .none):
+				return pluralLabel(for: a, displayName: displayName(a))
+					.localizedCaseInsensitiveCompare(pluralLabel(for: b, displayName: displayName(b)))
+					== .orderedAscending
+			}
 		}
 	}
 }

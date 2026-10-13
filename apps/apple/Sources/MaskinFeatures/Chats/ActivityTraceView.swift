@@ -147,14 +147,14 @@ struct LiveActivityView: View {
 	/// Steps shown while live: the newest few, so the card doesn't grow without bound.
 	static let visibleSteps = 5
 
-	/// Indent of the steps: past the 26pt avatar.
-	static let stepIndent: CGFloat = MaskinSpace.s13 + MaskinSpace.s4
+	/// Indent of the steps: past the 24pt avatar.
+	static let stepIndent: CGFloat = MaskinSpace.s12 + MaskinSpace.s4
 
 	/// The turn whose step list is open; opening is remembered per turn while it is live.
 	@State private var openTurnID: String?
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			header
 			TimelineView(.periodic(from: .now, by: 5)) { context in
 				line(LiveActivityLine.resolve(
@@ -176,6 +176,10 @@ struct LiveActivityView: View {
 				.transition(.opacity)
 			}
 		}
+		.padding(.vertical, BubbleShape.theirVertical)
+		.padding(.horizontal, BubbleShape.horizontal)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(MaskinSurface.card, in: BubbleShape.agent)
 		.animation(MaskinMotion.quick, value: turn?.steps.map(\.id))
 		.accessibilityElement(children: .contain)
 	}
@@ -212,17 +216,16 @@ struct LiveActivityView: View {
 
 	/// "is writing a reply" while the newest step is the agent's own words, else "is working on it".
 	private var verb: String {
-		turn?.currentStep?.kind == .text ? "is writing a reply" : "is working on it"
+		let current = turn?.steps.last(where: \.isRunning) ?? turn?.currentStep
+		return current?.kind == .text || current?.kind == .thinking ? "is writing a reply" : "is working on it"
 	}
 
 	private var header: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			ActorAvatar(
-				name: agent.name, kind: .agent, size: MaskinSpace.s13 - MaskinSpace.s1, seed: agent.id,
-				working: true)
-			Text(agent.name).maskinText(.subhead).fontWeight(.bold).foregroundStyle(MaskinColor.ink)
+			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id, working: true)
+			Text(agent.name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 				.lineLimit(1)
-			WorkingBars()
+			EqualiserBars()
 			Text(verb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			Spacer(minLength: 0)
 			if let start = turn?.startedAt ?? startedAt { ElapsedLabel(since: start) }
@@ -232,14 +235,35 @@ struct LiveActivityView: View {
 	}
 }
 
-/// "12s" / "1m 04s", ticking once a second. Hidden from VoiceOver (it would re-announce).
+/// Three small dots that pulse in turn (still under Reduce Motion). Dots mean "composing a
+/// reply"; work is shown with `EqualiserBars`.
+struct PulsingDots: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s1 + MaskinSpace.s1) {
+			ForEach(0..<3, id: \.self) { i in
+				Circle().fill(MaskinColor.ink5).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+					.phaseAnimator([0.3, 1.0], trigger: reduceMotion) { view, phase in
+						view.opacity(reduceMotion ? 0.7 : phase)
+					} animation: { _ in
+						.easeInOut(duration: 0.6).delay(Double(i) * 0.2)
+					}
+			}
+		}
+		.accessibilityHidden(true)
+	}
+}
+
+/// "12s" / "1m 04s" in mono 11pt, ticking once a second. Hidden from VoiceOver (it would re-announce).
 struct ElapsedLabel: View {
 	let since: Date
 
 	var body: some View {
 		TimelineView(.periodic(from: since, by: 1)) { context in
 			Text(Self.text(from: since, to: context.date))
-				.maskinText(.caption).monospacedDigit().foregroundStyle(MaskinColor.ink5)
+				.font(MaskinTypeface.mono(MaskinFontSize.t11, relativeTo: .caption)).monospacedDigit()
+				.foregroundStyle(MaskinColor.ink5)
 		}
 		.accessibilityHidden(true)
 	}
@@ -253,7 +277,7 @@ struct ElapsedLabel: View {
 
 /// A finished turn: one muted line (the last thing the agent did, "· 3 steps · 8s"), indented under
 /// the agent's avatar, that opens to the full trace ("Hide work" while open). A failed turn leads
-/// with a warning triangle in the warning colour and opens by itself so the reason is on screen.
+/// with a warning triangle and opens by itself so the reason is on screen.
 struct FinishedTraceView: View {
 	let turn: ActivityTurn
 	@State private var expanded = false
@@ -274,12 +298,12 @@ struct FinishedTraceView: View {
 				HStack(spacing: MaskinSpace.s3) {
 					if turn.failed {
 						Image(systemName: "exclamationmark.triangle.fill")
-							.foregroundStyle(MaskinColor.danger)
+							.foregroundStyle(MaskinColor.warning)
 							.accessibilityHidden(true)
 					}
 					Text(expanded && !turn.failed ? "Hide work" : turn.collapsedLabel)
 						.maskinText(.caption)
-						.foregroundStyle(turn.failed ? MaskinColor.danger : MaskinColor.ink4)
+						.foregroundStyle(turn.failed ? MaskinColor.warningStrong : MaskinColor.ink4)
 						.lineLimit(1)
 					Image(systemName: "chevron.down")
 						.font(.caption2)
