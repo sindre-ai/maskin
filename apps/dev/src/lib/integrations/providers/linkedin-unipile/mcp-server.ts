@@ -325,7 +325,21 @@ export function registerLinkedInMcpInstance(
 				inputSchema: {
 					thread_id: z.string().min(1),
 					body: z.string().min(1).max(8000),
-					idempotency_key: z.string().min(1).max(128),
+					in_reply_to_message_id: z
+						.string()
+						.min(1)
+						.optional()
+						.describe(
+							'Id of the inbound message you are answering. The server builds the idempotency key from the thread and this id, so a webhook reply and a sweep reply to the same message send once. On the webhook path this is message_id from the event data; on the sweep path it is the last inbound message id from list_messages. Any idempotency_key you also pass is ignored.',
+						),
+					idempotency_key: z
+						.string()
+						.min(1)
+						.max(128)
+						.optional()
+						.describe(
+							'Legacy. Only used when in_reply_to_message_id is absent, and logs a warning. Prefer in_reply_to_message_id.',
+						),
 				},
 			},
 			async (args) => {
