@@ -11,6 +11,8 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 	/// A sub-agent session the message above handed work to. `behind` names the sessions of the
 	/// same message it waits on (a name, never an id).
 	case handoff(SpawnedSession, behind: [String])
+	/// A live call: one card holding every line of the call, which the thread does not also show as bubbles.
+	case liveCall(LiveCallCard)
 
 	public var id: String {
 		switch self {
@@ -19,6 +21,7 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 		case .system(let m): m.id
 		case .message(let m, _): m.id
 		case .handoff(let session, _): "handoff-\(session.id)"
+		case .liveCall(let card): card.id
 		}
 	}
 }
@@ -57,9 +60,24 @@ public enum ThreadLayout {
 	///     the "new" divider goes (nil: no divider, e.g. a thread that was never read).
 	public static func items(
 		for messages: [ChatMessage], unreadAfter cursor: Int? = nil, currentActorID: String? = nil,
-		calendar: Calendar = .current
+		calls: [LiveCallRecord] = [], calendar: Calendar = .current
 	) -> [ThreadItem] {
 		var items: [ThreadItem] = []
+		// Each message belongs to at most one call; the card sits where the call's first message was.
+		var callOf: [String: Int] = [:]
+		var members: [[ChatMessage]] = Array(repeating: [], count: calls.count)
+		for message in messages where !message.isSystem {
+			if let index = calls.firstIndex(where: {
+				LiveCallWindow.contains($0, message, currentActorID: currentActorID)
+			}) {
+				callOf[message.id] = index
+				members[index].append(message)
+			}
+		}
+		var emitted: Set<Int> = []
+		func card(_ index: Int) -> ThreadItem {
+			.liveCall(LiveCallCard(record: calls[index], messages: members[index], currentActorID: currentActorID))
+		}
 		var lastDay: Date?
 		var previous: ChatMessage?
 		// The first message from someone else past the cursor, and how many such there are.
@@ -70,11 +88,30 @@ public enum ThreadLayout {
 		} ?? []
 		let dividerBefore = unread.first?.id
 		for message in messages {
+			var folded = false
+			if let index = callOf[message.id] {
+				if emitted.contains(index) { continue }
+				folded = true
+			}
+			// A call nobody spoke in has no message to sit at: it goes where it started.
+			for index in calls.indices where members[index].isEmpty && !emitted.contains(index) {
+				if let at = message.createdAt, calls[index].startedAt <= at {
+					items.append(card(index))
+					emitted.insert(index)
+					previous = nil
+				}
+			}
 			let day = message.createdAt.map { calendar.startOfDay(for: $0) }
 			if let day, day != lastDay {
 				items.append(.daySeparator(day))
 				lastDay = day
 				previous = nil
+			}
+			if folded, let index = callOf[message.id] {
+				items.append(card(index))
+				emitted.insert(index)
+				previous = nil
+				continue
 			}
 			if message.isSystem {
 				items.append(.system(message))
@@ -100,6 +137,7 @@ public enum ThreadLayout {
 				previous = nil
 			}
 		}
+		for index in calls.indices where !emitted.contains(index) { items.append(card(index)) }
 		return items
 	}
 

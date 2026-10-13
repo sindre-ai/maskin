@@ -22,6 +22,8 @@ struct ChatThreadView: View {
 	@Environment(\.liveMeeting) private var liveMeeting
 	/// Present in the app; absent in previews and snapshots, where `@` falls back to the thread's people.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	/// The shell's live call; nil in previews and snapshots.
+	@Environment(LiveCallCenter.self) private var liveCalls: LiveCallCenter?
 	@State private var isAtBottom = true
 	/// Messages that arrived while the reader was scrolled up; the jump pill says how many.
 	@State private var unseenCount = 0
@@ -72,6 +74,8 @@ struct ChatThreadView: View {
 			// The grouped canvas, so agent bubbles (a `card` fill) read against it.
 			.background(MaskinSurface.grouped)
 			.safeAreaInset(edge: .bottom, spacing: 0) { composerBar }
+			// A running call is pinned under the navigation bar: who, how long, Mute / End.
+			.safeAreaInset(edge: .top, spacing: 0) { callBanner }
 			.navigationTitle(store.title)
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
@@ -135,7 +139,7 @@ struct ChatThreadView: View {
 						Label("Chat options", systemImage: "ellipsis")
 							.foregroundStyle(MaskinColor.ink)
 					}
-					if let lead = liveLead {
+					if let lead = liveLead, call == nil {
 						Button {
 							liveMeeting.present(.thread(chat: store, lead: lead))
 						} label: {
@@ -146,6 +150,7 @@ struct ChatThreadView: View {
 				}
 			}
 			.task { await runtime?.mentionRoster()?.load() }
+			.onAppear { liveCalls?.visibleConversationID = store.conversationID }
 			.task {
 				store.isActive = scenePhase == .active
 				await store.start()
@@ -153,8 +158,10 @@ struct ChatThreadView: View {
 			}
 			.onDisappear {
 				store.isActive = false
-				SpeechReader.shared.stop()
+				// A call keeps speaking when you leave the thread.
+				if liveCalls?.current == nil { SpeechReader.shared.stop() }
 				store.stop()
+				if liveCalls?.visibleConversationID == store.conversationID { liveCalls?.visibleConversationID = nil }
 			}
 			.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
 .alert(
@@ -365,7 +372,7 @@ struct ChatThreadView: View {
 				composer.beginEdit(messageID: message.id, text: message.content)
 			},
 			onQuote: { composer.beginReply(author: $0.actorName, content: $0.content) }, matchIDs: matchSet,
-			currentMatchID: currentMatchID)
+			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
 			.onAppear { if !usesGeometryTracking { reachedBottom() } }
 			.onDisappear { if !usesGeometryTracking { isAtBottom = false } }
@@ -412,6 +419,10 @@ struct ChatThreadView: View {
 				case .countUnseen: unseenCount += 1
 				}
 			}
+			// The "speaking…" bubble appears at the bottom: keep it in view while you are following.
+			.onChange(of: call?.voice.transcript.isEmpty) { _, _ in
+				if isNearBottom { scrollToBottom(proxy) }
+			}
 			.onChange(of: currentMatchID) { _, id in
 				guard let id else { return }
 				withAnimation(MaskinMotion.standard) { proxy.scrollTo(id, anchor: Self.matchAnchor) }
@@ -438,14 +449,14 @@ struct ChatThreadView: View {
 				JumpToLatestButton(unseen: unseenCount) { jumpRequest += 1 }
 					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 			}
-			if !searching, !quickReplies.isEmpty {
+			if call == nil, !searching, !quickReplies.isEmpty {
 				QuickReplyChips(options: quickReplies) { reply in
 					quickRepliesUsedFor = store.messages.last { !$0.isSystem }?.id
 					if store.send(reply) != nil { MaskinHaptics.play(.light) }
 				}
 				.transition(.opacity)
 			}
-			if searching {
+			if call == nil, searching {
 				ThreadSearchBar(
 					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
 					onStep: { matchIndex = ThreadSearch.step(from: matchIndex, by: $0, count: matchIDs.count) },
@@ -454,7 +465,11 @@ struct ChatThreadView: View {
 						searchText = ""
 					})
 			}
-			composerField
+			if let call {
+				LiveControlBar(session: call) { liveCalls?.end() }
+			} else {
+				composerField
+			}
 		}
 		.animation(MaskinMotion.quick, value: isNearBottom)
 		.animation(MaskinMotion.quick, value: quickReplies)
@@ -484,8 +499,26 @@ struct ChatThreadView: View {
 		let fresh = handsFreeTracker.newReplies(in: store.messages, currentActorID: store.currentActorID)
 		// A quiet tap when an agent's reply lands while you're looking at the thread.
 		if !fresh.isEmpty, scenePhase == .active { MaskinHaptics.play(.light) }
-		guard handsFree else { return }
+		// A call reads its own replies.
+		guard handsFree, call == nil else { return }
 		for message in fresh { SpeechReader.shared.enqueue(markdown: message.content, id: message.id) }
+	}
+
+	/// The call running in this thread, if any.
+	private var call: LiveMeetingSession? { liveCalls?.session(for: store.conversationID) }
+
+	@ViewBuilder
+	private var callBanner: some View {
+		if let call {
+			LiveCallBanner(
+				session: call,
+				mentioned: CallMentions.objects(
+					in: store.messages.filter { ($0.createdAt ?? .distantFuture) >= call.startedAt ?? .distantPast }),
+				onInvite: onInvite,
+				onOpenObject: { runtime?.openObject($0.id) },
+				onEnd: { liveCalls?.end() })
+			.transition(.move(edge: .top).combined(with: .opacity))
+		}
 	}
 
 	/// Who a live call from this thread is with: its first agent. Nil (no Live button) without one.
@@ -615,6 +648,8 @@ struct ThreadTranscript: View {
 	var onQuote: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
+	/// The call running in this thread: its card shows what you are saying as you say it.
+	var call: LiveMeetingSession?
 
 	var body: some View {
 		if lazy {
@@ -633,20 +668,18 @@ struct ThreadTranscript: View {
 		let anchors =
 			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
 		let items = ThreadLayout.items(
-			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID)
+			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
+			calls: LiveCallLog.shared.records(for: store.conversationID))
 		let sections = ThreadLayout.sections(for: items)
 		let runs = ThreadLayout.runs(in: items)
 		let latestOwnID = OutgoingStatus.latestOwnID(in: messages, currentActorID: store.currentActorID)
 		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-		let calls = LiveCallSpans(
-			records: LiveCallLog.shared.records(for: store.conversationID), messages: messages,
-			currentActorID: store.currentActorID)
 		// One section per day: its header stays pinned at the top while that day scrolls by (the thread's
 		// LazyVStack asks for pinned section headers).
 		ForEach(sections) { section in
 			Section {
 				ForEach(section.items) { item in
-					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID, latestOwnID: latestOwnID, calls: calls)
+					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID, latestOwnID: latestOwnID)
 				}
 			} header: {
 				if let day = section.day { DayHeader(label: ThreadLayout.dayLabel(day, now: now)) }
@@ -709,8 +742,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
-		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage], latestOwnID: String?,
-		calls: LiveCallSpans
+		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage], latestOwnID: String?
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -720,16 +752,12 @@ struct ThreadTranscript: View {
 		case .unreadDivider(let count):
 			ThreadDivider(label: "NEW", tint: MaskinColor.sigInk, ruleTint: MaskinColor.sigHi, mono: true)
 				.accessibilityLabel(count == 1 ? "1 new message" : "\(count) new messages")
+		case .liveCall(let card):
+			LiveCallCardView(card: card, partial: call?.voice.transcript ?? "")
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
 			let run = runs[message.id] ?? ThreadLayout.Run()
-			let call = calls.roles[message.id]
-			// A live call is a section of the thread: a header where it starts, a LIVE marker on
-			// your spoken lines, and a summary card where it ends.
-			if let call, call.isFirst {
-				ThreadDivider(label: "LIVE CALL · WITH \(call.record.leadName.uppercased())", mono: true)
-			}
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
 			}
@@ -747,8 +775,7 @@ struct ThreadTranscript: View {
 				// Edit is for your latest message only; it re-opens in the composer.
 				onEdit: message.id == latestOwnID && message.canEdit(by: store.currentActorID) ? { onEdit(message) } : nil,
 				onQuote: message.content.isEmpty ? nil : { onQuote(message) },
-				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
-				spoken: call?.isSpoken == true
+				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
 			.swipeToReply(message.content.isEmpty || message.isFailed ? nil : { onQuote(message) })
 			.padding(.top, Self.topPadding(for: message, showsAuthor: showsAuthor, run: run, anchors: anchors, byID: byID))
@@ -764,9 +791,6 @@ struct ThreadTranscript: View {
 			}
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
-			}
-			if let call, call.isLast, let note = calls.summary(for: call.record) {
-				LiveMeetingCard(note: note)
 			}
 		}
 	}

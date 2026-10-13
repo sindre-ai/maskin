@@ -17,7 +17,7 @@ final class LiveMeetingSession {
 	private(set) var guests: [ChatParticipant] = []
 	private(set) var startedAt: Date?
 	private(set) var endedAt: Date?
-	var captionsOn = true
+	@ObservationIgnored private var participantsAtStart: Set<String> = []
 	/// Where the call's sound goes ("iPhone Speaker", "AirPods"); empty until the call starts.
 	private(set) var routeName = ""
 
@@ -65,6 +65,7 @@ final class LiveMeetingSession {
 	func begin() {
 		guard startedAt == nil else { return }
 		startedAt = now()
+		participantsAtStart = Set(chat.participants.map(\.id))
 		let record = LiveCallRecord(
 			conversationID: chat.conversationID, leadName: lead.name, startedAt: startedAt ?? now())
 		callRef.id = record.id
@@ -141,11 +142,6 @@ final class LiveMeetingSession {
 	/// The thread changed; hand the new messages to the voice loop.
 	func messagesChanged() { voice.messagesChanged(chat.messages) }
 
-	/// What the agent last said, for captions: real message text, as received.
-	var lastAgentWords: String? {
-		chat.messages.last { $0.author == .agent && !$0.isSystem && !$0.isErrorReply }?.content
-	}
-
 	/// People and agents that can still be invited: in the workspace, not already in the chat.
 	func invitable(from actors: [ChatActor]) -> [ChatActor] {
 		let inChat = Set(chat.participants.map(\.id)).union(guests.map(\.id))
@@ -157,11 +153,6 @@ final class LiveMeetingSession {
 		guard !guests.contains(where: { $0.id == actor.id }) else { return }
 		await chat.addParticipants([actor.id])
 		guests.append(actor.participant)
-	}
-
-	/// Pull an object up: post it into the chat as a link everyone in the call can open.
-	func pullUp(title: String, url: URL) {
-		_ = chat.send("Pulling up [\(title)](\(url.absoluteString))")
 	}
 
 	/// Hang up. An ad hoc call leaves a note in its chat: "Live meeting with X · 0:42" and the
@@ -182,10 +173,13 @@ final class LiveMeetingSession {
 		// The thread shows the call (section header, LIVE markers, summary card) from the messages
 		// inside this window.
 		if let id = callRef.id {
-			let names = guests.map(\.name)
+			// Anyone added to the chat during the call (from the banner's Invite) was a guest.
+			let names = chat.participants.filter { !participantsAtStart.contains($0.id) }.map(\.name)
 			log.update(id) {
 				$0.endedAt = finished
 				$0.guests = names
+				// The call's card closes when the call ends.
+				$0.expanded = false
 			}
 		}
 	}

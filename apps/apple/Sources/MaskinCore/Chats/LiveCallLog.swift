@@ -15,10 +15,13 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 	public var endedAt: Date?
 	/// The text of each line that was sent by voice, in order.
 	public var spoken: [String]
+	/// Whether the person left the call's card open or closed; nil takes the default (open while
+	/// the call runs, closed once it has ended).
+	public var expanded: Bool?
 
 	public init(
 		id: String = UUID().uuidString, conversationID: String, leadName: String, guests: [String] = [],
-		startedAt: Date, endedAt: Date? = nil, spoken: [String] = []
+		startedAt: Date, endedAt: Date? = nil, spoken: [String] = [], expanded: Bool? = nil
 	) {
 		self.id = id
 		self.conversationID = conversationID
@@ -27,6 +30,7 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 		self.startedAt = startedAt
 		self.endedAt = endedAt
 		self.spoken = spoken
+		self.expanded = expanded
 	}
 }
 
@@ -63,65 +67,70 @@ public struct LiveCallLog {
 	}
 }
 
-/// Which messages of a thread belong to a live call, computed from the call records and the
-/// messages' own timestamps: the call's section in the thread, its spoken lines, and the
-/// summary card at its end.
-public struct LiveCallSpans: Sendable {
-	public struct Role: Sendable, Equatable {
-		public var record: LiveCallRecord
-		public var isFirst: Bool
-		public var isLast: Bool
-		/// One of your lines that was spoken (not typed during the call).
-		public var isSpoken: Bool
-	}
-
-	/// By message id.
-	public private(set) var roles: [String: Role] = [:]
-	/// By record id: the lines of the call in order, for the summary.
-	public private(set) var turns: [String: [LiveMeetingTurn]] = [:]
-
+/// The part of a thread a live call folds away: the messages in its time window, as one card.
+public enum LiveCallWindow {
 	/// The agent's reply to your last line often lands just after hang-up.
 	public static let grace: TimeInterval = 20
 	/// Clock difference allowed between this device and the server.
 	static let skew: TimeInterval = 5
 
-	public init() {}
-
-	public init(records: [LiveCallRecord], messages: [ChatMessage], currentActorID: String?) {
-		for record in records {
-			let inside = messages.filter { Self.contains(record, $0) }
-			guard !inside.isEmpty else { continue }
-			var lines: [LiveMeetingTurn] = []
-			for (index, message) in inside.enumerated() {
-				let mine = message.actorID == currentActorID
-				let spoken =
-					mine
-					&& (record.spoken.contains(message.content.trimmingCharacters(in: .whitespacesAndNewlines))
-						|| message.metadata?["source"]?.stringValue == "live")
-				roles[message.id] = Role(
-					record: record, isFirst: index == 0, isLast: index == inside.count - 1, isSpoken: spoken)
-				lines.append(
-					LiveMeetingTurn(
-						speaker: mine ? LiveMeetingNote.youName : message.actorName, text: message.content,
-						isYou: mine))
-			}
-			turns[record.id] = lines
-		}
-	}
-
-	static func contains(_ record: LiveCallRecord, _ message: ChatMessage) -> Bool {
+	/// Whether `message` is part of the call: in its window, and said by you or an agent. Another
+	/// person posting meanwhile in a group chat stays in the thread, outside the card.
+	public static func contains(_ record: LiveCallRecord, _ message: ChatMessage, currentActorID: String?) -> Bool {
 		guard message.kind == "message", !message.isErrorReply, !message.content.isEmpty else { return false }
+		guard message.actorID == currentActorID || message.author == .agent else { return false }
 		guard let created = message.createdAt else { return record.endedAt == nil }
-		let end = (record.endedAt ?? .distantFuture)
-		let limit = end == .distantFuture ? end : end.addingTimeInterval(grace)
-		return created >= record.startedAt.addingTimeInterval(-skew) && created <= limit
+		let end = record.endedAt.map { $0.addingTimeInterval(grace) } ?? .distantFuture
+		return created >= record.startedAt.addingTimeInterval(-skew) && created <= end
+	}
+}
+
+/// One live call as the thread shows it: a single foldable card holding every line of the call.
+public struct LiveCallCard: Equatable, Sendable, Identifiable {
+	public var record: LiveCallRecord
+	/// The call's messages in order (they are still ordinary chat messages; only the layout folds them).
+	public var messages: [ChatMessage]
+	public var currentActorID: String?
+
+	public var id: String { "call-\(record.id)" }
+	public var isActive: Bool { record.endedAt == nil }
+	/// Open while the call runs unless the person closed it; closed after, unless they opened it.
+	public var startsExpanded: Bool { isActive ? (record.expanded ?? true) : (record.expanded ?? false) }
+
+	public init(record: LiveCallRecord, messages: [ChatMessage], currentActorID: String?) {
+		self.record = record
+		self.messages = messages
+		self.currentActorID = currentActorID
 	}
 
-	/// The card at the end of a finished call: counts, your first line, the agent's last.
-	public func summary(for record: LiveCallRecord) -> LiveMeetingNote? {
-		guard let end = record.endedAt else { return nil }
-		let title = LiveMeetingFormat.endNote(
+	public func isYou(_ message: ChatMessage) -> Bool { message.actorID == currentActorID }
+	public var youCount: Int { messages.filter(isYou).count }
+	public var replyCount: Int { messages.count - youCount }
+
+	/// "Live call · with Relay · 7:01" without the duration while the call is running.
+	public func heading(now: Date) -> String {
+		let end = record.endedAt ?? now
+		return LiveMeetingFormat.endNote(
 			lead: record.leadName, guests: record.guests, seconds: end.timeIntervalSince(record.startedAt))
-		return LiveMeetingNote.summary(title: title, turns: turns[record.id] ?? [])
+			.replacingOccurrences(of: "Live meeting with", with: "LIVE CALL · with")
+			.uppercased()
 	}
+
+	/// "4 from you · 3 replies"; empty text for a call nobody spoke in.
+	public var counts: String {
+		guard !messages.isEmpty else { return "" }
+		let you = youCount == 1 ? "1 from you" : "\(youCount) from you"
+		let other = replyCount == 1 ? "1 reply" : "\(replyCount) replies"
+		return "\(you) · \(other)"
+	}
+
+	/// The newest line, flattened, for the collapsed card.
+	public var preview: String? {
+		guard let last = messages.last else { return nil }
+		let text = ChatPreviewText.plain(last.content)
+		return (isYou(last) ? "You: " : "\(last.actorName): ") + text
+	}
+
+	/// Objects the call has linked, newest first.
+	public var mentioned: [MentionedObject] { CallMentions.objects(in: messages) }
 }
