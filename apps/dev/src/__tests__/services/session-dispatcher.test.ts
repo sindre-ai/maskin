@@ -36,6 +36,14 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 					const rows = [...sessionsById.values()].map((r) => ({ status: r.status }))
 					return { limit: (n: number) => Promise.resolve(rows.slice(0, n)) }
 				}
+				// claimSlot re-reads the row's status and pin after a zero-row claim.
+				if (_columns && Object.keys(_columns).join() === 'status,agentServerId') {
+					const rows = [...sessionsById.values()].map((r) => ({
+						status: r.status,
+						agentServerId: r.agentServerId,
+					}))
+					return { limit: (n: number) => Promise.resolve(rows.slice(0, n)) }
+				}
 				const rows = servers
 					.filter((s) => (s.status as unknown as string) === 'active')
 					.map((s) => {
@@ -129,13 +137,18 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 		},
 	})
 
-	return {
+	// claimSlot takes a per-server advisory lock (execute) inside a transaction.
+	// The fake is single-threaded, so the lock is a no-op and tx is the fake itself.
+	const fake = {
 		select,
 		update,
 		insert,
+		execute: () => Promise.resolve([]),
+		transaction: <T>(fn: (tx: unknown) => Promise<T>) => fn(fake),
 		_sessions: sessionsById,
 		_insertedEvents: insertedEvents,
 	}
+	return fake
 }
 
 function defaultStartReq(sessionId: string): StartSessionRequest {
@@ -711,6 +724,8 @@ describe('SessionDispatcher.dispatch — sticky assignment', () => {
 			insert: (_table: unknown) => ({
 				values: (_row: Record<string, unknown>) => Promise.resolve(),
 			}),
+			execute: () => Promise.resolve([]),
+			transaction: <T>(fn: (tx: unknown) => Promise<T>) => fn(db),
 		}
 		const client = makeClient({
 			startSession: vi.fn(async (_req: StartSessionRequest) => startResponse('s-1')),
