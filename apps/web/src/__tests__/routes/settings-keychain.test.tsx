@@ -22,8 +22,18 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+const mockRole = vi.fn<() => string>(() => 'member')
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+	useWorkspace: () => ({ workspace: { role: mockRole() }, workspaceId: 'ws-1' }),
+}))
+
+const mockActor = vi.fn<() => { id: string; type: string } | null>(() => ({
+	id: 'actor-1',
+	type: 'human',
+}))
+vi.mock('@/lib/auth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/lib/auth')>()),
+	getStoredActor: () => mockActor(),
 }))
 
 const mockFlag = vi.fn<() => boolean>(() => true)
@@ -33,10 +43,21 @@ vi.mock('@/hooks/use-document-title', () => ({ useDocumentTitle: () => {} }))
 const mockUseIntegrations = vi.fn()
 const mockCreate = vi.fn()
 const mockUseAuditLog = vi.fn()
+const mockUpdateScope = vi.fn()
+const mockResetScope = vi.fn()
+const scopeMutation = vi.fn<() => Record<string, unknown>>(() => ({}))
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => mockUseIntegrations(),
 	useCreateByoApiKey: () => ({ mutateAsync: mockCreate, isPending: false }),
 	useCredentialAuditLog: () => mockUseAuditLog(),
+	useUpdateKeyScope: () => ({
+		mutate: mockUpdateScope,
+		reset: mockResetScope,
+		isPending: false,
+		isError: false,
+		error: null,
+		...scopeMutation(),
+	}),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -44,6 +65,7 @@ vi.mock('@/hooks/use-actors', () => ({
 		data: [
 			{ id: 'actor-1', name: 'Magnus', type: 'human' },
 			{ id: 'agent-1', name: 'Infra & DevOps', type: 'agent' },
+			{ id: 'agent-2', name: 'Code Reviewer', type: 'agent' },
 		],
 	}),
 }))
@@ -91,6 +113,9 @@ beforeEach(() => {
 	mockFlag.mockReturnValue(true)
 	mockParams.mockReturnValue({})
 	mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+	mockRole.mockReturnValue('member')
+	mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
+	scopeMutation.mockReturnValue({})
 })
 
 describe('Keychain layout route', () => {
@@ -450,5 +475,95 @@ describe('CredentialDetailPage', () => {
 		render(<CredentialDetailPage />)
 		expect(screen.getByRole('alert')).toHaveTextContent('Could not load the audit log.')
 		expect(screen.getByRole('heading', { name: 'Linear · Sindre AI' })).toBeInTheDocument()
+	})
+})
+
+describe('CredentialDetailPage: who can use this key', () => {
+	function openPasted(over = {}) {
+		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
+		mockUseIntegrations.mockReturnValue({ data: [pasted(over)], isLoading: false })
+		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
+		return render(<CredentialDetailPage />)
+	}
+	const agentsBlock = () =>
+		screen.getByRole('heading', { name: 'Agents' }).parentElement?.parentElement
+
+	it('lists the agents the key is granted to, and says so when there are none', () => {
+		openPasted({ scopeGrants: [{ kind: 'actor', actorId: 'agent-1' }] })
+		expect(agentsBlock()).toHaveTextContent('Available to 1 agent')
+		expect(agentsBlock()).toHaveTextContent('Infra & DevOps')
+	})
+
+	it('says no agent can use a key granted to nobody but a person', () => {
+		openPasted()
+		expect(agentsBlock()).toHaveTextContent('No agent can use this key yet.')
+	})
+
+	it('names the whole workspace for a workspace grant', () => {
+		openPasted({ scopeGrants: [{ kind: 'workspace' }] })
+		expect(agentsBlock()).toHaveTextContent('Available to 2 agents')
+		expect(agentsBlock()).toHaveTextContent('All agents in this workspace')
+	})
+
+	it('shows Edit access to the person who saved the key, and to an admin', () => {
+		const { unmount } = openPasted()
+		expect(screen.getByRole('button', { name: 'Edit access' })).toBeInTheDocument()
+		unmount()
+		mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+		mockRole.mockReturnValue('admin')
+		openPasted()
+		expect(screen.getByRole('button', { name: 'Edit access' })).toBeInTheDocument()
+	})
+
+	it('hides Edit access from a plain member, an agent and a key that is not active', () => {
+		mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+		const { unmount } = openPasted()
+		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
+		unmount()
+
+		mockActor.mockReturnValue({ id: 'actor-1', type: 'agent' })
+		mockRole.mockReturnValue('owner')
+		const second = openPasted()
+		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
+		second.unmount()
+
+		mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
+		mockParams.mockReturnValue({ integrationId: 'cred-chat' })
+		mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
+		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
+		render(<CredentialDetailPage />)
+		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+	})
+
+	it('saves the ticked agent from the sheet', async () => {
+		const user = userEvent.setup()
+		openPasted()
+		await user.click(screen.getByRole('button', { name: 'Edit access' }))
+		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
+		await user.click(screen.getByRole('button', { name: 'Save access' }))
+		expect(mockUpdateScope).toHaveBeenCalledWith(
+			[{ kind: 'actor', actorId: 'agent-2' }],
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
+	})
+
+	it('shows the failure inside the sheet and keeps it open', async () => {
+		scopeMutation.mockReturnValue({ isError: true, error: new ApiError(500, 'boom') })
+		const user = userEvent.setup()
+		openPasted()
+		await user.click(screen.getByRole('button', { name: 'Edit access' }))
+		expect(screen.getByRole('alert')).toHaveTextContent("Couldn't save access. Nothing changed.")
+	})
+
+	it('shows the audit row for a scope change with who made it', () => {
+		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
+		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
+		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'scope_changed' }])]))
+		render(<CredentialDetailPage />)
+		const log = screen.getByRole('region', { name: 'Audit log' })
+		const row = within(log).getAllByRole('listitem')[0]
+		expect(row).toHaveTextContent('Magnus changed which agents can use this credential.')
+		expect(row).toHaveTextContent('SCOPE CHANGED')
 	})
 })

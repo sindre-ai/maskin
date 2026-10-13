@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api } from '../lib/api'
+import { type KeychainScopeGrant, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -188,6 +188,26 @@ export function useCreateByoApiKey(workspaceId: string) {
 			api.integrations.createByoApiKey(workspaceId, input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/**
+ * Keychain: replace which agents may use a saved key. The error stays on the mutation so
+ * the access sheet can show it inline; only the success toast lives here. The list and the
+ * audit log are refetched because the Agents block and the SCOPE CHANGED row both read them.
+ */
+export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (scopeGrants: KeychainScopeGrant[]) =>
+			api.integrations.updateScope(integrationId, workspaceId, scopeGrants),
+		onSuccess: () => {
+			toast.success('Access updated')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
+			})
 		},
 	})
 }
