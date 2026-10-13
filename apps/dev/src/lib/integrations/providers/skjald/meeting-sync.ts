@@ -71,6 +71,8 @@ interface SaveMeetingArgs {
 	externalId: string
 	title: string
 	content: string | null
+	/** The meeting status to write on insert and on update. */
+	status: string
 	/** The metadata to write, given what the meeting already has (null when it is new). */
 	metadata: (existing: Record<string, unknown> | null) => Record<string, unknown>
 }
@@ -78,7 +80,7 @@ interface SaveMeetingArgs {
 /** Insert-or-update by `external_id`, including the fall-through when a concurrent delivery wins the insert. */
 async function saveMeeting(
 	db: Database,
-	{ workspaceId, systemActorId, externalId, title, content, metadata }: SaveMeetingArgs,
+	{ workspaceId, systemActorId, externalId, title, content, status, metadata }: SaveMeetingArgs,
 ): Promise<UpsertSkjaldMeetingResult> {
 	const update = async (id: string, existingMetadata: Record<string, unknown> | null) => {
 		await db
@@ -86,7 +88,7 @@ async function saveMeeting(
 			.set({
 				title,
 				content,
-				status: 'done',
+				status,
 				metadata: metadata(existingMetadata),
 				updatedAt: new Date(),
 			})
@@ -105,7 +107,7 @@ async function saveMeeting(
 				type: 'meeting',
 				title,
 				content,
-				status: 'done',
+				status,
 				metadata: metadata(null),
 				createdBy: systemActorId,
 			})
@@ -159,6 +161,7 @@ export async function upsertSkjaldMeeting(
 		externalId: payload.meeting_id,
 		title: payload.meeting_title,
 		content: payload.transcript_text ?? null,
+		status: 'done',
 		metadata: () => metadata,
 	})
 }
@@ -208,6 +211,7 @@ export async function upsertSkjaldOutcomeMeeting(
 		externalId: session.id,
 		title: session.title.trim() || 'Untitled meeting',
 		content: renderOutcomeContent(payload) || null,
+		status: 'happened',
 		metadata: (existing) => ({
 			...(existing ?? {}),
 			external_id: session.id,

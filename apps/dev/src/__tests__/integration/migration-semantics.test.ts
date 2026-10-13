@@ -656,3 +656,84 @@ describe('0066 — retiring the qualified bet status and the commitment type', (
 		)
 	})
 })
+
+// 0091 moves Skjald outcome meetings saved as the invalid `done` to `happened`.
+// Only outcome saves write `started_at`, so that key is what separates them from
+// the transcription.completed meetings, which still write `done`.
+describe('0091 — Skjald outcome meetings done to happened', () => {
+	async function seedMeeting(
+		workspaceName: string,
+		status: string,
+		metadata: Record<string, string>,
+	) {
+		const actorId = getTestActorId()
+		const [ws] = await sql<{ id: string }[]>`
+			INSERT INTO workspaces (name, created_by) VALUES (${workspaceName}, ${actorId})
+			RETURNING id
+		`
+		const [meeting] = await sql<{ id: string }[]>`
+			INSERT INTO objects (workspace_id, type, title, status, metadata, created_by)
+			VALUES (${ws.id}, 'meeting', 'Customer call', ${status}, ${sql.json(metadata)}, ${actorId})
+			RETURNING id
+		`
+		return meeting.id
+	}
+
+	async function statusOf(id: string) {
+		const [row] = await sql<{ status: string }[]>`SELECT status FROM objects WHERE id = ${id}`
+		return row.status
+	}
+
+	it('moves a Skjald outcome meeting saved as done to happened', async () => {
+		const id = await seedMeeting('skjald-outcome-done', 'done', {
+			source: 'skjald',
+			external_id: 'a',
+			started_at: '2026-10-07T09:00:00Z',
+		})
+
+		await replayMigration('0091_skjald_outcome_meetings_done_to_happened.sql')
+
+		expect(await statusOf(id)).toBe('happened')
+	})
+
+	it('leaves transcription.completed meetings, other sources and other statuses alone', async () => {
+		const v1 = await seedMeeting('skjald-v1-done', 'done', { source: 'skjald', external_id: 'b' })
+		const otherSource = await seedMeeting('other-source-done', 'done', {
+			source: 'fireflies',
+			external_id: 'c',
+			started_at: '2026-10-07T09:00:00Z',
+		})
+		const processed = await seedMeeting('skjald-processed', 'processed', {
+			source: 'skjald',
+			external_id: 'd',
+			started_at: '2026-10-07T09:00:00Z',
+		})
+
+		await replayMigration('0091_skjald_outcome_meetings_done_to_happened.sql')
+
+		expect(await statusOf(v1), 'v1 meeting has no started_at and stays done').toBe('done')
+		expect(await statusOf(otherSource), 'non-Skjald meeting stays done').toBe('done')
+		expect(await statusOf(processed), 'only done rows move').toBe('processed')
+	})
+
+	it('is idempotent: a second run flips nothing and leaves updated_at alone', async () => {
+		const id = await seedMeeting('skjald-outcome-idempotent', 'done', {
+			source: 'skjald',
+			external_id: 'e',
+			started_at: '2026-10-07T09:00:00Z',
+		})
+
+		await replayMigration('0091_skjald_outcome_meetings_done_to_happened.sql')
+		const [first] = await sql<{ status: string; updated_at: Date }[]>`
+			SELECT status, updated_at FROM objects WHERE id = ${id}
+		`
+		expect(first.status).toBe('happened')
+
+		await replayMigration('0091_skjald_outcome_meetings_done_to_happened.sql')
+		const [second] = await sql<{ status: string; updated_at: Date }[]>`
+			SELECT status, updated_at FROM objects WHERE id = ${id}
+		`
+		expect(second.status).toBe('happened')
+		expect(second.updated_at.getTime()).toBe(first.updated_at.getTime())
+	})
+})
