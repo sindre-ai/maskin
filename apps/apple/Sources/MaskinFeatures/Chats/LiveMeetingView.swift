@@ -151,6 +151,7 @@ private struct LiveMeetingContent: View {
 	private let avatarSize = MaskinSpace.s14 * 3 + MaskinSpace.s9
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	private var regularWidth: Bool { sizeClass == .regular }
+	@State private var captionHeight: CGFloat = 0
 	private var buttonSize: CGFloat { LiveMeetingMetrics.controlSize(regularWidth: regularWidth) }
 
 	var body: some View {
@@ -251,21 +252,34 @@ private struct LiveMeetingContent: View {
 		.frame(maxWidth: .infinity)
 	}
 
-	/// What you are saying as it is recognised, and the agent's latest words.
+	/// What you are saying as it is recognised, and the agent's latest words. Never cut off: long
+	/// text scrolls inside the box, which stays pinned to the newest words while they arrive.
 	private var captions: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			if !session.voice.transcript.isEmpty {
-				Text(session.voice.transcript).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
-					.lineLimit(4)
+		ScrollView {
+			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+				if !session.voice.transcript.isEmpty {
+					Text(session.voice.transcript).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+				}
+				Text(session.voice.speakingText ?? session.lastAgentWords ?? "Captions appear here when \(session.lead.name) speaks.")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
 			}
-			Text(session.voice.speakingText ?? session.lastAgentWords ?? "Captions appear here when \(session.lead.name) speaks.")
-				.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-				.lineLimit(6)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.textSelection(.enabled)
+			.background(
+				GeometryReader { proxy in
+					Color.clear.preference(key: CaptionHeightKey.self, value: proxy.size.height)
+				})
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
+		.defaultScrollAnchor(.bottom)
+		.scrollBounceBehavior(.basedOnSize)
+		// Hugs short captions; long ones fill up to the cap and scroll.
+		.frame(height: min(max(captionHeight, 24), regularWidth ? 360 : 260))
+		.onPreferenceChange(CaptionHeightKey.self) { captionHeight = $0 }
 		.padding(MaskinSpace.s8)
 		.background(MaskinColor.surfaceMuted, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl))
 		.padding(.bottom, MaskinSpace.s7)
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Captions")
 	}
 
 	// MARK: Controls
@@ -388,4 +402,9 @@ extension LiveMeetingSession {
 			speak: { _, _ in }, stopSpeaking: {}, isSpeaking: { false }, send: send)
 		#endif
 	}
+}
+
+private struct CaptionHeightKey: PreferenceKey {
+	static let defaultValue: CGFloat = 0
+	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
