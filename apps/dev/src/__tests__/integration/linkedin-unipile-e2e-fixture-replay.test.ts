@@ -598,7 +598,7 @@ describe('smoke 8, 10 and 11 in fixture form: one reply, whichever path gets the
 		expect(second.message_id).toBe(first.message_id)
 		expect(reply).toHaveBeenCalledTimes(1)
 		expect(sent).toEqual([{ thread_id: CHAT_ID, body: 'draft from the webhook session' }])
-		expect(listMessages).toHaveBeenCalledTimes(2)
+		expect(listMessages).toHaveBeenCalledTimes(1)
 	})
 
 	it('sends one message when the sweep path answers first and the webhook path answers after', async () => {
