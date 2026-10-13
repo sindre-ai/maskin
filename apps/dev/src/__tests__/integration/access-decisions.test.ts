@@ -8,6 +8,7 @@ import {
 	integrations,
 	messages,
 	workspaceMembers,
+	workspaces,
 } from '@maskin/db/schema'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -44,6 +45,7 @@ import {
 	insertConversation,
 	insertObject,
 	insertSession,
+	insertTrigger,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -622,6 +624,175 @@ describe('the one hour timeout', () => {
 		expect(await sweepAccessRequestTimeouts({ db, sessionManager: stub })).toBe(0)
 		expect((await requestRow(fresh.id)).status).toBe('requested')
 		expect((await requestRow(decided.id)).status).toBe('approved')
+	})
+})
+
+describe('which object a person is told on', () => {
+	const commentsOn = (entityId: string) =>
+		db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, entityId), eq(events.action, 'commented')))
+
+	const setFallback = (workspaceId: string, objectId: string) =>
+		db
+			.update(workspaces)
+			.set({ settings: { access_request_fallback_object_id: objectId } })
+			.where(eq(workspaces.id, workspaceId))
+
+	/** A blocked run of the requester, then a denied request filed from it. */
+	async function deniedFrom(
+		t: Awaited<ReturnType<typeof team>>,
+		session: Record<string, unknown> | null,
+	) {
+		const blocked = session
+			? await insertSession(db, t.w.ws.id, t.requester.id, t.requester.id, {
+					status: 'completed',
+					...session,
+				})
+			: null
+		const { id } = await filed(
+			t,
+			t.requester,
+			{},
+			blocked ? { 'x-maskin-session-id': blocked.id } : {},
+		)
+		expect((await call(t.cto, t.w.ws.id, 'POST', `/${id}/deny`)).status).toBe(200)
+		return id
+	}
+
+	it('uses the originating object and not the fixed one when the run has no trigger', async () => {
+		const t = await team()
+		const task = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'task' })
+		const fixed = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'knowledge' })
+		await setFallback(t.w.ws.id, fixed.id)
+
+		await deniedFrom(t, { initiatedFromObjectId: task.id, triggerId: null })
+
+		expect(await commentsOn(task.id)).toHaveLength(1)
+		expect(await commentsOn(fixed.id)).toHaveLength(0)
+		expect((await eventsFor(t.w.ws.id, 'escalated_to_human'))[0]?.data).toMatchObject({
+			commented_on: task.id,
+			via: 'initiated_object',
+		})
+	})
+
+	it('uses the originating object and not the loop when both exist', async () => {
+		const t = await team()
+		const task = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'task' })
+		const trigger = await insertTrigger(db, t.w.ws.id, t.w.ownerId, t.requester.id)
+		const loop = await insertObject(db, t.w.ws.id, t.w.ownerId, {
+			type: 'loop',
+			metadata: { trigger_ids: [trigger?.id] },
+		})
+
+		await deniedFrom(t, { initiatedFromObjectId: task.id, triggerId: trigger?.id })
+
+		expect(await commentsOn(task.id)).toHaveLength(1)
+		expect(await commentsOn(loop?.id as string)).toHaveLength(0)
+	})
+
+	it('uses the oldest loop that holds the trigger when the run has no object', async () => {
+		const t = await team()
+		const trigger = await insertTrigger(db, t.w.ws.id, t.w.ownerId, t.requester.id)
+		const other = await insertTrigger(db, t.w.ws.id, t.w.ownerId, t.requester.id)
+		const metadata = { trigger_ids: [trigger?.id] }
+		// The newer loop is inserted first, so only the created_at order can pick the right one.
+		const newer = await insertObject(db, t.w.ws.id, t.w.ownerId, {
+			type: 'loop',
+			metadata,
+			createdAt: new Date('2026-10-02T00:00:00Z'),
+		})
+		const oldest = await insertObject(db, t.w.ws.id, t.w.ownerId, {
+			type: 'loop',
+			metadata,
+			createdAt: new Date('2026-10-01T00:00:00Z'),
+		})
+		const unrelated = await insertObject(db, t.w.ws.id, t.w.ownerId, {
+			type: 'loop',
+			metadata: { trigger_ids: [other?.id] },
+			createdAt: new Date('2026-09-01T00:00:00Z'),
+		})
+		const fixed = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'knowledge' })
+		await setFallback(t.w.ws.id, fixed.id)
+
+		await deniedFrom(t, { initiatedFromObjectId: null, triggerId: trigger?.id })
+
+		const landed = await commentsOn(oldest?.id as string)
+		expect(landed).toHaveLength(1)
+		const data = landed[0]?.data as { mentions: string[]; attention: number }
+		expect(data.mentions).toEqual([t.w.ownerId])
+		expect(data.attention).toBe(3)
+		expect(await commentsOn(newer?.id as string)).toHaveLength(0)
+		expect(await commentsOn(unrelated?.id as string)).toHaveLength(0)
+		expect(await commentsOn(fixed.id)).toHaveLength(0)
+		expect((await eventsFor(t.w.ws.id, 'escalated_to_human'))[0]?.data).toMatchObject({
+			via: 'parent_loop',
+		})
+	})
+
+	it('uses the fixed object when the run has no object and no loop', async () => {
+		const t = await team()
+		const trigger = await insertTrigger(db, t.w.ws.id, t.w.ownerId, t.requester.id)
+		const fixed = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'knowledge' })
+		await setFallback(t.w.ws.id, fixed.id)
+
+		// A trigger that belongs to no loop, and a request filed with no stored session.
+		await deniedFrom(t, { initiatedFromObjectId: null, triggerId: trigger?.id })
+		const t2 = await team()
+		const fixed2 = await insertObject(db, t2.w.ws.id, t2.w.ownerId, { type: 'knowledge' })
+		await setFallback(t2.w.ws.id, fixed2.id)
+		await deniedFrom(t2, null)
+
+		expect(await commentsOn(fixed.id)).toHaveLength(1)
+		expect(await commentsOn(fixed2.id)).toHaveLength(1)
+		expect((await eventsFor(t.w.ws.id, 'escalated_to_human'))[0]?.data).toMatchObject({
+			commented_on: fixed.id,
+			via: 'fallback_object',
+		})
+	})
+
+	it('also reaches the fixed object for an expired request', async () => {
+		const t = await team()
+		const fixed = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'knowledge' })
+		await setFallback(t.w.ws.id, fixed.id)
+		const { id } = await filed(t, t.requester)
+		await db
+			.update(accessRequests)
+			.set({ createdAt: dsql`now() - interval '61 minutes'` })
+			.where(eq(accessRequests.id, id))
+
+		await sweepAccessRequestTimeouts({ db, sessionManager: {} as SessionManager })
+
+		expect(await commentsOn(fixed.id)).toHaveLength(1)
+	})
+
+	it('posts no comment and writes an error event when nothing resolves', async () => {
+		const t = await team()
+		const id = await deniedFrom(t, null)
+
+		const errors = await eventsFor(t.w.ws.id, 'access_request_escalation_error')
+		expect(errors).toHaveLength(1)
+		expect(errors[0]).toMatchObject({ entityId: id })
+		expect(errors[0]?.data).toMatchObject({ why: 'denied', error: 'no_escalation_target' })
+		const all = await db.select().from(events).where(eq(events.workspaceId, t.w.ws.id))
+		expect(all.filter((e) => e.action === 'commented')).toHaveLength(0)
+		expect((await eventsFor(t.w.ws.id, 'escalated_to_human'))[0]?.data).toMatchObject({
+			commented_on: null,
+			via: null,
+		})
+	})
+
+	it('treats a fixed object from another workspace as unset', async () => {
+		const t = await team()
+		const other = await world()
+		const foreign = await insertObject(db, other.ws.id, other.ownerId, { type: 'knowledge' })
+		await setFallback(t.w.ws.id, foreign.id)
+
+		await deniedFrom(t, null)
+
+		expect(await commentsOn(foreign.id)).toHaveLength(0)
+		expect(await eventsFor(t.w.ws.id, 'access_request_escalation_error')).toHaveLength(1)
 	})
 })
 
