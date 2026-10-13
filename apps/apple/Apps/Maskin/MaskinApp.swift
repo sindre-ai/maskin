@@ -102,6 +102,7 @@ struct MaskinApp: App {
 			.windowResizability(.contentMinSize)
 			.onChange(of: scenePhase) { _, phase in
 				if phase == .background { BackgroundRefresh.schedule() }
+				if phase == .active { Task { await TurnActivityCoordinator.shared?.sweep() } }
 			}
 		#endif
 		.commands { ShellCommands() }
@@ -122,9 +123,13 @@ struct MaskinApp: App {
 								.init(apiKey: $0.apiKey, workspaceId: $0.workspaceId)
 							}
 						}
-					}))
+					}),
+				sessions: APITurnSessionLookup(client: environment.client))
 			TurnActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
+			// Cards the backend started and never ended (its end push needs an update token this
+			// device may never have registered): clear them as soon as the app runs.
+			Task { await coordinator.sweep(force: true) }
 			environment.auth.onSessionEnded { ending in
 				let creds = APILiveActivityTokens.Credentials(
 					apiKey: ending.apiKey, workspaceId: ending.workspaceId)

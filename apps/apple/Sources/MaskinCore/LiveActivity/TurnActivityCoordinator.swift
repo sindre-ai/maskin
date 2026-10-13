@@ -12,6 +12,12 @@ public protocol TurnActivityHosting: AnyObject {
 	func end(sessionId: String, state: TurnActivityState, dismissAfter: TimeInterval) async
 	/// Ends every activity at once, with no lingering card (sign-out).
 	func endAll() async
+	/// Every card on the device that is still showing (active or stale).
+	func cards() -> [TurnActivityCard]
+	/// Removes the card with no lingering, whatever it shows.
+	func endNow(sessionId: String) async
+	/// Re-sends a card's current content with a fresh stale date.
+	func refresh(sessionId: String) async
 }
 
 public enum LiveActivityTokenKind: String, Codable, Sendable {
@@ -44,6 +50,11 @@ public final class TurnActivityCoordinator {
 
 	private let host: any TurnActivityHosting
 	private let tokens: any LiveActivityTokenRegistering
+	private let sessionLookup: (any TurnSessionLooking)?
+	private var sweeping = false
+	private var lastSweepAt: Date?
+	/// Sweeps closer together than this are coalesced (a chat refreshes sessions every few seconds).
+	public static let sweepInterval: TimeInterval = 20
 	private var deviceId: String?
 	private var lastState: [String: TurnActivityState] = [:]
 	private var ended: Set<String> = []
@@ -52,9 +63,45 @@ public final class TurnActivityCoordinator {
 	/// Server ids of registered tokens, keyed `"start"` or the session id.
 	private var registered: [String: (id: String, token: String, device: String)] = [:]
 
-	public init(host: any TurnActivityHosting, tokens: any LiveActivityTokenRegistering) {
+	public init(
+		host: any TurnActivityHosting, tokens: any LiveActivityTokenRegistering,
+		sessions: (any TurnSessionLooking)? = nil
+	) {
 		self.host = host
 		self.tokens = tokens
+		self.sessionLookup = sessions
+	}
+
+	// MARK: Sweep
+
+	/// Ends cards whose turn is over, too old, stale or duplicated (see `TurnActivitySweep`).
+	/// Call on launch, on foreground and after a session refresh. `force` skips the coalescing.
+	public func sweep(now: Date = Date(), force: Bool = false) async {
+		guard !sweeping else { return }
+		if !force, let last = lastSweepAt, now.timeIntervalSince(last) < Self.sweepInterval { return }
+		let cards = host.cards()
+		guard !cards.isEmpty else { return }
+		sweeping = true
+		lastSweepAt = now
+		defer { sweeping = false }
+		var lookups: [String: TurnSessionLookup] = [:]
+		if let sessionLookup {
+			for card in cards {
+				if let found = await sessionLookup.lookup(
+					sessionId: card.sessionId, workspaceId: card.workspaceId)
+				{
+					lookups[card.sessionId] = found
+				}
+			}
+		}
+		let plan = TurnActivitySweep.plan(cards: cards, lookups: lookups, now: now)
+		for end in plan.ends {
+			lastState[end.sessionId] = nil
+			ended.insert(end.sessionId)
+			await host.endNow(sessionId: end.sessionId)
+			await dropUpdateToken(for: end.sessionId)
+		}
+		for id in plan.refreshes { await host.refresh(sessionId: id) }
 	}
 
 	// MARK: Turns
