@@ -20,20 +20,24 @@ public enum TurnActivityStatus: String, Codable, Sendable, Equatable {
 /// The Live Activity's changing part. JSON shape is a CONTRACT with the backend push sender
 /// (`ApnsSender.sendLiveActivity`): all keys always present, `startedAt` encoded as Swift's
 /// default `Date` (seconds since 2001-01-01), so do NOT set a date strategy on any coder that
-/// handles it.
+/// handles it. `topic` is the one OPTIONAL key (omitted when nil, tolerated when absent) so old
+/// pushes and old builds keep decoding.
 public struct TurnActivityState: Codable, Hashable, Sendable {
 	public static let maxAgentNameLength = 40
 	public static let maxStepLength = 80
+	public static let maxTopicLength = 60
 
 	public var sessionId: String
 	public var agentName: String
 	public var step: String
 	public var startedAt: Date
 	public var status: TurnActivityStatus
+	/// What the turn is about (the conversation's title), so two cards from the same agent differ.
+	public var topic: String?
 
 	public init(
 		sessionId: String, agentName: String, step: String? = nil, startedAt: Date,
-		status: TurnActivityStatus
+		status: TurnActivityStatus, topic: String? = nil
 	) {
 		self.sessionId = sessionId
 		self.agentName = Self.clamp(agentName, to: Self.maxAgentNameLength, fallback: "Agent")
@@ -41,6 +45,46 @@ public struct TurnActivityState: Codable, Hashable, Sendable {
 			step ?? "", to: Self.maxStepLength, fallback: Self.defaultStep(for: status))
 		self.startedAt = startedAt
 		self.status = status
+		let trimmed = topic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		self.topic = trimmed.isEmpty ? nil : Self.clamp(trimmed, to: Self.maxTopicLength, fallback: "")
+	}
+
+	private enum CodingKeys: String, CodingKey {
+		case sessionId, agentName, step, startedAt, status, topic
+	}
+
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		self.init(
+			sessionId: try c.decode(String.self, forKey: .sessionId),
+			agentName: try c.decode(String.self, forKey: .agentName),
+			step: try c.decode(String.self, forKey: .step),
+			startedAt: try c.decode(Date.self, forKey: .startedAt),
+			status: try c.decode(TurnActivityStatus.self, forKey: .status),
+			topic: try c.decodeIfPresent(String.self, forKey: .topic))
+	}
+
+	public func encode(to encoder: any Encoder) throws {
+		var c = encoder.container(keyedBy: CodingKeys.self)
+		try c.encode(sessionId, forKey: .sessionId)
+		try c.encode(agentName, forKey: .agentName)
+		try c.encode(step, forKey: .step)
+		try c.encode(startedAt, forKey: .startedAt)
+		try c.encode(status, forKey: .status)
+		try c.encodeIfPresent(topic, forKey: .topic)
+	}
+
+	/// The card's main line: the agent's current step, or, when all the push could say is the
+	/// generic "Working", what the conversation is about.
+	public var primaryLine: String {
+		if status == .running, step == Self.defaultStep(for: .running), let topic { return topic }
+		return step
+	}
+
+	/// The topic as a second line when the primary line is the step.
+	public var secondaryLine: String? {
+		guard let topic, topic != primaryLine else { return nil }
+		return topic
 	}
 
 	public static func defaultStep(for status: TurnActivityStatus) -> String {
@@ -122,7 +166,7 @@ public struct LiveTurn: Equatable, Sendable {
 	/// come from `agentName`; an unresolved actor reads "Agent", never an id.
 	public static func turns(
 		from sessions: [ChatAgentSession], workspaceId: String, conversationId: String,
-		agentName: (String) -> String?, now: Date
+		agentName: (String) -> String?, topic: String? = nil, now: Date
 	) -> [LiveTurn] {
 		sessions.compactMap { session in
 			let status: TurnActivityStatus
@@ -138,7 +182,7 @@ public struct LiveTurn: Equatable, Sendable {
 					sessionId: session.id, workspaceId: workspaceId, conversationId: conversationId),
 				state: TurnActivityState(
 					sessionId: session.id, agentName: agentName(session.actorID) ?? "Agent",
-					step: session.currentActivity, startedAt: session.startedAt ?? now, status: status))
+					step: session.currentActivity, startedAt: session.startedAt ?? now, status: status, topic: topic))
 		}
 	}
 }

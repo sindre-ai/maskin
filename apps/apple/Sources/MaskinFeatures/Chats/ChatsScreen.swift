@@ -192,7 +192,7 @@ private struct ChatThreadHost: View {
 		chat.onMarkedRead = { [conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
 		}
-		chat.onSessionsRefreshed = { [weak chat, weak environment] sessions in
+		chat.onSessionsRefreshed = { [weak chat, weak environment, conversations] sessions in
 			// Foreground fallback for the Live Activity; background updates come from APNs.
 			guard let coordinator = TurnActivityCoordinator.shared, let chat,
 				let workspaceId = environment?.workspaceId
@@ -200,8 +200,11 @@ private struct ChatThreadHost: View {
 			let turns = LiveTurn.turns(
 				from: sessions, workspaceId: workspaceId, conversationId: conversationID,
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
-				now: Date())
-			Task { await coordinator.reconcile(turns) }
+				topic: conversations.conversation(id: conversationID)?.title, now: Date())
+			Task {
+				await coordinator.reconcile(turns)
+				await coordinator.sweep()
+			}
 		}
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
 		composer.text = ChatDraftStore.text(for: conversationID)

@@ -39,10 +39,27 @@ struct TurnActivityStateTests {
 		let s = TurnActivityState(sessionId: "s1", agentName: "Forge", step: "Reading", startedAt: t0, status: .needsYou)
 		let json = try #require(
 			JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
-		#expect(Set(json.keys) == ["sessionId", "agentName", "step", "startedAt", "status"])
+		#expect(Set(json.keys) == ["sessionId", "agentName", "step", "startedAt", "status"])  // no topic: shape unchanged
 		// Default Date coding: seconds since 2001, NOT unix epoch.
 		#expect(json["startedAt"] as? Double == 800_000_000)
 		#expect(json["status"] as? String == "needsYou")
+	}
+
+	@Test func topicIsOptionalOnTheWireAndFallsBackToTheTopicWhenTheStepIsGeneric() throws {
+		let s = TurnActivityState(
+			sessionId: "s", agentName: "Forge", startedAt: t0, status: .running, topic: " Q3 plan ")
+		let json = try #require(
+			JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+		#expect(json["topic"] as? String == "Q3 plan")
+		#expect(s.primaryLine == "Q3 plan")
+		#expect(s.secondaryLine == nil)
+		let withStep = TurnActivityState(
+			sessionId: "s", agentName: "Forge", step: "Reading files", startedAt: t0, status: .running,
+			topic: "Q3 plan")
+		#expect(withStep.primaryLine == "Reading files")
+		#expect(withStep.secondaryLine == "Q3 plan")
+		let back = try JSONDecoder().decode(TurnActivityState.self, from: JSONEncoder().encode(withStep))
+		#expect(back == withStep)
 	}
 
 	@Test func decodesAServerPushPayload() throws {
@@ -98,6 +115,14 @@ private final class FakeHost: TurnActivityHosting {
 	func update(sessionId: String, state: TurnActivityState) async {
 		log.append("update:\(sessionId):\(state.status.rawValue)")
 	}
+	var shown: [TurnActivityCard] = []
+	func cards() -> [TurnActivityCard] { shown }
+	func endNow(sessionId: String) async {
+		active.remove(sessionId)
+		shown.removeAll { $0.sessionId == sessionId }
+		log.append("endNow:\(sessionId)")
+	}
+	func refresh(sessionId: String) async { log.append("refresh:\(sessionId)") }
 	func endAll() async {
 		active = []
 		log.append("endAll")
@@ -281,5 +306,92 @@ struct TurnStopperTests {
 			sessionId: "s1", workspaceId: "ws")
 		#expect(!ok)
 		#expect(await api.stopped.isEmpty)
+	}
+}
+
+
+private func card(
+	_ id: String, agent: String = "Forge", age: TimeInterval = 60, stale: Bool = false
+) -> TurnActivityCard {
+	TurnActivityCard(
+		sessionId: id, workspaceId: "ws", agentName: agent,
+		startedAt: t0.addingTimeInterval(-age), isStale: stale)
+}
+
+@Suite("TurnActivitySweep")
+struct TurnActivitySweepTests {
+	private func plan(_ cards: [TurnActivityCard], _ lookups: [String: TurnSessionLookup] = [:])
+		-> TurnSweepPlan
+	{
+		TurnActivitySweep.plan(cards: cards, lookups: lookups, now: t0)
+	}
+
+	@Test func endsCardsWhoseSessionFinishedOrVanished() {
+		let p = plan(
+			[card("done", agent: "A"), card("gone", agent: "B"), card("paused", agent: "C"), card("live", agent: "D")],
+			[
+				"done": .status(.completed), "gone": .notFound, "paused": .status(.paused),
+				"live": .status(.running),
+			])
+		#expect(Set(p.ends.map(\.sessionId)) == ["done", "gone", "paused"])
+		#expect(p.ends.first { $0.sessionId == "gone" }?.reason == .sessionGone)
+	}
+
+	@Test func endsCardsOlderThanTheSessionTimeoutEvenWhenOffline() {
+		let p = plan([card("old", age: TurnActivitySweep.maxAge + 1), card("new")])
+		#expect(p.ends == [.init(sessionId: "old", reason: .tooOld)])
+	}
+
+	@Test func aFailedLookupNeverEndsAFreshCard() {
+		#expect(plan([card("a")]).ends.isEmpty)
+	}
+
+	@Test func staleCardsEndUnlessTheServerConfirmsTheyAreLive() {
+		let p = plan([card("a", agent: "A", stale: true), card("b", agent: "B", stale: true)], ["b": .status(.running)])
+		#expect(p.ends == [.init(sessionId: "a", reason: .stale)])
+		#expect(p.refreshes == ["b"])
+	}
+
+	@Test func keepsOnlyTheNewestCardPerAgent() {
+		let p = plan([card("old", age: 600), card("new", age: 10), card("other", agent: "Scout")])
+		#expect(p.ends == [.init(sessionId: "old", reason: .superseded)])
+	}
+
+	@Test func supersededCardsAreNotAlsoRefreshed() {
+		let p = plan(
+			[card("old", age: 600, stale: true), card("new", age: 10)],
+			["old": .status(.running), "new": .status(.running)])
+		#expect(p.ends == [.init(sessionId: "old", reason: .superseded)])
+		#expect(p.refreshes.isEmpty)
+	}
+}
+
+private struct FakeLookup: TurnSessionLooking {
+	var answers: [String: TurnSessionLookup]
+	func lookup(sessionId: String, workspaceId: String) async -> TurnSessionLookup? { answers[sessionId] }
+}
+
+@MainActor
+@Suite("TurnActivityCoordinator sweep")
+struct TurnActivityCoordinatorSweepTests {
+	@Test func endsDeadCardsImmediatelyAndRefreshesLiveStaleOnes() async {
+		let host = FakeHost()
+		host.shown = [card("dead", agent: "A"), card("alive", agent: "B", stale: true)]
+		let coordinator = TurnActivityCoordinator(
+			host: host, tokens: FakeTokens(),
+			sessions: FakeLookup(answers: ["dead": .status(.completed), "alive": .status(.running)]))
+		await coordinator.sweep(now: t0, force: true)
+		#expect(host.log == ["endNow:dead", "refresh:alive"])
+	}
+
+	@Test func coalescesSweepsInsideTheInterval() async {
+		let host = FakeHost()
+		host.shown = [card("dead")]
+		let coordinator = TurnActivityCoordinator(
+			host: host, tokens: FakeTokens(), sessions: FakeLookup(answers: ["dead": .notFound]))
+		await coordinator.sweep(now: t0)
+		host.shown = [card("dead2")]
+		await coordinator.sweep(now: t0.addingTimeInterval(5))
+		#expect(host.log == ["endNow:dead"])
 	}
 }

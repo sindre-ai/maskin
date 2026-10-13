@@ -34,7 +34,10 @@ struct TurnLiveActivity: Widget {
 				}
 				DynamicIslandExpandedRegion(.bottom) {
 					VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-						Text(state.step).maskinText(.subhead).lineLimit(2)
+						Text(state.primaryLine).maskinText(.subhead).lineLimit(2)
+						if let secondary = state.secondaryLine {
+							Text(secondary).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+						}
 						TurnActions(attributes: attributes, state: state)
 					}
 					.frame(maxWidth: .infinity, alignment: .leading)
@@ -152,10 +155,20 @@ private struct LockScreenTurnView: View {
 				LiveActivityAgentTile(name: state.agentName, size: 44)
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 					Text(state.agentName).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
-					Text(state.step)
+					Text(state.primaryLine)
 						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.ink4)
+						.foregroundStyle(MaskinColor.ink)
 						.lineLimit(2)
+					// What it is about, and when it began: tells two cards from the same agent apart.
+					HStack(spacing: MaskinSpace.s2) {
+						if let secondary = state.secondaryLine {
+							Text(secondary).lineLimit(1)
+							Text("\u{00B7}")
+						}
+						Text("Started ") + Text(state.startedAt, style: .time)
+					}
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink4)
 				}
 			}
 			TurnActions(attributes: attributes, state: state)

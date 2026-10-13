@@ -85,6 +85,30 @@
 			await activity.update(content)
 		}
 
+		func cards() -> [TurnActivityCard] {
+			Activity<MaskinTurnAttributes>.activities.compactMap { activity in
+				guard activity.activityState == .active || activity.activityState == .stale else { return nil }
+				return TurnActivityCard(
+					sessionId: activity.attributes.sessionId, workspaceId: activity.attributes.workspaceId,
+					agentName: activity.content.state.agentName, startedAt: activity.content.state.startedAt,
+					isStale: activity.activityState == .stale)
+			}
+		}
+
+		func endNow(sessionId: String) async {
+			for activity in Activity<MaskinTurnAttributes>.activities
+			where activity.attributes.sessionId == sessionId {
+				await activity.end(nil, dismissalPolicy: .immediate)
+			}
+		}
+
+		func refresh(sessionId: String) async {
+			guard let activity = activity(for: sessionId) else { return }
+			await activity.update(
+				ActivityContent(
+					state: activity.content.state, staleDate: Date().addingTimeInterval(15 * 60)))
+		}
+
 		func endAll() async {
 			for activity in Activity<MaskinTurnAttributes>.activities {
 				await activity.end(nil, dismissalPolicy: .immediate)
