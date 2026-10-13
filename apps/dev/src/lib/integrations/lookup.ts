@@ -12,6 +12,7 @@ import { decryptStoredCredential } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { getKmsProvider } from '../keychain-kms'
 import { insertCredentialAccessLog } from './credential-audit'
+import { formatCredentialLogDetail } from './credential-log-detail'
 import {
 	CredentialNotFoundError,
 	CredentialPendingError,
@@ -19,6 +20,7 @@ import {
 	CredentialUndoneError,
 	ScopeDeniedError,
 } from './errors'
+import { isGrantExpired, liveActorGrants } from './grants'
 import { mintHeaders, vaultHeaders } from './header-mint'
 import type { DecryptedCredential } from './types'
 
@@ -196,14 +198,19 @@ export interface GetCredentialDeps {
 	kms?: KmsProvider
 }
 
-function isScopeGranted(grants: unknown, ctx: CredentialReadContext): boolean {
+function isScopeGranted(grants: unknown, ctx: CredentialReadContext, now: Date): boolean {
 	if (!Array.isArray(grants)) return false
 	return (grants as ScopeGrant[]).some((grant) => {
 		switch (grant?.kind) {
 			case 'workspace':
 				return true
 			case 'actor':
-				return typeof grant.actorId === 'string' && grant.actorId === ctx.requestingActorId
+				// An expired actor grant grants nothing. See isGrantExpired for the launch-only limit.
+				return (
+					typeof grant.actorId === 'string' &&
+					grant.actorId === ctx.requestingActorId &&
+					!isGrantExpired(grant, now)
+				)
 			case 'loop':
 				return (
 					typeof grant.loopId === 'string' &&
@@ -220,7 +227,8 @@ function isScopeGranted(grants: unknown, ctx: CredentialReadContext): boolean {
 /**
  * Every read of a stored credential goes through here. In order: load the row,
  * accept only active or pending_undo, enforce scope_grants against the
- * requesting actor or loop, unwrap the DEK and decrypt, then write the audit row.
+ * requesting actor or loop (an actor grant past its expiresAt grants nothing),
+ * unwrap the DEK and decrypt, then write the audit row.
  * The value is returned only after the audit row has committed, so a read with
  * no log row cannot reach a caller. A denied scope check writes an events row
  * and no audit row (nothing was read). Failure is always a typed error, never null.
@@ -248,7 +256,8 @@ export async function getCredential(
 		throw new CredentialUnavailableError(integrationId, row.status)
 	}
 
-	if (!isScopeGranted(row.scopeGrants, ctx)) {
+	const now = new Date()
+	if (!isScopeGranted(row.scopeGrants, ctx, now)) {
 		await recordEvent(db, {
 			workspaceId,
 			actorId: ctx.requestingActorId,
@@ -281,6 +290,12 @@ export async function getCredential(
 		dekCiphertext: row.dekCiphertext,
 	})
 
+	// A read made under an access-request grant carries that grant's id in the detail
+	// text. Any other read keeps detail NULL. Use is logged per session (this is the
+	// launch-time read row), not per tool call.
+	const grantId = liveActorGrants(row.scopeGrants, ctx.requestingActorId, now).find(
+		(g) => g.grantId,
+	)?.grantId
 	await db.transaction((tx) =>
 		insertCredentialAccessLog(tx, {
 			workspaceId,
@@ -292,6 +307,7 @@ export async function getCredential(
 			action: 'read',
 			source: row.source,
 			requestId: ctx.requestId,
+			detail: grantId ? formatCredentialLogDetail({ grant: grantId }) : null,
 		}),
 	)
 

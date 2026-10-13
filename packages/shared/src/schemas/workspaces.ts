@@ -239,6 +239,11 @@ export const workspaceSettingsSchema = z.object({
 	// Staff prototype bet so owner chats route through CoS instead of Workspace
 	// Coach when this is populated.
 	default_agent_id: z.string().uuid().nullable().optional(),
+	// Object that gets the note for a human when an access request ends denied,
+	// expired or with no approver and the blocked run has neither an originating
+	// object nor a parent loop (services/access-request-flow.ts). Unset means such
+	// a request is not commented on anywhere; an error event records it instead.
+	access_request_fallback_object_id: z.string().uuid().nullable().optional(),
 	// File ids (uuid strings) pinned into the sidebar Favorites group by the
 	// Mini-apps bet. References only — the sidebar resolves each id against the
 	// live file object, so the nightly regen's in-place byte swap flows through

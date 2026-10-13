@@ -10,6 +10,8 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, count, desc, eq, sql } from 'drizzle-orm'
+import { writeGrantAuditRow } from './grant-audit'
+import { hasWorkspaceGrant, liveActorGrants } from './grants'
 
 // Slice A of the access-request bet: an agent files a request for a credential it
 // cannot read, and the server either files it (Tier 1) or refuses it. Every rule
@@ -75,7 +77,7 @@ export interface FileRequestInput {
  *
  * A refusal by the route itself is stored as a denied request with no approver, so
  * the cooldown covers it and a stuck loop writes one row a day. A refusal writes
- * nothing to the audit chain.
+ * nothing to the audit chain; a filed request writes one grant_requested row.
  */
 export async function fileAccessRequest(
 	db: Database,
@@ -88,7 +90,7 @@ export async function fileAccessRequest(
 
 		// The tier is read from the credential record now. Nothing the caller sent decides it.
 		const [credential] = await tx
-			.select({ id: integrations.id, tier: integrations.tier })
+			.select({ id: integrations.id, tier: integrations.tier, source: integrations.source })
 			.from(integrations)
 			.where(
 				and(
@@ -164,6 +166,16 @@ export async function fileAccessRequest(
 
 		const [filed] = await tx.insert(accessRequests).values(base).returning()
 		if (!filed) throw new Error('access request insert returned no row')
+		// A filed request is the first grant event on the chain. The refusals above write none.
+		await writeGrantAuditRow(tx, {
+			action: 'grant_requested',
+			workspaceId: input.workspaceId,
+			integrationId: input.integrationId,
+			actorId: input.requesterActorId,
+			source: credential.source,
+			requestId: `access-request:${filed.id}:requested`,
+			tier,
+		})
 		return { outcome: 'filed', request: filed }
 	})
 }
@@ -246,13 +258,9 @@ export async function listRequestableAccess(
 		})
 }
 
-/** True when the actor, or the whole workspace, already holds a grant. Expiry is the expiry task's. */
+/** True when the actor, or the whole workspace, holds a grant that has not expired. */
 function holdsGrant(grants: unknown, actorId: string): boolean {
-	if (!Array.isArray(grants)) return false
-	return grants.some(
-		(g: { kind?: string; actorId?: string }) =>
-			g?.kind === 'workspace' || (g?.kind === 'actor' && g.actorId === actorId),
-	)
+	return hasWorkspaceGrant(grants) || liveActorGrants(grants, actorId, new Date()).length > 0
 }
 
 /** The workspace's CTO agent, the default Tier 1 approver. Null when there is none. */
