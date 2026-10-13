@@ -937,13 +937,12 @@ const EXPERIENCE_SECTION = 'linkedin_experience'
  */
 function toIsoDate(raw: unknown): string | null {
 	if (typeof raw !== 'string') return null
-	const parts = raw.trim().split('/')
-	const ok = (v: string, len: number) => v.length === len && /^\d+$/.test(v)
-	if (parts.length === 3 && ok(parts[0], 2) && ok(parts[1], 2) && ok(parts[2], 4)) {
-		return `${parts[2]}-${parts[0]}-${parts[1]}`
-	}
-	if (parts.length === 2 && ok(parts[0], 2) && ok(parts[1], 4)) return `${parts[1]}-${parts[0]}`
-	if (parts.length === 1 && ok(parts[0], 4)) return parts[0]
+	const value = raw.trim()
+	const full = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value)
+	if (full) return `${full[3]}-${full[1]}-${full[2]}`
+	const monthYear = /^(\d{2})\/(\d{4})$/.exec(value)
+	if (monthYear) return `${monthYear[2]}-${monthYear[1]}`
+	if (/^\d{4}$/.test(value)) return value
 	return null
 }
 
