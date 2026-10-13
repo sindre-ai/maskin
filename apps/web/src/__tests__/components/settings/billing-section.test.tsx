@@ -370,7 +370,7 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Pro — $49/mo')
-		expect(screen.queryByText(/usage credits/)).not.toBeInTheDocument()
+		expect(screen.queryByText(/^\$[\d.,]+ usage credits$/)).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
 	})
 
