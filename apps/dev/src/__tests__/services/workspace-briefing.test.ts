@@ -82,6 +82,17 @@ describe('buildWorkspaceStartupBlock', () => {
 		expect(block).not.toContain('app.maskin.ai')
 	})
 
+	it('tells every session to link anything it mentions inline, with a URL format per kind', () => {
+		for (const interactive of [false, true]) {
+			const block = buildWorkspaceStartupBlock({ ...args, interactive })
+			expect(block).toContain('Whenever you mention something in Maskin, link it inline')
+			expect(block).toContain('[name](https://maskin.io/ws-abc/agents/<id>)')
+			expect(block).toContain('[name](https://maskin.io/ws-abc/triggers/<id>)')
+			expect(block).toContain('[name](https://maskin.io/ws-abc/files/<id>)')
+			expect(block).toContain('[Settings](https://maskin.io/ws-abc/settings)')
+		}
+	})
+
 	it('strips a trailing slash from the frontend URL before embedding it', () => {
 		const block = buildWorkspaceStartupBlock({
 			workspaceId: 'ws-abc',
