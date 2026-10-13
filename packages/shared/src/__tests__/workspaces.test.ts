@@ -149,6 +149,28 @@ describe('workspaceSettingsSchema', () => {
 		expect(() => workspaceSettingsSchema.parse({ default_agent_id: 'not-a-uuid' })).toThrow()
 	})
 
+	it('leaves access_request_fallback_object_id undefined when not provided', () => {
+		const result = workspaceSettingsSchema.parse({})
+		expect(result.access_request_fallback_object_id).toBeUndefined()
+	})
+
+	it('accepts access_request_fallback_object_id set to a uuid or cleared to null', () => {
+		expect(
+			workspaceSettingsSchema.parse({ access_request_fallback_object_id: uuid })
+				.access_request_fallback_object_id,
+		).toBe(uuid)
+		expect(
+			workspaceSettingsSchema.parse({ access_request_fallback_object_id: null })
+				.access_request_fallback_object_id,
+		).toBeNull()
+	})
+
+	it('rejects access_request_fallback_object_id that is not a uuid', () => {
+		expect(() =>
+			workspaceSettingsSchema.parse({ access_request_fallback_object_id: 'not-a-uuid' }),
+		).toThrow()
+	})
+
 	it('accepts field_definitions', () => {
 		const result = workspaceSettingsSchema.parse({
 			field_definitions: {

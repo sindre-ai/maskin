@@ -3,9 +3,11 @@ import {
 	type AccessRequest,
 	actors,
 	messages,
+	objects,
 	workspaceMembers,
+	workspaces,
 } from '@maskin/db/schema'
-import { and, desc, eq, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, ne, sql } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import {
@@ -234,13 +236,69 @@ const WHY: Record<EscalationReason, string> = {
 	no_approver: 'No agent approver is eligible for this credential.',
 }
 
+type EscalationVia = 'initiated_object' | 'parent_loop' | 'fallback_object'
+
+/**
+ * Where the note for a human goes, first match wins: (1) the object the blocked run
+ * was started for, (2) the oldest loop whose metadata.trigger_ids holds the blocked
+ * run's trigger (the same JSONB lookup loop-escalation-reconciler.ts uses, with an
+ * oldest-first order added), (3) the object named by the workspace setting
+ * access_request_fallback_object_id. The setting counts only when it is set and the
+ * object is in this workspace. Null when nothing matches.
+ */
+async function resolveEscalationTarget(
+	db: Database,
+	request: AccessRequest,
+	blocked: Awaited<ReturnType<typeof loadBlockedSession>>,
+): Promise<{ entityId: string; via: EscalationVia } | null> {
+	if (blocked?.initiatedFromObjectId) {
+		return { entityId: blocked.initiatedFromObjectId, via: 'initiated_object' }
+	}
+
+	if (blocked?.triggerId) {
+		const [loop] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, request.workspaceId),
+					eq(objects.type, 'loop'),
+					sql`${objects.metadata}->'trigger_ids' ? ${blocked.triggerId}`,
+				),
+			)
+			.orderBy(asc(objects.createdAt), asc(objects.id))
+			.limit(1)
+		if (loop) return { entityId: loop.id, via: 'parent_loop' }
+	}
+
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, request.workspaceId))
+		.limit(1)
+	const fallbackId = (workspace?.settings as Record<string, unknown> | null)
+		?.access_request_fallback_object_id
+	if (typeof fallbackId === 'string' && fallbackId) {
+		const [fallback] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.id, fallbackId), eq(objects.workspaceId, request.workspaceId)))
+			.limit(1)
+		if (fallback) return { entityId: fallback.id, via: 'fallback_object' }
+	}
+	return null
+}
+
 /**
  * A request that ends without an agent grant goes to a human, and no grant is made
- * here. The note is a comment on the object the blocked run was started for (a task,
- * most often) that mentions the workspace's human owners, with the credential, tier,
- * duration and the reason as a quote block. A request with no such object leaves an
- * event instead. A human acts on it through approve_access_request or
- * deny_access_request; there is no one-tap card yet.
+ * here. The note is a comment that mentions the workspace's human owners, with the
+ * credential, tier, duration and the reason as a quote block. It lands on the object
+ * the blocked run was started for (a task, most often), else on the loop the run's
+ * trigger belongs to, else on the workspace's fallback object (see
+ * resolveEscalationTarget). When none of the three exists nothing is commented, and
+ * an access_request_escalation_error event says so, so the case is never silent. A
+ * human acts on it through approve_access_request or deny_access_request; there is no
+ * one-tap card yet.
  */
 export async function escalateToHuman(
 	deps: FlowDeps,
@@ -252,6 +310,7 @@ export async function escalateToHuman(
 		const { db } = deps
 		const route = await approverRoute(db, request)
 		const blocked = await loadBlockedSession(db, request)
+		const target = await resolveEscalationTarget(db, request, blocked)
 		const owners = await db
 			.select({ id: actors.id })
 			.from(workspaceMembers)
@@ -274,15 +333,31 @@ export async function escalateToHuman(
 			`Access request id: ${request.id}. A workspace owner or admin can answer with approve_access_request or deny_access_request.`,
 		].join('\n')
 
-		if (blocked?.initiatedFromObjectId) {
+		if (target) {
 			await postComment(db, {
 				workspaceId: request.workspaceId,
 				actorId: authorActorId ?? request.requesterActorId,
-				entityId: blocked.initiatedFromObjectId,
+				entityId: target.entityId,
 				content,
 				mentions: owners.map((o) => o.id),
 				attention: 3,
 				metadata: { access_request_id: request.id },
+			})
+		} else {
+			logger.error('Access request: no object to hand the request to a human on', {
+				requestId: request.id,
+			})
+			await recordEvent(db, {
+				workspaceId: request.workspaceId,
+				actorId: authorActorId ?? request.requesterActorId,
+				action: 'access_request_escalation_error',
+				entityType: 'access_request',
+				entityId: request.id,
+				data: {
+					why,
+					error: 'no_escalation_target',
+					requester_actor_id: request.requesterActorId,
+				},
 			})
 		}
 		await recordEvent(db, {
@@ -295,7 +370,8 @@ export async function escalateToHuman(
 				why,
 				integration_id: request.integrationId,
 				requester_actor_id: request.requesterActorId,
-				commented_on: blocked?.initiatedFromObjectId ?? null,
+				commented_on: target?.entityId ?? null,
+				via: target?.via ?? null,
 			},
 		})
 	} catch (err) {
