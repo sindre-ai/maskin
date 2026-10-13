@@ -67,7 +67,7 @@ export function CredentialStatusBadge({ integration }: { integration: Integratio
 	return isUnassigned(integration) ? (
 		<Badge variant="outline">Unassigned</Badge>
 	) : (
-		<Badge variant="secondary">Connected</Badge>
+		<Badge variant="secondary">Assigned</Badge>
 	)
 }
 
