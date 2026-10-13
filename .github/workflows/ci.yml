@@ -181,6 +181,48 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
+  # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
+  # Nothing else runs that script, so a change that breaks a fresh bootstrap is
+  # otherwise first noticed by the next agent whose session needs a database.
+  # Each check lives in scripts/checks/ and bootstraps into a throwaway dir.
+  dev-bootstrap-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The cache is what keeps this job off snapshot.debian.org, which is the
+      # flake risk here rather than the check itself. Keyed on the two pinned
+      # versions the script downloads; only the downloads are cached, never a
+      # data dir.
+      - name: Read devstack versions
+        id: devstack
+        run: |
+          echo "pg=$(sed -n 's/^MASKIN_PG_VERSION="${MASKIN_PG_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+          echo "weed=$(sed -n 's/^MASKIN_WEED_VERSION="${MASKIN_WEED_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache devstack downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/maskin-devstack/postgres-*
+            ~/.cache/maskin-devstack/vendor-lib-*
+            ~/.cache/maskin-devstack/weed-*
+          key: devstack-${{ runner.os }}-${{ runner.arch }}-pg${{ steps.devstack.outputs.pg }}-weed${{ steps.devstack.outputs.weed }}
+
+      - name: Fresh bootstrap is UTF8 and migrates
+        run: bash scripts/checks/fresh-db-utf8.sh
+
   verify-e2e:
     runs-on: ubuntu-latest
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard

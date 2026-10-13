@@ -15,6 +15,11 @@
 # from snapshot.debian.org's content-addressed archive instead, which never
 # prunes — see the DEB_* hash tables below.
 #
+# The cluster is created UTF8 with the C locale (initdb --encoding=UTF8
+# --locale=C), matching production and independent of the caller's LANG. An
+# existing SQL_ASCII devstack is not re-encoded: the script stops and tells
+# you to recreate it.
+#
 # Safe to re-run: every step is skipped if its output already exists.
 set -e
 set -o pipefail
@@ -117,7 +122,7 @@ export LD_LIBRARY_PATH="$PG_VENDOR_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [ ! -d "$PG_DATA" ]; then
 	echo "bootstrap-local-devstack: initializing Postgres data dir..."
-	initdb -D "$PG_DATA" -U "$PG_USER" --auth=trust >"$LOG_DIR/initdb.log" 2>&1
+	initdb -D "$PG_DATA" -U "$PG_USER" --auth=trust --encoding=UTF8 --locale=C >"$LOG_DIR/initdb.log" 2>&1
 fi
 
 if ! pg_ctl -D "$PG_DATA" status >/dev/null 2>&1; then
@@ -139,6 +144,18 @@ createdb_err="$(createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>&1)
 		exit 1
 	fi
 }
+
+# initdb only runs for a missing data dir, so an older SQL_ASCII devstack is not
+# re-encoded by the flags above. Stop rather than delete someone's data.
+# pg_dump reads the encoding from CREATE DATABASE because psql links libreadline,
+# which minimal sandboxes lack and this script does not vendor.
+cluster_encoding="$(pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" --create --schema-only "$PG_DB" |
+	sed -n "s/^CREATE DATABASE .* ENCODING = '\([^']*\)'.*/\1/p")"
+if [ "$cluster_encoding" != "UTF8" ]; then
+	echo "bootstrap-local-devstack: cluster at $PG_DATA is $cluster_encoding, expected UTF8." >&2
+	echo "This devstack predates the encoding fix. Recreate it: rm -rf '$PG_DATA' and re-run the script." >&2
+	exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # SeaweedFS
