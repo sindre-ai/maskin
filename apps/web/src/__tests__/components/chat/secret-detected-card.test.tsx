@@ -51,6 +51,14 @@ describe('VaultedCard', () => {
 		expect(screen.queryByRole('link', { name: 'View credential' })).not.toBeInTheDocument()
 	})
 
+	it('puts Retry before View credential when the restart failed', () => {
+		flags.settingsUi = true
+		renderCard({ phase: 'failed' })
+		const retry = screen.getByRole('button', { name: 'Retry' })
+		const view = screen.getByRole('link', { name: 'View credential' })
+		expect(retry.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
 	it('says Ended once undo has stopped the session', () => {
 		renderCard({ phase: 'undone', sessionEnded: true })
 		expect(screen.getByText('Ended')).toBeInTheDocument()

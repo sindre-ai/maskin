@@ -142,11 +142,6 @@ export function SecretDetectedCard({
 						Send as-is
 					</Button>
 				)}
-				{high && onSendAsIs ? (
-					<Button type="button" variant="outline" disabled={busy} onClick={onSendAsIs}>
-						Not a secret — send as-is
-					</Button>
-				) : null}
 				{!high && onEdit ? (
 					<Button type="button" variant="outline" disabled={busy} onClick={onEdit}>
 						Edit message
@@ -202,7 +197,7 @@ interface VaultedCardProps {
 	onRetry: () => void
 }
 
-const PILL = 'rounded-full border px-2 py-0.5 text-xs font-medium'
+const PILL = 'shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium'
 
 /** 7c-1 resuming, 7c-2 resumed, 7c-3 relaunch failed, 7c-4 undone. */
 export function VaultedCard({
@@ -288,6 +283,11 @@ export function VaultedCard({
 			{failed || undoAvailable || settingsUi ? (
 				<div className="flex flex-col gap-1">
 					<div className="flex flex-wrap gap-2">
+						{failed ? (
+							<Button type="button" size="sm" onClick={onRetry}>
+								Retry
+							</Button>
+						) : null}
 						{settingsUi ? (
 							<Button asChild variant="outline" size="sm">
 								<Link
@@ -296,11 +296,6 @@ export function VaultedCard({
 								>
 									View credential
 								</Link>
-							</Button>
-						) : null}
-						{failed ? (
-							<Button type="button" size="sm" onClick={onRetry}>
-								Retry
 							</Button>
 						) : null}
 						{undoAvailable ? (
