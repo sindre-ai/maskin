@@ -22781,6 +22781,9 @@
 											"type": "integer",
 											"minimum": 0
 										},
+										"credit_topup_available": {
+											"type": "boolean"
+										},
 										"linkedin_identity_addon": {
 											"type": [
 												"object",
@@ -22817,6 +22820,7 @@
 										"stripe_customer_id",
 										"stripe_subscription_id",
 										"credit_balance_cents",
+										"credit_topup_available",
 										"linkedin_identity_addon"
 									]
 								}
