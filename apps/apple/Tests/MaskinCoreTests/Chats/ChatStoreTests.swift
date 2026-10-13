@@ -689,3 +689,81 @@ struct ChatSendMetadataTests {
 		#expect(message.mentionIDs == ["m1", "m2"])
 	}
 }
+
+private actor IdleTraceSource: SessionActivitySource {
+	let turns: [ActivityTurn]
+	init(_ turns: [ActivityTurn]) { self.turns = turns }
+	func activity(sessionID: String, limitTurns: Int, background: Bool) async throws -> SessionActivity {
+		SessionActivity(sessionID: sessionID, turns: turns)
+	}
+}
+
+@Suite("ChatStore idle sessions")
+@MainActor
+struct ChatStoreIdleTests {
+	private let running = ChatAgentSession(
+		id: "s1", actorID: "relay", status: .running, startedAt: chatT0.addingTimeInterval(-900),
+		updatedAt: chatT0.addingTimeInterval(-60))
+
+	private func harness(turn: ActivityTurn, messages: [ChatMessage]) async -> ChatHarness {
+		let h = ChatHarness(server: messages, detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		let trace = ActivityStore(
+			source: IdleTraceSource([turn]), activeInterval: .seconds(60), idleInterval: .seconds(60))
+		await h.store.start()
+		h.store.trace = trace
+		if turn.isRunning {
+			await trace.update(sessions: [running])
+			_ = await eventually { trace.liveTurn(sessionID: "s1") != nil }
+		} else {
+			// History is read for sessions that aren't live; load the finished turn that way.
+			var loaded = running
+			loaded.status = .completed
+			await trace.update(sessions: [loaded])
+		}
+		trace.stop()
+		return h
+	}
+
+	private func turn(_ status: ActivityStep.Status) -> ActivityTurn {
+		ActivityTurn(sessionID: "s1", messageID: 1, status: status, containsReply: true)
+	}
+
+	@Test("a running interactive session whose turn finished is idle, not working")
+	func idleAfterReply() async {
+		let h = await harness(
+			turn: turn(.completed),
+			messages: [chatMsg(1, at: -600), chatMsg(2, by: "relay", agent: true, "done", at: -590)])
+		#expect(h.store.isIdle(running))
+		#expect(h.store.workingAgents().isEmpty)
+		#expect(h.store.liveSessions().isEmpty)
+		h.store.stop()
+	}
+
+	@Test("a turn still running keeps the session working")
+	func runningTurn() async {
+		let h = await harness(turn: turn(.running), messages: [chatMsg(1, at: -30)])
+		#expect(!h.store.isIdle(running))
+		#expect(h.store.workingAgents().map(\.id) == ["relay"])
+		h.store.stop()
+	}
+
+	@Test("a fresh message after the finished turn is not idle while the next turn spins up")
+	func freshMessage() async {
+		let h = await harness(
+			turn: turn(.completed),
+			messages: [chatMsg(1, at: -600), chatMsg(2, by: "relay", agent: true, "done", at: -590), chatMsg(3, at: -2)])
+		#expect(!h.store.isIdle(running))
+		h.store.stop()
+	}
+
+	@Test("without a trace nothing is known, so the session still counts as working")
+	func noTrace() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		await h.store.start()
+		#expect(!h.store.isIdle(running))
+		#expect(h.store.workingAgents().map(\.id) == ["relay"])
+		h.store.stop()
+	}
+}

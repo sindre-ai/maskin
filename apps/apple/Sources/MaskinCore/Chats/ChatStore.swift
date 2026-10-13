@@ -223,9 +223,34 @@ public final class ChatStore {
 			?? ChatParticipant(id: actorID, name: "An agent", kind: .agent)
 	}
 
-	/// Live agent sessions, one per agent (the newest), ignoring ones that have gone quiet.
+	/// Live agent sessions, one per agent (the newest), ignoring ones that have gone quiet and ones
+	/// that are only waiting for the next message (`isIdle`).
 	public func liveSessions(at date: Date? = nil) -> [ChatAgentSession] {
 		let t = date ?? now()
+		return runningSessions(at: t).filter { !isIdle($0, at: t) }
+	}
+
+	/// An interactive session stays `running` between turns, so its status alone can't say whether
+	/// the agent is working. It is idle when its newest traced turn has finished, nothing is
+	/// awaited from it, and no one has written to the chat since that turn began (a message
+	/// newer than the turn gets `spawnGrace` for the next turn to show up). Without a loaded trace
+	/// nothing is known, so the session counts as working.
+	public func isIdle(_ session: ChatAgentSession, at date: Date? = nil) -> Bool {
+		let t = date ?? now()
+		guard awaitingReplySince == nil,
+			let turns = trace?.turnsBySession[session.id],
+			let last = turns.max(by: { $0.messageID < $1.messageID }), !last.isRunning
+		else { return false }
+		let newerFromOthers = messages.contains { message in
+			guard message.kind == "message", message.actorID != session.actorID else { return false }
+			guard message.serverID == nil || (message.serverID ?? 0) > last.messageID else { return false }
+			guard let created = message.createdAt else { return message.serverID == nil }
+			return t.timeIntervalSince(created) < spawnGrace
+		}
+		return !newerFromOthers
+	}
+
+	private func runningSessions(at t: Date) -> [ChatAgentSession] {
 		var seen: Set<String> = []
 		return agentSessions.filter { session in
 			guard session.status.isLive else { return false }
@@ -339,7 +364,7 @@ public final class ChatStore {
 
 	/// Only poll sessions while something could change: an agent is running or a reply is due.
 	private var needsSessionPoll: Bool {
-		!liveSessions().isEmpty || awaitingReplySince != nil || hasLiveSpawnedSession
+		!runningSessions(at: now()).isEmpty || awaitingReplySince != nil || hasLiveSpawnedSession
 	}
 
 	/// A handoff row is still queued or working: its state only reaches us through the messages.
