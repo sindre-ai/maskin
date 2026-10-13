@@ -104,6 +104,8 @@ export default defineConfig(async () => ({
 			'/api': {
 				target: 'http://localhost:3000',
 				changeOrigin: true,
+				// Voice calls open a WebSocket at /api/voice-sessions/:id/events.
+				ws: true,
 			},
 			'/mcp': {
 				target: 'http://localhost:3000',
@@ -123,6 +125,8 @@ export default defineConfig(async () => ({
 			'/api': {
 				target: 'http://localhost:3000',
 				changeOrigin: true,
+				// Voice calls open a WebSocket at /api/voice-sessions/:id/events.
+				ws: true,
 			},
 			'/mcp': {
 				target: 'http://localhost:3000',
