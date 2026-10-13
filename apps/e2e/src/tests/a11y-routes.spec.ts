@@ -59,10 +59,6 @@ const ROUTES: RouteSpec[] = [
 		path: () => '/signup',
 	},
 	{
-		label: 'workspace picker',
-		path: () => '/workspaces',
-	},
-	{
 		label: 'for-you (workspace landing)',
 		path: (ctx) => `/${ctx.workspaceId}`,
 		setup: async (ctx) => {
