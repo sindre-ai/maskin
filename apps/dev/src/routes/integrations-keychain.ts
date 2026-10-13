@@ -1,11 +1,13 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { credentialAccessLog, integrations } from '@maskin/db/schema'
-import { and, desc, eq, lt, sql } from 'drizzle-orm'
+import { credentialAccessLog, integrations, workspaceMembers } from '@maskin/db/schema'
+import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { findDefaultApproverId } from '../lib/integrations/access-requests'
 import { BYO_APIKEY_PROVIDER, createByoApiKey } from '../lib/integrations/byo-apikey'
 import {
 	CHAT_CAPTURE_PROVIDERS,
@@ -13,6 +15,7 @@ import {
 	captureChatSecret,
 } from '../lib/integrations/chat-capture'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { formatCredentialLogDetail } from '../lib/integrations/credential-log-detail'
 import { CredentialNameError } from '../lib/integrations/credential-name'
 import { rotateIntegrationDek } from '../lib/integrations/rotate-dek'
 import { getKmsProvider } from '../lib/keychain-kms'
@@ -551,6 +554,169 @@ app.openapi(rotateDekRoute, (async (c) => {
 	}
 	return c.json({ id, status: 'rotated' as const }, 200)
 }) as RouteHandler<typeof rotateDekRoute, Env>)
+
+// ── PUT /api/integrations/:id/tier ───────────────────────────────────────
+
+const tierBodySchema = z
+	.object({
+		tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+		/** The agent that decides Tier 1 requests. Omit to keep the stored one, or default to the CTO. */
+		approverActorId: z.string().uuid().optional(),
+		/** Fallback approvers when the approver is the requester. Omit to keep the stored list. */
+		secondApproverActorIds: z.array(z.string().uuid()).max(5).optional(),
+	})
+	.strict()
+
+const tierResponseSchema = z.object({
+	id: z.string().uuid(),
+	tier: z.number().int(),
+	approverActorId: z.string().uuid().nullable(),
+	secondApproverActorIds: z.array(z.string().uuid()),
+	changed: z.boolean(),
+})
+
+const tierRoute = createRoute({
+	method: 'put',
+	path: '/{id}/tier',
+	tags: ['integrations'],
+	summary: 'Set the risk tier of a credential (humans only)',
+	description:
+		"Tier 1 lets agents use everything this key can do. Mark Tier 1 only on keys that are read-only in the vendor's own settings. Unset counts as Tier 2.",
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: tierBodySchema } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'Tier set. changed is false when nothing differed',
+			content: { 'application/json': { schema: tierResponseSchema } },
+		},
+		400: {
+			description: 'An approver is not a member of this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Only a human workspace admin or owner can set a tier',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'The credential is not active',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(tierRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	// The actor type comes from the actor row behind the API key, never from the
+	// request. An agent key, the CTO's included, stops here.
+	if (
+		c.get('actorType') !== 'human' ||
+		!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only a human workspace admin or owner can set a credential tier',
+			),
+			403,
+		)
+	}
+
+	const named = [...new Set([body.approverActorId, ...(body.secondApproverActorIds ?? [])])].filter(
+		(v): v is string => !!v,
+	)
+	if (named.length > 0) {
+		const members = await db
+			.select({ actorId: workspaceMembers.actorId })
+			.from(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					inArray(workspaceMembers.actorId, named),
+				),
+			)
+		if (members.length !== named.length) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'Every approver must be a member of this workspace'),
+				400,
+			)
+		}
+	}
+
+	const outcome = await db.transaction(async (tx) => {
+		const [row] = await tx
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+			.for('update')
+			.limit(1)
+		if (!row) return { kind: 'not_found' as const }
+		if (row.status !== 'active' && row.status !== 'pending_undo')
+			return { kind: 'inactive' as const }
+
+		const approverActorId =
+			body.approverActorId ??
+			row.approverActorId ??
+			(body.tier === 1 ? await findDefaultApproverId(tx, workspaceId) : null)
+		const secondApproverActorIds = body.secondApproverActorIds ?? row.secondApproverActorIds
+		const tierChanged = row.tier !== body.tier
+		const approversChanged =
+			approverActorId !== row.approverActorId ||
+			JSON.stringify(secondApproverActorIds) !== JSON.stringify(row.secondApproverActorIds)
+		const result = { id: row.id, tier: body.tier, approverActorId, secondApproverActorIds }
+		if (!tierChanged && !approversChanged) return { kind: 'ok' as const, changed: false, ...result }
+
+		await tx
+			.update(integrations)
+			.set({ tier: body.tier, approverActorId, secondApproverActorIds, updatedAt: new Date() })
+			.where(eq(integrations.id, row.id))
+
+		// Every tier change lands on the audit chain, in the transaction that makes it.
+		// The detail carries the new tier only, through the one canonical writer.
+		if (tierChanged) {
+			await insertCredentialAccessLog(tx, {
+				workspaceId,
+				integrationId: row.id,
+				actorId: callerId,
+				action: 'tier_changed',
+				source: row.source,
+				requestId: `tier-change:${row.id}:${randomUUID()}`,
+				detail: formatCredentialLogDetail({ tier: body.tier }),
+			})
+		}
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: row.id,
+			data: {
+				provider: row.provider,
+				tier_from: row.tier,
+				tier_to: body.tier,
+				approvers_changed: approversChanged,
+			},
+		})
+		return { kind: 'ok' as const, changed: true, ...result }
+	})
+
+	if (outcome.kind === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+	}
+	if (outcome.kind === 'inactive') {
+		return c.json(createApiError('CONFLICT', 'This credential is not active'), 409)
+	}
+	const { kind: _kind, ...result } = outcome
+	return c.json(result, 200)
+}) as RouteHandler<typeof tierRoute, Env>)
 
 // ── GET /api/integrations/:id/audit-log ──────────────────────────────────
 
