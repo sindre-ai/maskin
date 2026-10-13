@@ -123,6 +123,13 @@ export const workspaceResponseSchema = z.object({
 	id: z.string().uuid(),
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
+	// Whether a BYO key is stored, for every caller. Only a human admin or owner
+	// gets llm_keys, custom_llm, claude_oauth and billing inside settings.
+	llm_configured: z.object({
+		anthropic: z.boolean(),
+		openai: z.boolean(),
+		custom_llm: z.boolean(),
+	}),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
 	// column OR an enterprise billing owner), not the raw column. Derived, so it
