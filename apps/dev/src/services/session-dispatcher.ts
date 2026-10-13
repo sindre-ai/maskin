@@ -13,6 +13,9 @@ import {
 import type { DispatchResult } from './session-dispatch-queue'
 
 const TERMINAL_STATUSES: readonly string[] = ['completed', 'failed', 'timeout', 'user_stopped']
+const DISPATCHABLE_STATUSES: readonly string[] = ['pending', 'queued', 'starting']
+
+type ClaimResult = 'claimed' | 'server_full' | 'not_dispatchable'
 
 /**
  * Routes a session-start over HTTPS to the least-loaded `active`
@@ -25,8 +28,10 @@ const TERMINAL_STATUSES: readonly string[] = ['completed', 'failed', 'timeout', 
  * `no_capacity` so the queue parks the row at its backoff.
  *
  * The session row's `agent_server_id` is set BEFORE the POST so any concurrent
- * dispatcher sees the slot consumed when computing load. If the POST fails the
- * field is rolled back, freeing the slot before the queue retries.
+ * dispatcher sees the slot consumed when computing load. The set is one
+ * conditional UPDATE that also checks the server's capacity (see `claimSlot`),
+ * so a stale pick cannot push a server past `max_concurrent_sessions`. If the
+ * POST fails the field is rolled back, freeing the slot before the queue retries.
  *
  * If a dispatch attempt is interrupted after claiming a slot but before it
  * either completes or rolls back (e.g. the process is killed mid-dispatch by
@@ -100,8 +105,17 @@ export class SessionDispatcher {
 			return { kind: 'no_capacity' }
 		}
 
-		const claimed = await this.claimSlot(sessionId, picked.server.id)
-		if (!claimed) {
+		const claim = await this.claimSlot(sessionId, picked.server.id)
+		if (claim === 'server_full') {
+			// Another dispatch took the last slot between our pick and our claim.
+			// Nothing was written, so park the row like any other full pool.
+			logger.info('Agent-server filled up before the slot claim', {
+				sessionId,
+				agentServerId: picked.server.id,
+			})
+			return { kind: 'no_capacity' }
+		}
+		if (claim === 'not_dispatchable') {
 			// The session row is gone or already terminal — refuse the dispatch
 			// permanently so the queue stops retrying.
 			return {
@@ -357,23 +371,67 @@ export class SessionDispatcher {
 	}
 
 	/**
-	 * Claim the session's slot on `serverId` if it is still pending/queued/
-	 * starting and not yet pinned to another server. Idempotent: re-claiming
-	 * the same (session, server) returns the row again.
+	 * Claim the session's slot on `serverId` in one conditional UPDATE: the row
+	 * gets `agent_server_id` only if it is still pending/queued/starting, not
+	 * pinned to another server, and the server's other starting/running sessions
+	 * number fewer than its `max_concurrent_sessions` at the moment of the update.
+	 * The count excludes this session, so re-claiming the same (session, server)
+	 * stays idempotent and a sticky retry never needs a second slot.
+	 *
+	 * Under READ COMMITTED, two concurrent UPDATEs for different sessions each
+	 * count against their own snapshot and would both pass the check. The
+	 * per-server advisory lock serializes them; the UPDATE is a separate
+	 * statement so it takes a fresh snapshot that sees the previous claim.
+	 *
+	 * `claimed` — the slot is held. `server_full` — the session is dispatchable
+	 * but the server has no free slot (or is no longer active); nothing was
+	 * written. `not_dispatchable` — the session row is gone, terminal, or pinned
+	 * elsewhere. The follow-up read only picks which of the last two to report.
 	 */
-	private async claimSlot(sessionId: string, serverId: string): Promise<boolean> {
-		const [row] = await this.db
-			.update(sessions)
-			.set({ agentServerId: serverId, updatedAt: new Date() })
-			.where(
-				and(
-					eq(sessions.id, sessionId),
-					inArray(sessions.status, ['pending', 'queued', 'starting']),
-					sql`(${sessions.agentServerId} IS NULL OR ${sessions.agentServerId} = ${serverId})`,
-				),
+	private async claimSlot(sessionId: string, serverId: string): Promise<ClaimResult> {
+		const claimed = await this.db.transaction(async (tx) => {
+			await tx.execute(
+				sql`SELECT pg_advisory_xact_lock(hashtextextended(${`agent_server_slot:${serverId}`}::text, 0))`,
 			)
-			.returning({ id: sessions.id })
-		return Boolean(row)
+			const [row] = await tx
+				.update(sessions)
+				.set({ agentServerId: serverId, updatedAt: new Date() })
+				.where(
+					and(
+						eq(sessions.id, sessionId),
+						inArray(sessions.status, ['pending', 'queued', 'starting']),
+						sql`(${sessions.agentServerId} IS NULL OR ${sessions.agentServerId} = ${serverId})`,
+						// Literal, table-qualified columns: see the correlated-subquery entry
+						// in .claude/rules/known-pitfalls.md.
+						sql`(
+							SELECT COUNT(*)
+							FROM sessions AS held
+							WHERE held.agent_server_id = ${serverId}::uuid
+							  AND held.status IN ('starting','running')
+							  AND held.id <> sessions.id
+						) < (
+							SELECT agent_servers.max_concurrent_sessions
+							FROM agent_servers
+							WHERE agent_servers.id = ${serverId}::uuid
+							  AND agent_servers.status = 'active'
+						)`,
+					),
+				)
+				.returning({ id: sessions.id })
+			return Boolean(row)
+		})
+		if (claimed) return 'claimed'
+
+		const [session] = await this.db
+			.select({ status: sessions.status, agentServerId: sessions.agentServerId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		const dispatchable =
+			session !== undefined &&
+			DISPATCHABLE_STATUSES.includes(session.status) &&
+			(session.agentServerId === null || session.agentServerId === serverId)
+		return dispatchable ? 'server_full' : 'not_dispatchable'
 	}
 
 	private async releaseSlot(sessionId: string, serverId: string): Promise<void> {
