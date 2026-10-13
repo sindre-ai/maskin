@@ -45,6 +45,19 @@ describe('buildLiveActivityPayload', () => {
 		expect(aps.timestamp).toBe(Math.floor(NOW_MS / 1000))
 	})
 
+	it('adds an optional, clamped topic and omits it when blank', () => {
+		const state = (topic: string | null | undefined) =>
+			(
+				buildLiveActivityPayload({ ...base, event: 'update', topic }, NOW_MS) as {
+					aps: { 'content-state': Record<string, unknown> }
+				}
+			).aps['content-state']
+		expect(state('  Q3 pricing  ').topic).toBe('Q3 pricing')
+		expect((state('x'.repeat(200)).topic as string).length).toBeLessThanOrEqual(60)
+		expect('topic' in state('   ')).toBe(false)
+		expect('topic' in state(null)).toBe(false)
+	})
+
 	it('encodes startedAt as seconds since the Swift reference date', () => {
 		expect(toSwiftReferenceSeconds(new Date('2001-01-01T00:00:00Z'))).toBe(0)
 		const { aps } = buildLiveActivityPayload({ ...base, event: 'update' }, NOW_MS) as {

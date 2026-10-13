@@ -8,6 +8,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { flushPendingLiveActivityEnd } from '../services/live-activity-push'
 import { resolveAuditWorkspace } from './devices'
 
 type Env = {
@@ -150,6 +151,10 @@ app.openapi(registerRoute, async (c) => {
 		row.createdAt.getTime() === now.getTime() ? 'created' : 'updated',
 		row,
 	)
+	// The session may have ended before this token existed: send the end that had nowhere to go.
+	if (row.kind === 'update' && row.sessionId) {
+		await flushPendingLiveActivityEnd(row.sessionId, actorId)
+	}
 	return c.json(serialize(row), 200)
 })
 
