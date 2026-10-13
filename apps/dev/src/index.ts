@@ -9,6 +9,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
+import { KeychainGrantExpirySweeperJob } from './jobs/keychain-grant-expiry-sweeper'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
@@ -233,6 +234,12 @@ const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
 keychainUndoSweeperJob.start()
 logger.info('Keychain undo sweeper started')
 
+// Keychain: writes one grant_expired audit row per expired access-request grant.
+// Expiry itself is enforced at read time; this job only records it.
+const keychainGrantExpirySweeperJob = new KeychainGrantExpirySweeperJob(db)
+keychainGrantExpirySweeperJob.start()
+logger.info('Keychain grant expiry sweeper started')
+
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
 // unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
 const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
@@ -382,6 +389,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
+	keychainGrantExpirySweeperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()
