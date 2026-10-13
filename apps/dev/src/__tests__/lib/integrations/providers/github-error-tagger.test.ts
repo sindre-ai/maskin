@@ -78,6 +78,18 @@ describe('classifyGithubError — primary tag', () => {
 		expect(out.cause_tag).toBe('schema-validation')
 	})
 
+	it('tags 404-not-found on a 404 instead of falling back to schema-validation', () => {
+		const out = classifyGithubError(
+			{
+				hadToken: true,
+				status: 404,
+				body: 'failed to get pull request: GET https://api.github.com/repos/sindre-ai/maskin/pulls/99999999: 404 Not Found []',
+			},
+			{ now },
+		)
+		expect(out.cause_tag).toBe('404-not-found')
+	})
+
 	it('tags mergeable-blocked on 409 with mergeability hints', () => {
 		const out = classifyGithubError(
 			{
