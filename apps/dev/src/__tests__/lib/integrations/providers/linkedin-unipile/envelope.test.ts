@@ -14,6 +14,7 @@ describe('readUnipileEnvelope', () => {
 			type: 'message.new',
 			accountId: 'acc_1',
 			envelopeId: 'evt_1',
+			createdAt: '2026-10-04T10:00:00.000Z',
 			resource: { id: 'msg_1' },
 		})
 	})
@@ -37,7 +38,7 @@ describe('readUnipileEnvelope', () => {
 	})
 
 	it('returns nulls for anything that is not an object or has empty fields', () => {
-		const empty = { type: null, accountId: null, envelopeId: null, resource: null }
+		const empty = { type: null, accountId: null, envelopeId: null, createdAt: null, resource: null }
 		expect(readUnipileEnvelope(null)).toEqual(empty)
 		expect(readUnipileEnvelope('x')).toEqual(empty)
 		expect(readUnipileEnvelope([])).toEqual(empty)

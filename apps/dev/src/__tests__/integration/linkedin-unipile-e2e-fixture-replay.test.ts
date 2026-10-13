@@ -526,9 +526,7 @@ describe('sweep comparison over the fixture set', () => {
 		await replay(relationNewFixture)
 
 		const received = (await eventsOf('linkedin.message')).filter((e) => e.action === 'received')
-		const webhookInbound = received
-			.map((e) => (e.data as { message_id: string }).message_id)
-			.sort()
+		const webhookInbound = received.map((e) => (e.data as { message_id: string }).message_id).sort()
 
 		const mailbox = await listLinkedInMessages({ db, actorId, workspaceId }, { thread_id: CHAT_ID })
 		const sweepInbound = mailbox.messages

@@ -280,7 +280,7 @@ describe('relation.new classification', () => {
 
 	it('drops a payload with no id as malformed_payload without a 5xx', async () => {
 		const body = relationNew()
-		delete (body.payload as Record<string, unknown>).id
+		(body.payload as Record<string, unknown>).id = undefined
 
 		const res = await deliver(body)
 		expect(res.status).toBe(200)
