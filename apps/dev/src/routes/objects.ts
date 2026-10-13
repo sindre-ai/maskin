@@ -1157,7 +1157,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		connectedObjects = await db
 			.select()
 			.from(objects)
-			.where(inArray(objects.id, [...connectedIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...connectedIds])))
 	}
 
 	// Fetch recent activity + comments for this object. Events use the object's
@@ -1248,7 +1248,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		else if (rel.targetType === 'session') provenanceSessionIds.add(rel.targetId)
 	}
 	if (provenanceConversationIds.size > 0 || provenanceSessionIds.size > 0) {
-		const provenanceTitles = await resolveEndpointTitles(db, {
+		const provenanceTitles = await resolveEndpointTitles(db, workspaceId, {
 			conversationIds: [...provenanceConversationIds],
 			sessionIds: [...provenanceSessionIds],
 		})
