@@ -29,12 +29,17 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 	public private(set) var transcript = ""
 	public private(set) var isMuted = false
 
-	/// How long you must stop talking before what you said is sent.
-	public var silenceWindow: TimeInterval = 1.2
-	/// A lone word ("yes", "no") waits a little longer, in case more is coming.
+	/// How long you must stop talking before what you said is sent. People pause to think mid
+	/// sentence, so this is generous; the shorter and longer windows below adapt it to what was said.
+	public var silenceWindow: TimeInterval = 2.4
+	/// The words end like a finished sentence ("…at the moment?"): a shorter pause will do.
+	public var sentenceEndWindow: TimeInterval = 1.3
+	/// The words trail off like a half-said thought ("tell me what", "and", a comma): wait longer.
+	public var unfinishedWindow: TimeInterval = 4.5
+	/// A lone "yes" / "no" is an answer on its own.
 	public var singleWordWindow: TimeInterval = 1.6
-	/// When the recogniser itself says the utterance is final, there is no need to wait long.
-	public var finalWindow: TimeInterval = 0.4
+	/// The recogniser calling the utterance final shortens the wait, but never for an unfinished one.
+	public var finalWindow: TimeInterval = 1.0
 	/// How many words not coming from the agent's own voice it takes to cut the agent off.
 	public var bargeInWords = 2
 	/// How long to wait for a reply before listening again.
@@ -98,9 +103,7 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 				}
 				return out
 			}
-			let window =
-				transcriptIsFinal ? finalWindow : (words.count == 1 ? singleWordWindow : silenceWindow)
-			guard quiet >= window else { return out }
+			guard quiet >= window(for: text, words: words) else { return out }
 			transcript = ""
 			lastHeardAt = nil
 			transcriptIsFinal = false
@@ -110,6 +113,30 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 		case .speaking:
 			return []
 		}
+	}
+
+	/// Send what has been heard now, without waiting out the pause ("Send now").
+	public mutating func commitNow(at now: Date) -> [Command] {
+		guard !isMuted, phase == .listening || phase == .thinking, let text = pendingText else { return [] }
+		transcript = ""
+		lastHeardAt = nil
+		transcriptIsFinal = false
+		phase = .thinking
+		thinkingSince = now
+		return [.resetTranscript, .send(text)]
+	}
+
+	/// How long to be quiet before `text` counts as finished.
+	func window(for text: String, words: [String]) -> TimeInterval {
+		let last = words.last ?? ""
+		let trailsOff =
+			text.hasSuffix(",") || text.hasSuffix(":") || text.hasSuffix(";") || text.hasSuffix("-")
+			|| text.hasSuffix("…") || Self.unfinishedEndings.contains(last)
+		if trailsOff { return unfinishedWindow }
+		if transcriptIsFinal { return finalWindow }
+		let ended = text.hasSuffix(".") || text.hasSuffix("?") || text.hasSuffix("!")
+		if words.count == 1 { return Self.shortAnswers.contains(last) || ended ? singleWordWindow : silenceWindow }
+		return ended ? sentenceEndWindow : silenceWindow
 	}
 
 	/// An agent message arrived. While waiting for one it starts being read; while one is being read
@@ -177,6 +204,20 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 	}
 
 	// MARK: Words
+
+	static let shortAnswers: Set<String> = [
+		"yes", "no", "yeah", "yep", "nope", "okay", "ok", "sure", "stop", "thanks", "continue", "next",
+	]
+
+	/// Words a finished thought does not end on.
+	static let unfinishedEndings: Set<String> = [
+		"and", "but", "so", "or", "because", "if", "when", "while", "that", "which", "who", "whom", "whose",
+		"the", "a", "an", "to", "of", "than",
+		"what", "how", "why", "where", "whether", "some", "any", "are", "is", "was", "were", "be", "can",
+		"could", "would", "should", "will", "do", "does", "did", "have", "has", "my", "your", "our", "their",
+		"its", "i", "i'm", "i'd", "i'll", "we", "you", "they", "then", "also", "like", "um", "uh", "umm", "uhh",
+		"as", "not", "just", "tell", "show", "give", "send", "list",
+	]
 
 	static let fillers: Set<String> = ["um", "uh", "umm", "uhh", "hmm", "hm", "mm", "mmm", "er", "ah", "eh"]
 

@@ -93,6 +93,9 @@ final class LiveVoiceController {
 		isActive = false
 	}
 
+	/// Send what has been heard now instead of waiting out the pause.
+	func sendNow() { run(machine.commitNow(at: ports.now())) }
+
 	func toggleMute() { run(machine.setMuted(!machine.isMuted)) }
 
 	/// Stop the agent talking and listen at once.
@@ -180,7 +183,7 @@ final class LiveVoiceController {
 			case .stopListening: ports.stopListening()
 			case .resetTranscript: ports.resetTranscript()
 			case .send(let text): send(text)
-			case .speak(let id): ports.speak(id, texts[id] ?? "")
+			case .speak(let id): ports.speak(id, SpokenReply.text(from: texts[id] ?? ""))
 			case .stopSpeaking: ports.stopSpeaking()
 			}
 		}

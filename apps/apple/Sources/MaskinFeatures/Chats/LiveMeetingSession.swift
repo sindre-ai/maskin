@@ -22,6 +22,13 @@ final class LiveMeetingSession {
 	private(set) var routeName = ""
 
 	@ObservationIgnored private let now: () -> Date
+	@ObservationIgnored private let log: LiveCallLog
+	/// The call's record id, set when it begins; the send closure built in `init` reads it.
+	@ObservationIgnored private let callRef: CallRef
+
+	final class CallRef: @unchecked Sendable {
+		@MainActor var id: String?
+	}
 	#if os(iOS)
 	@ObservationIgnored private let audio = LiveAudioSession()
 	#endif
@@ -30,13 +37,20 @@ final class LiveMeetingSession {
 	init(
 		kind: LiveMeetingKind, chat: ChatStore, lead: ChatParticipant,
 		makePorts: (@escaping @MainActor (String) -> Void) -> LiveVoiceController.Ports,
-		now: @escaping () -> Date = { Date() }
+		now: @escaping () -> Date = { Date() }, log: LiveCallLog = .shared
 	) {
+		self.log = log
 		self.kind = kind
 		self.chat = chat
 		self.lead = lead
 		self.now = now
-		voice = LiveVoiceController(ports: makePorts { [chat] text in _ = chat.send(text) })
+		let call = CallRef()
+		callRef = call
+		voice = LiveVoiceController(
+			ports: makePorts { [chat] text in
+				_ = chat.send(text)
+				if let id = call.id { log.update(id) { $0.spoken.append(text.trimmingCharacters(in: .whitespacesAndNewlines)) } }
+			})
 		voice.agentName = lead.name
 	}
 
@@ -51,6 +65,10 @@ final class LiveMeetingSession {
 	func begin() {
 		guard startedAt == nil else { return }
 		startedAt = now()
+		let record = LiveCallRecord(
+			conversationID: chat.conversationID, leadName: lead.name, startedAt: startedAt ?? now())
+		callRef.id = record.id
+		log.save(record)
 		#if os(iOS)
 		SpeechReader.shared.usesExternalAudioSession = true
 		do {
@@ -159,10 +177,16 @@ final class LiveMeetingSession {
 		audio.deactivate()
 		SpeechReader.shared.usesExternalAudioSession = false
 		#endif
-		guard kind.postsNote else { return }
-		let title = LiveMeetingFormat.endNote(
-			lead: lead.name, guests: guests.map(\.name), seconds: elapsed(at: finished))
-		// Every line was posted as it was said; the note summarises them rather than repeating them.
-		_ = chat.send(LiveMeetingNote.summary(title: title, turns: voice.turns).markdown)
+		// Nothing is posted for the call itself: every line went into the thread as it was said, and a
+		// message from you saying "Live meeting…" would read as speech and make the agent answer it.
+		// The thread shows the call (section header, LIVE markers, summary card) from the messages
+		// inside this window.
+		if let id = callRef.id {
+			let names = guests.map(\.name)
+			log.update(id) {
+				$0.endedAt = finished
+				$0.guests = names
+			}
+		}
 	}
 }

@@ -190,6 +190,9 @@ private struct LiveMeetingContent: View {
 			}
 			Text(statusLine).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				.multilineTextAlignment(.center)
+			if !session.voice.transcript.isEmpty, session.voice.phase != .speaking {
+				Button("Send now") { session.voice.sendNow() }.buttonStyle(.bordered)
+			}
 			if !session.guests.isEmpty { guestChips }
 		}
 		.onTapGesture { if session.voice.phase == .speaking { session.voice.interrupt() } }
