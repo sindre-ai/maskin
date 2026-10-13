@@ -22,6 +22,7 @@ import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { CapabilityScanner } from './services/capability-scanner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -239,6 +240,13 @@ logger.info('Loop escalation reconciler started')
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
+
+// Daily capability scan, shadow mode. A server job with no model call. Does
+// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
+// capability-scan.
+const capabilityScanner = new CapabilityScanner(db)
+capabilityScanner.start()
+logger.info('Capability scanner started')
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
