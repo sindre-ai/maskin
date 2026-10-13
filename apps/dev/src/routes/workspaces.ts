@@ -6,6 +6,7 @@ import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
 	WORKSPACE_COACH_DEFAULT,
+	WORKSPACE_UPDATE_DIFF_FIELDS,
 	computeChanges,
 	createWorkspaceSchema,
 	transferBillingOwnershipSchema,
@@ -35,6 +36,7 @@ import {
 	isWorkspaceMember,
 	isWorkspaceOwner,
 } from '../lib/workspace-auth'
+import { workspaceForCaller } from '../lib/workspace-redaction'
 import {
 	OwnershipCapExceededError,
 	SeatCapExceededError,
@@ -96,11 +98,18 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * column OR an enterprise billing owner). Every single-row workspace response
  * goes through this, so a route can't leak the raw grant flag or disagree with
  * the list route about who is enterprise.
+ *
+ * The admin-only settings keys (llm_keys, custom_llm, claude_oauth, billing) are only
+ * included when `callerIsHumanAdminOrOwner` is true; see workspace-redaction.ts.
  */
 function serializeWorkspace<
-	T extends { enterpriseGranted: boolean | null; billingOwnerId: string | null },
->(row: T) {
-	const { enterpriseGranted, ...rest } = row
+	T extends {
+		enterpriseGranted: boolean | null
+		billingOwnerId: string | null
+		settings: unknown
+	},
+>(row: T, callerIsHumanAdminOrOwner: boolean) {
+	const { enterpriseGranted, ...rest } = workspaceForCaller(row, callerIsHumanAdminOrOwner)
 	return serialize({ ...rest, enterprise: isEnterprise(row) })
 }
 
@@ -215,7 +224,14 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
 
-	return c.json(serializeWorkspace(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
+	// The creator is the owner of the new workspace; an agent creating one (MCP
+	// create_workspace) still gets the redacted view.
+	return c.json(
+		serializeWorkspace(workspace, c.get('actorType') !== 'agent') as z.infer<
+			typeof workspaceResponseSchema
+		>,
+		201,
+	)
 })
 
 // GET /api/workspaces
@@ -262,8 +278,9 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	// billing owner is entitled on every workspace they own without a
 	// per-workspace grant. This list is the only place the frontend reads the
 	// flag from, so it gates the whole settings UI.
+	const callerIsHuman = c.get('actorType') !== 'agent'
 	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
-		...row,
+		...workspaceForCaller(row, callerIsHuman && (row.role === 'owner' || row.role === 'admin')),
 		enterprise: isEnterprise({ ...row, enterpriseGranted }),
 	}))
 
@@ -297,6 +314,14 @@ app.openapi(listWorkspacesRoute, async (c) => {
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
 })
+
+/** Top-level keys whose value differs between two settings objects. Names only, never values. */
+function changedKeys(before: Record<string, unknown>, after: unknown): string[] {
+	const next = (after ?? {}) as Record<string, unknown>
+	return [...new Set([...Object.keys(before), ...Object.keys(next)])].filter(
+		(key) => !isDeepStrictEqual(before[key], next[key]),
+	)
+}
 
 type SettingsPatch = NonNullable<z.infer<typeof updateWorkspaceSchema>['settings']>
 
@@ -398,7 +423,8 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		? pickChangedAdminSettings(body.settings, existingSettings)
 		: { settings: undefined, changed: false }
 	const changesName = body.name !== undefined && body.name !== existing.name
-	if ((changesName || changesLlm) && !(await isWorkspaceHumanAdminOrOwner(db, actorId, id))) {
+	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
+	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
 		return c.json(
 			createApiError(
 				'FORBIDDEN',
@@ -509,10 +535,23 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		action: 'updated',
 		entityType: 'workspace',
 		entityId: id,
-		data: { updated },
+		// Field names only: the row holds credentials in settings, and agents can
+		// read this event through get_events.
+		data: {
+			changes: computeChanges(
+				existing as unknown as Record<string, unknown>,
+				updated as unknown as Record<string, unknown>,
+				WORKSPACE_UPDATE_DIFF_FIELDS,
+			),
+			changed_settings_keys: changedKeys(existingSettings, updated.settings),
+		},
 	})
 
-	return c.json(serializeWorkspace(updated) as z.infer<typeof workspaceResponseSchema>)
+	return c.json(
+		serializeWorkspace(updated, callerIsHumanAdminOrOwner) as z.infer<
+			typeof workspaceResponseSchema
+		>,
+	)
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
 
 /**
@@ -700,7 +739,12 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		data: { changes },
 	})
 
-	return c.json(serializeWorkspace(updated) as z.infer<typeof workspaceResponseSchema>)
+	// Owner by the check above; an agent holding the owner role still gets the redacted view.
+	return c.json(
+		serializeWorkspace(updated, c.get('actorType') !== 'agent') as z.infer<
+			typeof workspaceResponseSchema
+		>,
+	)
 }) as RouteHandler<typeof updateWorkspaceOnboardingRoute, Env>)
 
 // POST /api/workspaces/:id/members
@@ -1035,7 +1079,9 @@ app.openapi(transferOwnershipRoute, (async (c) => {
 		}
 		case 'transferred':
 			return c.json(
-				serializeWorkspace(outcome.workspace) as z.infer<typeof workspaceResponseSchema>,
+				serializeWorkspace(outcome.workspace, c.get('actorType') !== 'agent') as z.infer<
+					typeof workspaceResponseSchema
+				>,
 				200,
 			)
 	}
