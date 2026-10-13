@@ -23,11 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import {
-	useCredentialAuditLog,
-	useIntegrations,
-	useUpdateKeyScope,
-} from '@/hooks/use-integrations'
+import { useCredentialAuditLog, useIntegrations, useUpdateKeyScope } from '@/hooks/use-integrations'
 import type { CredentialAuditEntry } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -47,6 +43,19 @@ const ACTION_LABELS: Record<CredentialAuditEntry['action'], string> = {
 	rotated: 'ROTATED',
 	sweeper_activated: 'ACTIVATED',
 	scope_changed: 'SCOPE CHANGED',
+	tier_changed: 'TIER CHANGED',
+	grant_requested: 'GRANT REQUESTED',
+	grant_approved: 'GRANT APPROVED',
+	grant_denied: 'GRANT DENIED',
+	grant_expired: 'GRANT EXPIRED',
+	grant_revoked: 'GRANT REVOKED',
+}
+
+// A tolerant read of the tier in the detail text. Anything but tier=1|2|3 gives null,
+// and no other part of the text is ever shown.
+function tierFromDetail(detail: string | null | undefined): 1 | 2 | 3 | null {
+	const match = detail?.match(/(?:^|;)tier=([123])(?:;|$)/)
+	return match ? (Number(match[1]) as 1 | 2 | 3) : null
 }
 
 function sessionLabel(sessionId: string): string {
@@ -98,6 +107,20 @@ function AuditEntryText({
 			return <>The undo window closed. This credential is now permanent.</>
 		case 'scope_changed':
 			return <>{actorName} changed which agents can use this credential.</>
+		case 'tier_changed': {
+			const tier = tierFromDetail(entry.detail)
+			return <>Tier changed{tier !== null && <> to {tier}</>}</>
+		}
+		case 'grant_requested':
+			return <>Access to this credential was requested.</>
+		case 'grant_approved':
+			return <>Access to this credential was approved.</>
+		case 'grant_denied':
+			return <>Access to this credential was denied.</>
+		case 'grant_expired':
+			return <>An access grant for this credential expired.</>
+		case 'grant_revoked':
+			return <>An access grant for this credential was revoked.</>
 	}
 }
 
@@ -171,7 +194,7 @@ function CredentialDetailPage() {
 				</div>
 			</div>
 
-			<div className="grid gap-4 md:grid-cols-[1fr_240px]">
+			<div className="grid gap-4 lg:grid-cols-[1fr_240px]">
 				<section
 					aria-labelledby="audit-log-heading"
 					className="min-w-0 rounded-lg border border-border"

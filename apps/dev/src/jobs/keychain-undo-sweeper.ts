@@ -92,14 +92,20 @@ export class KeychainUndoSweeperJob {
 				}
 				await recordEvents(
 					tx,
-					[...byWorkspace.entries()].map(([workspaceId, list]) => ({
-						workspaceId,
-						actorId: list[0].created_by,
-						action: SWEEP_ACTION,
-						entityType: 'integration',
-						entityId: list[0].id,
-						data: { rows_activated: list.length, integration_ids: list.map((r) => r.id) },
-					})),
+					[...byWorkspace.entries()].flatMap(([workspaceId, list]) => {
+						const first = list[0]
+						if (!first) return []
+						return [
+							{
+								workspaceId,
+								actorId: first.created_by,
+								action: SWEEP_ACTION,
+								entityType: 'integration',
+								entityId: first.id,
+								data: { rows_activated: list.length, integration_ids: list.map((r) => r.id) },
+							},
+						]
+					}),
 				)
 				return rows
 			})

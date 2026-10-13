@@ -1685,9 +1685,23 @@ export interface CredentialAuditEntry {
 	actorId: string
 	sessionId: string | null
 	outboundTarget: string | null
-	action: 'read' | 'create' | 'undone' | 'rotated' | 'sweeper_activated' | 'scope_changed'
+	action:
+		| 'read'
+		| 'create'
+		| 'undone'
+		| 'rotated'
+		| 'sweeper_activated'
+		| 'scope_changed'
+		| 'tier_changed'
+		| 'grant_requested'
+		| 'grant_approved'
+		| 'grant_denied'
+		| 'grant_expired'
+		| 'grant_revoked'
 	source: string
 	readAt: string
+	/** Only tier_changed rows carry it, as approver=...;grant=...;tier=N;ext=... Null otherwise. */
+	detail: string | null
 }
 
 export interface CredentialAuditLogPage {

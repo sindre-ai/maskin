@@ -345,6 +345,7 @@ function auditPage(entries: Partial<CredentialAuditEntry>[], next: string | null
 			action: 'create',
 			source: 'admin_ui',
 			readAt: '2026-10-04T10:00:00.000Z',
+			detail: null,
 			...e,
 		})),
 	} satisfies CredentialAuditLogPage
@@ -415,6 +416,37 @@ describe('CredentialDetailPage', () => {
 		expect(details).toHaveTextContent('API key')
 		expect(details).toHaveTextContent('via chat')
 		expect(details).toHaveTextContent('Infra & DevOps')
+	})
+
+	it('labels tier_changed rows with the tier from the detail text and never shows ids', () => {
+		mockParams.mockReturnValue({ integrationId: 'cred-chat' })
+		mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
+		const id = '0a1b2c3d-0000-4000-8000-000000000000'
+		mockUseAuditLog.mockReturnValue(
+			auditLog([
+				auditPage([
+					{ action: 'tier_changed', detail: 'approver=;grant=;tier=1;ext=' },
+					{ action: 'tier_changed', detail: `approver=${id};grant=${id};tier=3;ext=${id}` },
+					{ action: 'tier_changed', detail: 'approver=;grant=;tier=;ext=' },
+					{ action: 'tier_changed', detail: 'approver=;grant=;tier=9;ext=' },
+					{ action: 'tier_changed', detail: null },
+					{ action: 'grant_approved' },
+				]),
+			]),
+		)
+		render(<CredentialDetailPage />)
+
+		const items = within(screen.getByRole('region', { name: 'Audit log' })).getAllByRole('listitem')
+		expect(items).toHaveLength(6)
+		expect(items[0]).toHaveTextContent(/^.*Tier changed to 1.*TIER CHANGED$/)
+		expect(items[1]).toHaveTextContent('Tier changed to 3')
+		for (const i of [2, 3, 4]) {
+			expect(items[i]).toHaveTextContent('Tier changed')
+			expect(items[i]).not.toHaveTextContent('Tier changed to')
+		}
+		expect(items[5]).toHaveTextContent('GRANT APPROVED')
+		expect(screen.queryByText(new RegExp(id))).not.toBeInTheDocument()
+		expect(screen.queryByText(/approver=/)).not.toBeInTheDocument()
 	})
 
 	it('shows a pasted key without the chat chip and with a plain create row', () => {
@@ -542,8 +574,12 @@ describe('CredentialDetailPage: who can use this key', () => {
 		await user.click(screen.getByRole('button', { name: 'Edit access' }))
 		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
 		await user.click(screen.getByRole('button', { name: 'Save access' }))
+		// The person who pasted the key keeps their own grant; the sheet only adds the agent.
 		expect(mockUpdateScope).toHaveBeenCalledWith(
-			[{ kind: 'actor', actorId: 'agent-2' }],
+			[
+				{ kind: 'actor', actorId: 'actor-1' },
+				{ kind: 'actor', actorId: 'agent-2' },
+			],
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 	})

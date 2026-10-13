@@ -358,7 +358,13 @@ export async function approveAccessRequest(
 				expires_at: expiresAt.toISOString(),
 			},
 		})
-		return { outcome: 'approved', request: approved, grantId, expiresAt, credentialName: credential.name }
+		return {
+			outcome: 'approved',
+			request: approved,
+			grantId,
+			expiresAt,
+			credentialName: credential.name,
+		}
 	})
 }
 

@@ -1,18 +1,18 @@
 import { serve } from '@hono/node-server'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { createMcpServer } from '@maskin/mcp'
 import {
+	events,
 	accessRequests,
 	credentialAccessLog,
-	events,
 	integrations,
 	messages,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import { createMcpServer } from '@maskin/mcp'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { and, eq, sql as dsql } from 'drizzle-orm'
+import { and, sql as dsql, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { startSessionMock, relaunchMock, respondMock } = vi.hoisted(() => ({
@@ -37,9 +37,9 @@ vi.mock('../../services/conversation-responder', async (importOriginal) => ({
 
 import { createApiError } from '../../lib/errors'
 import { verifyCredentialAccessChain } from '../../lib/integrations/credential-audit'
+import accessRequestsRoutes from '../../routes/access-requests'
 import { sweepAccessRequestTimeouts } from '../../services/access-request-flow'
 import type { SessionManager } from '../../services/session-manager'
-import accessRequestsRoutes from '../../routes/access-requests'
 import {
 	insertActor,
 	insertConversation,
@@ -153,7 +153,9 @@ async function credential(
 }
 
 /** CTO as default approver, CPO as the stored second approver, one requesting agent. */
-async function team(over: { approver?: 'cto' | null; second?: boolean; tier?: 1 | 2 | 3 | null } = {}) {
+async function team(
+	over: { approver?: 'cto' | null; second?: boolean; tier?: 1 | 2 | 3 | null } = {},
+) {
 	const w = await world()
 	const cto = await w.agent('CTO')
 	const cpo = await w.agent('CPO')
@@ -356,12 +358,20 @@ describe('POST /api/access-requests/:id/approve', () => {
 		expect(body).toMatchObject({ id, status: 'approved' })
 
 		const row = await requestRow(id)
-		expect(row).toMatchObject({ status: 'approved', approverActorId: t.cto.id, grantId: body.grantId })
+		expect(row).toMatchObject({
+			status: 'approved',
+			approverActorId: t.cto.id,
+			grantId: body.grantId,
+		})
 		expect(row.decidedAt).not.toBeNull()
 
 		const grants = await scopeGrantsOf(t.cred.id)
 		expect(grants).toHaveLength(1)
-		expect(grants[0]).toMatchObject({ kind: 'actor', actorId: t.requester.id, grantId: body.grantId })
+		expect(grants[0]).toMatchObject({
+			kind: 'actor',
+			actorId: t.requester.id,
+			grantId: body.grantId,
+		})
 		const expiresAt = new Date(grants[0]?.expiresAt as string).getTime()
 		expect(expiresAt).toBeGreaterThan(before + 2 * 3_600_000 - 5_000)
 		expect(expiresAt).toBeLessThan(Date.now() + 2 * 3_600_000 + 5_000)
@@ -448,7 +458,10 @@ describe('POST /api/access-requests/:id/approve', () => {
 	it('refuses a duration over seven days stored on the request', async () => {
 		const t = await team()
 		const { id } = await filed(t, t.requester)
-		await db.update(accessRequests).set({ requestedDuration: '200h' }).where(eq(accessRequests.id, id))
+		await db
+			.update(accessRequests)
+			.set({ requestedDuration: '200h' })
+			.where(eq(accessRequests.id, id))
 		expect((await call(t.cto, t.w.ws.id, 'POST', `/${id}/approve`)).status).toBe(403)
 		expect(await scopeGrantsOf(t.cred.id)).toEqual([])
 	})
@@ -523,12 +536,20 @@ describe('POST /api/access-requests/:id/approve', () => {
 describe('POST /api/access-requests/:id/deny', () => {
 	it('denies, starts the cooldown, lands on the chain and goes to a human with no grant', async () => {
 		const t = await team()
-		const task = await insertObject(db, t.w.ws.id, t.w.ownerId, { type: 'task', status: 'in_progress' })
+		const task = await insertObject(db, t.w.ws.id, t.w.ownerId, {
+			type: 'task',
+			status: 'in_progress',
+		})
 		const blocked = await insertSession(db, t.w.ws.id, t.requester.id, t.requester.id, {
 			status: 'completed',
 			initiatedFromObjectId: task.id,
 		})
-		const { id } = await filed(t, t.requester, { reason: 'because' }, { 'x-maskin-session-id': blocked.id })
+		const { id } = await filed(
+			t,
+			t.requester,
+			{ reason: 'because' },
+			{ 'x-maskin-session-id': blocked.id },
+		)
 
 		const res = await call(t.cto, t.w.ws.id, 'POST', `/${id}/deny`)
 		expect(res.status).toBe(200)
@@ -819,7 +840,10 @@ describe('running the blocked agent again after an approval', () => {
 		expect(input.actorId).toBe(t.requester.id)
 		expect(input.actionPrompt.startsWith('Summarise the dashboard')).toBe(true)
 		expect(input.actionPrompt).toContain('Access granted')
-		expect(input.config).toMatchObject({ note: 'keep me', idempotencyKey: `access-request-rerun:${id}` })
+		expect(input.config).toMatchObject({
+			note: 'keep me',
+			idempotencyKey: `access-request-rerun:${id}`,
+		})
 		expect(input.parentSessionId).toBe(blocked.id)
 	})
 
@@ -900,7 +924,9 @@ describe('running the blocked agent again after an approval', () => {
 
 	it('ignores a session hint that is not the requester own session', async () => {
 		const t = await team()
-		const someoneElse = await insertSession(db, t.w.ws.id, t.cto.id, t.cto.id, { status: 'completed' })
+		const someoneElse = await insertSession(db, t.w.ws.id, t.cto.id, t.cto.id, {
+			status: 'completed',
+		})
 		const { id } = await filed(t, t.requester, {}, { 'x-maskin-session-id': someoneElse.id })
 		startSessionMock.mockClear()
 		const body = await (await call(t.cto, t.w.ws.id, 'POST', `/${id}/approve`)).json()
@@ -961,7 +987,9 @@ describe('through the MCP tools', () => {
 			expect(res.isError).toBe(true)
 			expect(text(res)).toContain('403')
 		}
-		expect(await db.select().from(integrations).where(dsql`${integrations.scopeGrants} <> '[]'::jsonb`)).toEqual([])
+		expect(
+			await db.select().from(integrations).where(dsql`${integrations.scopeGrants} <> '[]'::jsonb`),
+		).toEqual([])
 	})
 
 	it('an approver reads, approves and the requester can read the outcome', async () => {

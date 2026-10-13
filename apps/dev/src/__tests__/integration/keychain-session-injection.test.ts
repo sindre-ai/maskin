@@ -184,7 +184,9 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 		const reads = await db
 			.select()
 			.from(credentialAccessLog)
-			.where(eq(credentialAccessLog.integrationId, off))
+			.where(
+				and(eq(credentialAccessLog.integrationId, off), eq(credentialAccessLog.action, 'read')),
+			)
 		expect(reads).toEqual([])
 	})
 
@@ -260,9 +262,15 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 	it('skips a name that has no usable characters, and a later key that takes a slug already used', async () => {
 		const s = await setup()
 		const first = fake('first')
-		await vaultKey(s, '🔑🔑', fake('emoji'), [{ kind: 'workspace' }])
+		// The create path now refuses both of these names, so rename the rows after vaulting
+		// to reach rows that were stored before that rule existed.
+		const emoji = await vaultKey(s, 'Emoji key', fake('emoji'), [{ kind: 'workspace' }])
 		await vaultKey(s, 'My key', first, [{ kind: 'workspace' }])
-		await vaultKey(s, 'my-KEY', fake('second'), [{ kind: 'workspace' }])
+		const second = await vaultKey(s, 'Second key', fake('second'), [{ kind: 'workspace' }])
+		const rename = (id: string, displayName: string) =>
+			db.update(integrations).set({ displayName }).where(eq(integrations.id, id))
+		await rename(emoji, '🔑🔑')
+		await rename(second, 'my-KEY')
 
 		const env = await launchEnv(s.sessionA)
 		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([
