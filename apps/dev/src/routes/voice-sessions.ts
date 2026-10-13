@@ -128,7 +128,13 @@ async function releasePendingSession(db: Database, id: string): Promise<void> {
 	try {
 		await db
 			.update(voiceSessions)
-			.set({ status: 'errored', endedReason: 'vendor_error', endedAt: new Date() })
+			.set({
+				status: 'errored',
+				endedReason: 'vendor_error',
+				endedAt: new Date(),
+				// Drop the offer claim so the row does not read as having a vendor call.
+				vendorSessionId: null,
+			})
 			.where(and(eq(voiceSessions.id, id), eq(voiceSessions.status, 'pending')))
 	} catch (err) {
 		logger.error('Failed to release pending voice session after vendor connect failure', {
