@@ -6,6 +6,7 @@ import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
 	buildMentionPrompt,
+	isAgentMentionFreeComment,
 	normalizeMentionsList,
 	normalizeParentEventId,
 	threadReplyLines,
@@ -211,7 +212,13 @@ describe('CommentDispatcher', () => {
 	it('dispatches to the driver with triggerSource and sourceCommentEventId when driver ≠ author (case 2)', async () => {
 		mockResults.selectQueue = [
 			// event data
-			[{ actorId: 'human-author', data: { content: 'hi', mentions: [] } }],
+			[
+				{
+					actorId: 'human-author',
+					actorType: 'human',
+					data: { content: 'hi', mentions: [] },
+				},
+			],
 			// driver lookup
 			[{ driver: 'driver-1' }],
 		]
@@ -360,6 +367,99 @@ describe('CommentDispatcher', () => {
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({ case: 'case_3_cos_fallback', resolvedActorId: COS_ACTOR_ID }),
+		)
+	})
+
+	it('agent comment with no mention on a driven object → no session, noop_suppressed', async () => {
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'agent-author',
+					actorType: 'agent',
+					data: { content: 'done, nothing needed', mentions: [] },
+				},
+			],
+			// A driver is present, but the ladder is never reached to look it up.
+			[{ driver: 'driver-1' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'agent-author' }))
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({
+				case: 'noop_suppressed',
+				resolvedActorId: null,
+				sourceCommentEventId: 42,
+			}),
+		)
+		const suppressedLog = logInfo.mock.calls.find(
+			(c) =>
+				c[0] === 'Comment responder resolved' &&
+				(c[1] as { case?: string })?.case === 'noop_suppressed',
+		)
+		expect(suppressedLog?.[1]).toMatchObject({ event_id: '42', resolved_actor_id: null })
+	})
+
+	it('agent comment with no mention on a driverless object → no session, noop_suppressed (no CoS wake)', async () => {
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'agent-author',
+					actorType: 'agent',
+					data: { content: 'fyi', mentions: [] },
+				},
+			],
+			[{ driver: null }],
+			COS_LOOKUP_ROWS,
+			[{ title: 'Orphan bet' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'agent-author' }))
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'noop_suppressed', resolvedActorId: null }),
+		)
+		expect(vi.mocked(trackCommentResponderResolved)).not.toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'case_3_cos_fallback' }),
+		)
+	})
+
+	it('agent comment WITH an @mention of an agent still starts that agent session', async () => {
+		const mentioned = buildActor({ type: 'agent' })
+		const notification = buildNotification({
+			targetActorId: mentioned.id,
+			sourceActorId: 'agent-author',
+			type: 'needs_input',
+		})
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'agent-author',
+					actorType: 'agent',
+					data: { content: 'over to you', mentions: [mentioned.id] },
+				},
+			],
+			[
+				{ id: mentioned.id, type: mentioned.type },
+				{ id: 'agent-author', type: 'agent' },
+			],
+		]
+		mockResults.insert = [notification]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'agent-author' }))
+
+		expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		const [, params] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock
+			.calls[0] as [string, Record<string, unknown>]
+		expect(params.actorId).toBe(mentioned.id)
+		expect(params.triggerSource).toBe('comment_fallback')
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'case_1_mention' }),
 		)
 	})
 
@@ -678,5 +778,15 @@ describe('buildMentionPrompt()', () => {
 
 	it('leaves the prompt unchanged when no sender line is given', () => {
 		expect(buildMentionPrompt(base).startsWith('You were @mentioned')).toBe(true)
+	})
+})
+
+describe('isAgentMentionFreeComment()', () => {
+	it('is true only for an agent author with no mentions', () => {
+		expect(isAgentMentionFreeComment({ actorType: 'agent', mentionCount: 0 })).toBe(true)
+		expect(isAgentMentionFreeComment({ actorType: 'agent', mentionCount: 1 })).toBe(false)
+		expect(isAgentMentionFreeComment({ actorType: 'human', mentionCount: 0 })).toBe(false)
+		expect(isAgentMentionFreeComment({ actorType: null, mentionCount: 0 })).toBe(false)
+		expect(isAgentMentionFreeComment({ actorType: undefined, mentionCount: 0 })).toBe(false)
 	})
 })
