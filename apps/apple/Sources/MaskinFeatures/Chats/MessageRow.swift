@@ -115,6 +115,8 @@ struct MessageRow: View {
 	/// Reply to this message: quotes it above the composer; nil when there is no text to quote.
 	var onQuote: (() -> Void)?
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
+	/// Said aloud in a live call rather than typed: marked with a small mic.
+	var spoken = false
 	@State private var selectingText = false
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
@@ -255,7 +257,7 @@ struct MessageRow: View {
 
 	/// Your message is only a link into Maskin (shown as a card) or only an emoji: no bubble.
 	private var hasOwnSurface: Bool {
-		if message.isEmojiOnly { return true }
+		if message.isEmojiOnly || callNote != nil { return true }
 		if let link = MarkdownStandaloneLink.match(message.content), linkInfo?(link.url) != nil { return true }
 		return false
 	}
@@ -263,7 +265,7 @@ struct MessageRow: View {
 	private var column: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			if showsAuthor { header }
-			if message.isEmojiOnly {
+			if message.isEmojiOnly || callNote != nil {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) { content }
 			} else {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) { content }
@@ -331,6 +333,9 @@ struct MessageRow: View {
 		}
 	}
 
+	/// The summary an ended live call left here; nil for an ordinary message.
+	private var callNote: LiveMeetingNote? { LiveMeetingNote.parse(message.content) }
+
 	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
 	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
 
@@ -341,7 +346,9 @@ struct MessageRow: View {
 	private var content: some View {
 		let dimmed = message.isPending && !message.isFailed
 		Group {
-			if message.isEmojiOnly {
+			if let callNote {
+				LiveMeetingCard(note: callNote)
+			} else if message.isEmojiOnly {
 				Text(message.content).maskinSymbol(emojiSize)
 			} else {
 				MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
@@ -353,6 +360,10 @@ struct MessageRow: View {
 		.opacity(dimmed ? 0.6 : 1)
 		if message.editedAt != nil {
 			Text("edited").maskinText(.caption).opacity(0.6)
+		}
+		if spoken {
+			Label("LIVE", systemImage: "mic.fill").maskinText(.microLabel).opacity(0.6)
+				.accessibilityLabel("Spoken in a live call")
 		}
 	}
 

@@ -9,11 +9,14 @@ import SwiftUI
 @Observable
 final class LiveVoiceController {
 	struct Ports {
-		/// Starts the recogniser; `onText` gets the running transcript. Returns what went wrong, if it
-		/// could not start (permission refused, language unavailable).
-		var startListening: @MainActor (_ onText: @escaping @MainActor (String) -> Void) async -> String?
+		/// Starts the recogniser (a no-op when it is running); `onText` gets the running transcript and
+		/// whether the recogniser calls the utterance final. Returns what went wrong, if it could not
+		/// start (permission refused, language unavailable).
+		var startListening: @MainActor (_ onText: @escaping @MainActor (String, Bool) -> Void) async -> String?
 		var stopListening: @MainActor () -> Void
 		var isListening: @MainActor () -> Bool
+		/// Starts the recogniser's transcript over without a gap in the audio.
+		var resetTranscript: @MainActor () -> Void = {}
 		/// Reads a message aloud, after whatever is already being read.
 		var speak: @MainActor (_ messageID: String, _ markdown: String) -> Void
 		var stopSpeaking: @MainActor () -> Void
@@ -27,10 +30,20 @@ final class LiveVoiceController {
 	private(set) var isActive = false
 	/// Why the conversation could not start or had to stop ("Allow Microphone access in Settings…").
 	private(set) var failure: String?
+	/// What was said in this call, in order: your sent lines and the agent's replies.
+	private(set) var turns: [LiveMeetingTurn] = []
+	/// A problem that does not stop the call ("Microphone interrupted", "Listening again…").
+	private(set) var notice: String?
+	/// A phone call, Siri or an alarm has the audio: the call is paused until it hands it back.
+	private(set) var isInterrupted = false
+	/// The agent's name on its turns.
+	@ObservationIgnored var agentName = "Agent"
 
 	var phase: LiveVoicePhase { machine.phase }
 	var transcript: String { machine.transcript }
 	var isMuted: Bool { machine.isMuted }
+	/// What the agent is saying now, for captions.
+	var speakingText: String? { phase == .speaking ? turns.last { !$0.isYou }?.text : nil }
 
 	@ObservationIgnored private let ports: Ports
 	@ObservationIgnored private let tickInterval: Duration
@@ -54,7 +67,10 @@ final class LiveVoiceController {
 		guard !isActive else { return }
 		seen = Set(messages.map(\.id))
 		texts = [:]
+		turns = []
 		failure = nil
+		notice = nil
+		isInterrupted = false
 		isActive = true
 		run(machine.begin())
 		ticker = Task { [weak self] in
@@ -67,18 +83,59 @@ final class LiveVoiceController {
 		}
 	}
 
+	/// Hang up. What was heard but not yet sent is sent first, so nothing said is lost.
 	func end() {
 		guard isActive else { return }
+		if let pending = machine.pendingText { send(pending) }
 		run(machine.end())
 		ticker?.cancel()
 		ticker = nil
 		isActive = false
 	}
 
+	/// Send what has been heard now instead of waiting out the pause.
+	func sendNow() { run(machine.commitNow(at: ports.now())) }
+
 	func toggleMute() { run(machine.setMuted(!machine.isMuted)) }
 
 	/// Stop the agent talking and listen at once.
 	func interrupt() { run(machine.interrupt()) }
+
+	/// The media server restarted: the recogniser is gone; the next beat starts it again.
+	func audioReset() {
+		guard isActive else { return }
+		ports.stopListening()
+	}
+
+	/// The call cannot go on (the audio session would not open).
+	func fail(_ message: String) {
+		failure = message
+		end()
+	}
+
+	/// Something else took the audio (a phone call, Siri): stop listening and speaking, keep the call.
+	func interruptionBegan() {
+		guard isActive, !isInterrupted else { return }
+		isInterrupted = true
+		notice = "Paused: the microphone is in use by something else."
+		if let pending = machine.pendingText { send(pending) }
+		ports.stopListening()
+		ports.stopSpeaking()
+		run(machine.interrupt())
+	}
+
+	/// The audio came back. `shouldResume` is the system's own hint; without it the call ends.
+	func interruptionEnded(shouldResume: Bool) {
+		guard isActive, isInterrupted else { return }
+		isInterrupted = false
+		guard shouldResume else {
+			failure = "The call was interrupted and ended. What was said is saved in the chat."
+			end()
+			return
+		}
+		notice = nil
+		if !machine.isMuted { startListening() }
+	}
 
 	/// The thread changed: a new agent message is the reply being waited for.
 	func messagesChanged(_ messages: [ChatMessage]) {
@@ -91,7 +148,8 @@ final class LiveVoiceController {
 				continue
 			}
 			texts[message.id] = message.content
-			run(machine.replyArrived(messageID: message.id))
+			turns.append(LiveMeetingTurn(speaker: agentName, text: message.content, isYou: false))
+			run(machine.replyArrived(messageID: message.id, text: message.content))
 		}
 	}
 
@@ -103,8 +161,8 @@ final class LiveVoiceController {
 		switch machine.phase {
 		case .speaking:
 			if !ports.isSpeaking() { run(machine.speechFinished()) }
-		case .listening:
-			if !machine.isMuted, !starting, !ports.isListening() {
+		case .listening, .thinking:
+			if !machine.isMuted, !isInterrupted, !starting, !ports.isListening() {
 				let now = ports.now()
 				restarts = restarts.filter { now.timeIntervalSince($0) < Self.restartWindow } + [now]
 				if restarts.count > Self.restartLimit {
@@ -112,10 +170,9 @@ final class LiveVoiceController {
 					end()
 					return
 				}
+				notice = "Listening again…"
 				run([.startListening])
 			}
-		case .thinking:
-			break
 		}
 	}
 
@@ -124,21 +181,29 @@ final class LiveVoiceController {
 			switch command {
 			case .startListening: startListening()
 			case .stopListening: ports.stopListening()
-			case .send(let text): ports.send(text)
-			case .speak(let id): ports.speak(id, texts[id] ?? "")
+			case .resetTranscript: ports.resetTranscript()
+			case .send(let text): send(text)
+			case .speak(let id): ports.speak(id, SpokenReply.text(from: texts[id] ?? ""))
 			case .stopSpeaking: ports.stopSpeaking()
 			}
 		}
 	}
 
+	/// One finished line of yours: it goes into the chat at once.
+	private func send(_ text: String) {
+		turns.append(LiveMeetingTurn(speaker: LiveMeetingNote.youName, text: text, isYou: true))
+		ports.send(text)
+	}
+
 	private func startListening() {
-		guard !starting else { return }
+		guard !starting, !isInterrupted, !ports.isListening() else { return }
 		starting = true
 		Task { [weak self] in
 			guard let self else { return }
-			let problem = await self.ports.startListening { [weak self] text in
-				guard let self else { return }
-				self.run(self.machine.heard(text, at: self.ports.now()))
+			let problem = await self.ports.startListening { [weak self] text, isFinal in
+				guard let self, self.isActive else { return }
+				self.notice = nil
+				self.run(self.machine.heard(text, at: self.ports.now(), isFinal: isFinal))
 			}
 			self.starting = false
 			if let problem {

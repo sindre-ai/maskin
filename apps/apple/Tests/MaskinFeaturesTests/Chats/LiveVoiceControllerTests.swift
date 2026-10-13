@@ -10,7 +10,8 @@ private final class FakeRoom {
 	var clock = Date(timeIntervalSince1970: 1_800_000_000)
 	var listening = false
 	var speakingID: String?
-	var onText: (@MainActor (String) -> Void)?
+	var onText: (@MainActor (String, Bool) -> Void)?
+	var resets = 0
 	var startFailure: String?
 	var starts = 0
 	var stopsListening = 0
@@ -32,6 +33,7 @@ private final class FakeRoom {
 				listening = false
 			},
 			isListening: { [self] in listening },
+			resetTranscript: { [self] in resets += 1 },
 			speak: { [self] id, text in
 				spoken.append((id, text))
 				speakingID = id
@@ -46,7 +48,7 @@ private final class FakeRoom {
 		)
 	}
 
-	func hear(_ text: String) { onText?(text) }
+	func hear(_ text: String, final: Bool = false) { onText?(text, final) }
 	func advance(_ seconds: TimeInterval) { clock = clock.addingTimeInterval(seconds) }
 }
 
@@ -78,18 +80,36 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		#expect(room.starts == 1 && room.listening)
 	}
 
-	@Test("a spoken sentence is sent after the pause, and the microphone is turned off for the reply")
+	@Test("a spoken sentence is sent after the pause, and the microphone stays on")
 	func sendsWhatYouSay() async {
 		let (live, room) = make()
 		live.begin(existing: [])
 		await settle()
 		room.hear("what is blocked right now")
 		#expect(live.transcript == "what is blocked right now")
-		room.advance(2)
+		room.advance(3)
 		live.tick()
 		#expect(room.sent == ["what is blocked right now"])
-		#expect(room.stopsListening == 1 && !room.listening)
+		#expect(room.stopsListening == 0 && room.listening)
+		#expect(room.resets >= 1)
 		#expect(live.phase == .thinking)
+	}
+
+	@Test("what you said and what the agent replied are kept as the call's turns")
+	func keepsTurns() async {
+		let (live, room) = make()
+		live.agentName = "Relay"
+		live.begin(existing: [])
+		await settle()
+		room.hear("summarise the pipeline please")
+		room.advance(3)
+		live.tick()
+		live.messagesChanged([message(2, "Three bets are blocked.")])
+		#expect(
+			live.turns == [
+				LiveMeetingTurn(speaker: "You", text: "summarise the pipeline please", isYou: true),
+				LiveMeetingTurn(speaker: "Relay", text: "Three bets are blocked.", isYou: false),
+			])
 	}
 
 	@Test("the reply is read aloud, then it listens again")
@@ -98,7 +118,7 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		live.begin(existing: [message(1, agent: false, "earlier")])
 		await settle()
 		room.hear("summarise the pipeline please")
-		room.advance(2)
+		room.advance(3)
 		live.tick()
 		live.messagesChanged([message(1, agent: false, "earlier"), message(2, "Three bets are blocked.")])
 		#expect(room.spoken.map(\.text) == ["Three bets are blocked."])
@@ -110,7 +130,7 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		live.tick()
 		await settle()
 		#expect(live.phase == .listening)
-		#expect(room.starts == 2)
+		#expect(room.starts == 1 && room.listening)
 	}
 
 	@Test("messages that were already in the thread are never read")
@@ -129,7 +149,7 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		live.begin(existing: [])
 		await settle()
 		room.hear("do the thing for me")
-		room.advance(2)
+		room.advance(3)
 		live.tick()
 		live.messagesChanged([message(1, "The model API timed out.", error: true)])
 		await settle()
@@ -143,13 +163,67 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		live.begin(existing: [])
 		await settle()
 		room.hear("tell me a long story")
-		room.advance(2)
+		room.advance(3)
 		live.tick()
 		live.messagesChanged([message(1, "Once upon a time…")])
 		live.interrupt()
 		await settle()
 		#expect(room.stoppedSpeaking == 1 && room.speakingID == nil)
 		#expect(live.phase == .listening && room.listening)
+	}
+
+	@Test("talking over the agent cuts it off")
+	func bargeIn() async {
+		let (live, room) = make()
+		live.begin(existing: [])
+		await settle()
+		room.hear("tell me a long story")
+		room.advance(3)
+		live.tick()
+		live.messagesChanged([message(1, "Once upon a time in a land far away.")])
+		room.hear("wait stop there")
+		#expect(room.stoppedSpeaking == 1 && room.speakingID == nil)
+		#expect(live.phase == .listening && live.transcript == "wait stop there")
+	}
+
+	@Test("ending sends what was heard but not yet sent")
+	func endSavesPending() async {
+		let (live, room) = make()
+		live.begin(existing: [])
+		await settle()
+		room.hear("remind me about the offsite")
+		live.end()
+		#expect(room.sent == ["remind me about the offsite"])
+		#expect(live.turns.last?.isYou == true)
+	}
+
+	@Test("an interruption pauses the call and saves what was said; it resumes when audio returns")
+	func interruption() async {
+		let (live, room) = make()
+		live.begin(existing: [])
+		await settle()
+		room.hear("one more thing before")
+		live.interruptionBegan()
+		#expect(live.isInterrupted && !room.listening)
+		#expect(room.sent == ["one more thing before"])
+		live.tick()
+		await settle()
+		#expect(!room.listening)
+		live.interruptionEnded(shouldResume: true)
+		await settle()
+		#expect(live.isActive && room.listening && !live.isInterrupted)
+	}
+
+	@Test("an interruption that does not hand the audio back ends the call and says so")
+	func interruptionEnds() async {
+		let (live, room) = make()
+		live.begin(existing: [])
+		await settle()
+		live.interruptionBegan()
+		live.interruptionEnded(shouldResume: false)
+		#expect(!live.isActive)
+		#expect(live.failure?.contains("interrupted") == true)
+		_ = room
 	}
 
 	@Test("muting turns the microphone off and unmuting turns it on")

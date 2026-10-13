@@ -638,12 +638,15 @@ struct ThreadTranscript: View {
 		let runs = ThreadLayout.runs(in: items)
 		let latestOwnID = OutgoingStatus.latestOwnID(in: messages, currentActorID: store.currentActorID)
 		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+		let calls = LiveCallSpans(
+			records: LiveCallLog.shared.records(for: store.conversationID), messages: messages,
+			currentActorID: store.currentActorID)
 		// One section per day: its header stays pinned at the top while that day scrolls by (the thread's
 		// LazyVStack asks for pinned section headers).
 		ForEach(sections) { section in
 			Section {
 				ForEach(section.items) { item in
-					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID, latestOwnID: latestOwnID)
+					row(item, answers: answers, anchors: anchors, runs: runs, byID: byID, latestOwnID: latestOwnID, calls: calls)
 				}
 			} header: {
 				if let day = section.day { DayHeader(label: ThreadLayout.dayLabel(day, now: now)) }
@@ -706,7 +709,8 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
-		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage], latestOwnID: String?
+		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage], latestOwnID: String?,
+		calls: LiveCallSpans
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -720,6 +724,12 @@ struct ThreadTranscript: View {
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
 			let run = runs[message.id] ?? ThreadLayout.Run()
+			let call = calls.roles[message.id]
+			// A live call is a section of the thread: a header where it starts, a LIVE marker on
+			// your spoken lines, and a summary card where it ends.
+			if let call, call.isFirst {
+				ThreadDivider(label: "LIVE CALL · WITH \(call.record.leadName.uppercased())", mono: true)
+			}
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
 			}
@@ -737,7 +747,8 @@ struct ThreadTranscript: View {
 				// Edit is for your latest message only; it re-opens in the composer.
 				onEdit: message.id == latestOwnID && message.canEdit(by: store.currentActorID) ? { onEdit(message) } : nil,
 				onQuote: message.content.isEmpty ? nil : { onQuote(message) },
-				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
+				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
+				spoken: call?.isSpoken == true
 			)
 			.swipeToReply(message.content.isEmpty || message.isFailed ? nil : { onQuote(message) })
 			.padding(.top, Self.topPadding(for: message, showsAuthor: showsAuthor, run: run, anchors: anchors, byID: byID))
@@ -753,6 +764,9 @@ struct ThreadTranscript: View {
 			}
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
+			}
+			if let call, call.isLast, let note = calls.summary(for: call.record) {
+				LiveMeetingCard(note: note)
 			}
 		}
 	}

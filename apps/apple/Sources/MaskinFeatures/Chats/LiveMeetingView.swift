@@ -149,7 +149,6 @@ private struct LiveMeetingContent: View {
 			if ownsChat { await session.chat.start() }
 			session.begin()
 		}
-		.onChange(of: session.chat.messages.map(\.id)) { _, _ in session.messagesChanged() }
 		.onChange(of: session.chat.participants.map(\.id)) { _, _ in session.messagesChanged() }
 		.onDisappear {
 			session.end()
@@ -183,9 +182,17 @@ private struct LiveMeetingContent: View {
 			TimelineView(.periodic(from: .now, by: 1)) { context in
 				Text(LiveMeetingFormat.duration(session.elapsed(at: context.date)))
 					.maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+					.onChange(of: context.date) { _, _ in session.refreshNowPlaying() }
+			}
+			if !session.routeName.isEmpty {
+				Label(session.routeName, systemImage: "speaker.wave.2").maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink5)
 			}
 			Text(statusLine).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				.multilineTextAlignment(.center)
+			if !session.voice.transcript.isEmpty, session.voice.phase != .speaking {
+				Button("Send now") { session.voice.sendNow() }.buttonStyle(.bordered)
+			}
 			if !session.guests.isEmpty { guestChips }
 		}
 		.onTapGesture { if session.voice.phase == .speaking { session.voice.interrupt() } }
@@ -198,11 +205,12 @@ private struct LiveMeetingContent: View {
 
 	private var statusLine: String {
 		if let failure = session.voice.failure { return failure }
+		if let notice = session.voice.notice ?? session.connectionNotice { return notice }
 		if session.voice.isMuted { return "Microphone off" }
 		switch session.voice.phase {
-		case .listening: return session.voice.transcript.isEmpty ? "Listening" : session.voice.transcript
+		case .listening: return "Listening"
 		case .thinking: return "\(session.lead.name) is working on it"
-		case .speaking: return "Tap to interrupt"
+		case .speaking: return "Speaking · talk or tap to interrupt"
 		}
 	}
 
@@ -223,14 +231,21 @@ private struct LiveMeetingContent: View {
 		.frame(maxWidth: .infinity)
 	}
 
+	/// What you are saying as it is recognised, and the agent's latest words.
 	private var captions: some View {
-		Text(session.lastAgentWords ?? "Captions appear here when \(session.lead.name) speaks.")
-			.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-			.lineLimit(6)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.padding(MaskinSpace.s8)
-			.background(MaskinColor.surfaceMuted, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl))
-			.padding(.bottom, MaskinSpace.s7)
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			if !session.voice.transcript.isEmpty {
+				Text(session.voice.transcript).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+					.lineLimit(4)
+			}
+			Text(session.voice.speakingText ?? session.lastAgentWords ?? "Captions appear here when \(session.lead.name) speaks.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+				.lineLimit(6)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(MaskinSpace.s8)
+		.background(MaskinColor.surfaceMuted, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl))
+		.padding(.bottom, MaskinSpace.s7)
 	}
 
 	// MARK: Controls
@@ -241,7 +256,7 @@ private struct LiveMeetingContent: View {
 				session.voice.isMuted ? "Unmute" : "Mic",
 				symbol: session.voice.isMuted ? "mic.slash.fill" : "mic.fill",
 				active: session.voice.isMuted
-			) { session.voice.toggleMute() }
+			) { session.toggleMute() }
 			control("Invite", symbol: "person.badge.plus") {
 				showInvite = true
 				Task {
@@ -331,18 +346,17 @@ extension LiveMeetingSession {
 		send: @escaping @MainActor (String) -> Void
 	) -> LiveVoiceController.Ports {
 		#if os(iOS)
-		let dictation = Dictation()
+		// The call has its own recogniser (gapless restarts, echo-cancelled, no audio-session
+		// ownership); dictation in the composer keeps `Dictation`.
+		let listener = LiveListener()
 		return LiveVoiceController.Ports(
 			startListening: { onText in
-				await dictation.start(onText: onText)
-				if case .unavailable(let message) = dictation.state {
-					dictation.clearError()
-					return message
-				}
+				if let problem = await listener.start(onText: onText) { return problem }
 				return nil
 			},
-			stopListening: { dictation.stop() },
-			isListening: { dictation.isListening },
+			stopListening: { listener.stop() },
+			isListening: { listener.isListening },
+			resetTranscript: { listener.resetTranscript() },
 			speak: { id, markdown in SpeechReader.shared.enqueue(markdown: markdown, id: id) },
 			stopSpeaking: { SpeechReader.shared.stop() },
 			isSpeaking: { SpeechReader.shared.speakingID != nil },
