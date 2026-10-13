@@ -2,6 +2,7 @@ import { type Page, expect } from '@playwright/test'
 import { test } from '../fixtures/auth.fixture'
 import { type LiveChatSession, seedLiveChatSession } from '../helpers/chat-log-stream.helper'
 import { sendFromComposer } from '../helpers/composer.helper'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -213,4 +214,67 @@ test.describe('Keychain chat capture: vault, relaunch, undo', () => {
 		expect(res.status()).toBe(400)
 		expect(JSON.stringify(await res.json())).toContain('RAW_SECRET_DETECTED')
 	})
+})
+
+test.describe('Keychain scope editor: paste, assign, see scope', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`ticking an agent in Edit access shows it in the Agents block and the audit log @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await page.addInitScript(() => {
+				localStorage.setItem('ff:keychain-settings-ui', 'on')
+			})
+			await grantPlanHeadroom(account.apiKey, account.workspaceId)
+			const agent = await account.api.createAgentActor(`E2E Scope Agent ${Date.now()}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			// Paste through the real form, so the key lands scoped to the person who pasted it.
+			await page.goto(`/${account.workspaceId}/settings/keychain/new`)
+			const name = `Coolify ${Date.now()}`
+			await page.getByLabel('Name').fill(name)
+			await page.getByLabel('Secret').fill(FAKE_KEY)
+			await page.getByRole('button', { name: 'Save' }).click()
+			await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 })
+			const block = page.getByRole('region', { name: 'Details' })
+			await expect(block).toContainText('No agent can use this key yet.')
+
+			// Assign, in the access sheet.
+			await page.getByRole('button', { name: 'Edit access' }).click()
+			const sheet = page.getByRole('dialog', { name: 'Edit access' })
+			await expect(sheet).toBeVisible()
+			await sheet.getByRole('checkbox', { name: new RegExp(agent.name) }).click()
+			await expect(sheet).toContainText('Available to 1 agent')
+			const saved = page.waitForResponse(
+				(r) => r.url().includes('/scope') && r.request().method() === 'PUT',
+			)
+			await sheet.getByRole('button', { name: 'Save access' }).click()
+			const response = await saved
+			expect(response.status()).toBe(200)
+			expect(JSON.stringify(await response.json())).not.toContain(FAKE_KEY)
+
+			// See the scope: the sheet closes, the block lists the agent, the log has the row.
+			await expect(sheet).toBeHidden()
+			await expect(block).toContainText('Available to 1 agent')
+			await expect(block).toContainText(agent.name)
+			const log = page.getByRole('region', { name: 'Audit log' })
+			await expect(log).toContainText('SCOPE CHANGED')
+
+			const list = await page.request.get(`${BASE}/api/integrations`, {
+				headers: authHeaders(account.apiKey, account.workspaceId),
+			})
+			const rows = (await list.json()) as Array<{
+				displayName: string | null
+				scopeGrants: Array<{ kind: string; actorId?: string }>
+			}>
+			expect(rows.find((r) => r.displayName === name)?.scopeGrants).toEqual([
+				{ kind: 'actor', actorId: agent.id },
+			])
+			const overflow = await page.evaluate(
+				() => document.documentElement.scrollWidth > window.innerWidth,
+			)
+			expect(overflow).toBe(false)
+		})
+	}
 })
