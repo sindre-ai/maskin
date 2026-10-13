@@ -48,10 +48,12 @@ export function buildWorkspaceStartupBlock(args: {
 	frontendUrl: string
 	interactive?: boolean
 }): string {
-	const exampleUrl = buildWebAppHref(stripTrailingSlash(args.frontendUrl), args.workspaceId, {
-		kind: 'object',
-		id: '<id>',
-	})
+	const base = stripTrailingSlash(args.frontendUrl)
+	const exampleUrl = buildWebAppHref(base, args.workspaceId, { kind: 'object', id: '<id>' })
+	const agentUrl = buildWebAppHref(base, args.workspaceId, { kind: 'agent', id: '<id>' })
+	const triggerUrl = buildWebAppHref(base, args.workspaceId, { kind: 'trigger', id: '<id>' })
+	const fileUrl = buildWebAppHref(base, args.workspaceId, { kind: 'file', id: '<id>' })
+	const settingsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings' })
 	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.
@@ -60,9 +62,13 @@ This workspace works through bets — shaped, time-boxed outcomes.
 - Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 
-When you reference an object in a comment, notification, or description, emit a markdown link with this exact format — do not guess the host or drop the workspace segment:
+Whenever you mention something in Maskin, link it inline as a markdown link. The title or name is usually the best link text, but short wording that reads naturally, like \`[here]\`, is fine too. This goes for anything a person might want to open: an object, an agent, a trigger, a file, a settings page. It applies in chat replies, comments, notifications and descriptions alike. Use these URL formats (the link text is up to you) — do not guess the host, drop the workspace segment, or paste bare ids:
 
-\`[title](${exampleUrl})\`
+- Object (bet, task, insight, document, and so on): \`[title](${exampleUrl})\`
+- Agent: \`[name](${agentUrl})\`
+- Trigger: \`[name](${triggerUrl})\`
+- File: \`[name](${fileUrl})\`
+- Settings: \`[Settings](${settingsUrl})\`
 
 ${EVERY_SESSION_GUIDANCE}
 
