@@ -20,7 +20,7 @@ import {
 	relationshipResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { deriveEndpointKinds } from '../lib/relationships-endpoint-kind'
+import { deriveEndpointKinds, findEndpointIdsInWorkspace } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { autoSubscribe } from '../services/subscriptions'
@@ -72,7 +72,7 @@ const createGraphRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Workspace not found',
+			description: 'Workspace, or an edge source or target, not found',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -254,6 +254,23 @@ app.openapi(createGraphRoute, async (c) => {
 				]),
 				400,
 			)
+		}
+	}
+
+	// Every pre-existing endpoint must live in the caller's workspace. Node $id
+	// references resolve to rows created below, so only bare UUIDs are checked.
+	// A foreign id answers 404 before any node or edge is written.
+	const externalRefs = new Set<string>()
+	for (const edge of body.edges) {
+		if (!nodeIds.has(edge.source)) externalRefs.add(edge.source)
+		if (!nodeIds.has(edge.target)) externalRefs.add(edge.target)
+	}
+	if (externalRefs.size > 0) {
+		const known = await findEndpointIdsInWorkspace(db, workspaceId, [...externalRefs])
+		for (const ref of externalRefs) {
+			if (!known.has(ref)) {
+				return c.json(createApiError('NOT_FOUND', 'Edge source or target not found'), 404)
+			}
 		}
 	}
 
@@ -468,7 +485,7 @@ app.openapi(createGraphRoute, async (c) => {
 		const externalRows = await db
 			.select({ id: objects.id, title: objects.title })
 			.from(objects)
-			.where(inArray(objects.id, [...externalIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...externalIds])))
 		for (const row of externalRows) titleById.set(row.id, row.title ?? null)
 	}
 

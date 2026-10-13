@@ -140,8 +140,9 @@ describe('tokenRankOrderBy — deterministic tie-break', () => {
 		const lowered = rendered.toLowerCase()
 		// Two indicators per token (title, content)…
 		expect(lowered.match(/case when/g)?.length ?? 0).toBe(6)
-		// …one `+` joining them inside each token, plus two joining the tokens.
-		expect(lowered.match(/ \+ /g)?.length ?? 0).toBe(5)
+		// …per token, one `+` adding the title-coverage bonus to the title weight and
+		// one joining the title and content indicators, plus two joining the tokens.
+		expect(lowered.match(/ \+ /g)?.length ?? 0).toBe(8)
 		// The title indicator carries the heavier weight, so a title hit
 		// outranks a content-only hit.
 		expect(params.filter((p) => p === 1000)).toHaveLength(3)

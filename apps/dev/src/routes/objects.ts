@@ -402,6 +402,11 @@ export function tokenizeSearchQuery(q: string): string[] {
 // (fewer than 1000 tokens), while more matched tokens still rank higher.
 const TITLE_HIT_WEIGHT = 1000
 
+// A title hit also earns up to this many points for the share of the title the
+// token covers, so "hans" ranks "Hans" (100%) above "Hans Solutions" (~29%).
+// Kept below TITLE_HIT_WEIGHT so coverage never outranks an extra matched token.
+const TITLE_COVERAGE_SCALE = 100
+
 function tokenIlikePattern(token: string): string {
 	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
 }
@@ -446,7 +451,7 @@ export function buildObjectListConditions(
 				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 				if (match) perTokenMatches.push(match)
 				perTokenHits.push(
-					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT} else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
+					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(${objects.title}), 1)) else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
 				)
 			}
 			const combined = or(...perTokenMatches)
@@ -472,9 +477,10 @@ export function buildObjectListConditions(
 }
 
 /**
- * Ordering when a tokenized `q` produced a rank expression: token-hit count
- * DESC, then title ASC (T1's deterministic tie-break), then id ASC to keep
- * pagination stable across ties.
+ * Ordering when a tokenized `q` produced a rank expression: rank DESC (title
+ * hits, weighted by how much of the title the query covers), then title ASC
+ * (T1's deterministic tie-break), then id ASC to keep pagination stable across
+ * ties.
  */
 export function tokenRankOrderBy(rankExpr: SQL): SQL[] {
 	return [desc(rankExpr), asc(objects.title), asc(objects.id)]
@@ -1151,7 +1157,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		connectedObjects = await db
 			.select()
 			.from(objects)
-			.where(inArray(objects.id, [...connectedIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...connectedIds])))
 	}
 
 	// Fetch recent activity + comments for this object. Events use the object's
@@ -1242,7 +1248,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		else if (rel.targetType === 'session') provenanceSessionIds.add(rel.targetId)
 	}
 	if (provenanceConversationIds.size > 0 || provenanceSessionIds.size > 0) {
-		const provenanceTitles = await resolveEndpointTitles(db, {
+		const provenanceTitles = await resolveEndpointTitles(db, workspaceId, {
 			conversationIds: [...provenanceConversationIds],
 			sessionIds: [...provenanceSessionIds],
 		})
