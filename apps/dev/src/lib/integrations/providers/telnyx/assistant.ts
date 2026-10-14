@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import type { TelnyxAssistant, TelnyxClient } from './client'
-import { readTelnyxRuntimeConfig } from './config'
 import { TOOL_DECLARATIONS } from './tool-schemas'
 
 export const ASSISTANT_MODEL = 'anthropic/claude-haiku-4-5'
@@ -191,24 +190,42 @@ function canonical(value: unknown): string {
  * The assistant content hash: script_version in the consent audit record, and the marker that
  * lets an unchanged assistant skip the update call. Computed over the script (prompt, tools,
  * flow) without the description field, where the hash itself is stored, and without tool_ids:
- * the knowledge base changes on its own schedule and is not the script.
+ * the knowledge base changes on its own schedule and is not the script. Tool headers count by
+ * name only: the secret never shapes script_version, so rotating it keeps the version while
+ * dropping the header changes it. (A rotation still needs a manual update of the live assistant.)
  */
 export function assistantContentHash(payload: Record<string, unknown>): string {
-	const { description: _omitted, tool_ids: _kb, ...rest } = payload
-	return createHash('sha256').update(canonical(rest)).digest('hex').slice(0, 16)
+	const { description: _omitted, tool_ids: _kb, tools, ...rest } = payload
+	const hashable = Array.isArray(tools) ? { ...rest, tools: tools.map(withHeaderNamesOnly) } : rest
+	return createHash('sha256').update(canonical(hashable)).digest('hex').slice(0, 16)
+}
+
+function withHeaderNamesOnly(tool: unknown): unknown {
+	const webhook = (tool as { webhook?: { headers?: Array<{ name: string }> } } | null)?.webhook
+	if (!webhook?.headers) return tool
+	return {
+		...(tool as object),
+		webhook: { ...webhook, headers: webhook.headers.map((h) => ({ name: h.name })) },
+	}
 }
 
 // Every call in this bet is Danish (+45 numbers), so the disclosure is Danish. Same rule as
 // FOLLOWUP_LANGUAGE in the post-call email hook; no per-contact detection until a second market exists.
 export const DISCLOSURE_LOCALE: DisclosureLocale = 'da'
 
-/** The hash of the assistant this deploy would create, from env. Used as script_version at tool time. */
+/**
+ * The hash of the assistant this deploy would create, from env. Used as script_version at tool
+ * time. Throws without MASKIN_PUBLIC_URL: a version hashed over relative tool urls is wrong, and a
+ * wrong version in a consent record is worse than a failed call.
+ */
 export function currentScriptVersion(env: NodeJS.ProcessEnv = process.env): string {
 	const base = env.MASKIN_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
+	if (base === '') throw new Error('MASKIN_PUBLIC_URL is not set: cannot compute the script version')
 	return assistantContentHash(
 		buildAssistantPayload({
 			locale: DISCLOSURE_LOCALE,
-			toolWebhookSecret: readTelnyxRuntimeConfig(env).toolWebhookSecret ?? '',
+			// Header values are not part of the hash, so the secret is not needed here.
+			toolWebhookSecret: '',
 			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 		}),
 	)

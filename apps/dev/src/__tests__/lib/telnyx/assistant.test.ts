@@ -6,6 +6,7 @@ import {
 	SYSTEM_PROMPT,
 	assistantContentHash,
 	buildAssistantPayload,
+	currentScriptVersion,
 	ensureAssistant,
 } from '../../../lib/integrations/providers/telnyx/assistant'
 import type { TelnyxClient } from '../../../lib/integrations/providers/telnyx/client'
@@ -165,9 +166,34 @@ describe('assistantContentHash', () => {
 		)
 	})
 
+	it('keeps the tool secret out of the hash: rotating it keeps the version, dropping the header changes it', () => {
+		const a = buildAssistantPayload(input)
+		const rotated = buildAssistantPayload({ ...input, toolWebhookSecret: 'another-secret' })
+		expect(assistantContentHash(rotated)).toBe(assistantContentHash(a))
+		const noHeader = {
+			...a,
+			tools: (a.tools as Array<{ webhook: Record<string, unknown> }>).map((t) => ({
+				...t,
+				webhook: { ...t.webhook, headers: [] },
+			})),
+		}
+		expect(assistantContentHash(noHeader)).not.toBe(assistantContentHash(a))
+	})
+
 	it('ignores the description field, where the hash itself is stored', () => {
 		const a = buildAssistantPayload(input)
 		expect(assistantContentHash({ ...a, description: 'whatever' })).toBe(assistantContentHash(a))
+	})
+})
+
+describe('currentScriptVersion', () => {
+	it('is the hash of the payload for the public url, with no secret needed', () => {
+		const version = currentScriptVersion({ MASKIN_PUBLIC_URL: 'https://maskin.test/' })
+		expect(version).toBe(assistantContentHash(buildAssistantPayload(input)))
+	})
+
+	it('throws when MASKIN_PUBLIC_URL is unset instead of hashing relative urls', () => {
+		expect(() => currentScriptVersion({})).toThrow('MASKIN_PUBLIC_URL')
 	})
 })
 
