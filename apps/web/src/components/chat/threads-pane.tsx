@@ -1,21 +1,26 @@
 import {
 	SessionLogTranscript,
+	getSessionResultDisplay,
 	isSessionIdleAwaitingInput,
 } from '@/components/agents/session-log-transcript'
 import { ProducedFilesGroup, ProducedObjectsGroup } from '@/components/objects/produced-pane'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { MarkdownContent } from '@/components/shared/markdown-content'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { type ConversationThread, useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useSendSessionInput, useSession, useSessionLogs } from '@/hooks/use-sessions'
+import type { SessionLogResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	STRIP_PILL_CLASSES,
 	type ThreadGroup,
+	failureText,
 	handoffTitle,
 	statusToPill,
 	statusToThreadGroup,
@@ -70,83 +75,111 @@ export function ThreadsPane({
 					onClose={onClose}
 				/>
 			) : (
-				<ThreadsList threads={threads} onOpen={(id) => onOpenSession(id)} onClose={onClose} />
+				<ThreadsList threads={threads} onOpen={(id) => onOpenSession(id)} />
 			)}
 		</div>
-	)
-}
-
-function PaneClose({ onClose }: { onClose?: () => void }) {
-	if (!onClose) return null
-	return (
-		<Button
-			type="button"
-			variant="ghost"
-			size="icon"
-			className="h-6 w-6"
-			onClick={onClose}
-			aria-label="Close Threads pane"
-		>
-			<X size={14} />
-		</Button>
 	)
 }
 
 function ThreadsList({
 	threads,
 	onOpen,
-	onClose,
-}: { threads: ConversationThread[]; onOpen: (id: string) => void; onClose?: () => void }) {
+}: { threads: ConversationThread[]; onOpen: (id: string) => void }) {
+	const working = threads.filter((t) => statusToThreadGroup(t.status) === 'working').length
+	const failed = threads.filter((t) => statusToThreadGroup(t.status) === 'failed').length
+	const summary =
+		threads.length === 0
+			? 'Nothing has been handed off yet.'
+			: failed > 0
+				? `${failed} ${failed === 1 ? 'thread needs' : 'threads need'} your attention.`
+				: working > 0
+					? `${working} ${working === 1 ? 'thread is' : 'threads are'} working.`
+					: 'All threads are done.'
 	return (
-		<>
-			<div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
-				<h3 className="text-[13px] font-semibold text-foreground">
-					Threads <span className="ml-1 font-mono text-muted-foreground">{threads.length}</span>
-				</h3>
-				<PaneClose onClose={onClose} />
+		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
+			<div>
+				<h3 className="text-[20px] font-semibold tracking-[-0.02em] text-foreground">Overview</h3>
+				<p className="mt-0.5 text-[13px] text-muted-foreground">{summary}</p>
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
-				{threads.length === 0 ? (
-					<EmptyState
-						title="No threads yet"
-						description="When an agent in this chat hands work to another agent, it shows up here."
-					/>
-				) : (
-					GROUP_ORDER.map((group) => {
-						const items = threads.filter((t) => statusToThreadGroup(t.status) === group)
-						if (items.length === 0) return null
-						return (
-							<section key={group} aria-label={`${GROUP_LABEL[group]} · ${items.length}`}>
-								<h4 className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[0.09em] text-muted-foreground">
-									{GROUP_LABEL[group]} · {items.length}
-								</h4>
-								<ul className="flex flex-col gap-0.5">
-									{items.map((t) => (
-										<li key={t.id}>
-											<button
-												type="button"
-												onClick={() => onOpen(t.id)}
-												className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-											>
-												<span className="w-full truncate text-[13px] font-medium text-foreground">
+			{threads.length === 0 ? (
+				<EmptyState
+					title="No threads yet"
+					description="When an agent in this chat hands work to another agent, it shows up here."
+				/>
+			) : (
+				GROUP_ORDER.map((group) => {
+					const items = threads.filter((t) => statusToThreadGroup(t.status) === group)
+					if (items.length === 0) return null
+					return (
+						<section key={group} aria-label={`${GROUP_LABEL[group]} · ${items.length}`}>
+							<h4 className="mb-1 flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-[12.5px] font-medium text-foreground">
+								{GROUP_LABEL[group]}
+								<span className="font-normal text-muted-foreground">{items.length}</span>
+							</h4>
+							<ul className="flex flex-col">
+								{items.map((t) => (
+									<li key={t.id}>
+										<button
+											type="button"
+											onClick={() => onOpen(t.id)}
+											className="flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+										>
+											<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+												<span className="truncate text-[13.5px] font-medium text-foreground">
 													{handoffTitle(t.actionPrompt, t.actorName)}
 												</span>
-												<span className="w-full truncate text-[11px] text-muted-foreground">
+												<span className="truncate text-[12px] text-muted-foreground">
 													{t.actorName}
 													{group === 'working' && t.currentActivity
 														? ` · ${t.currentActivity}`
 														: ''}
 												</span>
-											</button>
-										</li>
-									))}
-								</ul>
-							</section>
-						)
-					})
+											</span>
+											{t.startedAt ? (
+												<RelativeTime
+													date={t.startedAt}
+													compact
+													className="shrink-0 pt-0.5 text-[11px] text-muted-foreground"
+												/>
+											) : null}
+										</button>
+									</li>
+								))}
+							</ul>
+						</section>
+					)
+				})
+			)}
+		</div>
+	)
+}
+
+/**
+ * What the person came to read: the final output of a finished thread, what a
+ * failed one is stuck on, or the live transcript while it is still running.
+ * The prompt the agent was handed is deliberately not shown.
+ */
+function ThreadOutcome({
+	thread,
+	logs,
+	isLoading,
+}: { thread: ConversationThread; logs: SessionLogResponse[]; isLoading: boolean }) {
+	const group = statusToThreadGroup(thread.status)
+	const result = useMemo(() => getSessionResultDisplay(logs), [logs])
+	if (isLoading) return <Spinner />
+	if (group === 'working') return <SessionLogTranscript logs={logs} />
+	const text = result?.text ?? (group === 'failed' ? failureText(thread.result) : null)
+	return (
+		<div className="rounded-lg border border-border bg-card px-3 py-2">
+			<span className="eyebrow">{group === 'failed' ? 'Needs attention' : 'Final output'}</span>
+			<div className="mt-1.5">
+				{text ? (
+					<MarkdownContent content={text} size="sm" />
+				) : (
+					<p className="text-[12.5px] text-muted-foreground">No final output was recorded.</p>
 				)}
 			</div>
-		</>
+		</div>
 	)
 }
 
@@ -210,17 +243,22 @@ function ThreadView({
 						{idle && pill === 'WORKING' ? 'IDLE' : pill}
 					</span>
 				) : null}
-				<PaneClose onClose={onClose} />
+				{onClose ? (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-6 w-6"
+						onClick={onClose}
+						aria-label="Close Overview"
+					>
+						<X size={14} />
+					</Button>
+				) : null}
 			</div>
 
 			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
-				<div className="rounded-lg border border-border bg-card px-3 py-2">
-					<span className="eyebrow">Handed off</span>
-					<p className="mt-1 whitespace-pre-wrap text-[12.5px] text-foreground">
-						{thread.actionPrompt}
-					</p>
-				</div>
-				{isLoading ? <Spinner /> : <SessionLogTranscript logs={logs ?? []} />}
+				<ThreadOutcome thread={thread} logs={logs ?? []} isLoading={isLoading} />
 				<ProducedObjectsGroup workspaceId={workspaceId} items={producedObjects} />
 				<ProducedFilesGroup workspaceId={workspaceId} items={producedFiles} />
 				<Link

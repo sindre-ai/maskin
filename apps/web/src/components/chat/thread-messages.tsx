@@ -338,7 +338,7 @@ export function ThreadMessages({
 				    foot of the transcript so the person sees the work begin instead of
 				    waiting for the agent's next message to anchor it. */}
 				{threadsPane && handedOffStripEnabled && pendingHandoffs.length > 0 ? (
-					<div className="flex flex-col gap-2 px-[var(--chat-gut)]">
+					<div className="ml-[39px] flex max-w-[660px] flex-col gap-2">
 						{pendingHandoffs.map((session) => (
 							<HandoffCard
 								key={session.id}

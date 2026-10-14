@@ -1,9 +1,8 @@
+import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
 import { ThreadsPaneContext } from '@/components/chat/threads-context'
-import { ThreadsPane } from '@/components/chat/threads-pane'
-import { ProducedPane } from '@/components/objects/produced-pane'
 import { RouteError } from '@/components/shared/route-error'
 import {
 	Sheet,
@@ -38,6 +37,24 @@ import { z } from 'zod'
 const chatSearchSchema = z.object({
 	msg: z.coerce.number().int().positive().optional(),
 })
+
+const SEEN_KEY = (conversationId: string) => `maskin-overview-seen:${conversationId}`
+
+function readSeenOverview(conversationId: string): string | null {
+	try {
+		return localStorage.getItem(SEEN_KEY(conversationId))
+	} catch {
+		return null
+	}
+}
+
+function writeSeenOverview(conversationId: string, signature: string) {
+	try {
+		localStorage.setItem(SEEN_KEY(conversationId), signature)
+	} catch {
+		// Storage can be blocked; the dot then just re-pulses on reload.
+	}
+}
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/$conversationId')({
 	component: ConversationThreadPage,
@@ -82,17 +99,20 @@ function ConversationThreadPage() {
 	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
 	// flags use above.
 	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
-	// Threads pane: local state, not a search param — it is a transient view over
-	// data already on the page. `'list'` shows the list; a session id opens it.
-	// Shares the right rail with Produced, so opening one closes the other.
-	const [threadsPane, setThreadsPane] = useState<null | { sessionId: string | null }>(null)
+	// Right-rail Overview (Threads + Produced tabs): local state, not a search
+	// param — a transient view over data already on the page. `?produced` still
+	// deep-links in, opening it on the Produced tab.
 	const threadsEnabled = handedOffStripEnabled
+	const overviewEnabled = threadsEnabled || producedEnabled
+	const [overview, setOverview] = useState<null | {
+		tab: OverviewTab
+		sessionId: string | null
+	}>(() => (producedRequested ? { tab: 'produced', sessionId: null } : null))
 	const threads = useConversationThreads(workspaceId, conversationId)
-	const threadsOpen = threadsEnabled && threadsPane !== null
-	// One right rail: an open Threads pane takes it over from Produced.
-	const producedOpen = producedRequested && !threadsOpen
 	const threadsContext = useMemo(
-		() => ({ openThread: (sessionId: string) => setThreadsPane({ sessionId }) }),
+		() => ({
+			openThread: (sessionId: string) => setOverview({ tab: 'threads', sessionId }),
+		}),
 		[],
 	)
 	const lastMarkedRef = useRef<number | null>(null)
@@ -108,33 +128,32 @@ function ConversationThreadPage() {
 		isLoading: producedLoading,
 	} = useConversationProduced(workspaceId, conversationId, producedEnabled)
 
-	const toggleProduced = useCallback(() => {
-		if (threadsOpen) {
-			// Switching rails: Threads closes and Produced opens in one click.
-			setThreadsPane(null)
-			if (producedRequested) return
-		}
-		navigate({
-			to: '/$workspaceId/chats/$conversationId',
-			params: { workspaceId, conversationId },
-			search: (prev: { produced?: boolean }) => ({
-				...prev,
-				produced: prev.produced ? undefined : true,
-			}),
-		})
-	}, [navigate, workspaceId, conversationId, threadsOpen, producedRequested])
+	const toggleOverview = useCallback(() => {
+		setOverview((prev) =>
+			prev ? null : { tab: threadsEnabled ? 'threads' : 'produced', sessionId: null },
+		)
+	}, [threadsEnabled])
 
-	const toggleThreads = useCallback(() => {
-		setThreadsPane((prev) => (prev ? null : { sessionId: null }))
-		// Hand the rail over: clear Produced so closing Threads doesn't reveal it.
-		if (producedRequested) {
-			navigate({
-				to: '/$workspaceId/chats/$conversationId',
-				params: { workspaceId, conversationId },
-				search: (prev: { produced?: boolean }) => ({ ...prev, produced: undefined }),
-			})
-		}
-	}, [navigate, workspaceId, conversationId, producedRequested])
+	// Pulse the Overview dot when threads or produced items changed since the
+	// pane was last open. "Seen" is remembered per chat so a reload doesn't
+	// re-announce what the person already looked at.
+	const overviewSignature = useMemo(
+		() => `${threads.map((t) => `${t.id}:${t.status}`).join('|')}#${totalCount}`,
+		[threads, totalCount],
+	)
+	const [seenSignature, setSeenSignature] = useState<string | null>(() =>
+		readSeenOverview(conversationId),
+	)
+	useEffect(() => {
+		setSeenSignature(readSeenOverview(conversationId))
+	}, [conversationId])
+	useEffect(() => {
+		if (!overview) return
+		setSeenSignature(overviewSignature)
+		writeSeenOverview(conversationId, overviewSignature)
+	}, [overview, overviewSignature, conversationId])
+	const overviewHasNew =
+		!overview && (threads.length > 0 || totalCount > 0) && overviewSignature !== seenSignature
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).
@@ -150,13 +169,13 @@ function ConversationThreadPage() {
 		updateMe.mutate({ id: conversationId, data: { last_read_message_id: newest.id } })
 	}, [conversation, messagesData, conversationId])
 
-	// P toggles the Produced pane. Skipped when the user is typing in an
+	// P toggles the Overview pane. Skipped when the user is typing in an
 	// editable element (input/textarea/contentEditable) so composer keystrokes
 	// aren't hijacked — same shape as the shortcut policy in the command
 	// palette. Only registers when the flag is on so non-tester actors don't
 	// carry a listener at all.
 	useEffect(() => {
-		if (!producedEnabled) return
+		if (!overviewEnabled) return
 		const onKey = (e: KeyboardEvent) => {
 			if (e.metaKey || e.ctrlKey || e.altKey) return
 			if (e.key !== 'p' && e.key !== 'P') return
@@ -165,27 +184,36 @@ function ConversationThreadPage() {
 			const tag = target.tagName
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
 			e.preventDefault()
-			toggleProduced()
+			toggleOverview()
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [producedEnabled, toggleProduced])
+	}, [overviewEnabled, toggleOverview])
 
 	const announcement = useOriginDeepLinkScroll({
 		messageId: deepLinkMessageId ?? null,
 		dataTrigger: messagesData,
 	})
 
-	const threadsPaneNode = (
-		<ThreadsPane
+	const overviewNode = overview ? (
+		<OverviewPane
 			workspaceId={workspaceId}
 			conversationId={conversationId}
-			openSessionId={threadsPane?.sessionId ?? null}
-			onOpenSession={(sessionId) => setThreadsPane({ sessionId })}
-			onClose={() => setThreadsPane(null)}
+			tab={overview.tab}
+			onTabChange={(tab) => setOverview({ tab, sessionId: null })}
+			threadsEnabled={threadsEnabled}
+			producedEnabled={producedEnabled}
+			threadsCount={threads.length}
+			producedCount={totalCount}
+			openSessionId={overview.sessionId}
+			onOpenSession={(sessionId) => setOverview({ tab: 'threads', sessionId })}
+			producedObjects={producedObjects}
+			producedFiles={producedFiles}
+			producedLoading={producedLoading}
+			onClose={() => setOverview(null)}
 			className="h-full"
 		/>
-	)
+	) : null
 
 	return (
 		<ThreadsPaneContext.Provider value={threadsEnabled ? threadsContext : null}>
@@ -200,13 +228,9 @@ function ConversationThreadPage() {
 						workspaceId={workspaceId}
 						conversationId={conversationId}
 						v4Polish={chatsV4Enabled && headerV4Enabled}
-						producedEnabled={producedEnabled}
-						producedCount={totalCount}
-						producedOpen={producedOpen}
-						onToggleProduced={producedEnabled ? toggleProduced : undefined}
-						threadsCount={threads.length}
-						threadsOpen={threadsOpen}
-						onToggleThreads={threadsEnabled ? toggleThreads : undefined}
+						overviewOpen={overview !== null}
+						overviewHasNew={overviewHasNew}
+						onToggleOverview={overviewEnabled ? toggleOverview : undefined}
 					/>
 					<ThreadMessages
 						workspaceId={workspaceId}
@@ -234,60 +258,24 @@ function ConversationThreadPage() {
 			    animation via `motion-reduce:animate-none` — the underlying
 			    Tailwind utility zeros the duration to the base ~0ms, matching
 			    the "Reduced motion drops to 0.001ms" requirement. */}
-				{threadsOpen && isDesktop ? (
+				{overview && isDesktop ? (
 					<aside
-						aria-label="Threads pane"
-						className="duration-slide ease-emphasized w-[320px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none"
+						aria-label="Overview pane"
+						className="duration-slide ease-emphasized w-[400px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none xl:w-[440px]"
 					>
-						{threadsPaneNode}
+						{overviewNode}
 					</aside>
 				) : null}
-				{threadsOpen && !isDesktop ? (
-					<Sheet open onOpenChange={(open) => !open && setThreadsPane(null)}>
+				{overview && !isDesktop ? (
+					<Sheet open onOpenChange={(open) => !open && setOverview(null)}>
 						<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
 							<SheetHeader className="sr-only">
-								<SheetTitle>Threads</SheetTitle>
-								<SheetDescription>Sessions this chat handed work to.</SheetDescription>
-							</SheetHeader>
-							{threadsPaneNode}
-						</SheetContent>
-					</Sheet>
-				) : null}
-				{producedEnabled && producedOpen && isDesktop ? (
-					<aside
-						aria-label="Produced pane"
-						className="duration-slide ease-emphasized w-[320px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none"
-					>
-						<ProducedPane
-							workspaceId={workspaceId}
-							producedObjects={producedObjects}
-							producedFiles={producedFiles}
-							isLoading={producedLoading}
-						/>
-					</aside>
-				) : null}
-				{producedEnabled && !isDesktop ? (
-					<Sheet
-						open={producedOpen}
-						onOpenChange={(open) => {
-							if (!open) toggleProduced()
-						}}
-					>
-						<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
-							<SheetHeader className="sr-only">
-								<SheetTitle>Produced</SheetTitle>
+								<SheetTitle>Overview</SheetTitle>
 								<SheetDescription>
-									Objects and files produced downstream of this chat's sessions.
+									Work this chat handed to other agents, and what it produced.
 								</SheetDescription>
 							</SheetHeader>
-							<ProducedPane
-								workspaceId={workspaceId}
-								producedObjects={producedObjects}
-								producedFiles={producedFiles}
-								isLoading={producedLoading}
-								onClose={toggleProduced}
-								className="h-full"
-							/>
+							{overviewNode}
 						</SheetContent>
 					</Sheet>
 				) : null}
