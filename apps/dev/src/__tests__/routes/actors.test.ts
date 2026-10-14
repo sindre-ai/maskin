@@ -4,7 +4,7 @@ import { PlanCapExceededError } from '../../lib/llm-routing'
 import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createSessionTestApp, createTestApp } from '../setup'
+import { createMockAgentStorage, createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -1037,7 +1037,14 @@ describe('Actors Routes', () => {
 
 		it('returns 200 when agent actor deleted successfully', async () => {
 			const agentActor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const agentStorage = createMockAgentStorage()
+			const { app, mockResults } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
 			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
@@ -1053,6 +1060,39 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
+			expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(agentActor.id, wsId)
+		})
+
+		it('returns 500 and does not delete the agent when its storage files cannot be removed', async () => {
+			const agentActor = buildActor({ type: 'agent' })
+			const agentStorage = createMockAgentStorage({
+				deleteAllAgentFiles: vi.fn().mockRejectedValue(new Error('s3 down')),
+			})
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.deleted).toBeUndefined()
+			expect(body.error.message).toContain('agent not deleted')
+			// No deleted event was recorded, so the failure is not reported as success.
+			expect(
+				calls.inserts.find((v) => (v as { action?: string }).action === 'deleted'),
+			).toBeUndefined()
 		})
 
 		it('records only identity fields in the deleted event, never tools, llm_config or credentials', async () => {
@@ -1073,7 +1113,13 @@ describe('Actors Routes', () => {
 				llmConfig: { api_key: 'fake-llm-key-for-test', model: 'fake-model' },
 				memory: { notes: 'fake memory for test' },
 			})
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				createMockAgentStorage(),
+			)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
