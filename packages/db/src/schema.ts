@@ -41,6 +41,15 @@ export const actors = pgTable('actors', {
 	// install-provisioned rows carry { installed_loop_id, source_item_id }
 	// so the T5 version-push cron can find them. See marketplaceLoops comment.
 	metadata: jsonb('metadata'),
+	// The workspace this human prefers to land in. Nullable: NULL means "no
+	// preference". Only ever set for the actor itself, and only to a workspace it
+	// is a member of (enforced in PATCH /api/actors/:id). A stale value (membership
+	// removed later) is harmless: readers match it against the actor's current
+	// memberships. SET NULL when the workspace itself is deleted.
+	// biome-ignore lint/suspicious/noExplicitAny: workspaces is declared below this table
+	defaultWorkspaceId: uuid('default_workspace_id').references((): any => workspaces.id, {
+		onDelete: 'set null',
+	}),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),

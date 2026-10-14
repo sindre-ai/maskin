@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
@@ -30,6 +31,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
@@ -224,6 +227,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 const createCommentRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['events'],
 	summary: 'Create a comment on an object',
 	request: {
@@ -253,6 +257,7 @@ app.openapi(createCommentRoute, (async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	// Validate the target object exists and belongs to this workspace

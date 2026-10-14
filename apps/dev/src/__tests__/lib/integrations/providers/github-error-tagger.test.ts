@@ -90,6 +90,48 @@ describe('classifyGithubError — primary tag', () => {
 		expect(out.cause_tag).toBe('404-not-found')
 	})
 
+	it('tags 429-rate-limited on a 429 without the anon rate-limit body', () => {
+		const out = classifyGithubError(
+			{
+				hadToken: true,
+				status: 429,
+				body: 'You have exceeded a secondary rate limit',
+				headers: makeHeaders({ 'retry-after': '30' }),
+			},
+			{ now },
+		)
+		expect(out.cause_tag).toBe('429-rate-limited')
+	})
+
+	it('tags 5xx-server-error on a 500', () => {
+		const out = classifyGithubError(
+			{ hadToken: true, status: 500, body: 'Internal Server Error' },
+			{ now },
+		)
+		expect(out.cause_tag).toBe('5xx-server-error')
+	})
+
+	it('tags 5xx-server-error on a 502', () => {
+		const out = classifyGithubError({ hadToken: true, status: 502, body: 'Bad Gateway' }, { now })
+		expect(out.cause_tag).toBe('5xx-server-error')
+	})
+
+	it('tags unknown on a status-less failure instead of schema-validation', () => {
+		const out = classifyGithubError(
+			{ hadToken: true, errorMessage: 'fetch failed: socket hang up' },
+			{ now },
+		)
+		expect(out.cause_tag).toBe('unknown')
+	})
+
+	it('still tags schema-validation on a 422 after the catch-all change', () => {
+		const out = classifyGithubError(
+			{ hadToken: true, status: 422, body: 'Validation Failed' },
+			{ now },
+		)
+		expect(out.cause_tag).toBe('schema-validation')
+	})
+
 	it('tags mergeable-blocked on 409 with mergeability hints', () => {
 		const out = classifyGithubError(
 			{
