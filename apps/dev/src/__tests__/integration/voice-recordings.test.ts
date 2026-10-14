@@ -7,6 +7,9 @@ import { processVoiceRetentionSweep, sweepErased } from '../../jobs/voice-retent
 import type { CallRecording } from '../../lib/integrations/providers/telnyx/client'
 import { TelnyxHttpError } from '../../lib/integrations/providers/telnyx/http'
 import { applyVoiceEvent } from '../../lib/outreach/voice/apply'
+import { createDrizzleDialerStore } from '../../lib/outreach/voice/dialer-store'
+import { erasureMarkerFor } from '../../lib/outreach/voice/dnc-gate'
+import { parseErasureKey } from '../../lib/outreach/voice/erasure-key'
 import { postCallHooks } from '../../lib/outreach/voice/post-call'
 import {
 	type MirrorDeps,
@@ -476,6 +479,138 @@ describe('voice erasure', () => {
 		expect(row.content).not.toBeNull()
 		expect(row.metadata.erased_at).toBeUndefined()
 		expect((await processVoiceRetentionSweep(db, storage.provider, telnyx.factory)).erased).toBe(1)
+	})
+})
+
+describe('voice erasure marker', () => {
+	const KEY = parseErasureKey('test-erasure-marker-key-0123456789-abcdef')
+	const NUMBER = '+4511111111'
+	const sweep = (storage: StorageProvider, telnyx: ReturnType<typeof fakeTelnyx>, key = KEY) =>
+		processVoiceRetentionSweep(db, storage, telnyx.factory, new Date(), key)
+	const markerOf = (raw: string) => {
+		if (!KEY.ok) throw new Error('test key must parse')
+		return erasureMarkerFor(raw, KEY.key)
+	}
+	const errorEvents = async (contactId: string) =>
+		(await db.select().from(events).where(eq(events.entityId, contactId))).filter(
+			(e) => e.action === 'voice_erasure_marker_failed',
+		)
+	const erasable = (phone: unknown = NUMBER) =>
+		setup({
+			status: 'deleted_by_request',
+			metadata: { ...consentFields, email: 'pia@prospect.example', phone, last_call_id: 'call-1' },
+		})
+
+	it('writes v1: plus the HMAC of the number in the write that strips it, and nothing else', async () => {
+		const s = await erasable()
+		const { storage, telnyx } = fx()
+
+		expect(await sweep(storage.provider, telnyx)).toEqual({ expired: 0, erased: 1 })
+
+		const row = await rowOf(s.contactId)
+		expect(row.status).toBe('deleted_by_request')
+		expect(row.metadata.erasure_marker).toBe(markerOf(NUMBER))
+		expect(row.metadata.erasure_marker).toMatch(/^v1:[0-9a-f]{64}$/)
+		expect(Object.keys(row.metadata).sort()).toEqual(
+			[...Object.keys(consentFields), 'erased_at', 'erasure_marker'].sort(),
+		)
+		expect(JSON.stringify(row.metadata)).not.toContain('11111111')
+		expect(row.content).toBeNull()
+		// The title is kept: this slice does not blank it (named risk in errata 9.4).
+		expect(row.title).toBe('Pia Prospect')
+		expect(await errorEvents(s.contactId)).toHaveLength(0)
+	})
+
+	it.each([NUMBER, '+45 11 11 11 11', '0045 11111111', '11111111'])(
+		'writes the same marker when the stored number is %s',
+		async (phone) => {
+			const s = await erasable(phone)
+			const { storage, telnyx } = fx()
+			await sweep(storage.provider, telnyx)
+			expect((await rowOf(s.contactId)).metadata.erasure_marker).toBe(markerOf(NUMBER))
+		},
+	)
+
+	it.each([undefined, '', '+4670000000', 12345678])(
+		'writes no marker and no error event when the stored number is %j',
+		async (phone) => {
+			const s = await erasable(phone)
+			const { storage, telnyx } = fx()
+
+			expect((await sweep(storage.provider, telnyx)).erased).toBe(1)
+
+			const row = await rowOf(s.contactId)
+			expect(row.metadata.erasure_marker).toBeUndefined()
+			expect(row.metadata.erased_at).toBeDefined()
+			expect(await errorEvents(s.contactId)).toHaveLength(0)
+		},
+	)
+
+	it.each([
+		['unset', undefined],
+		['shorter than 32 bytes', 'too-short'],
+	])(
+		'with the key %s, still erases, writes no marker and writes one error event with no number',
+		async (_label, raw) => {
+			const s = await erasable()
+			const { storage, telnyx } = fx()
+
+			expect((await sweep(storage.provider, telnyx, parseErasureKey(raw))).erased).toBe(1)
+
+			const row = await rowOf(s.contactId)
+			expect(row.status).toBe('deleted_by_request')
+			expect(row.metadata.erasure_marker).toBeUndefined()
+			expect(row.metadata.phone).toBeUndefined()
+			expect(row.metadata.erased_at).toBeDefined()
+			const errors = await errorEvents(s.contactId)
+			expect(errors).toHaveLength(1)
+			expect(errors[0]?.data).toMatchObject({ source: 'voice_retention_sweep' })
+			expect(JSON.stringify(errors[0]?.data)).not.toContain('11111111')
+			expect(JSON.stringify(errors[0]?.data)).not.toContain('too-short')
+		},
+	)
+
+	it('computes nothing when a delete fails, so the row keeps its number and has no marker', async () => {
+		const s = await erasable()
+		const { storage, telnyx } = fx()
+		await storage.provider.put(recordingKey(s.contactId, 'call-1'), Buffer.from('a'))
+		const failing: StorageProvider = {
+			...storage.provider,
+			delete: async () => {
+				throw new Error('s3 down')
+			},
+		}
+
+		expect((await sweep(failing, telnyx)).erased).toBe(0)
+
+		const row = await rowOf(s.contactId)
+		expect(row.metadata.phone).toBe(NUMBER)
+		expect(row.metadata.erasure_marker).toBeUndefined()
+		expect(await errorEvents(s.contactId)).toHaveLength(0)
+	})
+
+	it('is found by the dial-time lookup in its own workspace only', async () => {
+		const s = await erasable()
+		const other = await setup()
+		const { storage, telnyx } = fx()
+		await sweep(storage.provider, telnyx)
+		const store = createDrizzleDialerStore(db)
+		const marker = markerOf(NUMBER) ?? ''
+
+		expect(await store.hasErasedMarker(s.workspaceId, marker)).toBe(true)
+		expect(await store.hasErasedMarker(other.workspaceId, marker)).toBe(false)
+		expect(await store.hasErasedMarker(s.workspaceId, markerOf('+4522222222') ?? '')).toBe(false)
+	})
+
+	it('is not matched once the row is no longer deleted_by_request', async () => {
+		const s = await erasable()
+		const { storage, telnyx } = fx()
+		await sweep(storage.provider, telnyx)
+		await db.update(objects).set({ status: 'voice_queued' }).where(eq(objects.id, s.contactId))
+
+		expect(
+			await createDrizzleDialerStore(db).hasErasedMarker(s.workspaceId, markerOf(NUMBER) ?? ''),
+		).toBe(false)
 	})
 })
 

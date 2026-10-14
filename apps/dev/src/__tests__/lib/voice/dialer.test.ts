@@ -10,12 +10,14 @@ import {
 	runDialerTick,
 } from '../../../lib/outreach/voice/dialer'
 import { parseFounderActors } from '../../../lib/outreach/voice/dnc-gate'
+import { parseErasureKey } from '../../../lib/outreach/voice/erasure-key'
 
 // Thu 2026-10-01 11:00 CEST, inside the dial window.
 const NOW = new Date('2026-10-01T09:00:00Z')
 const WS = '33333333-3333-4333-8333-333333333333'
 const ACTOR = '44444444-4444-4444-8444-444444444444'
 const SEBK = '11111111-1111-4111-8111-111111111111'
+const ERASURE_KEY = parseErasureKey('test-erasure-marker-key-0123456789-abcdef')
 
 function contact(n: number, over: Partial<QueuedContact> = {}): QueuedContact {
 	return {
@@ -70,6 +72,7 @@ function fakeStore(
 			store.events.push(e)
 			if (e.action === 'call_initiated') store.callInitiatedCount++
 		},
+		hasErasedMarker: async () => false,
 		stampMetadata: async (_ws, contactId, patch) => {
 			store.stamps.push({ contactId, patch })
 			const row = rows.get(contactId)
@@ -99,6 +102,7 @@ function setup(store: FakeStore, over: Partial<DialerDeps> = {}) {
 		gate: {
 			founders: parseFounderActors(JSON.stringify({ sebk: SEBK })),
 			findActor: async () => ({ type: 'human' }),
+			erasure: ERASURE_KEY,
 		},
 		config: CONFIG,
 		autosendEnabled: true,
@@ -359,6 +363,68 @@ describe('runDialerTick', () => {
 			const result = await runDialerTick(WS, deps)
 			expect(result.dialed_count).toBe(2)
 			expect(createCall).toHaveBeenCalledTimes(2)
+		})
+	})
+
+	describe('erased-contact check (gate check 7)', () => {
+		it('refuses a contact whose number matches an erased contact and places no call', async () => {
+			const c = contact(1)
+			const store = fakeStore([c])
+			const lookups: Array<[string, string]> = []
+			store.hasErasedMarker = async (ws, marker) => {
+				lookups.push([ws, marker])
+				return true
+			}
+			const { deps, createCall } = setup(store)
+
+			const result = await runDialerTick(WS, deps)
+
+			expect(createCall).not.toHaveBeenCalled()
+			expect(result.refused_count).toBe(1)
+			expect(lookups).toHaveLength(1)
+			expect(lookups[0]?.[0]).toBe(WS)
+			const refusal = store.events.find((e) => e.action === 'dnc_refused')
+			expect(refusal).toMatchObject({ entityId: c.id, data: { check: 'erased' } })
+			// The event carries the reason and the contact id, never the marker or the number.
+			expect(refusal?.data).toEqual({ check: 'erased', reason: 'matches erased contact' })
+			expect(JSON.stringify(refusal)).not.toContain(lookups[0]?.[1] ?? 'unreachable')
+			expect(JSON.stringify(refusal)).not.toContain('2012340')
+			// The new contact keeps its status.
+			expect(store.rows.get(c.id)?.status).toBe('voice_queued')
+		})
+
+		it('dials a contact whose number matches nobody', async () => {
+			const store = fakeStore([contact(1)])
+			const { deps, createCall } = setup(store)
+			await runDialerTick(WS, deps)
+			expect(createCall).toHaveBeenCalledTimes(1)
+		})
+
+		it('with the key unset and the dial flag on, places no call and says the key is not set', async () => {
+			const store = fakeStore([contact(1)])
+			const { deps, createCall } = setup(store)
+			deps.gate.erasure = parseErasureKey(undefined)
+
+			await runDialerTick(WS, deps)
+
+			expect(createCall).not.toHaveBeenCalled()
+			const refusal = store.events.find((e) => e.action === 'dnc_refused')
+			expect(refusal?.data).toMatchObject({
+				check: 'erased',
+				reason: expect.stringContaining('VOICE_ERASURE_MARKER_KEY is not set'),
+			})
+		})
+
+		it('with the key unset and the dial flag off, ticks as usual and never reaches the check', async () => {
+			const store = fakeStore([contact(1)])
+			const { deps, createCall } = setup(store, { autosendEnabled: false })
+			deps.gate.erasure = parseErasureKey(undefined)
+
+			const result = await runDialerTick(WS, deps)
+
+			expect(result.skipped_reason).toBe('autosend_off')
+			expect(createCall).not.toHaveBeenCalled()
+			expect(actions(store)).not.toContain('dnc_refused')
 		})
 	})
 
