@@ -188,7 +188,7 @@ struct TVDecisionCard: View {
 			if let when = card.latestActivityAt {
 				if entry.record == nil, let held = TVDecisionAge.heldTag(since: when) {
 					Text(held).font(.system(size: 24, weight: .semibold, design: .monospaced))
-						.foregroundStyle(MaskinColor.ink4)
+						.foregroundStyle(MaskinColor.sigInk)
 				}
 				Text(when.formatted(date: .omitted, time: .shortened))
 					.font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)

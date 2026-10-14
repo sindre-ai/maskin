@@ -110,7 +110,7 @@ private struct TVFlowCard: View {
 				Text(flow.pill.label).font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
 				if flow.waitingCount > 0 {
 					Text("NEEDS YOU")
-						.font(.system(size: 22, weight: .semibold, design: .monospaced))
+						.font(.system(size: 24, weight: .semibold, design: .monospaced))
 						.padding(.horizontal, 16).padding(.vertical, 6)
 						.background(MaskinSurface.inverse, in: Capsule())
 						.foregroundStyle(MaskinSurface.onInverse)
@@ -121,7 +121,7 @@ private struct TVFlowCard: View {
 				}
 				if let target = flow.targets?.first {
 					Text("\(target.label) \(Int(target.actual)) of \(Int(target.target))")
-						.font(.system(size: 22, weight: .semibold, design: .monospaced))
+						.font(.system(size: 24, weight: .semibold, design: .monospaced))
 						.foregroundStyle(MaskinColor.ink4).lineLimit(1)
 				}
 			}
