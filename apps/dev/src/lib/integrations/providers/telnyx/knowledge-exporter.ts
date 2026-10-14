@@ -59,30 +59,60 @@ export function renderKnowledgeMarkdown(row: KnowledgeRow): string {
 	return `${parts.join('\n\n')}\n`
 }
 
+const WORD_START = '(?<![\\p{L}\\p{N}_])'
+const WORD_END = '(?![\\p{L}\\p{N}_])'
+const DANISH_FIRST_PERSON = new RegExp(
+	`${WORD_START}(?:jeg|mig|min|mit|mine|vi|os|vores|vor|vort|vore)${WORD_END}`,
+	'iu',
+)
+const ENGLISH_FIRST_PERSON = new RegExp(`${WORD_START}(?:we|our|us)${WORD_END}`, 'iu')
+const CAPITAL_I = new RegExp(`${WORD_START}I${WORD_END}`, 'u')
+/** A number followed by min is minutes, not the Danish word min (my). */
+const MINUTES = new RegExp(`\\d+\\s*min${WORD_END}`, 'giu')
+const DANISH_MARKERS = new Set(
+	'og ikke er det til af med som har kan vil en et på om der den de for'.split(' '),
+)
+
+function looksDanish(prose: string): boolean {
+	if (/[æøå]/i.test(prose)) return true
+	const seen = new Set<string>()
+	for (const word of prose.toLowerCase().match(/[\p{L}]+/gu) ?? []) {
+		if (DANISH_MARKERS.has(word)) seen.add(word)
+	}
+	return seen.size >= 3
+}
+
 /**
  * First-person prose in the knowledge base pushes the agent toward speaking as a human, which
- * conflicts with the AI disclosure (tech spec 2b.6). Code blocks and inline code are skipped.
+ * conflicts with the AI disclosure (tech spec 2b.6). Danish and English are both checked. A capital
+ * I is only tested when the page does not look Danish, since Danish I means you (plural). Code
+ * blocks and inline code are skipped.
  */
 export function proseHasFirstPerson(markdown: string): boolean {
-	const prose = markdown.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ')
-	return /\b(I|we|our|us)\b/i.test(prose)
+	const prose = markdown
+		.replace(/```[\s\S]*?```/g, ' ')
+		.replace(/`[^`]*`/g, ' ')
+		.replace(MINUTES, ' ')
+	if (DANISH_FIRST_PERSON.test(prose) || ENGLISH_FIRST_PERSON.test(prose)) return true
+	return !looksDanish(prose) && CAPITAL_I.test(prose)
 }
 
 export interface ExportResult {
 	uploaded: string[]
 	removed: string[]
-	/** customer_facing objects whose prose reads in the first person. Still exported: a warning, not a gate. */
-	warnings: Array<{ id: string; title: string | null }>
+	/** customer_facing objects whose prose reads in the first person. Left out of the bucket until reworded. */
+	skipped: Array<{ id: string; title: string | null }>
 	retrievalToolId: string
 }
 
 export type KnowledgeBucket = Pick<StorageProvider, 'put' | 'list' | 'delete' | 'ensureBucket'>
 
 /**
- * Uploads exactly the customer_facing = true knowledge objects of the workspace to the bucket, drops
- * the files of ones that stopped being customer facing, and makes sure the assistant has a
- * retrieval tool over the bucket. Telnyx re-embeds changed files on its own once the bucket has
- * been embedded, so embedding is only requested the first time.
+ * Uploads exactly the validated, customer_facing = true knowledge objects of the workspace that do
+ * not read in the first person, drops the files of ones that stopped qualifying (including ones
+ * edited into first person), and makes sure the assistant has a retrieval tool over the bucket.
+ * Telnyx re-embeds changed files on its own once the bucket has been embedded, so embedding is
+ * only requested the first time.
  */
 export async function exportKnowledge(
 	db: Database,
@@ -101,6 +131,7 @@ export async function exportKnowledge(
 			and(
 				eq(objects.workspaceId, config.workspaceId),
 				eq(objects.type, 'knowledge'),
+				eq(objects.status, 'validated'),
 				sql`${objects.metadata}->>'customer_facing' = 'true'`,
 			),
 		)
@@ -108,17 +139,18 @@ export async function exportKnowledge(
 	await bucket.ensureBucket()
 	const existing = await bucket.list(KEY_PREFIX)
 
-	const warnings: ExportResult['warnings'] = []
+	const skipped: ExportResult['skipped'] = []
 	const wanted = new Set<string>()
 	const uploaded: string[] = []
 	for (const row of rows) {
 		const markdown = renderKnowledgeMarkdown(row as KnowledgeRow)
 		if (proseHasFirstPerson(markdown)) {
-			warnings.push({ id: row.id, title: row.title })
-			logger.warn('customer_facing knowledge reads in the first person', {
+			skipped.push({ id: row.id, title: row.title })
+			logger.warn('customer_facing knowledge skipped: reads in the first person', {
 				objectId: row.id,
 				title: row.title,
 			})
+			continue
 		}
 		const key = bucketKey(row.id)
 		wanted.add(key)
@@ -139,5 +171,5 @@ export async function exportKnowledge(
 		KB_RETRIEVAL_TOOL_NAME,
 		config.bucketName,
 	)
-	return { uploaded, removed, warnings, retrievalToolId }
+	return { uploaded, removed, skipped, retrievalToolId }
 }

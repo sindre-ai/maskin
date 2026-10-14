@@ -110,7 +110,7 @@ export async function runExportPass(db: Database): Promise<void> {
 	logger.info('Telnyx knowledge exported', {
 		uploaded: result.uploaded.length,
 		removed: result.removed.length,
-		firstPersonWarnings: result.warnings.length,
+		firstPersonSkipped: result.skipped.length,
 	})
 
 	const base = (process.env.MASKIN_PUBLIC_URL ?? '').trim().replace(/\/+$/, '')
