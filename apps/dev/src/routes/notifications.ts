@@ -20,6 +20,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
@@ -72,6 +73,14 @@ app.openapi(createNotificationRoute, async (c) => {
 	const actorType = c.get('actorType')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	// The actors, object and session a notification names are later used to wake
+	// agents and resume sessions, so each must belong to this workspace.
+	await assertInWorkspace(db, workspaceId, {
+		actors: [body.source_actor_id, body.target_actor_id],
+		objects: [body.object_id],
+		sessions: [body.session_id],
+	})
 
 	const [created] = await db
 		.insert(notifications)
@@ -324,7 +333,13 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification || !(await isWorkspaceMember(db, actorId, notification.workspaceId))) {
+	// The response event and the wake-up below both run in the notification's own
+	// workspace, so it has to be the one the request names.
+	if (
+		!notification ||
+		notification.workspaceId !== workspaceId ||
+		!(await isWorkspaceMember(db, actorId, notification.workspaceId))
+	) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 	}
 
@@ -412,10 +427,12 @@ async function wakeSourceAgent(ctx: {
 
 	let continuationOfSessionId: string | null = null
 	if (ctx.linkedSessionId) {
+		// Scoped to the notification's workspace: a session id from elsewhere reads
+		// as absent, so it is never resumed or named in the new session's prompt.
 		const [linked] = await ctx.db
 			.select({ status: sessions.status })
 			.from(sessions)
-			.where(eq(sessions.id, ctx.linkedSessionId))
+			.where(and(eq(sessions.id, ctx.linkedSessionId), eq(sessions.workspaceId, ctx.workspaceId)))
 			.limit(1)
 
 		const status = linked?.status
@@ -440,7 +457,7 @@ async function wakeSourceAgent(ctx: {
 
 		// Terminal states (completed, failed, timeout, stopped, snapshotting, etc.)
 		// → spawn a new session and reference the prior one for context continuity.
-		continuationOfSessionId = ctx.linkedSessionId
+		if (linked) continuationOfSessionId = ctx.linkedSessionId
 	}
 
 	await startSession({

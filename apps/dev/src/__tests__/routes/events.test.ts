@@ -973,6 +973,8 @@ describe('Events Routes', () => {
 							data: { content: 'Root' },
 						},
 					],
+					// startSession: the agent is a member of the workspace
+					[{ id: agentAId }],
 				]
 				mockResults.insert = [newComment]
 
@@ -1127,6 +1129,8 @@ describe('Events Routes', () => {
 					],
 					// Actor resolution for the mentioned candidate
 					[{ id: agentAId, type: 'agent' }],
+					// startSession: the agent is a member of the workspace
+					[{ id: agentAId }],
 				]
 				mockResults.insert = [newComment]
 

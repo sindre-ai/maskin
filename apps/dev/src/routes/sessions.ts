@@ -28,6 +28,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -92,6 +93,21 @@ app.openapi(createSessionRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// Every other id in the body must belong to the caller's workspace before
+	// anything is written or started with it. A miss is a 404, the same as an id
+	// that does not exist. The agent (body.actor_id) is checked inside
+	// startSession(), which every caller of a session start goes through.
+	await assertInWorkspace(db, workspaceId, {
+		objects: [
+			body.initiated_from_object_id,
+			body.config.mention?.object_id,
+			body.config.thread_reply?.object_id,
+		],
+		conversations: [body.config.conversation?.conversation_id],
+		triggers: [body.trigger_id],
+		sessions: [body.source_session_id, ...(body.depends_on_session_ids ?? [])],
+	})
 
 	// Stash entry_agent_role inside the existing config JSON blob so downstream
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
