@@ -3,6 +3,7 @@ import { events, objects } from '@maskin/db/schema'
 import { type SQL, and, count, eq, gte, inArray, not, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
 import { applyVoiceEvent, runAppliedEffects } from './apply'
+import { extractCallContext } from './call-context'
 import { RETRY_STATUSES, dialAttemptOf } from './dialer'
 import type { DialerStore, QueueExclusion, QueuedContact } from './dialer'
 import {
@@ -119,6 +120,7 @@ export function createDrizzleDialerStore(
 					id: objects.id,
 					status: objects.status,
 					metadata: objects.metadata,
+					content: objects.content,
 					nextDialAt: sql<string | null>`${objects.metadata}->>'next_dial_at'`,
 				})
 				.from(objects)
@@ -131,6 +133,7 @@ export function createDrizzleDialerStore(
 					status: r.status,
 					metadata: (r.metadata ?? null) as Record<string, unknown> | null,
 					nextDialAt: r.nextDialAt,
+					callContext: extractCallContext(r.content),
 				}),
 			)
 		},

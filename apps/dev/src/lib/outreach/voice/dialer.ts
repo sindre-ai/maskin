@@ -45,6 +45,8 @@ export type DialerConfig = z.infer<typeof dialerConfigSchema>
 export interface QueuedContact extends GateContact {
 	/** metadata.next_dial_at exactly as read, the claim compares against it. */
 	nextDialAt: string | null
+	/** The "Call context" section of the contact description, already capped. Empty when there is none. */
+	callContext?: string
 }
 
 export interface DialerEvent {

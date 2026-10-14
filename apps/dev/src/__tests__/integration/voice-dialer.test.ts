@@ -136,6 +136,41 @@ describe('voice dialer against real Postgres', () => {
 			expect(retry).toMatchObject({ status: 'voice_no_answer', nextDialAt: DUE })
 		})
 
+		it('reads only the Call context section of the description, empty when there is none', async () => {
+			const ws = await freshWorkspace()
+			const contact = (phone: string, content: string | undefined) =>
+				insertObject(db, ws.id, getTestActorId(), {
+					type: 'contact',
+					status: 'voice_queued',
+					content,
+					metadata: { owner: 'sebk', phone, company_type: 'aps', next_dial_at: DUE },
+				})
+			const withSection = await contact(
+				'+4520123456',
+				[
+					'Tier A, score 87',
+					'',
+					'## Call context',
+					'Bygger webshops til tøjbutikker.',
+					'',
+					'## Internal notes',
+					'Rejected in May: too small.',
+				].join('\n'),
+			)
+			const withoutSection = await contact(
+				'+4520123457',
+				'Tier A, score 87. Rejected in May: too small.',
+			)
+			const noDescription = await contact('+4520123458', undefined)
+
+			const { store } = deps(ws.id)
+			const queue = await store.readQueue(ws.id, NOW, 50, EXCLUSION)
+			const contextOf = (id: string | undefined) => queue.find((c) => c.id === id)?.callContext
+			expect(contextOf(withSection?.id)).toBe('Bygger webshops til tøjbutikker.')
+			expect(contextOf(withoutSection?.id)).toBe('')
+			expect(contextOf(noDescription?.id)).toBe('')
+		})
+
 		it('orders by next_dial_at, falling back to created_at, and honours the limit', async () => {
 			const ws = await freshWorkspace()
 			const later = await seedContact(ws.id, 'voice_no_answer', {
