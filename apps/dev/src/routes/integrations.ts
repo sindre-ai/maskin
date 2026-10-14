@@ -1708,6 +1708,10 @@ app.openapi(callbackRoute, (async (c) => {
 		)
 		.limit(1)
 
+	// Reconnecting onto a row that was already active is a refresh, not a new
+	// connect, so it must not count toward integration_connected.
+	const isNewConnect = existingSameInstall?.status !== 'active'
+
 	if (existingSameInstall) {
 		await db
 			.update(integrations)
@@ -1784,13 +1788,15 @@ app.openapi(callbackRoute, (async (c) => {
 		},
 	})
 
-	void trackIntegrationConnected({
-		provider: providerName,
-		workspaceId: stateData.workspaceId,
-		actorId: stateData.actorId,
-		integrationId,
-		authType: 'oauth',
-	})
+	if (isNewConnect) {
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			integrationId,
+			authType: 'oauth',
+		})
+	}
 
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
