@@ -15,6 +15,7 @@ import {
 } from '../lib/integrations/chat-capture'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { CredentialNameError } from '../lib/integrations/credential-name'
+import { CredentialValueError } from '../lib/integrations/credential-value'
 import { rotateIntegrationDek } from '../lib/integrations/rotate-dek'
 import { grantedActorsAreInWorkspace } from '../lib/integrations/scope-grants'
 import { getKmsProvider } from '../lib/keychain-kms'
@@ -180,7 +181,7 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		if (err instanceof ChatCaptureError) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
-		if (err instanceof CredentialNameError) {
+		if (err instanceof CredentialNameError || err instanceof CredentialValueError) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
 		// Error text only, never the request: a driver error can carry bound params.
@@ -255,7 +256,7 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 
 		return c.json({ integrationId: result.integrationId }, 201)
 	} catch (err) {
-		if (err instanceof CredentialNameError) {
+		if (err instanceof CredentialNameError || err instanceof CredentialValueError) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
 		// Error name only, never the request: a driver error can carry bound params.

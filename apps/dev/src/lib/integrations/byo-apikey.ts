@@ -6,6 +6,7 @@ import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
+import { assertValidCredentialValue } from './credential-value'
 
 /** Provider id stored on a key pasted in the Keychain, where no service was detected. */
 export const BYO_APIKEY_PROVIDER = 'custom'
@@ -41,6 +42,8 @@ export async function createByoApiKey(
 	// The same name rule and uniqueness as a chat capture, so one name means one env var.
 	// A taken name is refused before the KMS call; the check repeats under the lock below.
 	assertValidCredentialName(input.displayName)
+	// Before anything is read or encrypted. The message never repeats the value.
+	assertValidCredentialValue(input.rawSecret)
 	await assertSlugFree(db, workspaceId, input.displayName)
 	const grants: ScopeGrant[] = [{ kind: 'actor', actorId }]
 	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, input.rawSecret)

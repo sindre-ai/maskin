@@ -170,6 +170,24 @@ describe('POST /api/integrations/chat-capture', () => {
 		expect(JSON.stringify(captureMock.mock.calls)).not.toContain(CANARY)
 	})
 
+	it.each([
+		['a trailing newline', `${CANARY}\n`, /whitespace/],
+		['a double quote', `${CANARY}"x`, /double quote/],
+		['a backslash', `${CANARY}\\x`, /backslash/],
+		['1025 characters', 'k'.repeat(1025), /1 to 1024/],
+	])('rejects a secret with %s, names the rule and vaults nothing', async (_l, rawSecret, rule) => {
+		const s = await setup()
+		const res = await capture(appFor(s.human), s.ws.id, validBody(s.session.id, { rawSecret }))
+		expect(res.status).toBe(400)
+		const text = await res.text()
+		expect(text).toMatch(rule)
+		expect(text).not.toContain(CANARY)
+		expect(await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id))).toEqual(
+			[],
+		)
+		expect(captureMock).not.toHaveBeenCalled()
+	})
+
 	it('is readable through getCredential during the undo window, by the granted actor only', async () => {
 		const s = await setup()
 		const res = await capture(appFor(s.human), s.ws.id, validBody(s.session.id))

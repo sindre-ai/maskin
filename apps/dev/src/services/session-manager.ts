@@ -85,6 +85,10 @@ import {
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
 import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
+import {
+	findUnresolvedKeychainReferences,
+	stripSessionLevelMcps,
+} from '../lib/integrations/keychain-mcp-guard'
 import { getCredential } from '../lib/integrations/lookup'
 import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -2599,7 +2603,8 @@ ${HUMAN_MESSAGE_STYLE}`
 		}
 
 		// Keychain credentials: bring-your-own keys this session's actor may read.
-		Object.assign(envVars, await this.buildKeychainEnv(session))
+		const keychainEnv = await this.buildKeychainEnv(session)
+		Object.assign(envVars, keychainEnv)
 
 		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
 		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
@@ -2732,8 +2737,23 @@ ${HUMAN_MESSAGE_STYLE}`
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
-			for (const [i, mcp] of mcps.entries()) {
-				sessionMcpServers[`session-mcp-${i}`] = mcp
+			if (Object.keys(keychainEnv).length > 0) {
+				// A vaulted key reached this session: a session-level command could dump it,
+				// and a session-level http entry could send it to a server the caller chose.
+				const { kept, dropped } = stripSessionLevelMcps(mcps)
+				Object.assign(sessionMcpServers, kept)
+				for (const entry of dropped) {
+					logger.warn('Session-level MCP entry dropped: a Keychain key is in this session', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						entry: entry.name,
+						reason: entry.reason,
+					})
+				}
+			} else {
+				for (const [i, mcp] of mcps.entries()) {
+					sessionMcpServers[`session-mcp-${i}`] = mcp
+				}
 			}
 		}
 
@@ -2874,6 +2894,22 @@ ${HUMAN_MESSAGE_STYLE}`
 		const memoryMib = (sessionConfig.memory_mb as number) ?? 4096
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
+
+		// A KEYCHAIN_ reference the launch env does not hold expands to an empty string
+		// in the container: an agent that is not granted the key, or a name that matches
+		// none. Log the reference name and the reason, never a value.
+		for (const { server, envName } of [
+			...findUnresolvedKeychainReferences(stampedAgentToolsMcpServers ?? {}, envVars),
+			...findUnresolvedKeychainReferences(stampedSessionMcpServers, envVars),
+		]) {
+			logger.warn('Keychain reference resolves to nothing', {
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				server,
+				envName,
+				reason: 'key not granted to this agent, or no key by this name',
+			})
+		}
 
 		// One start log for both launch paths (local launchContainer and the
 		// production buildStartRequest), with every value redacted: see redactLaunchEnv.

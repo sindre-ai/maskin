@@ -177,6 +177,25 @@ describe('POST /api/integrations/byo-apikey', () => {
 		expect(captureMock).not.toHaveBeenCalled()
 	})
 
+	it.each([
+		['a trailing newline', `${CANARY}\n`, /whitespace/],
+		['a double quote', `${CANARY}"x`, /double quote/],
+		['a backslash', `${CANARY}\\x`, /backslash/],
+		['1025 characters', 'k'.repeat(1025), /1 to 1024/],
+	])('rejects a secret with %s, names the rule and writes nothing', async (_l, rawSecret, rule) => {
+		const human = getTestActorId()
+		const ws = await insertWorkspace(db, human)
+		const res = await paste(appFor(human), ws.id, validBody({ rawSecret }))
+		expect(res.status).toBe(400)
+		const text = await res.text()
+		expect(text).toMatch(rule)
+		expect(text).not.toContain(CANARY)
+		expect(await db.select().from(integrations).where(eq(integrations.workspaceId, ws.id))).toEqual(
+			[],
+		)
+		expect(captureMock).not.toHaveBeenCalled()
+	})
+
 	it('rejects a body that is not JSON', async () => {
 		const human = getTestActorId()
 		const ws = await insertWorkspace(db, human)
