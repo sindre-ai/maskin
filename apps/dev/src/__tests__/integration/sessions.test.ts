@@ -6,11 +6,14 @@ import { events, sessionLogs, sessions } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
+import type { SessionManager } from '../../services/session-manager'
 import {
 	buildCreateSessionBody,
 	insertActor,
 	insertSession,
 	insertSessionLog,
+	insertTrigger,
 	insertWorkspace,
 } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -153,6 +156,7 @@ function createSessionApp() {
 		},
 	})
 	const sessionManager = createMockSessionManager(db)
+	configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -249,14 +253,16 @@ describe('Sessions Integration', () => {
 			const headers = { 'x-workspace-id': workspaceId }
 			const otherAgent = await insertActor(db, { type: 'agent', name: 'Other Agent' })
 
-			await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const target = await insertSession(db, workspaceId, agentActorId, getTestActorId())
 			await insertSession(db, workspaceId, otherAgent.id, getTestActorId())
 
 			const res = await app.request(jsonGet(`/api/sessions?actor_id=${agentActorId}`, headers))
 			expect(res.status).toBe(200)
 			const list = await res.json()
 			expect(list).toHaveLength(1)
-			expect(list[0].actorId).toBe(agentActorId)
+			// Lean shape doesn't carry actorId; assert on id instead — proves the
+			// filter narrows to the specific agent's session, not just to one row.
+			expect(list[0].id).toBe(target.id)
 		})
 
 		it('supports pagination', async () => {
@@ -345,6 +351,203 @@ describe('Sessions Integration', () => {
 				const app = createSessionApp()
 				const headers = { 'x-workspace-id': workspaceId }
 				const res = await app.request(jsonGet('/api/sessions?updated_before=not-a-date', headers))
+				expect(res.status).toBe(400)
+			})
+		})
+
+		describe('lean rows + verbose flag + trigger_id', () => {
+			it("returns lean rows { id, title, status, updated_at } by default and today's payload on verbose=true", async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					actionPrompt: 'Do the thing',
+					status: 'running',
+				})
+
+				const leanRes = await app.request(jsonGet('/api/sessions', headers))
+				expect(leanRes.status).toBe(200)
+				const leanBody = (await leanRes.json()) as Array<Record<string, unknown>>
+				expect(leanBody).toHaveLength(1)
+				expect(Object.keys(leanBody[0]).sort()).toEqual(['id', 'status', 'title', 'updated_at'])
+				expect(leanBody[0].status).toBe('running')
+
+				const verboseRes = await app.request(jsonGet('/api/sessions?verbose=true', headers))
+				expect(verboseRes.status).toBe(200)
+				const verboseBody = (await verboseRes.json()) as Array<Record<string, unknown>>
+				expect(verboseBody).toHaveLength(1)
+				// The verbose payload keeps every field today's list emits — this is
+				// the regression pin the tech spec calls out (§4 backwards-compat).
+				const row = verboseBody[0]
+				for (const key of [
+					'id',
+					'workspaceId',
+					'actorId',
+					'status',
+					'actionPrompt',
+					'config',
+					'currentActivity',
+					'startedAt',
+					'completedAt',
+					'timeoutAt',
+					'createdBy',
+					'createdAt',
+					'updatedAt',
+				]) {
+					expect(row).toHaveProperty(key)
+				}
+				// Lean-only keys stay off the verbose payload.
+				expect(row).not.toHaveProperty('title')
+				expect(row).not.toHaveProperty('updated_at')
+			})
+
+			it('lean list is at least 5x smaller than verbose for the same rows', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+
+				// Seed 20 rows with realistic-sized action prompts + config blobs so
+				// the fat serialization has something to compare against.
+				const bigPrompt =
+					'Investigate the flaky login test on staging, then trace every failing assertion back to whichever fixture set them up and file a task for each root cause you find.'
+				const bigConfig = {
+					runtime: 'claude-code',
+					runtime_config: { max_turns: 20 },
+					timeout_seconds: 600,
+					memory_mb: 4096,
+					cpu_shares: 1024,
+					mcps: [],
+					env_vars: { FOO: 'bar', BAZ: 'qux' },
+					interactive: false,
+					entry_agent_role: 'chief-of-staff',
+				}
+				for (let i = 0; i < 20; i++) {
+					await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+						actionPrompt: bigPrompt,
+						config: bigConfig,
+					})
+				}
+
+				const leanRes = await app.request(jsonGet('/api/sessions?limit=20', headers))
+				expect(leanRes.status).toBe(200)
+				const leanText = await leanRes.text()
+
+				const verboseRes = await app.request(
+					jsonGet('/api/sessions?verbose=true&limit=20', headers),
+				)
+				expect(verboseRes.status).toBe(200)
+				const verboseText = await verboseRes.text()
+
+				// Serialized size ratio: fat / lean ≥ 5. This is the measurable
+				// success criterion the parent bet targets (bytes-per-row ≤ 50%
+				// of pre-ship baseline in PostHog).
+				expect(verboseText.length / leanText.length).toBeGreaterThanOrEqual(5)
+			})
+
+			it('filters by trigger_id and synthesizes the title from the trigger name', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const trigger = await insertTrigger(db, workspaceId, getTestActorId(), agentActorId, {
+					name: 'Nightly triage sweep',
+				})
+
+				const target = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					triggerId: trigger.id,
+					actionPrompt: 'Some prompt the trigger sent',
+				})
+				// Sibling session on the same actor but no trigger — must not match.
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					actionPrompt: 'A different one',
+				})
+
+				const res = await app.request(jsonGet(`/api/sessions?trigger_id=${trigger.id}`, headers))
+				expect(res.status).toBe(200)
+				const list = (await res.json()) as Array<{
+					id: string
+					title: string
+					status: string
+					updated_at: string | null
+				}>
+				expect(list).toHaveLength(1)
+				expect(list[0].id).toBe(target.id)
+				// Title synthesis prefers the trigger's name over actionPrompt.
+				expect(list[0].title).toBe('Nightly triage sweep')
+			})
+
+			it('lean row title falls back to actionPrompt when no trigger is joined', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const prompt = 'Reproduce the flaky test and file a task'
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					actionPrompt: prompt,
+				})
+
+				const res = await app.request(jsonGet('/api/sessions', headers))
+				expect(res.status).toBe(200)
+				const list = (await res.json()) as Array<{ title: string }>
+				expect(list).toHaveLength(1)
+				expect(list[0].title).toBe(prompt)
+			})
+
+			it('supports the before cursor: rows with updated_at < before are returned', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const early = new Date('2026-06-01T10:00:00.000Z')
+				const late = new Date('2026-06-01T14:00:00.000Z')
+				const earlySession = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: early,
+				})
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: late,
+				})
+
+				const cutoff = new Date('2026-06-01T12:00:00.000Z').toISOString()
+				const res = await app.request(
+					jsonGet(`/api/sessions?before=${encodeURIComponent(cutoff)}`, headers),
+				)
+				expect(res.status).toBe(200)
+				const list = (await res.json()) as Array<{ id: string }>
+				expect(list.map((r) => r.id)).toEqual([earlySession.id])
+			})
+
+			it('walking pages with before=<last updated_at> visits every row exactly once', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				// Created oldest but updated most recently: a created_at sort would bury it
+				// on the last page, where the updated_at cursor then excludes it.
+				const longLived = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					createdAt: new Date('2026-06-01T08:00:00.000Z'),
+					updatedAt: new Date('2026-06-01T20:00:00.000Z'),
+				})
+				const seeded = [longLived.id]
+				for (let i = 1; i <= 5; i++) {
+					const hour = String(8 + i).padStart(2, '0')
+					const s = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+						createdAt: new Date(`2026-06-01T${hour}:00:00.000Z`),
+						updatedAt: new Date(`2026-06-01T${hour}:30:00.000Z`),
+					})
+					seeded.push(s.id)
+				}
+
+				const seen: string[] = []
+				let cursor: string | undefined
+				for (let page = 0; page < 5; page++) {
+					const qs = `limit=2${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`
+					const res = await app.request(jsonGet(`/api/sessions?${qs}`, headers))
+					expect(res.status).toBe(200)
+					const rows = (await res.json()) as Array<{ id: string; updated_at: string }>
+					if (rows.length === 0) break
+					seen.push(...rows.map((r) => r.id))
+					cursor = rows[rows.length - 1].updated_at
+				}
+
+				expect([...seen].sort()).toEqual([...seeded].sort())
+				expect(seen[0]).toBe(longLived.id)
+			})
+
+			it('cap on limit is 200; requests over 200 are rejected', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const res = await app.request(jsonGet('/api/sessions?limit=500', headers))
 				expect(res.status).toBe(400)
 			})
 		})
@@ -704,6 +907,173 @@ describe('Sessions Integration', () => {
 
 			const res = await app.request(jsonGet(`/api/sessions/${randomUUID()}/logs`, headers))
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('Deep log read — /api/sessions/:id/logs/deep', () => {
+		it('newest_first pages backward through history covering every row exactly once', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+
+			// Seed 500 log rows. bigserial ids are monotonic, so the sequence
+			// is a stable ordered set we can reason about.
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 500; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+			expect(seeded).toHaveLength(500)
+
+			// Walk backward via before_id five times at limit=100. Each page
+			// must be contiguous with the last and cover every seeded row
+			// exactly once between them (500 / 100 = 5 pages).
+			const pages: number[][] = []
+			let cursor: number | undefined
+			for (let i = 0; i < 5; i++) {
+				const url = `/api/sessions/${session.id}/logs/deep?limit=100${
+					cursor !== undefined ? `&before_id=${cursor}` : ''
+				}`
+				const res = await app.request(jsonGet(url, headers))
+				expect(res.status).toBe(200)
+				const page = (await res.json()) as { id: number }[]
+				expect(page).toHaveLength(100)
+				const first = page[0]
+				const last = page[page.length - 1]
+				if (!first || !last) throw new Error('page is empty')
+				// Response order is id DESC on newest_first — NOT reversed.
+				expect(first.id).toBeGreaterThan(last.id)
+				pages.push(page.map((r) => r.id))
+				cursor = last.id
+			}
+
+			// Concatenate the five pages and assert they cover every seeded id
+			// exactly once. Sort ascending for the equality check.
+			const all = pages.flat().sort((a, b) => a - b)
+			const expected = seeded.map((r) => r.id).sort((a, b) => a - b)
+			expect(all).toEqual(expected)
+			// And a hard uniqueness check — no id appears twice across pages.
+			expect(new Set(all).size).toBe(500)
+		})
+
+		it('oldest_first with no cursor returns boot lines first (id ASC)', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 5; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/deep?direction=oldest_first&limit=3`, headers),
+			)
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { id: number }[]
+			expect(page.map((r) => r.id)).toEqual([seeded[0]?.id, seeded[1]?.id, seeded[2]?.id])
+		})
+
+		it('after_id tails the newest rows above the cursor', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 10; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+			const cursor = seeded[5]?.id
+			if (!cursor) throw new Error('seeded row missing')
+
+			const res = await app.request(
+				jsonGet(
+					`/api/sessions/${session.id}/logs/deep?direction=newest_first&after_id=${cursor}`,
+					headers,
+				),
+			)
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { id: number }[]
+			// Rows satisfy id > cursor, so seeded[6..9].
+			expect(page.every((r) => r.id > cursor)).toBe(true)
+			expect(page).toHaveLength(4)
+		})
+
+		it('stream filter narrows the where clause', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			await insertSessionLog(db, session.id, { stream: 'stdout', content: 'out 1' })
+			await insertSessionLog(db, session.id, { stream: 'stderr', content: 'err 1' })
+			await insertSessionLog(db, session.id, { stream: 'stdout', content: 'out 2' })
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/deep?stream=stderr`, headers),
+			)
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { stream: string }[]
+			expect(page).toHaveLength(1)
+			expect(page[0]?.stream).toBe('stderr')
+		})
+
+		it('does NOT change /api/sessions/:id/logs semantics (regression pin for spec §8 rabbit hole 5)', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 3; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+
+			// Old endpoint still returns ascending order.
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}/logs`, headers))
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { id: number }[]
+			expect(page.map((r) => r.id)).toEqual(seeded.map((r) => r.id))
+		})
+
+		it('returns 404 for a non-existent session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(jsonGet(`/api/sessions/${randomUUID()}/logs/deep`, headers))
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/sessions/:id — include_logs bug fix (routes/sessions.ts:309)', () => {
+		it('include_logs=true returns a logs array ordered newest-first and honors log_limit', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 10; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}?include_logs=true&log_limit=3`, headers),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as { id: string; logs: { id: number }[] }
+			expect(body.id).toBe(session.id)
+			expect(body.logs).toHaveLength(3)
+			// Newest first — the last three seeded rows, in DESC id order.
+			expect(body.logs.map((l) => l.id)).toEqual([seeded[9]?.id, seeded[8]?.id, seeded[7]?.id])
+		})
+
+		it('include_logs omitted returns session with no logs key', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			await insertSessionLog(db, session.id, { content: 'seed' })
+
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}`, headers))
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Record<string, unknown>
+			expect('logs' in body).toBe(false)
 		})
 	})
 

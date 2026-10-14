@@ -183,7 +183,38 @@ describe('AgentsIndexView', () => {
 			const activity = screen.getByText('Crunching numbers')
 			const sessions = screen.getByText('1 session')
 			expect(activity.className).toContain('md:block')
-			expect(sessions.className).toContain('md:block')
+			expect(sessions.parentElement?.className).toContain('md:flex')
+			expect(screen.getByText('$0.00').parentElement?.className).toContain('md:flex')
+		})
+
+		it('shows active sessions and total / last-30-day cost per agent', () => {
+			const now = Date.now()
+			const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString()
+			mount(
+				[agentBrian()],
+				[
+					buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' }),
+					buildSessionResponse({
+						id: 'b',
+						actorId: 'agent-brian',
+						status: 'completed',
+						totalCostUsd: '1.50',
+						completedAt: daysAgo(2),
+					}),
+					buildSessionResponse({
+						id: 'c',
+						actorId: 'agent-brian',
+						status: 'completed',
+						totalCostUsd: '10.25',
+						completedAt: daysAgo(45),
+					}),
+				],
+			)
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).getByText('3 sessions')).toBeInTheDocument()
+			expect(within(row).getByText('1 active')).toBeInTheDocument()
+			expect(within(row).getByText('$11.75')).toBeInTheDocument()
+			expect(within(row).getByText('$1.50 · 30d')).toBeInTheDocument()
 		})
 	})
 

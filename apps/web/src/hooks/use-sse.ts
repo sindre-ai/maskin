@@ -18,6 +18,14 @@ export type { SSEStatus } from '../lib/sse'
  */
 const MIN_RECONNECT_SYNC_MS = 10_000
 
+// Query-key roots that are rendered live and have nothing else to catch them up
+// after a gap: the chat transcript (conversations) and session state (sessions).
+// Only these refetch on reconnect; every other query is just marked stale and
+// refetches the next time something mounts it.
+const LIVE_RESYNC_ROOTS = new Set<unknown>(['conversations', 'sessions'])
+const isLiveQuery = (query: { queryKey: readonly unknown[] }) =>
+	LIVE_RESYNC_ROOTS.has(query.queryKey[0])
+
 export function useSSE(workspaceId: string): SSEStatus {
 	const queryClient = useQueryClient()
 	const controllerRef = useRef<AbortController | null>(null)
@@ -32,7 +40,11 @@ export function useSSE(workspaceId: string): SSEStatus {
 		const resync = () => {
 			lastSyncAtRef.current = Date.now()
 			pendingSyncRef.current = null
-			queryClient.invalidateQueries()
+			queryClient.invalidateQueries({
+				predicate: (query) => !isLiveQuery(query),
+				refetchType: 'none',
+			})
+			queryClient.invalidateQueries({ predicate: isLiveQuery }, { cancelRefetch: false })
 		}
 
 		const controller = connectSSE(workspaceId, {
@@ -52,8 +64,11 @@ export function useSSE(workspaceId: string): SSEStatus {
 			// A reconnect means we were disconnected for some interval. The
 			// server replays missed events from Last-Event-ID but caps that at
 			// 100, and a busy workspace blows through 100 events quickly — so
-			// anything cached during the gap may be stale. Invalidate broadly
-			// rather than trusting replay; this is what stops the chat
+			// anything cached during the gap may be stale. Mark everything stale
+			// rather than trusting replay, but refetch only the live-rendered
+			// queries now (see LIVE_RESYNC_ROOTS): a deploy drops every tab's
+			// stream at once, and refetching every active query per tab made
+			// each deploy a request spike. This is what stops the chat
 			// transcript from staying frozen after a dropped connection until
 			// the user reloads the page.
 			onReconnect: () => {

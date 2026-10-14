@@ -191,6 +191,30 @@ describe('PII scrubbing', () => {
 		})
 	})
 
+	it('reportApiFailure redacts the invite token from the accept path', () => {
+		__setFaroForTesting(fakeFaro)
+
+		reportApiFailure({ method: 'POST', path: '/invites/s3cr3t-token_AbC/accept', status: 409 })
+
+		expect(fakeFaro.api.pushEvent).toHaveBeenCalledWith('api_request_failed', {
+			method: 'POST',
+			path: '/invites/:token/accept',
+			status: '409',
+		})
+	})
+
+	it('reportApiFailure leaves other invite paths untouched', () => {
+		__setFaroForTesting(fakeFaro)
+
+		reportApiFailure({ method: 'POST', path: '/invites/0d5f6c1e/resend', status: 409 })
+
+		expect(fakeFaro.api.pushEvent).toHaveBeenCalledWith('api_request_failed', {
+			method: 'POST',
+			path: '/invites/0d5f6c1e/resend',
+			status: '409',
+		})
+	})
+
 	it('reportApiFailure includes the structured error code when the backend supplied one', () => {
 		__setFaroForTesting(fakeFaro)
 

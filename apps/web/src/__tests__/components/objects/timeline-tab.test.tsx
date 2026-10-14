@@ -49,9 +49,10 @@ function mockGraph(
 	relationships: ReturnType<typeof buildRelationshipResponse>[] = [],
 	connectedObjects: ReturnType<typeof buildObjectResponse>[] = [],
 	object = buildObjectResponse({}),
+	files: Array<{ id: string; name: string; mimeType: string; sizeBytes: number; url: string }> = [],
 ) {
 	vi.mocked(useObjectGraph).mockReturnValue({
-		data: { object, relationships, connected_objects: connectedObjects, events },
+		data: { object, relationships, connected_objects: connectedObjects, events, files },
 	} as never)
 }
 
@@ -121,6 +122,47 @@ describe('TimelineTab', () => {
 		expect(within(third).queryByText('Link')).toBeNull()
 		expect(within(third).getByText('breaks into')).toBeInTheDocument()
 		expect(within(third).getAllByRole('link', { name: /Timeline tab/i })).not.toHaveLength(0)
+	})
+
+	// Regression: a file endpoint on an `attached` edge is NOT an object row —
+	// ObjectReference would useObject(fileId) and 404, rendering "deleted
+	// object" (the bug Magnus reported on the object timeline while the right
+	// sidebar still rendered the same file correctly). The row must resolve
+	// against graph.files and render the filename linked to the file viewer.
+	it('renders a file endpoint on an attached edge as the file, not "deleted object"', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-file',
+				sourceId: 'obj-1',
+				sourceType: 'bet',
+				targetId: 'file-1',
+				targetType: 'file',
+				targetTitle: 'design.pdf',
+				type: 'attached',
+				createdBy: 'actor-1',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+		const files = [
+			{
+				id: 'file-1',
+				name: 'design.pdf',
+				mimeType: 'application/pdf',
+				sizeBytes: 12345,
+				url: 'http://localhost:5173/ws/files/file-1',
+			},
+		]
+		mockGraph([], relationships, [], object, files)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const items = screen.getAllByRole('listitem')
+		expect(items).toHaveLength(1)
+		const row = items[0]
+		expect(within(row).getByText('attached')).toBeInTheDocument()
+		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
+		expect(within(row).queryByText(/deleted object/i)).toBeNull()
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and

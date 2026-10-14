@@ -6,6 +6,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { bootstrapDefaultAgents } from '../../services/workspace-bootstrap'
@@ -21,8 +22,8 @@ import { db, getTestActorId } from './global-setup'
 //      `Deep-research brief validated → Signal Analyst clustering` trigger.
 //   2. Both are event triggers on knowledge status_changed → validated, wired
 //      to the Chief of Staff actor (the target agent that then dispatches
-//      Researcher via run_agent for deep research and Signal Analyst via
-//      run_agent for the chained Beat 6 clustering).
+//      Researcher via create_session (wait) for deep research and Signal Analyst via
+//      create_session (wait) for the chained Beat 6 clustering).
 //   3. When the first-pass brief validates, the deep-research trigger's
 //      Beat 2 gate dispatches immediately (Chief of Staff session is created
 //      for it) — this is action 1 of the extended trigger.
@@ -201,9 +202,9 @@ describe('Beat 6 — Signal Analyst chained trigger (integration)', () => {
 		// forget, so we poll for BOTH triggers to fire (Beat 2 + Beat 6 both
 		// match knowledge status_changed → validated in the seeded config).
 		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-		const runner = new TriggerRunner(db, bridge, {
-			createSession,
-		} as unknown as SessionManager)
+		const sessionManager = { createSession } as unknown as SessionManager
+		configureSessionLifecycle({ db, sessionManager })
+		const runner = new TriggerRunner(db, bridge, sessionManager)
 		await runner.start()
 		try {
 			bridge.emit('event', {
@@ -288,9 +289,9 @@ describe('Beat 6 — Signal Analyst chained trigger (integration)', () => {
 
 		const bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
 		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-		const runner = new TriggerRunner(db, bridge, {
-			createSession,
-		} as unknown as SessionManager)
+		const sessionManager = { createSession } as unknown as SessionManager
+		configureSessionLifecycle({ db, sessionManager })
+		const runner = new TriggerRunner(db, bridge, sessionManager)
 		await runner.start()
 		try {
 			bridge.emit('event', {

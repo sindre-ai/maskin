@@ -210,4 +210,20 @@ describe('linkedin-unipile MCP route — deprecated aggregate response', () => {
 		expect(errorText).toContain('/api/integrations/linkedin-unipile/mcp/{instanceSlug}')
 		expect(errorText).toContain('/api/integrations/linkedin-unipile/identities')
 	})
+
+	// The MCP SDK client opens a GET for a server-initiated SSE stream and
+	// retries every ~1s while the response is not a clean 405. Without these
+	// handlers a GET on the slug URL fell through to the SPA catch-all and
+	// answered 200 text/html, so each connected session hammered the route.
+	it.each(['GET', 'DELETE'])(
+		'answers %s on the per-identity slug route with 405',
+		async (method) => {
+			const res = await fetch(`${baseUrl}/linkedin-acc-identity`, {
+				method,
+				headers: { 'X-Workspace-Id': WORKSPACE_ID },
+			})
+			expect(res.status).toBe(405)
+			expect(res.headers.get('content-type') ?? '').not.toContain('text/html')
+		},
+	)
 })

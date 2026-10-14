@@ -1,3 +1,5 @@
+import { resetPosthogIdentity } from './posthog'
+
 const AUTH_KEY = 'maskin-api-key'
 const ACTOR_KEY = 'maskin-actor'
 
@@ -77,6 +79,7 @@ export function setStoredActor(actor: StoredActor) {
 export function clearAuth() {
 	removeKey(AUTH_KEY)
 	removeKey(ACTOR_KEY)
+	resetPosthogIdentity()
 }
 
 export function isAuthenticated(): boolean {

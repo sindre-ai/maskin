@@ -2,6 +2,7 @@ import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -66,6 +67,7 @@ describe('SessionManager launch — LLM credential pre-flight (Integration)', ()
 		})
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		try {
 			await manager.startSession(pending.id).catch(() => {})
 		} finally {
@@ -96,6 +98,7 @@ describe('SessionManager launch — LLM credential pre-flight (Integration)', ()
 		})
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		try {
 			await manager.startSession(pending.id).catch(() => {})
 		} finally {
@@ -120,6 +123,7 @@ describe('SessionManager launch — LLM credential pre-flight (Integration)', ()
 		})
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		try {
 			// The launch itself still fails past the pre-flight — there is no Docker
 			// or agent-server in this suite. What matters is that it was NOT
@@ -151,10 +155,13 @@ describe('SessionManager.runWatchdog — stalled launches carry a reason (Integr
 			containerId: null,
 			startedAt: null,
 			config: {},
+			sessionState: 'starting',
+			stateEnteredAt: new Date(Date.now() - 20 * 60 * 1000),
 			updatedAt: new Date(Date.now() - 20 * 60 * 1000),
 		})
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		try {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 		} finally {
@@ -185,10 +192,13 @@ describe('SessionManager.runWatchdog — stalled launches carry a reason (Integr
 			containerId: null,
 			startedAt: null,
 			config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			sessionState: 'starting',
+			stateEnteredAt: new Date(Date.now() - 20 * 60 * 1000),
 			updatedAt: new Date(Date.now() - 20 * 60 * 1000),
 		})
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		try {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 		} finally {

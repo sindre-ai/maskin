@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	MAX_ANNOTATIONS_PER_FILE,
 	MAX_ANNOTATION_COMMENT_LENGTH,
+	createFileSchema,
 	fileAnnotationSchema,
 	fileAnnotationsSchema,
 	updateFileSchema,
@@ -59,5 +60,42 @@ describe('updateFileSchema', () => {
 
 	it('still rejects a completely empty update', () => {
 		expect(updateFileSchema.safeParse({}).success).toBe(false)
+	})
+
+	it('reports received length and a bad multiple-of-4 when base64 is cut off', () => {
+		const result = updateFileSchema.safeParse({ content: 'QUJDRA=', encoding: 'base64' })
+		expect(result.success).toBe(false)
+		expect(result.error?.issues[0]?.message).toBe(
+			'Content must be base64-encoded (received 7 characters; length is not a multiple of 4)',
+		)
+	})
+
+	it('reports a good multiple-of-4 when the length is fine but characters are not base64', () => {
+		const result = updateFileSchema.safeParse({ content: 'QUJD!A==', encoding: 'base64' })
+		expect(result.success).toBe(false)
+		expect(result.error?.issues[0]?.message).toBe(
+			'Content must be base64-encoded (received 8 characters; length is a multiple of 4)',
+		)
+	})
+
+	it('still accepts valid base64', () => {
+		expect(updateFileSchema.safeParse({ content: 'QUJDRA==', encoding: 'base64' }).success).toBe(
+			true,
+		)
+	})
+})
+
+describe('createFileSchema', () => {
+	it('uses the same detailed base64 error on create', () => {
+		const result = createFileSchema.safeParse({
+			name: 'a.png',
+			mime_type: 'image/png',
+			content: 'QUJDRA=',
+			encoding: 'base64',
+		})
+		expect(result.success).toBe(false)
+		expect(result.error?.issues[0]?.message).toBe(
+			'Content must be base64-encoded (received 7 characters; length is not a multiple of 4)',
+		)
 	})
 })

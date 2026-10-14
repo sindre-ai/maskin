@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as sessionLifecycle from '../../services/session-lifecycle'
 import { SessionReconciler } from '../../services/session-reconciler'
 
 function deepContainsValue(obj: unknown, target: string, seen = new Set<unknown>()): boolean {
@@ -16,6 +17,15 @@ interface Candidate {
 	status: string
 }
 
+/**
+ * Post-settleSession migration the reconciler doesn't write directly to
+ * `sessions` — it calls `settleSession()`, which owns the SELECT+UPDATE+event
+ * insert inside its own transaction. The unit tests here don't need to prove
+ * settleSession's own behaviour (that lives in the integration suite); they
+ * only need to prove the reconciler routes the right sessions to it with the
+ * right classification. So we spy on settleSession, record the calls, and
+ * synthesise the `alreadySettled` flag the reconciler branches on.
+ */
 function makeFakeDb(candidates: Candidate[]) {
 	const updates: Array<{ values: Record<string, unknown>; where: unknown }> = []
 	const eventsInserted: Array<Record<string, unknown>> = []
@@ -47,6 +57,39 @@ function makeFakeDb(candidates: Candidate[]) {
 	return { db, updates, eventsInserted }
 }
 
+let settleCalls: Array<{ sessionId: string; outcome: sessionLifecycle.SettleOutcome }>
+let settleShouldThrowFor: string | null
+
+vi.mock('../../services/session-lifecycle', async (importOriginal) => {
+	const actual = (await importOriginal()) as typeof sessionLifecycle
+	return {
+		...actual,
+		settleSession: vi.fn(),
+	}
+})
+
+beforeEach(() => {
+	settleCalls = []
+	settleShouldThrowFor = null
+	vi.mocked(sessionLifecycle.settleSession).mockImplementation(
+		async (sessionId: string, outcome: sessionLifecycle.SettleOutcome) => {
+			settleCalls.push({ sessionId, outcome })
+			if (settleShouldThrowFor === sessionId) {
+				throw new Error('db blew up')
+			}
+			return {
+				sessionId,
+				finalStatus: 'failed',
+				alreadySettled: false,
+				stoppedSandbox: 'skipped-none-live',
+				pushedAgentFiles: 'skipped-no-workspace',
+				posthogEmitted: false,
+				events: {},
+			}
+		},
+	)
+})
+
 const agentServerId = '11111111-1111-1111-1111-111111111111'
 
 describe('SessionReconciler.reconcile', () => {
@@ -77,24 +120,23 @@ describe('SessionReconciler.reconcile', () => {
 		expect(result.markedFailed).toEqual(['session-lost'])
 		expect(result.orphanSandboxes).toEqual([])
 
-		expect(updates).toHaveLength(1)
-		expect(updates[0]?.values).toMatchObject({
-			status: 'failed',
-			result: {
-				exit_code: null,
-				failure_reason: { reason_code: 'agent_server_lost' },
-			},
-			currentActivity: null,
+		// The reconciler delegates the terminal write to settleSession —
+		// verify it was called for the lost session with the right kind,
+		// classification, source, and failure_reason. settleSession's own
+		// SELECT + UPDATE + event emission is covered by session-lifecycle
+		// integration tests, not here.
+		expect(settleCalls).toHaveLength(1)
+		expect(settleCalls[0]?.sessionId).toBe('session-lost')
+		expect(settleCalls[0]?.outcome).toMatchObject({
+			kind: 'fail',
+			classification: 'sandbox_crash',
+			source: 'reconciler',
+			failureReason: { reason_code: 'agent_server_lost' },
 		})
-
-		expect(eventsInserted).toHaveLength(1)
-		expect(eventsInserted[0]).toMatchObject({
-			workspaceId: 'ws-1',
-			actorId: 'actor-1',
-			action: 'session_failed',
-			entityType: 'session',
-			entityId: 'session-lost',
-		})
+		// updates/eventsInserted stay empty — the writes now live inside
+		// settleSession's transaction, which the mock never enters.
+		expect(updates).toHaveLength(0)
+		expect(eventsInserted).toHaveLength(0)
 	})
 
 	it('writes the failure reason into the session transcript', async () => {
@@ -141,7 +183,9 @@ describe('SessionReconciler.reconcile', () => {
 		const result = await reconciler.reconcile({ agentServerId, sandboxes: [] })
 
 		expect(result.markedFailed).toEqual(['session-lost'])
-		expect(updates[0]?.values).toMatchObject({ status: 'failed' })
+		expect(settleCalls[0]?.outcome).toMatchObject({ kind: 'fail' })
+		// updates array is unused now — settleSession owns the write.
+		void updates
 	})
 
 	it('returns sandbox names the DB does not claim as orphans for the caller to remove', async () => {
@@ -182,35 +226,23 @@ describe('SessionReconciler.reconcile', () => {
 				status: 'running',
 			},
 		]
-		let updateCall = 0
-		const eventsInserted: Array<Record<string, unknown>> = []
 		const db = {
 			select: () => ({ from: () => ({ where: () => Promise.resolve(candidates) }) }),
 			update: () => ({
-				set: () => ({
-					where: () => ({
-						returning: () => {
-							updateCall++
-							if (updateCall === 1) return Promise.reject(new Error('db blew up'))
-							return Promise.resolve([{ id: 'updated' }])
-						},
-					}),
-				}),
+				set: () => ({ where: () => ({ returning: () => Promise.resolve([]) }) }),
 			}),
-			insert: () => ({
-				values: (row: Record<string, unknown>) => {
-					eventsInserted.push(row)
-					return Promise.resolve()
-				},
-			}),
+			insert: () => ({ values: () => Promise.resolve() }),
 		}
+
+		settleShouldThrowFor = 'session-one'
 
 		const reconciler = new SessionReconciler(db as never)
 		const result = await reconciler.reconcile({ agentServerId, sandboxes: [] })
 
+		// One settle call succeeded (session-two), the other threw and its
+		// session id stayed off `markedFailed`.
 		expect(result.markedFailed).toEqual(['session-two'])
-		expect(eventsInserted).toHaveLength(1)
-		expect(eventsInserted[0]).toMatchObject({ entityId: 'session-two' })
+		expect(settleCalls.map((c) => c.sessionId).sort()).toEqual(['session-one', 'session-two'])
 	})
 
 	it('returns empty arrays when the snapshot matches the DB exactly', async () => {

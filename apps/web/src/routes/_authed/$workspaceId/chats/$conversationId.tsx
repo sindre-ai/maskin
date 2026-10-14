@@ -18,6 +18,7 @@ import {
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
@@ -46,6 +47,7 @@ function ConversationThreadPage() {
 	const { msg: deepLinkMessageId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
@@ -71,6 +73,12 @@ function ConversationThreadPage() {
 	// the pane as a bottom Sheet — the "no persistent third column" rail from
 	// the acceptance criteria.
 	const isDesktop = useIsDesktopViewport()
+	// Feature-flag boundary for the chat thread `HANDED OFF` sub-agent
+	// delegation strip bet (bet/444b-handed-off-strip). Read once at this
+	// route, threaded down as a plain boolean prop through ThreadMessages →
+	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
+	// flags use above.
+	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
 	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
@@ -158,6 +166,7 @@ function ConversationThreadPage() {
 					v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
 					v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 					producedEnabled={producedEnabled}
+					handedOffStripEnabled={handedOffStripEnabled}
 				/>
 				{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so

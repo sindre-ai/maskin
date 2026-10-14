@@ -5,6 +5,14 @@ export const actorTypeSchema = z.enum(['human', 'agent'])
 
 export const actorToolsSchema = z.object({
 	mcpServers: z.record(z.string(), mcpServerSchema).default({}),
+	/**
+	 * Names of workspace-level secrets (AGENT_SECRET_* process env on the API
+	 * service) to copy into this actor's session env, so tool headers can
+	 * reference them as ${AGENT_SECRET_X} instead of holding the token in plain
+	 * text. Names only, never values. Names without the AGENT_SECRET_ prefix are
+	 * ignored at launch (see resolveActorSecretEnv in apps/dev session-manager).
+	 */
+	envFrom: z.array(z.string()).optional(),
 })
 
 export const llmConfigSchema = z.object({
@@ -39,6 +47,9 @@ export const createActorSchema = z.object({
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
 	auto_create_workspace: z.boolean().optional(),
+	// Agents only: the workspace the new agent is born into. The caller must be a
+	// member of it. Never accepted for humans (signup mints its own workspace).
+	workspace_id: z.string().uuid().optional(),
 })
 
 export const loginSchema = z.object({
@@ -55,6 +66,9 @@ export const updateActorSchema = z.object({
 	memory: z.record(z.unknown()).optional(),
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
+	// The caller's own default workspace; null clears it. Only accepted when the
+	// target actor is the caller, and only for a workspace the caller belongs to.
+	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 export const actorParamsSchema = z.object({
@@ -96,6 +110,7 @@ export const actorResponseSchema = z.object({
 	// voice bet don't have to synthesise a value — the discovery surfaces
 	// treat `undefined` as "voice off" via a strict `=== true` check.
 	voice_enabled: z.boolean().optional(),
+	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>

@@ -52,12 +52,13 @@ describe('Settings > General > Privacy & data', () => {
 		expect(screen.getByRole('switch', { name: 'Anonymize this workspace' })).toBeInTheDocument()
 	})
 
-	// General only carries the two privacy switches — the extension toggles moved
-	// to their own rail section, so no other switch may render here.
+	// General carries the two privacy switches plus the default-workspace switch —
+	// the extension toggles moved to their own rail section, so no other switch
+	// may render here.
 	it('renders no extension switches on General', () => {
 		renderPage()
 
-		expect(screen.getAllByRole('switch')).toHaveLength(2)
+		expect(screen.getAllByRole('switch')).toHaveLength(3)
 	})
 
 	it('defaults share-usage on and anonymize off when settings.privacy is missing', () => {

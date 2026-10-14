@@ -64,6 +64,20 @@ describe('ListRow select affordance', () => {
 		expect(checkbox.className).toContain('opacity-0')
 	})
 
+	// Touch: a 16px visible box (no touch-size primitive) with a 44px pseudo-element
+	// tap area, and the star stays visible beside it instead of standing down.
+	it('keeps the checkbox at 16px with a 44px tap area and the star visible on touch', () => {
+		renderRow({ anySelected: false, isSelected: false })
+		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
+		expect(checkbox).toHaveAttribute('data-size', 'sm')
+		expect(checkbox.className).toContain('h-4')
+		expect(checkbox.className).toContain('max-[1024.02px]:after:-inset-3.5')
+		const star = screen.getByRole('button', { name: 'Star this object' })
+		expect(star.className).not.toContain('max-[1024.02px]:hidden')
+		expect(star.className).not.toContain('pointer-coarse:hidden')
+		expect(star.className).toContain('max-[1024.02px]:after:-inset-3.5')
+	})
+
 	it('draws a filled star and offers to remove it once the row is starred', () => {
 		mockStarState = { isStarred: true, isSaving: false }
 		renderRow({ anySelected: false, isSelected: false })

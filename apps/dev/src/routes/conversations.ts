@@ -30,6 +30,7 @@ import {
 	errorSchema,
 	idParamSchema,
 	messageResponseSchema,
+	messageWithSpawnedSessionsSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -37,6 +38,7 @@ import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
+import { loadSpawnedSessionsByMessage } from '../services/spawned-sessions'
 
 type Env = {
 	Variables: {
@@ -710,7 +712,7 @@ const listMessagesRoute = createRoute({
 			content: {
 				'application/json': {
 					schema: z.object({
-						messages: z.array(messageResponseSchema),
+						messages: z.array(messageWithSpawnedSessionsSchema),
 						has_more: z.boolean(),
 					}),
 				},
@@ -760,8 +762,24 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const hasMore = rows.length > query.limit
 	const page = rows.slice(0, query.limit)
 
+	// Participant-scoped delegation strip. `loadSpawnedSessionsByMessage` returns
+	// empty buckets for a caller who is not a participant, so a non-member sees the
+	// message list with no sub-agent prompts attached.
+	const spawned = await loadSpawnedSessionsByMessage(db, {
+		conversationId: id,
+		workspaceId,
+		messageIds: page.map((m) => m.id),
+		actorId: callerId,
+	})
+
 	return c.json({
-		messages: page.map((m) => serialize(m)) as z.infer<typeof messageResponseSchema>[],
+		messages: page.map(
+			(m) =>
+				({
+					...serialize(m),
+					spawned_sessions: spawned.get(m.id) ?? [],
+				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
+		),
 		has_more: hasMore,
 	})
 }) as RouteHandler<typeof listMessagesRoute, Env>)

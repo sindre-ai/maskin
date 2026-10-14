@@ -10,6 +10,7 @@ import { VoiceEnabledBadge } from '@/components/agents/voice-enabled-badge'
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
+import { formatUsd } from '@/components/settings/billing-usage'
 import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
@@ -22,6 +23,7 @@ import {
 	deriveAgentStatus,
 	getLatestSession,
 	groupSessionsByAgent,
+	summarizeAgentSessions,
 } from '@/lib/agent-status'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -39,6 +41,7 @@ const COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'kind', label: 'Kind', canHide: true },
 	{ id: 'activity', label: 'Activity', canHide: true },
 	{ id: 'sessions', label: 'Sessions', canHide: true },
+	{ id: 'cost', label: 'Cost', canHide: true },
 	{ id: 'status', label: 'Status', canHide: true },
 ]
 
@@ -67,6 +70,9 @@ interface AgentRow {
 	portrait: PortraitStatus
 	latestSession?: SessionResponse
 	sessionCount: number
+	activeCount: number
+	totalCostUsd: number
+	last30dCostUsd: number
 }
 
 // Pseudo-status buckets used by the filter chip strip. Voice is expressed as
@@ -133,11 +139,15 @@ export function AgentsIndexView({
 		() =>
 			agents.map((agent) => {
 				const sessionStatus = deriveAgentStatus(agent.id, sessionsByAgent)
+				const stats = summarizeAgentSessions(sessionsByAgent.get(agent.id))
 				return {
 					agent,
 					portrait: getPortraitStatus(agent, sessionStatus),
 					latestSession: getLatestSession(agent.id, sessionsByAgent),
-					sessionCount: sessionsByAgent.get(agent.id)?.length ?? 0,
+					sessionCount: stats.total,
+					activeCount: stats.active,
+					totalCostUsd: stats.totalCostUsd,
+					last30dCostUsd: stats.last30dCostUsd,
 				}
 			}),
 		[agents, sessionsByAgent],
@@ -191,6 +201,12 @@ export function AgentsIndexView({
 					return dir * (byCount || byName(a, b))
 				})
 				break
+			case 'cost':
+				arr.sort((a, b) => {
+					const byCost = a.totalCostUsd - b.totalCostUsd
+					return dir * (byCost || byName(a, b))
+				})
+				break
 			default:
 				arr.sort((a, b) => dir * byName(a, b))
 		}
@@ -240,6 +256,7 @@ export function AgentsIndexView({
 	const showKind = columnVisibility.kind !== false
 	const showActivity = columnVisibility.activity !== false
 	const showSessions = columnVisibility.sessions !== false
+	const showCost = columnVisibility.cost !== false
 	const showStatus = columnVisibility.status !== false
 
 	// Counts come off the pre-filter `rows` so a chip's number stays stable while
@@ -414,6 +431,7 @@ export function AgentsIndexView({
 							showKind={showKind}
 							showActivity={showActivity}
 							showSessions={showSessions}
+							showCost={showCost}
 							showStatus={showStatus}
 							reserveCallSlot={reserveCallSlot}
 						/>
@@ -430,6 +448,7 @@ function AgentGroupSection({
 	showKind,
 	showActivity,
 	showSessions,
+	showCost,
 	showStatus,
 	reserveCallSlot,
 }: {
@@ -438,6 +457,7 @@ function AgentGroupSection({
 	showKind: boolean
 	showActivity: boolean
 	showSessions: boolean
+	showCost: boolean
 	showStatus: boolean
 	reserveCallSlot: boolean
 }) {
@@ -452,6 +472,7 @@ function AgentGroupSection({
 						showKind={showKind}
 						showActivity={showActivity}
 						showSessions={showSessions}
+						showCost={showCost}
 						showStatus={showStatus}
 						reserveCallSlot={reserveCallSlot}
 					/>
@@ -490,6 +511,7 @@ function AgentGroupSection({
 							showKind={showKind}
 							showActivity={showActivity}
 							showSessions={showSessions}
+							showCost={showCost}
 							showStatus={showStatus}
 							reserveCallSlot={reserveCallSlot}
 						/>
@@ -512,6 +534,7 @@ function AgentRowItem({
 	showKind,
 	showActivity,
 	showSessions,
+	showCost,
 	showStatus,
 	reserveCallSlot,
 }: {
@@ -520,6 +543,7 @@ function AgentRowItem({
 	showKind: boolean
 	showActivity: boolean
 	showSessions: boolean
+	showCost: boolean
 	showStatus: boolean
 	/** Some row in the list carries a Call button: non-voice rows hold the same slot on md+ so the columns line up. */
 	reserveCallSlot: boolean
@@ -585,8 +609,17 @@ function AgentRowItem({
 					</span>
 				)}
 				{showSessions && (
-					<span className="hidden w-[74px] shrink-0 text-[11.5px] tabular-nums text-muted-foreground md:block">
-						{sessionsLabel}
+					<span className="hidden w-[74px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground md:flex">
+						<span>{sessionsLabel}</span>
+						<span className="text-[10.5px] text-muted-foreground/70">{row.activeCount} active</span>
+					</span>
+				)}
+				{showCost && (
+					<span className="hidden w-[84px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground md:flex">
+						<span>{formatUsd(row.totalCostUsd)}</span>
+						<span className="text-[10.5px] text-muted-foreground/70">
+							{formatUsd(row.last30dCostUsd)} · 30d
+						</span>
 					</span>
 				)}
 				{showStatus && (

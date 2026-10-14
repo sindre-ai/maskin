@@ -17,7 +17,11 @@ import { db, getTestActorId } from './global-setup'
 
 // Mock the PostHog capture so the metric emit is observable without sending
 // an HTTP request. The route's tag/emit helper still runs end-to-end.
-const capturePosthogMock = vi.fn().mockResolvedValue(undefined)
+// Hoisted because the mocked module is reached transitively through
+// session-lifecycle.ts, which loads before a plain top-level const initialises.
+const { capturePosthogMock } = vi.hoisted(() => ({
+	capturePosthogMock: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogMock,
 }))

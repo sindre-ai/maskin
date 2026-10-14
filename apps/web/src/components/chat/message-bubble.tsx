@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFiles } from '@/hooks/use-files'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -14,10 +15,18 @@ import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { HandedOffStrip } from './handed-off-strip'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
 import { VoiceMessageMetaTag } from './voice-call-boundary'
+
+function copyMessage(content: string) {
+	void navigator.clipboard?.writeText(content).then(
+		() => toast.success('Copied to clipboard'),
+		() => toast.error('Copy failed'),
+	)
+}
 
 interface MessageBubbleProps {
 	workspaceId: string
@@ -37,6 +46,12 @@ interface MessageBubbleProps {
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
+	/** Chat thread `HANDED OFF` sub-agent delegation strip
+	 *  (bet/444b-handed-off-strip). Threaded from the route boundary. When on,
+	 *  an agent message with a non-empty `spawned_sessions` embed renders the
+	 *  delegation strip beneath its content. Off suppresses the strip
+	 *  regardless of the embed. */
+	handedOffStripEnabled?: boolean
 }
 
 /**
@@ -53,6 +68,7 @@ export function MessageBubble({
 	questionAnswered = false,
 	v4Polish = false,
 	spawnInfo,
+	handedOffStripEnabled = false,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -65,11 +81,24 @@ export function MessageBubble({
 	// Real, persisted, own message (not a system row, not an optimistic
 	// bubble) — the only kind that can be edited or retried.
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
+	// Any real, persisted message with text can be copied, own or not, and
+	// independent of the v4 polish flag.
+	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	const attachments = message.metadata?.attachments ?? []
+	// Resolve the file record for each attachment so the bubble renders the real
+	// filename — the metadata `name` is best-effort and older / MCP-posted
+	// messages often omit it, which previously fell through to a hardcoded
+	// "Attachment" label. Matches the right sidebar's file rendering.
+	const attachmentFileIds = useMemo(() => attachments.map((a) => a.file_id), [attachments])
+	const { data: attachedFiles } = useFiles(workspaceId, { ids: attachmentFileIds })
+	const filesById = useMemo(
+		() => new Map((attachedFiles ?? []).map((f) => [f.id, f])),
+		[attachedFiles],
+	)
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
 	const mentions = message.metadata?.mentions ?? []
@@ -84,19 +113,22 @@ export function MessageBubble({
 	const fileList =
 		attachments.length > 0 ? (
 			<ul className="flex flex-col gap-1" aria-label="Attached files">
-				{attachments.map((f) => (
-					<li key={f.file_id}>
-						<AttachedFileCard
-							workspaceId={workspaceId}
-							file={{
-								id: f.file_id,
-								name: f.name ?? 'Attachment',
-								sizeBytes: f.size_bytes ?? 0,
-								mimeType: f.mime_type,
-							}}
-						/>
-					</li>
-				))}
+				{attachments.map((f) => {
+					const resolved = filesById.get(f.file_id)
+					return (
+						<li key={f.file_id}>
+							<AttachedFileCard
+								workspaceId={workspaceId}
+								file={{
+									id: f.file_id,
+									name: resolved?.name ?? f.name ?? 'Attachment',
+									sizeBytes: resolved?.sizeBytes ?? f.size_bytes ?? 0,
+									mimeType: resolved?.mimeType ?? f.mime_type,
+								}}
+							/>
+						</li>
+					)
+				})}
 			</ul>
 		) : null
 
@@ -192,6 +224,16 @@ export function MessageBubble({
 						className="text-[10px] text-muted-foreground"
 					/>
 					{isVoice ? <VoiceMessageMetaTag /> : null}
+					{canCopy && !editing ? (
+						<button
+							type="button"
+							onClick={() => copyMessage(message.content)}
+							aria-label="Copy message"
+							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+						>
+							<Copy size={12} aria-hidden />
+						</button>
+					) : null}
 					{canAct && !editing ? (
 						<>
 							<button
@@ -218,12 +260,11 @@ export function MessageBubble({
 		)
 	}
 
-	// Real, persisted, agent-side (non-own) message — the only kind that can
-	// be Copy/Retry'd. Optimistic bubbles (id ≤ 0) get no action row. The row
-	// itself is a v4 delta, so it is additionally gated by `v4Polish`.
-	const canActOnAgent = v4Polish && !isOwn && message.id > 0 && message.kind === 'message'
+	// Optimistic bubbles (id ≤ 0) get no action row. Copy is always available;
+	// Retry is a v4 delta, so it is additionally gated by `v4Polish`.
+	const canRetryAgent = v4Polish && message.id > 0 && message.kind === 'message'
 	return (
-		<div className={cn('flex items-start gap-[11px]', v4Polish && 'group')}>
+		<div className="group flex items-start gap-[11px]">
 			<ActorAvatar
 				id={message.actorId}
 				name={message.actorName}
@@ -275,6 +316,23 @@ export function MessageBubble({
 						answered={questionAnswered}
 					/>
 				) : null}
+				{/* Chat thread `HANDED OFF` sub-agent delegation strip
+				    (bet/444b-handed-off-strip). Renders inside the agent branch under
+				    the message text and above the REFERENCED rail — the spec's
+				    `When to render` position. Feature-flag gate is deliberately here
+				    at the render site so the embed and SSE contract stay unflagged
+				    (Rail 3 — visual layer only) and the strip vanishes cleanly on
+				    a flag flip. HandedOffStrip itself no-ops when the embed is
+				    empty, so this is safe on non-spawning agent messages too. */}
+				{handedOffStripEnabled &&
+				message.spawned_sessions &&
+				message.spawned_sessions.length > 0 ? (
+					<HandedOffStrip
+						workspaceId={workspaceId}
+						messageId={message.id}
+						spawnedSessions={message.spawned_sessions}
+					/>
+				) : null}
 				{hasMentions ? (
 					<div className="mt-[7px] flex flex-wrap items-center gap-2">
 						<span className="eyebrow shrink-0">Mentioned</span>
@@ -311,33 +369,30 @@ export function MessageBubble({
 					</div>
 				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
-				{canActOnAgent ? (
+				{canCopy ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100"
+						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
 						aria-label="Message actions"
 					>
 						<button
 							type="button"
-							onClick={() => {
-								void navigator.clipboard?.writeText(message.content).then(
-									() => toast.success('Copied to clipboard'),
-									() => toast.error('Copy failed'),
-								)
-							}}
+							onClick={() => copyMessage(message.content)}
 							aria-label="Copy message"
 							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
 						>
 							<Copy size={12} aria-hidden />
 						</button>
-						<button
-							type="button"
-							onClick={() => retryMessage.mutate({ messageId: message.id })}
-							disabled={retryMessage.isPending}
-							aria-label="Retry"
-							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-						>
-							<RotateCcw size={12} aria-hidden />
-						</button>
+						{canRetryAgent ? (
+							<button
+								type="button"
+								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								disabled={retryMessage.isPending}
+								aria-label="Retry"
+								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+							>
+								<RotateCcw size={12} aria-hidden />
+							</button>
+						) : null}
 					</div>
 				) : null}
 			</div>

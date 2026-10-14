@@ -132,6 +132,16 @@ interface MessageResponse {
 	createdAt: string | null
 }
 
+interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	actionPrompt: string
+	spawnedByMessageId: number | null
+	createdAt: string | null
+}
+
 interface TriggerResponse {
 	id: string
 	workspaceId: string
@@ -413,11 +423,18 @@ export class TestAPI {
 		return res.json()
 	}
 
-	async createAgentActor(name: string): Promise<CreateActorResponse> {
+	/**
+	 * Creates an agent that is born a member of `workspaceId`. The server needs the
+	 * caller's key and the workspace on the create call. With no workspace given it
+	 * uses the account's first one (a signed-up test account has just its own).
+	 */
+	async createAgentActor(name: string, workspaceId?: string): Promise<CreateActorResponse> {
+		const targetWorkspaceId = workspaceId ?? (await this.listWorkspaces())[0]?.id
+		if (!targetWorkspaceId) throw new Error('createAgentActor failed: account has no workspace')
 		const res = await fetch(`${this.baseURL}/api/actors`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ type: 'agent', name }),
+			headers: this.headers(),
+			body: JSON.stringify({ type: 'agent', name, workspace_id: targetWorkspaceId }),
 		})
 		if (!res.ok) throw new Error(`createAgentActor failed: ${res.status}`)
 		return res.json()
@@ -451,6 +468,16 @@ export class TestAPI {
 			body: JSON.stringify({ enabled }),
 		})
 		if (!res.ok) throw new Error(`setActorVoiceMode failed: ${res.status}`)
+		return res.json()
+	}
+
+	async listWorkspaceMembers(
+		workspaceId: string,
+	): Promise<Array<{ actorId: string; role: string; name: string; type: string }>> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${workspaceId}/members`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listWorkspaceMembers failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -555,13 +582,23 @@ export class TestAPI {
 			actor_id: string
 			action_prompt: string
 			config?: Record<string, unknown>
+			conversation_id?: string
+			message_id?: number
 			auto_start?: boolean
+			spawned_by_message_id?: number
 		},
 	): Promise<SessionResponse> {
+		// conversation_id + message_id is shorthand for config.conversation, which
+		// anchors the session to a conversation turn.
+		const { conversation_id, message_id, ...rest } = data
+		const body =
+			conversation_id && message_id && !rest.config
+				? { ...rest, config: { conversation: { conversation_id, message_id } } }
+				: rest
 		const res = await fetch(`${this.baseURL}/api/sessions`, {
 			method: 'POST',
 			headers: this.headers(workspaceId),
-			body: JSON.stringify(data),
+			body: JSON.stringify(body),
 		})
 		if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
 		return res.json()

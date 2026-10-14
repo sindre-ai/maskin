@@ -4,7 +4,7 @@ import { get as httpGet } from 'node:http'
 import { connect, createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { type GuestLogSink, createGuestLogSink } from '../lib/guest-log-stream'
+import { type GuestLogSink, createGuestLogSink, redactSecrets } from '../lib/guest-log-stream'
 import { logger } from '../lib/logger'
 
 const execFile = promisify(execFileCb)
@@ -437,11 +437,15 @@ export async function spawnSession(
 		await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
 	} catch (err) {
 		const e = err as { stderr?: unknown; stdout?: unknown; message?: string }
-		const stderr = e.stderr ? String(e.stderr) : ''
+		// execFile's message embeds the full command line, including every
+		// `-e KEY=value` env arg (AGENT_SECRET_*, tokens), so redact before logging
+		// or rethrowing.
+		const stderr = e.stderr ? redactSecrets(String(e.stderr)) : ''
+		const message = redactSecrets(e.message ?? 'unknown')
 		logger.error('msb create failed', {
 			sessionId: input.sessionId,
 			stderr,
-			message: e.message ?? 'unknown',
+			message,
 		})
 		// Best-effort cleanup so a half-booted sandbox doesn't sit around with
 		// the same name on retry. Non-fatal — the original create error is the
@@ -454,7 +458,7 @@ export async function spawnSession(
 				error: String(cleanupErr),
 			})
 		}
-		throw new Error(`msb create failed for ${input.sessionId}: ${stderr || e.message || 'unknown'}`)
+		throw new Error(`msb create failed for ${input.sessionId}: ${stderr || message}`)
 	}
 
 	try {

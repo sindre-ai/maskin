@@ -467,6 +467,9 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								objectId={object.id}
 								focusRef={answerRef}
 								variant="bar"
+								// Docked to the bottom of the scroller, so a dropdown that opens
+								// below the bar is clipped and only shows at the end of the page.
+								mentionDropdownPlacement="above"
 								// The full prompt wraps to three lines in a 375px bar, so the
 								// phone gets the short form.
 								placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}
