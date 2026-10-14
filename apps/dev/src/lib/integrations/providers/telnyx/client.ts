@@ -42,6 +42,8 @@ export interface CreateCallInput {
 	to: string
 	from: string
 	assistantId: string
+	/** Opens the greeting: "Hej Anna" from a real first name, plain "Hej" without one. */
+	prospectGreeting: string
 	connectionId: string
 	webhookUrl: string
 	clientState: CallClientState
@@ -218,7 +220,12 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 					to: input.to,
 					from: input.from,
 					connection_id: input.connectionId,
-					assistant_id: input.assistantId,
+					// The Dial docs list an assistant object, not a top-level assistant_id. Telnyx starts it
+					// on answer, and these dynamic variables win over the stored defaults.
+					assistant: {
+						id: input.assistantId,
+						dynamic_variables: { prospect_greeting: input.prospectGreeting },
+					},
 					webhook_url: input.webhookUrl,
 					answering_machine_detection: 'premium',
 					client_state: encodeClientState(input.clientState),

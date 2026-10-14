@@ -7,6 +7,7 @@ import {
 	type DialerStore,
 	type QueuedContact,
 	copenhagenMidnight,
+	prospectGreeting,
 	runDialerTick,
 } from '../../../lib/outreach/voice/dialer'
 import { parseFounderActors } from '../../../lib/outreach/voice/dnc-gate'
@@ -524,5 +525,31 @@ describe('runDialerTick', () => {
 		const result = await runDialerTick(WS, deps)
 		expect(result.skipped_reason).toBe('queue_empty')
 		expect(tickEvent(store)?.data).toMatchObject({ skipped_reason: 'queue_empty' })
+	})
+})
+
+describe('prospect greeting', () => {
+	it('greets by the first name stored on the contact', async () => {
+		const c = contact(1, {
+			metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'aps', first_name: ' Anna ' },
+		})
+		const { deps, createCall } = setup(fakeStore([c]))
+		await runDialerTick(WS, deps)
+		const input = createCall.mock.calls[0]?.[0] as unknown as { prospectGreeting: string }
+		expect(input.prospectGreeting).toBe('Hej Anna')
+	})
+
+	it('sends a plain Hej when the contact has no first name', async () => {
+		const { deps, createCall } = setup(fakeStore([contact(1)]))
+		await runDialerTick(WS, deps)
+		const input = createCall.mock.calls[0]?.[0] as unknown as { prospectGreeting: string }
+		expect(input.prospectGreeting).toBe('Hej')
+	})
+
+	it('falls back to Hej for a blank or non-text first name and never splits a full name', () => {
+		expect(prospectGreeting(null)).toBe('Hej')
+		expect(prospectGreeting({ first_name: '   ' })).toBe('Hej')
+		expect(prospectGreeting({ first_name: 42 })).toBe('Hej')
+		expect(prospectGreeting({ title: 'Anna Jensen' })).toBe('Hej')
 	})
 })
