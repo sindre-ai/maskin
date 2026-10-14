@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictMembership, getOAuthPin } from '@maskin/auth'
+import { evictMembership, evictOAuthTokens, getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -25,6 +25,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { revokeMemberGrants } from '../lib/oauth-server/grants'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -1319,7 +1320,10 @@ app.openapi(removeMemberRoute, (async (c) => {
 			data: { removed_actor_id: targetActorId, self_removal: isSelfRemoval },
 		})
 
-		return { kind: 'removed' as const }
+		// Their Claude connections to this workspace end with their membership.
+		const revokedGrants = await revokeMemberGrants(tx, targetActorId, workspaceId)
+
+		return { kind: 'removed' as const, revokedGrants }
 	})
 
 	switch (outcome.kind) {
@@ -1339,6 +1343,7 @@ app.openapi(removeMemberRoute, (async (c) => {
 			// Takes effect on the member's next request, not when its cached auth
 			// lookup expires.
 			evictMembership(targetActorId, workspaceId)
+			if (outcome.revokedGrants > 0) evictOAuthTokens()
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

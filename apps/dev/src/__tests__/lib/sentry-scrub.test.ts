@@ -75,6 +75,27 @@ describe('scrubString', () => {
 	})
 })
 
+describe('scrubString: Claude connector tokens', () => {
+	const ACCESS = 'mat_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG'
+	const REFRESH = 'mrt_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG'
+
+	it('blanks mat_ and mrt_ tokens wherever they appear in a string', () => {
+		const out = scrubString(`Authorization: Bearer ${ACCESS} and body refresh_token=${REFRESH}`)
+
+		expect(out).toBe('Authorization: Bearer [redacted] and body refresh_token=[redacted]')
+	})
+
+	it('blanks them inside nested log attributes', () => {
+		const out = scrubDeep({ request: { headers: { authorization: `Bearer ${ACCESS}` } } })
+
+		expect(JSON.stringify(out)).not.toContain('mat_0123')
+	})
+
+	it('leaves a short word that merely starts with mat_ alone', () => {
+		expect(scrubString('see mat_rix and mrt_ok')).toBe('see mat_rix and mrt_ok')
+	})
+})
+
 describe('scrubDeep', () => {
 	it('scrubs nested strings, never rewrites keys, and does not mutate the input', () => {
 		const input = { error: failedQuery(), nested: { list: [failedQuery(), 7, null] }, n: 1 }

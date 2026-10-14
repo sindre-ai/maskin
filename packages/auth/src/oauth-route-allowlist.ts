@@ -199,6 +199,13 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/integrations/resend/dns-precheck',
 	'POST /api/integrations/skjald/authorize',
 
+	// The Claude connector's own consent and connections API. A connected client must not approve its own access or manage connections: only the person, with their own API key.
+	'GET /api/oauth/authorize/preview',
+	'POST /api/oauth/authorize/approve',
+	'POST /api/oauth/authorize/deny',
+	'GET /api/oauth/grants',
+	'DELETE /api/oauth/grants/:id',
+
 	// Skip authMiddleware (public, provider-signed or self-authenticating). A mat_ token never reaches the OAuth branch on these.
 	'POST /api/auth/login',
 	'GET /api/health',
