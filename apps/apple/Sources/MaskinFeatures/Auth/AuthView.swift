@@ -114,13 +114,13 @@ public struct AuthView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 			BrandMark(size: 56)
 				.padding(.bottom, MaskinSpace.s3)
-			Text(model.mode == .signIn ? "Sign in to Maskin" : "Create your account")
+			Text(model.mode == .signIn ? "Your agents, one decision away." : "Create your account")
 				.maskinText(.largeTitle)
 				.foregroundStyle(MaskinColor.ink)
 				.accessibilityAddTraits(.isHeader)
 			Text(
 				model.mode == .signIn
-					? "Your workspace and agents, where you left them."
+					? "Sign in to see what needs you."
 					: "You get a workspace and agents ready to work."
 			)
 			.maskinText(.body)
