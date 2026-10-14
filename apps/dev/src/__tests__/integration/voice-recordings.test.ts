@@ -495,10 +495,16 @@ describe('voice erasure marker', () => {
 		(await db.select().from(events).where(eq(events.entityId, contactId))).filter(
 			(e) => e.action === 'voice_erasure_marker_failed',
 		)
-	const erasable = (phone: unknown = NUMBER) =>
+	// An explicit undefined means the contact has no stored number, so no default parameter here.
+	const erasable = (...args: [phone?: unknown]) =>
 		setup({
 			status: 'deleted_by_request',
-			metadata: { ...consentFields, email: 'pia@prospect.example', phone, last_call_id: 'call-1' },
+			metadata: {
+				...consentFields,
+				email: 'pia@prospect.example',
+				phone: args.length > 0 ? args[0] : NUMBER,
+				last_call_id: 'call-1',
+			},
 		})
 
 	it('writes v1: plus the HMAC of the number in the write that strips it, and nothing else', async () => {
