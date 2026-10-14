@@ -44,6 +44,7 @@ export interface IntegrationRow {
 	/** Source key from sources.ts: integration:{provider}:{integrationId}. */
 	sourceKey: string
 	provider: string
+	integrationId: string
 	status: string
 }
 
@@ -51,6 +52,7 @@ export interface NotAttachedFinding {
 	kind: 'available_not_attached'
 	sourceKey: string
 	provider: string
+	integrationId: string
 }
 
 /**
@@ -81,6 +83,7 @@ export function findAvailableNotAttached(input: {
 			kind: 'available_not_attached',
 			sourceKey: integration.sourceKey,
 			provider: integration.provider,
+			integrationId: integration.integrationId,
 		})
 	}
 	return findings

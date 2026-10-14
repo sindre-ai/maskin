@@ -139,6 +139,7 @@ describe('findAvailableNotAttached', () => {
 	const row = (provider: string, status = 'active'): IntegrationRow => ({
 		sourceKey: `integration:${provider}:id-${provider}`,
 		provider,
+		integrationId: `id-${provider}`,
 		status,
 	})
 
@@ -154,6 +155,7 @@ describe('findAvailableNotAttached', () => {
 				kind: 'available_not_attached',
 				sourceKey: 'integration:notion:id-notion',
 				provider: 'notion',
+				integrationId: 'id-notion',
 			},
 		])
 	})

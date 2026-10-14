@@ -2,11 +2,13 @@ import type { Database, Transaction } from '@maskin/db'
 import { events, workspaces } from '@maskin/db/schema'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { trackCapabilityScanCompleted } from '../lib/analytics/capability-events'
+import { findAvailableNotAttached } from '../lib/capabilities/connection-findings'
 import {
 	type CapabilitySnapshot,
 	type DiffResult,
 	type Finding,
 	type ProbeOutcome,
+	availableNotAttachedFinding,
 	diffCapabilities,
 } from '../lib/capabilities/diff'
 import {
@@ -16,7 +18,13 @@ import {
 	holdersForSources,
 } from '../lib/capabilities/holders'
 import { type ProbeFn, probeSource } from '../lib/capabilities/probe'
-import { type CapabilitySource, enumerateSources } from '../lib/capabilities/sources'
+import {
+	type CapabilitySource,
+	enumerateActiveIntegrations,
+	enumerateSources,
+	loadGrantedScopes,
+	providerConfigOf,
+} from '../lib/capabilities/sources'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
@@ -139,7 +147,24 @@ export class CapabilityScanner {
 		const startedAt = Date.now()
 		const ctx: HolderContext = { db: this.db, workspaceId }
 		const sources = await enumerateSources(this.db, workspaceId)
-		const holders = await holdersForSources(ctx, sources.map(toHolderSource))
+		const activeIntegrations = await enumerateActiveIntegrations(this.db, workspaceId)
+		const holderSources = new Map<string, HolderSource>(
+			sources.map((source) => [source.key, toHolderSource(source)]),
+		)
+		for (const row of activeIntegrations) {
+			if (holderSources.has(row.sourceKey)) continue
+			holderSources.set(row.sourceKey, {
+				key: row.sourceKey,
+				provider: row.provider,
+				integrationId: row.integrationId,
+			})
+		}
+		const holders = await holdersForSources(ctx, [...holderSources.values()])
+		const grantedScopes = await loadGrantedScopes(
+			this.db,
+			workspaceId,
+			sources.flatMap((source) => (source.integrationId ? [source.integrationId] : [])),
+		)
 		const unscannedServers = await countUnscannedServers(ctx)
 
 		// Probes run before the write transaction: they can take seconds.
@@ -189,6 +214,12 @@ export class CapabilityScanner {
 					holders: sourceHolders,
 					priorFailures,
 					now,
+					connection: source.provider
+						? {
+								config: providerConfigOf(source.provider),
+								credentials: grantedScopes.get(source.integrationId ?? '') ?? {},
+							}
+						: undefined,
 				})
 
 				totals.tools_total += diff.counts.tools_total
@@ -207,9 +238,29 @@ export class CapabilityScanner {
 					hadFailures: priorFailures > 0,
 					holders: sourceHolders,
 				})
-				totals.findings_eligible += diff.findings.filter(
-					(f) => f.kind === 'tool_added' && f.flagged,
-				).length
+				totals.findings_eligible += diff.findings.filter(isEligible).length
+			}
+
+			// Connected but held by nobody: a state, not a diff, so it has no probe. It
+			// is written through the same writer and counted the same way.
+			const unattached = findAvailableNotAttached({
+				integrations: activeIntegrations,
+				configFor: providerConfigOf,
+				holdersBySource: holders,
+			})
+			for (const row of unattached) {
+				const finding = availableNotAttachedFinding(workspaceId, row.sourceKey)
+				if (await alreadyReported(tx, workspaceId, row.integrationId, finding)) continue
+				findingsWritten += await writeChangedFindings(tx, {
+					workspaceId,
+					actorId,
+					entityId: row.integrationId,
+					provider: row.provider,
+					findings: [finding],
+					holders: [],
+					snapshotEventId: null,
+				})
+				totals.findings_eligible++
 			}
 
 			const mode: 'baseline' | 'diff' = baselined ? 'baseline' : 'diff'
@@ -373,20 +424,54 @@ async function writeSourceResult(
 		})
 	}
 
+	return writeChangedFindings(tx, {
+		workspaceId,
+		actorId,
+		entityId: source.entityId,
+		provider: source.provider,
+		findings: diff.findings,
+		holders,
+		snapshotEventId,
+	})
+}
+
+/** The one writer of capability_changed events, for every finding kind. */
+async function writeChangedFindings(
+	tx: Transaction,
+	params: {
+		workspaceId: string
+		actorId: string
+		entityId: string
+		provider: string | undefined
+		findings: readonly Finding[]
+		holders: readonly string[]
+		snapshotEventId: number | null
+	},
+): Promise<number> {
+	const { workspaceId, actorId, entityId, provider, findings, holders, snapshotEventId } = params
 	let written = 0
-	for (const finding of diff.findings) {
+	for (const finding of findings) {
 		if (!isWritten(finding)) continue
+		const toolKind = finding.kind === 'tool_added' || finding.kind === 'needs_reconnect'
+		const connectionKind =
+			finding.kind === 'needs_reconnect' || finding.kind === 'available_not_attached'
 		await recordEvent(tx, {
-			...base,
+			workspaceId,
+			actorId,
+			entityType: CAPABILITY_SOURCE_ENTITY,
+			entityId,
 			action: CAPABILITY_ACTIONS.changed,
 			data: {
-				source: source.key,
+				source: finding.source,
 				kind: finding.kind,
 				tools: finding.tools,
 				// As of scan time: a hint for reading the log, not an authority.
-				holders: finding.kind === 'tool_added' ? holders : [],
+				holders: toolKind ? holders : [],
 				dedupe_key: finding.dedupeKey,
 				snapshot_event_id: snapshotEventId,
+				// Names only: the integration and the scopes it lacks, never a token.
+				...(connectionKind ? { provider } : {}),
+				...(finding.missingScopes ? { missing_scopes: finding.missingScopes } : {}),
 			},
 		})
 		written++
@@ -395,13 +480,46 @@ async function writeSourceResult(
 }
 
 /**
- * Only a flagged tool_added becomes a capability_changed event, plus the
- * one-off source_unreachable. Removals, schema changes and spec changes live in
- * the snapshot and the scan counts, never as findings. A tool nobody holds is
- * stored and not written.
+ * What becomes a capability_changed event: a flagged tool_added, a needs_reconnect
+ * (flagged only when a holder exists), an available_not_attached, and the one-off
+ * source_unreachable. Removals, schema changes and spec changes live in the
+ * snapshot and the scan counts, never as findings. A tool nobody holds is stored
+ * and not written.
  */
 function isWritten(finding: Finding): boolean {
-	return (finding.kind === 'tool_added' && finding.flagged) || finding.kind === 'source_unreachable'
+	return isEligible(finding) || finding.kind === 'source_unreachable'
+}
+
+/** Counted in findings_eligible on capability_scan_completed. */
+function isEligible(finding: Finding): boolean {
+	return (
+		finding.flagged &&
+		(finding.kind === 'tool_added' ||
+			finding.kind === 'needs_reconnect' ||
+			finding.kind === 'available_not_attached')
+	)
+}
+
+/** Whether an event with this finding's dedupe_key already sits on the integration. */
+async function alreadyReported(
+	tx: Transaction,
+	workspaceId: string,
+	entityId: string,
+	finding: Finding,
+): Promise<boolean> {
+	const [row] = await tx
+		.select({ id: events.id })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityId, entityId),
+				eq(events.action, CAPABILITY_ACTIONS.changed),
+				sql`${events.data}->>'dedupe_key' = ${finding.dedupeKey}`,
+			),
+		)
+		.limit(1)
+	return Boolean(row)
 }
 
 async function newestSnapshotEventId(
