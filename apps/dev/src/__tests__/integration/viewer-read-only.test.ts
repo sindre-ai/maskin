@@ -148,7 +148,9 @@ describe('Viewer role is read-only', () => {
 
 			expect(await isWorkspaceWriter(db, getTestActorId(), workspaceId)).toBe(true)
 			expect(await isWorkspaceWriter(db, stranger.id, workspaceId)).toBe(false)
-			await expect(isWorkspaceWriter(db, viewerId, workspaceId)).rejects.toMatchObject({ status: 403 })
+			await expect(isWorkspaceWriter(db, viewerId, workspaceId)).rejects.toMatchObject({
+				status: 403,
+			})
 			// isWorkspaceMember is unchanged: a viewer is still a member for reads.
 			expect(await isWorkspaceMember(db, viewerId, workspaceId)).toBe(true)
 		})
