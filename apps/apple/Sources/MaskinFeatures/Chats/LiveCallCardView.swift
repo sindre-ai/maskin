@@ -30,7 +30,7 @@ struct LiveCallCardView: View {
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 		.overlay(
 			RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
-				.strokeBorder(card.isActive ? MaskinColor.sigHi : MaskinSurface.line, lineWidth: 1))
+				.strokeBorder(MaskinSurface.line, lineWidth: 1))
 		.animation(MaskinMotion.standard, value: expanded)
 		.onChange(of: card.isActive) { _, _ in override = nil }
 		.accessibilityElement(children: .contain)
@@ -45,16 +45,18 @@ struct LiveCallCardView: View {
 			LiveCallLog.shared.update(card.record.id) { $0.expanded = next }
 			MaskinHaptics.play(.light)
 		} label: {
-			HStack(spacing: MaskinSpace.s4) {
+			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 				Image(systemName: card.isActive ? "waveform" : "mic.fill")
-					.foregroundStyle(card.isActive ? MaskinColor.sigInk : MaskinColor.ink4)
+					.foregroundStyle(MaskinColor.ink3)
 					.accessibilityHidden(true)
-				if card.isActive {
-					TimelineView(.periodic(from: .now, by: 1)) { context in
-						MonoLabel(card.heading(now: context.date), color: MaskinColor.sigInk)
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text(card.title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+						.fixedSize(horizontal: false, vertical: true)
+					// The running clock lives in the call panel; here only a finished call shows its length.
+					if !card.isActive {
+						Text(card.durationText(now: card.record.endedAt ?? card.record.startedAt))
+							.maskinText(.caption).foregroundStyle(MaskinColor.ink4).monospacedDigit()
 					}
-				} else {
-					MonoLabel(card.heading(now: card.record.endedAt ?? card.record.startedAt))
 				}
 				Spacer(minLength: MaskinSpace.s3)
 				Image(systemName: "chevron.down")

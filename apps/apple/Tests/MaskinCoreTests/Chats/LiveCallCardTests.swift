@@ -111,9 +111,20 @@ import Testing
 		#expect(opened.startsExpanded)
 	}
 
-	@Test func headingNamesTheAgentAndDuration() {
-		let card = LiveCallCard(record: record(), messages: [], currentActorID: "me")
-		#expect(card.heading(now: t0) == "LIVE CALL · WITH RELAY · 7:01")
+	@Test func titleNamesTheAgentAndGuestsAndDurationIsSeparate() {
+		var withGuest = record()
+		withGuest.guests = ["Forge"]
+		let card = LiveCallCard(record: withGuest, messages: [], currentActorID: "me")
+		#expect(card.title == "Live call with Relay, with Forge")
+		#expect(card.durationText(now: t0) == "7:01")
+		let plain = LiveCallCard(record: record(), messages: [], currentActorID: "me")
+		#expect(plain.title == "Live call with Relay")
+	}
+
+	@Test func aRunningCallWithNoLinesYetHasNoCard() {
+		let items = ThreadLayout.items(
+			for: [msg(1, "me", "before", at: -60)], currentActorID: "me", calls: [record(ended: false)])
+		#expect(cards(items).isEmpty)
 	}
 
 	@Test func objectsLinkedInTheCallBecomeChips() {

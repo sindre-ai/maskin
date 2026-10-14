@@ -107,13 +107,16 @@ public struct LiveCallCard: Equatable, Sendable, Identifiable {
 	public var youCount: Int { messages.filter(isYou).count }
 	public var replyCount: Int { messages.count - youCount }
 
-	/// "Live call · with Relay · 7:01" without the duration while the call is running.
-	public func heading(now: Date) -> String {
-		let end = record.endedAt ?? now
-		return LiveMeetingFormat.endNote(
-			lead: record.leadName, guests: record.guests, seconds: end.timeIntervalSince(record.startedAt))
-			.replacingOccurrences(of: "Live meeting with", with: "LIVE CALL · with")
-			.uppercased()
+	/// "Live call with Relay", naming anyone who was invited: "Live call with Relay, with Forge".
+	public var title: String {
+		var text = "Live call with \(record.leadName)"
+		if !record.guests.isEmpty { text += ", with \(LiveMeetingFormat.list(record.guests))" }
+		return text
+	}
+
+	/// How long the call ran ("7:01"), or has run so far.
+	public func durationText(now: Date) -> String {
+		LiveMeetingFormat.duration((record.endedAt ?? now).timeIntervalSince(record.startedAt))
 	}
 
 	/// "4 from you · 3 replies"; empty text for a call nobody spoke in.

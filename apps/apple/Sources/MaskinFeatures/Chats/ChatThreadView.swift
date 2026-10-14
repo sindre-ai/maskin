@@ -121,8 +121,6 @@ struct ChatThreadView: View {
 			observedContent(proxy)
 				.ambientBackground()
 				.safeAreaInset(edge: .bottom, spacing: 0) { composerStack(proxy) }
-				// A running call is pinned under the navigation bar: who, how long, Mute / End.
-				.safeAreaInset(edge: .top, spacing: 0) { callBanner }
 				.navigationTitle(navTitle)
 				#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
@@ -358,12 +356,15 @@ struct ChatThreadView: View {
 				// spinner can flash into view, and loading history then ends with a jump.
 				.onAppear { if !followingOpen { loadEarlier(proxy) } }
 		}
-		topicHeading
+		// The heading and the typing hint make way for the call's own empty state.
+		if call == nil || !store.messages.isEmpty { topicHeading }
 		if let pinned = store.pinnedMessage {
 			PinnedMessageStrip(message: pinned, onOpen: { scroll(to: pinned.id, proxy: proxy) }, onUnpin: { store.unpin() })
 				.padding(.bottom, MaskinSpace.s9)
 		}
-		if store.messages.isEmpty { emptyHint }
+		if store.messages.isEmpty {
+			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
+		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
@@ -502,7 +503,7 @@ struct ChatThreadView: View {
 				.transition(.opacity.combined(with: .move(edge: .bottom)))
 			}
 			if let call {
-				LiveControlBar(session: call) { liveCalls?.end() }
+				callPanel(call)
 			} else if searching {
 				ThreadSearchBar(
 					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
@@ -526,18 +527,14 @@ struct ChatThreadView: View {
 	/// The call running in this thread, if any.
 	private var call: LiveMeetingSession? { liveCalls?.session(for: store.conversationID) }
 
-	@ViewBuilder
-	private var callBanner: some View {
-		if let call {
-			LiveCallBanner(
-				session: call,
-				mentioned: CallMentions.objects(
-					in: store.messages.filter { ($0.createdAt ?? .distantFuture) >= call.startedAt ?? .distantPast }),
-				onInvite: onInvite,
-				onOpenObject: { runtime?.openObject($0.id) },
-				onEnd: { liveCalls?.end() })
-			.transition(.move(edge: .top).combined(with: .opacity))
-		}
+	private func callPanel(_ call: LiveMeetingSession) -> some View {
+		LiveCallPanel(
+			session: call,
+			mentioned: CallMentions.objects(
+				in: store.messages.filter { ($0.createdAt ?? .distantFuture) >= call.startedAt ?? .distantPast }),
+			onInvite: onInvite,
+			onOpenObject: { runtime?.openObject($0.id) },
+			onEnd: { liveCalls?.end() })
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming

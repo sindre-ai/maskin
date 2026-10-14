@@ -39,7 +39,7 @@ public enum LiveMeetingFormat {
 	}
 
 	/// "A", "A and B", "A, B and C".
-	static func list(_ names: [String]) -> String {
+	public static func list(_ names: [String]) -> String {
 		switch names.count {
 		case 0: ""
 		case 1: names[0]

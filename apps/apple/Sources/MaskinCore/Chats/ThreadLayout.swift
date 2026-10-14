@@ -95,7 +95,7 @@ public enum ThreadLayout {
 			}
 			// A call nobody spoke in has no message to sit at: it goes where it started.
 			for index in calls.indices where members[index].isEmpty && !emitted.contains(index) {
-				if let at = message.createdAt, calls[index].startedAt <= at {
+				if calls[index].endedAt != nil, let at = message.createdAt, calls[index].startedAt <= at {
 					items.append(card(index))
 					emitted.insert(index)
 					previous = nil
@@ -137,7 +137,10 @@ public enum ThreadLayout {
 				previous = nil
 			}
 		}
-		for index in calls.indices where !emitted.contains(index) { items.append(card(index)) }
+		// A call that is still running and has no lines yet shows its empty state, not a card.
+		for index in calls.indices where !emitted.contains(index) && calls[index].endedAt != nil {
+			items.append(card(index))
+		}
 		return items
 	}
 
