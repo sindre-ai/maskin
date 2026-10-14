@@ -156,7 +156,11 @@ describe('POST /mcp sign-in challenge', () => {
 			expect(header.endsWith('scope="mcp"')).toBe(true)
 			expect(await res.json()).toEqual(BODY_401)
 			expect(mockCreateMcpServer).not.toHaveBeenCalled()
-			expect(resolveMcpCredential).toHaveBeenCalledWith(forbiddenDb, OAUTH_TOKEN)
+			// By reference: the equality matcher would probe the throwing proxy for its type tag.
+			expect(resolveMcpCredential).toHaveBeenCalledTimes(1)
+			const [dbArg, tokenArg] = resolveMcpCredential.mock.calls[0]
+			expect(dbArg === forbiddenDb).toBe(true)
+			expect(tokenArg).toBe(OAUTH_TOKEN)
 		})
 
 		it('lets a valid mat_ token through to the transport', async () => {

@@ -12,8 +12,10 @@ import { useEffect, useRef, useState } from 'react'
 export const Route = createFileRoute('/signup')({
 	// Where to go after signing up, when a page sent the person here. Same value and check as /login.
 	validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+		// An explicit undefined, not a missing key: the router merges this result over the raw URL
+		// search, so an unsafe value left out of the result would come back through the merge.
 		const redirect = safeInternalPath(search.redirect)
-		return redirect ? { redirect } : {}
+		return { redirect: redirect ?? undefined }
 	},
 	head: () => ({
 		meta: [

@@ -24,7 +24,7 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../app-factory'
 import { getWorkspaceRole, isWorkspaceWriter } from '../../lib/workspace-auth'
-import { __resetMcpActorCache, __resolveAgentActorId } from '../../routes/mcp'
+import { __resetMcpActorCache, __resolveAgentActor } from '../../routes/mcp'
 import {
 	insertActor,
 	insertConversation,
@@ -262,7 +262,7 @@ describe('a mat_ token pinned to workspace A', () => {
 		})
 
 		expect(res.status).toBe(201)
-		expect(res.body.created_by).toBe(person.id)
+		expect(res.body.createdBy).toBe(person.id)
 		expect(res.body.workspaceId ?? res.body.workspace_id).toBe(wsA.id)
 	})
 
@@ -440,23 +440,23 @@ describe('who the caller is', () => {
 					body: { type: 'task', title: 'Who am I', status: 'todo' },
 					marker,
 				})
-			).body.created_by
+			).body.createdBy
 
 		const keyCaller = await created(person.apiKey, wsA.id, false)
 		const tokenCaller = await created(token, undefined, true)
 
 		expect(keyCaller).toBe(person.id)
 		expect(tokenCaller).toBe(person.id)
-		expect(await __resolveAgentActorId(db, person.apiKey)).toBe(keyCaller)
-		expect(await __resolveAgentActorId(db, token)).toBe(tokenCaller)
+		expect((await __resolveAgentActor(db, person.apiKey))?.actorId).toBe(keyCaller)
+		expect((await __resolveAgentActor(db, token))?.actorId).toBe(tokenCaller)
 	})
 
 	it('is nobody for a refresh token or an unknown token, on both paths', async () => {
 		await seedTwoWorkspaces()
 		__resetMcpActorCache()
 
-		expect(await __resolveAgentActorId(db, mintToken('mrt_').raw)).toBeNull()
-		expect(await __resolveAgentActorId(db, mintToken('mat_').raw)).toBeNull()
+		expect(await __resolveAgentActor(db, mintToken('mrt_').raw)).toBeNull()
+		expect(await __resolveAgentActor(db, mintToken('mat_').raw)).toBeNull()
 	})
 })
 
