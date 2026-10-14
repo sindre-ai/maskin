@@ -4457,6 +4457,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4483,6 +4484,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4510,6 +4512,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -4560,6 +4563,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4735,6 +4739,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -4845,6 +4850,7 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[], // sumAssistantUsage fallback
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
 					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
@@ -4991,6 +4997,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
@@ -5079,6 +5086,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 			]
 			mockResults.insertQueue = [

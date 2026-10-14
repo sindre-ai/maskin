@@ -153,6 +153,7 @@ import {
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
+	sumAssistantUsage,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
@@ -3932,6 +3933,7 @@ ${HUMAN_MESSAGE_STYLE}`
 	 */
 	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
+		let tokensOnly = false
 		try {
 			const drained = this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
@@ -3947,6 +3949,12 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (!usage) {
 				usage = await extractSessionUsage(this.db, sessionId)
 			}
+			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
+			// to the tokens the assistant messages reported. Cost stays null.
+			if (!usage) {
+				usage = await sumAssistantUsage(this.db, sessionId)
+				tokensOnly = usage !== null
+			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
 		}
@@ -3957,10 +3965,14 @@ ${HUMAN_MESSAGE_STYLE}`
 		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
 		// lookup failure falls back to the CLI figure rather than losing the
 		// segment's cost entirely.
+		// A tokens-only segment (no `result` envelope) skips this: it has no
+		// reported cost, and pricing its tokens here would be a guess.
 		let resolvedCostUsd = usage.totalCostUsd
 		try {
-			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
-			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			if (!tokensOnly) {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			}
 		} catch (err) {
 			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
 				sessionId,
