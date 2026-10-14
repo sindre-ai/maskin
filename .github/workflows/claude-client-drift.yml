@@ -1,0 +1,37 @@
+name: Claude client record drift
+
+# Weekly check that the pinned Claude client record in packages/shared still matches the document
+# Claude publishes. It opens an insight in Maskin when they differ. It never changes runtime
+# behaviour, is not part of any deploy, and always finishes green: see
+# scripts/checks/claude-client-drift.ts.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Compare the pinned record with the live document
+        env:
+          MASKIN_API_URL: ${{ secrets.MASKIN_DRIFT_API_URL }}
+          MASKIN_API_KEY: ${{ secrets.MASKIN_DRIFT_API_KEY }}
+          MASKIN_WORKSPACE_ID: ${{ secrets.MASKIN_DRIFT_WORKSPACE_ID }}
+        run: pnpm exec tsx scripts/checks/claude-client-drift.ts
