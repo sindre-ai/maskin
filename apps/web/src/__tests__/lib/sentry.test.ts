@@ -120,7 +120,7 @@ describe('while client error logging is paused', () => {
 		vi.stubEnv('VITE_SENTRY_FORCE_ENABLE', 'true')
 		initSentry()
 		const config = vi.mocked(Sentry.init).mock.calls[0][0]
-		const event = { message: 'x' }
+		const event = { message: 'x', type: undefined }
 		const breadcrumb = { message: 'y' }
 
 		const release = pauseClientErrorLogging()
