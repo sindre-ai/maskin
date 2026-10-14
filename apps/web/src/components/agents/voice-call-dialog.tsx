@@ -376,9 +376,9 @@ function AgentAvatar({
 }) {
 	// Ring animation is paused at 300° in agent-thinking, user-speaking, and
 	// muted states — a static arc in each, so the ring stays a "connection is
-	// live" tell without pretending the agent is the one talking. Reconnecting
-	// omits the ring entirely (the ring means "we're connected"; a paused ring
-	// wouldn't).
+	// live" tell without pretending the agent is the one talking. User-speaking
+	// also fades it (SPEC: reduced-opacity ring). Reconnecting omits the ring
+	// entirely (the ring means "we're connected"; a paused ring wouldn't).
 	const wearsRing = state !== 'permission' && state !== 'reconnecting'
 	const wearsBreathing = state === 'live-agent-speaking'
 	const ringPaused =
@@ -388,7 +388,9 @@ function AgentAvatar({
 		<div
 			className={cn(
 				'relative flex items-center justify-center rounded-full',
-				wearsRing && !ringPaused && 'speaking-ring',
+				wearsRing && 'speaking-ring',
+				wearsRing && ringPaused && 'speaking-ring-paused',
+				state === 'live-user-speaking' && 'speaking-ring-faded',
 				wearsBreathing && 'voice-level',
 			)}
 			aria-hidden="true"
@@ -423,11 +425,7 @@ function LiveStatusLabel({ state, agentName }: { state: VoiceCallState; agentNam
 	}
 	// live-agent-speaking and live-muted both label as "<agent> is speaking",
 	// with the muted state getting the standalone banner above the controls.
-	return (
-		<div className="text-sm font-medium text-foreground">
-			{agentName} {state === 'live-muted' ? 'is speaking' : 'is speaking'}
-		</div>
-	)
+	return <div className="text-sm font-medium text-foreground">{agentName} is speaking</div>
 }
 
 function Bars() {
