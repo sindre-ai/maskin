@@ -2,8 +2,9 @@ import type { VoiceRelayOptions } from '@/lib/voice-relay'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockCreate, mockHangup } = vi.hoisted(() => ({
+const { mockCreate, mockOffer, mockHangup } = vi.hoisted(() => ({
 	mockCreate: vi.fn(),
+	mockOffer: vi.fn(),
 	mockHangup: vi.fn(),
 }))
 
@@ -11,7 +12,7 @@ vi.mock('@/lib/api', async () => {
 	const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
 	return {
 		...actual,
-		api: { voiceSessions: { create: mockCreate, hangup: mockHangup } },
+		api: { voiceSessions: { create: mockCreate, offer: mockOffer, hangup: mockHangup } },
 	}
 })
 
@@ -19,16 +20,15 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const { mockNavigate, mockToast, relayHandle, relayClose } = vi.hoisted(() => ({
+const { mockNavigate, mockToast, relayHandle } = vi.hoisted(() => ({
 	mockNavigate: vi.fn(),
 	mockToast: vi.fn(),
 	relayHandle: vi.fn(),
-	relayClose: vi.fn(),
 }))
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => mockNavigate }))
 vi.mock('@/lib/voice-toast', () => ({ showVoiceCallEndedToast: mockToast }))
 
-// The relay is mocked so no real WebSocket opens; tests drive its callbacks.
+// The relay is mocked; tests drive its line callback and read how it was built.
 let relayOptions: VoiceRelayOptions | null = null
 vi.mock('@/lib/voice-relay', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@/lib/voice-relay')>()
@@ -36,7 +36,7 @@ vi.mock('@/lib/voice-relay', async (importOriginal) => {
 		...actual,
 		createVoiceRelay: (options: VoiceRelayOptions) => {
 			relayOptions = options
-			return { handleRealtimeEvent: relayHandle, close: relayClose }
+			return { handleRealtimeEvent: relayHandle }
 		},
 	}
 })
@@ -99,11 +99,11 @@ let lastPc: FakePeerConnection | null = null
 
 beforeEach(() => {
 	mockCreate.mockReset()
+	mockOffer.mockReset().mockResolvedValue(offerOk)
 	mockHangup.mockReset().mockResolvedValue({})
 	mockToast.mockReset()
 	mockNavigate.mockReset()
 	relayHandle.mockReset()
-	relayClose.mockReset()
 	relayOptions = null
 	fakeTrack.stop.mockReset()
 	lastPc = null
@@ -119,12 +119,8 @@ afterEach(() => {
 	vi.useRealTimers()
 })
 
-const mintOk = {
-	voice_session_id: 'vs-1',
-	client_secret: 'ek_abc',
-	expires_at: '2026-10-01T00:00:00Z',
-	ws_url: 'wss://example.test',
-}
+const mintOk = { voice_session_id: 'vs-1' }
+const offerOk = { sdp: 'answer-sdp', tools_available: true, persist_transcripts: true }
 
 describe('useVoiceCall — microphone errors', () => {
 	it('lands in mic-blocked when the browser denies the microphone, without minting a session', async () => {
@@ -190,7 +186,7 @@ describe('useVoiceCall — session lifecycle', () => {
 	it('hangs up as network_error when the handshake fails after the session was minted', async () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
 		mockCreate.mockResolvedValue(mintOk)
-		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+		mockOffer.mockRejectedValue(new Error('offline'))
 		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
 		await act(() => result.current.start())
 		expect(mockHangup).toHaveBeenCalledWith(
@@ -204,7 +200,6 @@ describe('useVoiceCall — session lifecycle', () => {
 	it('hangs up as user_hangup, once, when the call is ended', async () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
 		mockCreate.mockResolvedValue(mintOk)
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => 'answer-sdp' }))
 		const { result, rerender } = renderHook(
 			({ open }) => useVoiceCall(AGENT_ID, AGENT_NAME, open),
 			{
@@ -230,7 +225,6 @@ describe('useVoiceCall — session lifecycle', () => {
 	it('restarts ICE once on a failed connection and ends the call as network_error after 15s', async () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
 		mockCreate.mockResolvedValue(mintOk)
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => 'answer-sdp' }))
 		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
 		await act(() => result.current.start())
 
@@ -258,7 +252,6 @@ describe('useVoiceCall — session lifecycle', () => {
 	it('a connection that recovers inside the window resumes without ending the call', async () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
 		mockCreate.mockResolvedValue(mintOk)
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => 'answer-sdp' }))
 		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
 		await act(() => result.current.start())
 
@@ -274,11 +267,11 @@ describe('useVoiceCall — session lifecycle', () => {
 	})
 })
 
-describe('useVoiceCall — control channel and post-call toast', () => {
-	async function startCall() {
+describe('useVoiceCall — server connection and post-call toast', () => {
+	async function startCall(offer: Partial<typeof offerOk> = {}) {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
 		mockCreate.mockResolvedValue(mintOk)
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => 'answer-sdp' }))
+		mockOffer.mockResolvedValue({ ...offerOk, ...offer })
 		const hook = renderHook(({ open }) => useVoiceCall(AGENT_ID, AGENT_NAME, open), {
 			initialProps: { open: true },
 		})
@@ -286,9 +279,28 @@ describe('useVoiceCall — control channel and post-call toast', () => {
 		return hook
 	}
 
-	it('opens the per-session events URL for the minted session', async () => {
+	async function endCall(hook: Awaited<ReturnType<typeof startCall>>) {
+		await act(async () => {
+			hook.result.current.end()
+		})
+	}
+
+	it('posts the browser offer to the server and applies the answer it returns', async () => {
 		await startCall()
-		expect(relayOptions?.url).toMatch(/\/api\/voice-sessions\/vs-1\/events$/)
+		expect(mockOffer).toHaveBeenCalledWith('ws-1', 'vs-1', 'v=0')
+		expect(lastPc?.setRemoteDescription).toHaveBeenCalledWith({ type: 'answer', sdp: 'answer-sdp' })
+	})
+
+	it('never calls the vendor from the browser', async () => {
+		const fetchMock = vi.fn()
+		vi.stubGlobal('fetch', fetchMock)
+		await startCall()
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('builds the relay with what the offer said about tools', async () => {
+		await startCall({ tools_available: false })
+		expect(relayOptions?.toolsAvailable).toBe(false)
 	})
 
 	it('feeds Realtime events into the relay', async () => {
@@ -297,13 +309,10 @@ describe('useVoiceCall — control channel and post-call toast', () => {
 		expect(relayHandle).toHaveBeenCalledWith({ type: 'response.done' })
 	})
 
-	it('shows the saved-transcript toast with the chat link when the call ends', async () => {
+	it('shows the saved-transcript toast with the chat link the hangup returns', async () => {
 		const hook = await startCall()
-		act(() => {
-			relayOptions?.onReady?.({ persistTranscripts: true, conversationId: null })
-			relayOptions?.onConversation?.('conv-9')
-		})
-		act(() => hook.result.current.end())
+		mockHangup.mockResolvedValue({ conversation_id: 'conv-9' })
+		await endCall(hook)
 		expect(mockToast).toHaveBeenCalledTimes(1)
 		const args = mockToast.mock.calls[0][0]
 		expect(args.agentName).toBe(AGENT_NAME)
@@ -314,13 +323,12 @@ describe('useVoiceCall — control channel and post-call toast', () => {
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId: 'ws-1', conversationId: 'conv-9' },
 		})
-		expect(relayClose).toHaveBeenCalled()
 	})
 
 	it('hangs up on the server before it shows the toast', async () => {
 		const hook = await startCall()
-		act(() => relayOptions?.onConversation?.('conv-9'))
-		act(() => hook.result.current.end())
+		mockHangup.mockResolvedValue({ conversation_id: 'conv-9' })
+		await endCall(hook)
 		expect(mockHangup).toHaveBeenCalledTimes(1)
 		expect(mockHangup.mock.invocationCallOrder[0]).toBeLessThan(
 			mockToast.mock.invocationCallOrder[0],
@@ -328,40 +336,41 @@ describe('useVoiceCall — control channel and post-call toast', () => {
 	})
 
 	it('shows the opt-out variant (no link) when the workspace opted out', async () => {
-		const hook = await startCall()
-		act(() => relayOptions?.onReady?.({ persistTranscripts: false, conversationId: null }))
-		act(() => hook.result.current.end())
+		const hook = await startCall({ persist_transcripts: false })
+		mockHangup.mockResolvedValue({ conversation_id: null })
+		await endCall(hook)
 		expect(mockToast).toHaveBeenCalledTimes(1)
 		expect(mockToast.mock.calls[0][0].conversationUrl).toBeNull()
 	})
 
-	it('shows no toast when the control channel never reported the transcript outcome', async () => {
+	it('shows no toast when nothing was saved and the workspace did not opt out', async () => {
 		const hook = await startCall()
-		act(() => hook.result.current.end())
+		mockHangup.mockResolvedValue({ conversation_id: null })
+		await endCall(hook)
 		expect(mockToast).not.toHaveBeenCalled()
 	})
 
 	it('fires once per call even when end and close both run', async () => {
 		const hook = await startCall()
-		act(() => relayOptions?.onConversation?.('conv-9'))
-		act(() => hook.result.current.end())
-		hook.rerender({ open: false })
+		mockHangup.mockResolvedValue({ conversation_id: 'conv-9' })
+		await endCall(hook)
+		await act(async () => hook.rerender({ open: false }))
 		expect(mockToast).toHaveBeenCalledTimes(1)
 	})
 
 	it('fires when the dialog is closed without pressing End', async () => {
 		const hook = await startCall()
-		act(() => relayOptions?.onConversation?.('conv-9'))
-		hook.rerender({ open: false })
+		mockHangup.mockResolvedValue({ conversation_id: 'conv-9' })
+		await act(async () => hook.rerender({ open: false }))
 		expect(mockToast).toHaveBeenCalledTimes(1)
 	})
 
 	it('shows no toast when the connection drops and the call ends as network_error', async () => {
 		await startCall()
-		act(() => relayOptions?.onConversation?.('conv-9'))
+		mockHangup.mockResolvedValue({ conversation_id: 'conv-9' })
 		vi.useFakeTimers()
 		act(() => lastPc?.setIce('failed'))
-		act(() => {
+		await act(async () => {
 			vi.advanceTimersByTime(16_000)
 		})
 		expect(mockHangup).toHaveBeenCalledWith(
@@ -376,7 +385,7 @@ describe('useVoiceCall — control channel and post-call toast', () => {
 		const hook = await startCall()
 		act(() => relayOptions?.onLine?.({ id: 1, kind: 'user', text: 'hi' }))
 		expect(hook.result.current.transcriptLines).toEqual([{ id: 1, kind: 'user', text: 'hi' }])
-		act(() => hook.result.current.end())
+		await endCall(hook)
 		expect(hook.result.current.transcriptLines).toEqual([])
 	})
 })

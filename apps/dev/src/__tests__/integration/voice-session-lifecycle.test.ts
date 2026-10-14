@@ -1,18 +1,20 @@
-import { voiceSessions, workspaceMembers } from '@maskin/db/schema'
+import { actors, voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
-import voiceSessionsRoutes, {
-	type RealtimeMintFn,
-	setRealtimeMintFn,
-} from '../../routes/voice-sessions'
+import voiceSessionsRoutes, { setVoiceInvokeToolFactory } from '../../routes/voice-sessions'
+import {
+	type CreateRealtimeCallFn,
+	type OpenRealtimeSocketFn,
+	setCreateRealtimeCallFn,
+	setOpenRealtimeSocketFn,
+} from '../../services/voice-realtime-call'
 import {
 	endVoiceSession,
 	getVoiceMinutesUsedToday,
 	recordVoiceToolCall,
 	recordVoiceTurn,
-	startVoiceWsGrace,
 } from '../../services/voice-session-lifecycle'
 import {
 	VoiceSessionTimeoutSweeper,
@@ -179,24 +181,6 @@ describe('VoiceSessionTimeoutSweeper', () => {
 	})
 })
 
-describe('WS-drop grace', () => {
-	beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
-	afterEach(() => vi.useRealTimers())
-
-	it('ends the call as network_error when nobody reconnects inside the grace', async () => {
-		const { session } = await seedCall()
-		startVoiceWsGrace(db, session.id, 20_000)
-		await vi.advanceTimersByTimeAsync(19_000)
-		expect((await reload(session.id))?.status).toBe('active')
-		await vi.advanceTimersByTimeAsync(2_000)
-		// The end runs on the real DB; give its promise chain a moment.
-		await vi.waitFor(async () => expect((await reload(session.id))?.status).toBe('ended'), {
-			timeout: 5_000,
-		})
-		expect((await reload(session.id))?.endedReason).toBe('network_error')
-	})
-})
-
 describe('endAllLiveVoiceSessions', () => {
 	it('ends live rows as server_stop', async () => {
 		const { session } = await seedCall()
@@ -316,21 +300,31 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 		expect((await reload(session.id))?.status).toBe('active')
 	})
 
-	describe('session mint', () => {
-		const okMint: RealtimeMintFn = async () => ({
+	describe('session mint and offer', () => {
+		const okCall: CreateRealtimeCallFn = async () => ({
 			kind: 'ok',
-			vendorSessionId: 'vs_mint',
-			clientSecret: 'ek_test',
-			expiresAt: '2026-10-06T10:00:00.000Z',
-			wsUrl: 'wss://api.openai.com/v1/realtime',
-			model: 'gpt-realtime',
+			callId: 'rtc_test',
+			answerSdp: 'v=0 answer',
 		})
+		const openSocket: OpenRealtimeSocketFn = (_url, _key, handlers) => {
+			queueMicrotask(() => handlers.onOpen())
+			return { send: () => {}, close: () => {} }
+		}
 
 		beforeEach(() => {
 			vi.mocked(capturePosthogEvent).mockClear()
-			setRealtimeMintFn(okMint)
+			process.env.MASKIN_VOICE_OPENAI_API_KEY = 'test-key'
+			setCreateRealtimeCallFn(okCall)
+			setOpenRealtimeSocketFn(openSocket)
+			setVoiceInvokeToolFactory(() => async () => ({ content: [] }))
 		})
-		afterEach(() => setRealtimeMintFn(null))
+		afterEach(() => {
+			// biome-ignore lint/performance/noDelete: process.env coerces undefined to the string "undefined"
+			delete process.env.MASKIN_VOICE_OPENAI_API_KEY
+			setCreateRealtimeCallFn(null)
+			setOpenRealtimeSocketFn(null)
+			setVoiceInvokeToolFactory(null)
+		})
 
 		const deniedReasons = () =>
 			vi
@@ -343,11 +337,18 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 				(r) => r.status === 'pending' || r.status === 'active',
 			)
 
+		const mint = async (agentId: string) => {
+			await db.update(actors).set({ apiKey: 'ank_voice_test' }).where(eq(actors.id, agentId))
+			const res = await post('/api/voice-sessions', { agent_actor_id: agentId })
+			return { res, id: ((await res.clone().json()) as { voice_session_id?: string }).voice_session_id }
+		}
+
 		it('409s a second concurrent mint for the same human and fires concurrent_active', async () => {
 			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
 
-			const first = await post('/api/voice-sessions', { agent_actor_id: agent.id })
-			expect(first.status).toBe(201)
+			const first = await mint(agent.id)
+			expect(first.res.status).toBe(201)
+			expect(await first.res.json()).not.toHaveProperty('client_secret')
 
 			const second = await post('/api/voice-sessions', { agent_actor_id: agent.id })
 			expect(second.status).toBe(409)
@@ -356,35 +357,86 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 			expect(await liveRows(getTestActorId())).toHaveLength(1)
 		})
 
-		it('does not lock the caller out when the vendor rate-limits the mint', async () => {
+		it('offer returns the answer, records the call id and takes exactly one offer', async () => {
 			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
-			setRealtimeMintFn(async () => ({ kind: 'rate_limited', retryAfterSeconds: 7 }))
+			const { id } = await mint(agent.id)
 
-			const limited = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			const offer = await post(`/api/voice-sessions/${id}/offer`, { sdp: 'v=0 offer' })
+			expect(offer.status).toBe(200)
+			expect(await offer.json()).toMatchObject({ sdp: 'v=0 answer', tools_available: true })
+			expect((await reload(id as string))?.vendorSessionId).toBe('rtc_test')
+
+			const again = await post(`/api/voice-sessions/${id}/offer`, { sdp: 'v=0 offer' })
+			expect(again.status).toBe(409)
+		})
+
+		it("offer 404s for another human's session", async () => {
+			const other = await insertActor(db)
+			const { session } = await seedCall({ humanId: other.id, status: 'pending' })
+			await db
+				.update(voiceSessions)
+				.set({ vendorSessionId: null })
+				.where(eq(voiceSessions.id, session.id))
+			const res = await post(`/api/voice-sessions/${session.id}/offer`, { sdp: 'v=0 offer' })
+			expect(res.status).toBe(404)
+		})
+
+		it('offer 404s once the minting human is no longer a workspace member', async () => {
+			const { agent, ws } = await seedCall({ status: 'ended', endedAt: new Date() })
+			const { id } = await mint(agent.id)
+			await db
+				.delete(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, ws.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+			const res = await post(`/api/voice-sessions/${id}/offer`, { sdp: 'v=0 offer' })
+			expect(res.status).toBe(404)
+		})
+
+		it('does not lock the caller out when the vendor rate-limits the offer', async () => {
+			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
+			const { id } = await mint(agent.id)
+			setCreateRealtimeCallFn(async () => ({ kind: 'rate_limited', retryAfterSeconds: 7 }))
+
+			const limited = await post(`/api/voice-sessions/${id}/offer`, { sdp: 'v=0 offer' })
 			expect(limited.status).toBe(429)
 			expect(await liveRows(getTestActorId())).toHaveLength(0)
 
-			setRealtimeMintFn(okMint)
-			const retry = await post('/api/voice-sessions', { agent_actor_id: agent.id })
-			expect(retry.status).toBe(201)
+			const retry = await mint(agent.id)
+			expect(retry.res.status).toBe(201)
 		})
 
-		it('does not lock the caller out when the vendor mint errors, and marks the row errored', async () => {
+		it('does not lock the caller out when the vendor errors, and marks the row errored', async () => {
 			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
-			setRealtimeMintFn(async () => ({ kind: 'error', status: 502, body: 'bad gateway' }))
+			const { id } = await mint(agent.id)
+			setCreateRealtimeCallFn(async () => ({ kind: 'error', status: 502, body: 'bad gateway' }))
 
-			const failed = await post('/api/voice-sessions', { agent_actor_id: agent.id })
+			const failed = await post(`/api/voice-sessions/${id}/offer`, { sdp: 'v=0 offer' })
 			expect(failed.status).toBe(500)
 			expect(await liveRows(getTestActorId())).toHaveLength(0)
-			const errored = (
-				await db.select().from(voiceSessions).where(eq(voiceSessions.status, 'errored'))
-			).filter((r) => r.humanActorId === getTestActorId() && r.endedReason === 'vendor_error')
-			expect(errored).toHaveLength(1)
-			expect(errored[0]?.endedAt).toBeInstanceOf(Date)
+			const row = await reload(id as string)
+			expect(row?.status).toBe('errored')
+			expect(row?.endedReason).toBe('vendor_error')
+			expect(row?.endedAt).toBeInstanceOf(Date)
 
-			setRealtimeMintFn(okMint)
-			const retry = await post('/api/voice-sessions', { agent_actor_id: agent.id })
-			expect(retry.status).toBe(201)
+			const retry = await mint(agent.id)
+			expect(retry.res.status).toBe(201)
+		})
+
+		it('reports tools_available false when the server socket never opens', async () => {
+			const { agent } = await seedCall({ status: 'ended', endedAt: new Date() })
+			const { id } = await mint(agent.id)
+			setOpenRealtimeSocketFn((_url, _key, handlers) => {
+				queueMicrotask(() => handlers.onError(new Error('refused')))
+				return { send: () => {}, close: () => {} }
+			})
+
+			const offer = await post(`/api/voice-sessions/${id}/offer`, { sdp: 'v=0 offer' })
+			expect(offer.status).toBe(200)
+			expect(await offer.json()).toMatchObject({ tools_available: false })
 		})
 	})
 })

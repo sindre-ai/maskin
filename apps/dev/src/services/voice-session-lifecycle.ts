@@ -9,15 +9,13 @@ import { captureVoiceException } from '../lib/sentry-voice'
 
 /**
  * Terminal path for a voice call. Every way a call can end (hangup route,
- * WS-drop grace, idle sweeper, vendor error, server shutdown) goes through
+ * server-socket drop, idle sweeper, vendor error, server shutdown) goes through
  * endVoiceSession so the row, the cost, the vendor teardown and the
  * voice_session_ended event cannot drift between paths.
  */
 
 /** Crash floor from the tech spec §Error handling. Pricing Strategist owns the real number. */
 export const VOICE_DAILY_MINUTE_CAP = 60
-/** How long a dropped event channel may stay away before the call is ended. */
-export const VOICE_WS_GRACE_MS = 20_000
 
 const LIVE_STATUSES = ['pending', 'active'] as const
 
@@ -39,7 +37,7 @@ interface LiveCounters {
 	toolCallsCount: number
 }
 
-// In-process on purpose: the event channel, the hangup route and the sweeper
+// In-process on purpose: the server socket, the hangup route and the sweeper
 // all run in this one server process, and voice_sessions has no columns for
 // turn / tool-call counts. After a restart a session ends with zeroes here and
 // falls back to whatever the client reported on hangup.
@@ -71,12 +69,11 @@ export function recordVoiceToolCall(sessionId: string): void {
 // ── Vendor teardown ──────────────────────────────────────────────────
 
 /**
- * Closes the vendor side of a call. OpenAI documents no server-side close for
- * a Realtime session minted via POST /v1/realtime/sessions: the audio runs
- * browser <-> OpenAI over WebRTC and the 60s ephemeral secret is already spent
- * once the handshake lands, so ending the row is what stops us counting it.
- * The seam stays so a vendor endpoint can be wired in without touching the
- * terminal paths; failures are logged, never thrown.
+ * Closes the vendor side of a call. routes/voice-sessions.ts wires this to
+ * closeVoiceCall (services/voice-realtime-call.ts), which closes the server
+ * socket and hangs the call up at OpenAI. The default only logs, for callers
+ * (tests, scripts) that load this module without the route. Failures are
+ * logged, never thrown.
  */
 export type CloseVendorSessionFn = (session: {
 	voiceSessionId: string
@@ -84,7 +81,7 @@ export type CloseVendorSessionFn = (session: {
 }) => Promise<void>
 
 let closeVendorSessionFn: CloseVendorSessionFn = async (session) => {
-	logger.debug('Voice vendor session closed (no server-side teardown endpoint)', {
+	logger.debug('Voice vendor session closed (no teardown wired)', {
 		voice_session_id: session.voiceSessionId,
 		vendor_session_id: session.vendorSessionId,
 	})
@@ -109,7 +106,7 @@ export type VoiceSessionEnded = typeof voiceSessions.$inferSelect
 
 /**
  * Ends a live call exactly once. The UPDATE only matches rows still pending /
- * active, so a hangup racing the sweeper (or a WS-drop timer firing after the
+ * active, so a hangup racing the sweeper (or a socket-drop end firing after the
  * user already hung up) resolves to a single winner; the loser gets null and
  * does nothing, which keeps voice_session_ended to one event per call.
  */
@@ -117,8 +114,6 @@ export async function endVoiceSession(
 	db: Database,
 	input: EndVoiceSessionInput,
 ): Promise<VoiceSessionEnded | null> {
-	cancelVoiceWsGrace(input.id)
-
 	const [live] = await db
 		.select({ startedAt: voiceSessions.startedAt })
 		.from(voiceSessions)
@@ -227,43 +222,6 @@ async function emitEnded(
 			voice_session_id: session.id,
 			error: err instanceof Error ? err.message : String(err),
 		})
-	}
-}
-
-// ── WS-drop grace ────────────────────────────────────────────────────
-
-const graceTimers = new Map<string, NodeJS.Timeout>()
-
-/**
- * Called when a call's event channel closes without the call having ended.
- * If the browser does not reconnect within the grace, the call is ended as
- * network_error. A reconnect (or any other terminal path) cancels it.
- */
-export function startVoiceWsGrace(
-	db: Database,
-	voiceSessionId: string,
-	graceMs: number = VOICE_WS_GRACE_MS,
-): void {
-	cancelVoiceWsGrace(voiceSessionId)
-	const timer = setTimeout(() => {
-		graceTimers.delete(voiceSessionId)
-		endVoiceSession(db, { id: voiceSessionId, reason: 'network_error' }).catch((err) => {
-			logger.error('Voice WS-drop grace end failed', {
-				voice_session_id: voiceSessionId,
-				error: err instanceof Error ? err.message : String(err),
-			})
-			captureVoiceException(voiceSessionId, err)
-		})
-	}, graceMs)
-	timer.unref()
-	graceTimers.set(voiceSessionId, timer)
-}
-
-export function cancelVoiceWsGrace(voiceSessionId: string): void {
-	const timer = graceTimers.get(voiceSessionId)
-	if (timer) {
-		clearTimeout(timer)
-		graceTimers.delete(voiceSessionId)
 	}
 }
 

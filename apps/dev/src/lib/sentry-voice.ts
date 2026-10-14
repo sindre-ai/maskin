@@ -4,9 +4,9 @@ import { Sentry } from './sentry'
 // (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
 //
 // The four voice surfaces that should carry the voice_session_id tag on any
-// Sentry event: 5xx from voice routes, WS handshake failures on
-// /api/voice-sessions/:id/events, tool-proxy exceptions on the same WS, and
-// vendor `error` events from OpenAI Realtime. Each of those code paths lands
+// Sentry event: 5xx from voice routes, failures to attach the server socket to a
+// call (services/voice-realtime-call.ts), tool-proxy exceptions on that socket,
+// and vendor `error` events from OpenAI Realtime. Each of those code paths lands
 // in a follow-up commit alongside the hangup route + sweeper — this helper
 // scaffolds the tag surface so those paths have one place to reach for it.
 
