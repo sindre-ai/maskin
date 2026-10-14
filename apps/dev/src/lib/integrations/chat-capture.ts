@@ -14,6 +14,7 @@ import { recordEvent } from '../events/record-event'
 import { BYO_APIKEY_PROVIDER } from './byo-apikey'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
+import { assertValidCredentialValue } from './credential-value'
 import { grantedActorsAreInWorkspace } from './scope-grants'
 
 /** How long a captured key stays undoable before the sweeper activates it. */
@@ -88,6 +89,7 @@ export async function captureChatSecret(
 	// Before anything is read or encrypted. The name rule needs no database, and its
 	// messages never repeat the name.
 	assertValidCredentialName(input.displayName)
+	assertValidCredentialValue(input.rawSecret)
 
 	const [session] = await db
 		.select({ id: sessions.id, actorId: sessions.actorId, conversationId: sessions.conversationId })
