@@ -408,6 +408,104 @@ describe('capability digest (integration)', () => {
 		})
 	})
 
+	describe('reply stop', () => {
+		/** What the person typed into the 1-1, after everything already there. */
+		async function say(chatId: string, humanId: string, content: string) {
+			await db.insert(messages).values({ conversationId: chatId, actorId: humanId, content })
+		}
+
+		/** The first note goes out, is read, and is a week old: only a stop can block the next. */
+		async function firstNoteSentAndRead(chats: Array<{ chatId: string; humanId: string }>) {
+			await scanner().tick()
+			answers.set(
+				BUILTIN,
+				tools({ create_objects: 'h-create', get_objects: 'h-get', tool_one: 'h1' }),
+			)
+			await scanner().tick()
+			for (const { chatId, humanId } of chats) {
+				const [note] = await notesIn(chatId)
+				expect(note).toBeDefined()
+				await markRead(chatId, humanId)
+				await db
+					.update(messages)
+					.set({ createdAt: new Date(Date.now() - 8 * DAY_MS) })
+					.where(eq(messages.id, note?.id as number))
+			}
+		}
+
+		function addSecondTool() {
+			answers.set(
+				BUILTIN,
+				tools({ create_objects: 'h-create', get_objects: 'h-get', tool_one: 'h1', tool_two: 'h2' }),
+			)
+		}
+
+		it('a stop reply skips every tick with opted_out and leaves the cursor alone', async () => {
+			const chatId = await chatFor(ownerId)
+			await firstNoteSentAndRead([{ chatId, humanId: ownerId }])
+			await say(chatId, ownerId, 'stop')
+			addSecondTool()
+
+			await scanner().tick()
+			await scanner().tick()
+
+			expect(await notesIn(chatId)).toHaveLength(1)
+			expect(await eventsFor('capability_digest_sent')).toHaveLength(1)
+			const reasons = (await skippedFor(ownerId)).map((e) => (e.data as { reason: string }).reason)
+			expect(reasons).toEqual(['opted_out', 'opted_out'])
+			expect(spies.startSession).not.toHaveBeenCalled()
+		})
+
+		it('start brings it back and the findings that waited go out in the next note', async () => {
+			const chatId = await chatFor(ownerId)
+			await firstNoteSentAndRead([{ chatId, humanId: ownerId }])
+			await say(chatId, ownerId, 'stop')
+			addSecondTool()
+			await scanner().tick()
+			expect(await notesIn(chatId)).toHaveLength(1)
+
+			await say(chatId, ownerId, 'start')
+			await scanner().tick()
+			const notes = await notesIn(chatId)
+			expect(notes).toHaveLength(2)
+			expect(notes[1]?.content).toContain('tool_two')
+			expect(await eventsFor('capability_digest_sent')).toHaveLength(2)
+		})
+
+		it('skips only the person who said stop; another person still gets a note', async () => {
+			const ownerChat = await chatFor(ownerId)
+			const adminChat = await chatFor(adminId)
+			await firstNoteSentAndRead([
+				{ chatId: ownerChat, humanId: ownerId },
+				{ chatId: adminChat, humanId: adminId },
+			])
+			await say(ownerChat, ownerId, 'Stop.')
+			addSecondTool()
+
+			await scanner().tick()
+
+			expect(await notesIn(ownerChat)).toHaveLength(1)
+			const adminNotes = await notesIn(adminChat)
+			expect(adminNotes).toHaveLength(2)
+			expect(adminNotes[1]?.content).toContain('tool_two')
+			const reasons = (await skippedFor(ownerId)).map((e) => (e.data as { reason: string }).reason)
+			expect(reasons).toEqual(['opted_out'])
+		})
+
+		it('a normal reply does not opt the person out', async () => {
+			const chatId = await chatFor(ownerId)
+			await firstNoteSentAndRead([{ chatId, humanId: ownerId }])
+			await say(chatId, ownerId, 'I will stop by later')
+			await say(chatId, ownerId, 'tell me more')
+			addSecondTool()
+
+			await scanner().tick()
+
+			expect(await notesIn(chatId)).toHaveLength(2)
+			expect(await skippedFor(ownerId)).toHaveLength(0)
+		})
+	})
+
 	describe('shared integrations and governance', () => {
 		/** A held tool finding written by a real scan, with delivery held back until the test says so. */
 		async function pendingToolFinding() {

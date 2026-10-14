@@ -34,12 +34,19 @@ export const PROACTIVE_DELIVERY_VERSION = 1
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
 
+/**
+ * A person's reply that switches proactive notes off or back on. Exact word,
+ * case-insensitive, trimmed, trailing . or ! allowed. Code decides, no model.
+ */
+const OPT_OUT_REPLY = '^\\s*(stop|start)\\s*[.!]*\\s*$'
+
 export type ProactiveRefusal =
 	| 'flag_off'
 	| 'sender_not_allowed'
 	| 'sender_paused'
 	| 'recipient_not_member'
 	| 'no_direct_chat'
+	| 'opted_out'
 	| 'duplicate'
 	| 'cap_agent_day'
 	| 'cap_person_day'
@@ -102,6 +109,36 @@ function logCaptureFailure(event: string, args: SendProactiveMessageArgs) {
 
 function refuse(reason: ProactiveRefusal) {
 	return { result: { sent: false, reason } as const, hoursSinceLastMessage: null }
+}
+
+/**
+ * Whether this person has told the agent to stop in this 1-1. Derived from
+ * their own messages, nothing is stored: the newest stop or start they wrote
+ * after the first proactive note wins, and a stop wins. A stop typed before any
+ * note was sent never counts. Only the recipient's messages are read.
+ *
+ * Scope is this 1-1. While only Chief of Staff can send that is the person;
+ * when other agents may send it has to become a person-wide stored flag.
+ */
+export async function isOptedOut(
+	db: Database | Tx,
+	p: { conversationId: string; recipientHumanId: string },
+): Promise<boolean> {
+	const rows = (await db.execute(sql`
+		SELECT m.content
+		FROM messages m
+		WHERE m.conversation_id = ${p.conversationId}
+			AND m.actor_id = ${p.recipientHumanId}
+			AND m.id > (
+				SELECT min(f.id) FROM messages f
+				WHERE f.conversation_id = ${p.conversationId}
+					AND f.metadata->'delivery'->>'kind' = ${PROACTIVE_DELIVERY_KIND}
+			)
+			AND m.content ~* ${OPT_OUT_REPLY}
+		ORDER BY m.id DESC
+		LIMIT 1
+	`)) as unknown as Array<{ content: string }>
+	return rows[0]?.content.trim().toLowerCase().startsWith('stop') ?? false
 }
 
 /** Counts proactive messages as the caps define them. Reads the delivery marker, never content. */
@@ -179,7 +216,12 @@ async function runChecksAndSend(
 	})
 	if (!chat) return refuse('no_direct_chat')
 
-	// 6. The same dedupe key never sends twice.
+	// 6. A person who replied stop is not messaged again, whatever the reason.
+	if (await isOptedOut(tx, { conversationId: chat.id, recipientHumanId })) {
+		return refuse('opted_out')
+	}
+
+	// 7. The same dedupe key never sends twice.
 	const [dup] = await tx
 		.select({ id: messages.id })
 		.from(messages)
@@ -192,7 +234,7 @@ async function runChecksAndSend(
 		.limit(1)
 	if (dup) return refuse('duplicate')
 
-	// 7. Caps. One from this sender per day.
+	// 8. Caps. One from this sender per day.
 	const dayAgo = new Date(now - DAY_MS)
 	const [fromAgent] = await tx
 		.select({ n: sql<number>`count(*)::int` })
@@ -207,7 +249,7 @@ async function runChecksAndSend(
 		)
 	if ((fromAgent?.n ?? 0) >= PROACTIVE_LIMITS.agentPerDay) return refuse('cap_agent_day')
 
-	// 8. Two per person per day from all agents, one per reason per week.
+	// 9. Two per person per day from all agents, one per reason per week.
 	const person = { workspaceId, recipientHumanId }
 	if (
 		(await countProactiveToPerson(tx, { ...person, since: dayAgo })) >=
@@ -223,7 +265,7 @@ async function runChecksAndSend(
 		return refuse('cap_reason_week')
 	}
 
-	// 9. The sender's last proactive message to this person must have been read.
+	// 10. The sender's last proactive message to this person must have been read.
 	const [lastProactive] = await tx
 		.select({ id: messages.id })
 		.from(messages)
@@ -246,12 +288,12 @@ async function runChecksAndSend(
 		if ((state?.lastRead ?? 0) < lastProactive.id) return refuse('unread_backlog')
 	}
 
-	// 10. 1 to 1,500 characters. No mentions metadata is ever attached below.
+	// 11. 1 to 1,500 characters. No mentions metadata is ever attached below.
 	if (content.length < 1 || content.length > PROACTIVE_CONTENT_MAX) {
 		return refuse('invalid_content')
 	}
 
-	// 11. Store it through the shared chat port. evaluateAndRespond is never called.
+	// 12. Store it through the shared chat port. evaluateAndRespond is never called.
 	const [latest] = await tx
 		.select({ createdAt: messages.createdAt })
 		.from(messages)

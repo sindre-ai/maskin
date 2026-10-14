@@ -9,7 +9,7 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
-import { sendProactiveMessage } from '../../services/proactive-message'
+import { isOptedOut, sendProactiveMessage } from '../../services/proactive-message'
 import { insertActor, insertConversation, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -336,5 +336,126 @@ describe('sendProactiveMessage (integration)', () => {
 		)
 		expect(results.filter((r) => r.sent)).toHaveLength(1)
 		expect(await messagesIn(chatId)).toHaveLength(1)
+	})
+
+	describe('opt-out by replying stop', () => {
+		/** A message the person (or anyone else) typed into the chat, after what is already there. */
+		async function say(content: string, actorId = humanId, conversationId = chatId) {
+			await db.insert(messages).values({ conversationId, actorId, content })
+		}
+
+		/** A note sent a week ago and read, so only the opt-out can block the next send. */
+		async function oldReadNote(conversationId = chatId) {
+			const note = await seedProactive({ conversationId, agentId: cosId, hoursAgo: 24 * 8 })
+			await markRead(conversationId, note.id)
+		}
+
+		it('a stop after a note refuses the next send with opted_out and sends nothing', async () => {
+			await oldReadNote()
+			await say('stop')
+			expect(await sendProactiveMessage(db, args())).toEqual({ sent: false, reason: 'opted_out' })
+			expect(await messagesIn(chatId)).toHaveLength(2)
+			const sent = await db
+				.select()
+				.from(events)
+				.where(
+					and(eq(events.workspaceId, workspaceId), eq(events.action, 'proactive_message_sent')),
+				)
+			expect(sent).toHaveLength(0)
+		})
+
+		it('covers every reason, not only the capability note', async () => {
+			await oldReadNote()
+			await say('stop')
+			expect(await sendProactiveMessage(db, args({ reason: 'anything_else' }))).toEqual({
+				sent: false,
+				reason: 'opted_out',
+			})
+		})
+
+		it('opts out only that person; another person still gets their note', async () => {
+			const other = await insertActor(db, { type: 'human', name: 'Other Person' })
+			await join(other.id)
+			flagOnFor(humanId, other.id)
+			const otherChat = await makeChat([other.id, cosId])
+			await oldReadNote()
+			await say('stop')
+
+			expect((await sendProactiveMessage(db, args({ recipientHumanId: other.id }))).sent).toBe(true)
+			expect(await messagesIn(otherChat)).toHaveLength(1)
+			expect(await sendProactiveMessage(db, args())).toEqual({ sent: false, reason: 'opted_out' })
+		})
+
+		it.each(['STOP', ' stop ', 'Stop.', 'stop!', '\n stop \n'])(
+			'%j counts as stop',
+			async (reply) => {
+				await oldReadNote()
+				await say(reply)
+				expect(await sendProactiveMessage(db, args())).toEqual({
+					sent: false,
+					reason: 'opted_out',
+				})
+			},
+		)
+
+		it.each([
+			'tell me more',
+			'I will stop by later',
+			'stop it',
+			"don't stop",
+			'please stop',
+			'stopping',
+			'stop sending',
+		])('%j does not opt out', async (reply) => {
+			await oldReadNote()
+			await say(reply)
+			expect((await sendProactiveMessage(db, args())).sent).toBe(true)
+		})
+
+		it('a stop typed before any proactive note does not opt anyone out', async () => {
+			await say('stop')
+			expect((await sendProactiveMessage(db, args())).sent).toBe(true)
+		})
+
+		it('start on its own changes nothing', async () => {
+			await oldReadNote()
+			await say('start')
+			expect((await sendProactiveMessage(db, args())).sent).toBe(true)
+		})
+
+		it('the newest of stop and start wins', async () => {
+			await oldReadNote()
+			await say('stop')
+			expect(await sendProactiveMessage(db, args())).toEqual({ sent: false, reason: 'opted_out' })
+			await say('start')
+			expect((await sendProactiveMessage(db, args())).sent).toBe(true)
+		})
+
+		it('stop, start, stop is opted out', async () => {
+			await oldReadNote()
+			await say('stop')
+			await say('start')
+			await say('stop')
+			expect(await isOptedOut(db, { conversationId: chatId, recipientHumanId: humanId })).toBe(true)
+		})
+
+		it('a stop from someone else in the chat does not count', async () => {
+			await oldReadNote()
+			await say('stop', cosId)
+			await say('stop', otherAgentId)
+			expect(await isOptedOut(db, { conversationId: chatId, recipientHumanId: humanId })).toBe(
+				false,
+			)
+			expect((await sendProactiveMessage(db, args())).sent).toBe(true)
+		})
+
+		it('a refused send uses no cap: the first send after start still goes out', async () => {
+			await oldReadNote()
+			await say('stop')
+			await sendProactiveMessage(db, args())
+			await sendProactiveMessage(db, args())
+			await say('start')
+			expect((await sendProactiveMessage(db, args())).sent).toBe(true)
+		})
 	})
 })
