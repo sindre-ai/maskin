@@ -3,8 +3,8 @@ import {
 	type DncGateDeps,
 	type GateContact,
 	checkEmailHookDenyList,
-	normalizeDanishNumber,
 	erasureMarkerFor,
+	normalizeDanishNumber,
 	parseFounderActors,
 	runDncGate,
 } from '../../../lib/outreach/voice/dnc-gate'

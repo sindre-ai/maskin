@@ -15,8 +15,8 @@ import {
 	findWorkspacesWithDueContacts,
 } from '../../lib/outreach/voice/dialer-store'
 import { parseFounderActors, runDncGate } from '../../lib/outreach/voice/dnc-gate'
-import { parseErasureKey } from '../../lib/outreach/voice/erasure-key'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
+import { parseErasureKey } from '../../lib/outreach/voice/erasure-key'
 import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
