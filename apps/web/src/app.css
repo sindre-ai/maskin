@@ -886,6 +886,15 @@
 			transform: rotate(360deg);
 		}
 	}
+	/* Paused ring: same static 300° arc, no spin. Used by the agent-thinking,
+	   user-speaking and muted states. -faded halves the arc for user-speaking
+	   (SPEC: reduced-opacity ring). */
+	.speaking-ring-paused::before {
+		animation: none;
+	}
+	.speaking-ring-faded::before {
+		opacity: 0.5;
+	}
 
 	/* Voice-level breathing shadow around the avatar. Amplitude is a static
 	   swell in this task — Task 3 wires it to the Realtime data-channel audio
