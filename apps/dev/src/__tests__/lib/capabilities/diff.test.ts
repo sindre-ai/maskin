@@ -7,8 +7,8 @@ import {
 	dedupeKeyFor,
 	diffCapabilities,
 } from '../../../lib/capabilities/diff'
-import type { ProviderConfig } from '../../../lib/integrations/types'
 import { hashServerSpec, hashToolSchema, sha256 } from '../../../lib/capabilities/schema-hash'
+import type { ProviderConfig } from '../../../lib/integrations/types'
 
 const WS = '11111111-1111-4111-8111-111111111111'
 const SOURCE = 'integration:slack:22222222-2222-4222-8222-222222222222'
