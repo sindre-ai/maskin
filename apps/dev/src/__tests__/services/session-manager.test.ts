@@ -4011,7 +4011,7 @@ describe('SessionManager', () => {
 					stream: 'stdout',
 					content: `${initLine([
 						{ name: 'maskin', status: 'connected' },
-						{ name: 'playwright', status: 'pending' },
+						{ name: 'playwright', status: 'failed' },
 					])}
 `,
 				},
@@ -4019,7 +4019,7 @@ describe('SessionManager', () => {
 
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 			expect(warnings[0].content).not.toContain('maskin')
 		})
 
@@ -4032,7 +4032,7 @@ describe('SessionManager', () => {
 			const sessionId = randomUUID()
 			const line = `${initLine([
 				{ name: 'maskin', status: 'connected' },
-				{ name: 'playwright', status: 'pending' },
+				{ name: 'playwright', status: 'failed' },
 			])}
 `
 			const cut = Math.floor(line.length / 2)
@@ -4048,7 +4048,7 @@ describe('SessionManager', () => {
 			await emit(sessionId, line.slice(cut))
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 		})
 
 		// The stream re-attaches with `tail: 'all'` on resume and with a ~1s
@@ -4056,7 +4056,7 @@ describe('SessionManager', () => {
 		// The warning should read once per session, not once per reconnect.
 		it('warns only once when the init line is replayed', async () => {
 			const sessionId = randomUUID()
-			const chunk = `${initLine([{ name: 'playwright', status: 'pending' }])}
+			const chunk = `${initLine([{ name: 'playwright', status: 'failed' }])}
 `
 			const emit = (
 				manager as unknown as {
