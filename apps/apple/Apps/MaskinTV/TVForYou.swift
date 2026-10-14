@@ -13,6 +13,8 @@ struct TVForYou: View {
 	@Binding var chromeHidden: Bool
 	/// A flow the briefing player asked to open; Flows picks it up.
 	@Binding var openFlow: String?
+	/// Today's briefing was asked for (Top Shelf); it plays once the cards are in.
+	@Binding var playBriefing: Bool
 	@State private var path = NavigationPath()
 	@State private var playing: BriefSequence?
 	@State private var askFailed = false
@@ -59,11 +61,11 @@ struct TVForYou: View {
 		}
 		#endif
 		.onChange(of: path.count) { _, count in chromeHidden = count > 0 }
-		.onChange(of: openDecision) { _, id in
-			guard let id else { return }
-			path = NavigationPath([id])
-			openDecision = nil
-		}
+		.onChange(of: openDecision) { _, _ in openRequestedDecision() }
+		.onAppear { openRequestedDecision() }
+		.onChange(of: playBriefing) { _, _ in playRequestedBriefing() }
+		.onChange(of: stories?.cards.first?.id) { _, _ in playRequestedBriefing() }
+		.task { playRequestedBriefing() }
 		.fullScreenCover(item: Binding(get: { playing.map(PlayingSequence.init) }, set: { if $0 == nil { playing = nil } })) { item in
 			if let stories {
 				TVBriefingPlayer(
@@ -72,6 +74,18 @@ struct TVForYou: View {
 				) { playing = nil }
 			}
 		}
+	}
+
+	private func openRequestedDecision() {
+		guard let id = openDecision else { return }
+		path = NavigationPath([id])
+		openDecision = nil
+	}
+
+	private func playRequestedBriefing() {
+		guard playBriefing, playing == nil, let stories, let card = stories.cards.first else { return }
+		playBriefing = false
+		playing = BriefSequence.make(cards: stories.cards, opening: card)
 	}
 
 	/// What the last briefing slide offers: review the first thing that needs you, or open the flow

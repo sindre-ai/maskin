@@ -318,7 +318,8 @@ public struct TeamLayout: Equatable, Sendable {
 
 		let unpinned = active.filter { !$0.pinned }
 		let flows = input.flowRooms.filter { !pinnedFlowKeys.contains($0.pinKey) }
-		let totalUnread = active.reduce(0) { $0 + $1.unreadCount } + input.flowRooms.reduce(0) { $0 + $1.unreadCount }
+		// The Unread chip counts unread rows, not messages, and never the pinned tiles (they have their own badge).
+		let totalUnread = unpinned.filter { $0.unreadCount > 0 }.count + flows.filter { $0.unreadCount > 0 }.count
 
 		var sections: [Section]
 		switch input.chip {

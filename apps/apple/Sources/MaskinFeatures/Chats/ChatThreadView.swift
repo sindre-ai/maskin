@@ -109,8 +109,9 @@ struct ChatThreadView: View {
 			composerEmpty: composer.text.isEmpty && composer.attachments.isEmpty, somebodyTyping: busy)
 	}
 
-	/// A flow channel or a group: the Team room. Its composer has Go live in place of the mic.
-	private var isRoom: Bool { flow != nil || store.participants.count >= 3 }
+	/// A flow's conversation: the Team room. Its composer has Go live in place of the mic. Groups use
+	/// the ordinary composer (mic, no Go live).
+	private var isRoom: Bool { flow != nil }
 
 	/// Who a live call from this thread is with: its first agent. Nil (no Live button) without one.
 	private var liveLead: ChatParticipant? { store.participants.first { $0.kind == .agent } }

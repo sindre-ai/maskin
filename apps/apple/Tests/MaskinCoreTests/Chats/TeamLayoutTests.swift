@@ -56,7 +56,7 @@ struct TeamLayoutTests {
 		#expect(layout.section("unread")?.count == 1)
 		#expect(layout.sections.map(\.kind) == [.unread, .time, .time])
 		#expect(layout.sections.dropFirst().flatMap { $0.rows.map(\.id) } == ["read", "old"])
-		#expect(layout.unreadCount == 3, "the chip count includes the pinned unread")
+		#expect(layout.unreadCount == 1, "the chip counts unread rows that are not pinned")
 		#expect(layout.empty == nil)
 		#expect(layout.showsArchived == false)
 	}
