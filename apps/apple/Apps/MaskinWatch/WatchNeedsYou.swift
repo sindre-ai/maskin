@@ -155,8 +155,9 @@ private struct WatchDecisionPage: View {
 					optionList
 					Label("Open on iPhone", systemImage: "iphone")
 						.font(WatchType.caption())
-						.foregroundStyle(MaskinColor.ink4)
-						.frame(minHeight: WatchMetrics.target)
+						.foregroundStyle(MaskinColor.ink3)
+						.frame(maxWidth: .infinity, minHeight: WatchMetrics.target)
+						.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
 					Text(WatchDecisionOptions.remainingLabel(remaining))
 						.font(WatchType.microMono())
 						.tracking(0.6)
@@ -338,7 +339,10 @@ private struct WatchConfirm: View {
 					WatchCapsule(title: "Confirm", prominent: true, font: WatchType.action())
 				}
 				.buttonStyle(.plain)
-				WatchQuietButton(title: "Cancel", action: cancel)
+				Button(action: cancel) {
+					WatchCapsule(title: "Cancel", font: WatchType.action())
+				}
+				.buttonStyle(.plain)
 			}
 		}
 		.containerBackground(for: .navigation) { WatchBackdrop() }

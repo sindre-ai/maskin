@@ -273,7 +273,7 @@ private struct AgentsActions: View {
 				Button(
 					intent: PauseAgentsIntent(sessionIds: state.agents.map(\.sessionId), workspaceId: identity.workspaceId)
 				) {
-					InkLabel(state.pauseLabel)
+					InkLabel(state.pauseLabel, quiet: true)
 				}
 				.buttonStyle(.plain)
 				if state.count == 1, let agent = state.agents.first {
@@ -289,15 +289,20 @@ private struct AgentsActions: View {
 /// The ink capsule: inverse surface with its label colour, 44 pt tall on the Lock Screen.
 private struct InkLabel: View {
 	let text: String
-	init(_ text: String) { self.text = text }
+	/// Pause is the quiet grey capsule; Open and See all are the white (inverse) ones.
+	let quiet: Bool
+	init(_ text: String, quiet: Bool = false) {
+		self.text = text
+		self.quiet = quiet
+	}
 	var body: some View {
 		Text(text)
 			.maskinText(.caption)
 			.lineLimit(1)
-			.foregroundStyle(MaskinSurface.onInverse)
+			.foregroundStyle(quiet ? MaskinColor.ink3 : MaskinSurface.onInverse)
 			.padding(.horizontal, MaskinSpace.s9)
 			.frame(minHeight: MaskinSpace.touchMin)
-			.background(MaskinSurface.inverse, in: Capsule())
+			.background(quiet ? MaskinSurface.fill : MaskinSurface.inverse, in: Capsule())
 	}
 }
 
