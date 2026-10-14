@@ -448,7 +448,7 @@ describe('POST /api/webhooks/skjald/:token with outcome events (integration)', (
 
 		const [meeting] = await meetingsIn(ws.id)
 		expect(meeting.title).toBe('Customer call')
-		expect(meeting.status).toBe('done')
+		expect(meeting.status).toBe('happened')
 		expect(meeting.content).toContain('## Summary\nAgreed to a pilot.')
 		expect(meeting.content).toContain('- Start the pilot in November')
 		expect(meeting.content).toContain('- Send the quote')
@@ -481,6 +481,7 @@ describe('POST /api/webhooks/skjald/:token with outcome events (integration)', (
 		expect(after).toHaveLength(1)
 		expect(after[0].id).toBe(meeting.id)
 		expect(after[0].title).toBe('Customer call (edited)')
+		expect(after[0].status).toBe('happened')
 		expect(after[0].content).toContain('Pilot confirmed.')
 		expect(after[0].content).not.toContain('Send the quote')
 		expect((after[0].metadata as Record<string, unknown>).tag).toBeNull()
