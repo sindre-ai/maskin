@@ -25576,6 +25576,41 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"delivery": {
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40
+													},
+													"version": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"reason": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 80
+													},
+													"dedupe_key": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"comment_event_id": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"kind"
+												]
 											}
 										}
 									}
@@ -27305,6 +27340,41 @@
 												"required": [
 													"question_message_id",
 													"answers"
+												]
+											},
+											"delivery": {
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40
+													},
+													"version": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"reason": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 80
+													},
+													"dedupe_key": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"comment_event_id": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"kind"
 												]
 											}
 										}

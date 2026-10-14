@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 
@@ -25,7 +25,7 @@ export const CHIEF_OF_STAFF_NAME = 'Chief of Staff'
  * lifetime if a second same-named agent is ever added.
  */
 export async function findChiefOfStaffId(
-	db: Database,
+	db: Database | Transaction,
 	workspaceId: string,
 ): Promise<string | null> {
 	const [row] = await db
