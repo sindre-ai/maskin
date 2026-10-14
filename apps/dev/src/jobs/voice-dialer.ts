@@ -16,6 +16,7 @@ import {
 	inDialWindow,
 	parseFounderActors,
 } from '../lib/outreach/voice/dnc-gate'
+import { type ErasureKey, parseErasureKey } from '../lib/outreach/voice/erasure-key'
 
 /**
  * Voice dialer cron: a tick about every 10 seconds, and only inside the
@@ -40,6 +41,7 @@ export class VoiceDialerJob {
 	private job: Cron | null = null
 	private running = false
 	private founders: FounderActors
+	private erasure: ErasureKey
 
 	constructor(
 		private db: Database,
@@ -51,6 +53,14 @@ export class VoiceDialerJob {
 		if (!this.founders.ok) {
 			logger.warn('voice dialer: founder rule will refuse every contact', {
 				reason: this.founders.reason,
+			})
+		}
+		// Parsed once. A missing or short key never stops startup: the dial check (gate check 7)
+		// refuses every call with this reason, and that only runs once the dial flag is on.
+		this.erasure = parseErasureKey(env.VOICE_ERASURE_MARKER_KEY)
+		if (!this.erasure.ok) {
+			logger.warn('voice dialer: erased-contact check will refuse every dial', {
+				reason: this.erasure.reason,
 			})
 		}
 	}
@@ -105,6 +115,7 @@ export class VoiceDialerJob {
 			telnyx: createTelnyxClient({ apiKey: runtime.apiKey ?? '', baseUrl: runtime.apiBaseUrl }),
 			gate: {
 				founders: this.founders,
+				erasure: this.erasure,
 				findActor: async (id) => {
 					const [row] = await this.db
 						.select({ type: actors.type })

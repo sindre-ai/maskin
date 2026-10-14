@@ -8,6 +8,12 @@ import { createTelnyxClient } from '../lib/integrations/providers/telnyx/client'
 import { readTelnyxRuntimeConfig } from '../lib/integrations/providers/telnyx/config'
 import { logger } from '../lib/logger'
 import {
+	ERASURE_MARKER_FIELD,
+	erasureMarkerFor,
+	normalizeDanishNumber,
+} from '../lib/outreach/voice/dnc-gate'
+import { type ErasureKey, parseErasureKey } from '../lib/outreach/voice/erasure-key'
+import {
 	DELETED_BY_REQUEST,
 	RETENTION_MONTHS,
 	type TelnyxRecordingClientFactory,
@@ -26,6 +32,12 @@ import {
  *   2. Erasure: a contact whose stored status is deleted_by_request loses its Telnyx-hosted
  *      recordings, its blobs, its content, and every metadata key except consent_*;
  *      erased_at marks it done.
+ *
+ * Erasure also writes the suppression marker (voice outreach errata section 9): a keyed hash
+ * of the stored phone, kept as one more key in the rebuilt metadata, in the same write that
+ * strips the number. No valid +45 number means no marker. A missing or short
+ * VOICE_ERASURE_MARKER_KEY means no marker and one error event (contact id only) per contact;
+ * erasure itself still completes. The contact title is kept, and metadata is rebuilt wholesale.
  *
  * Telnyx goes first on both paths. The call ids to delete come from the blob keys,
  * last_call_id and the contact's events, which the later steps remove or clear, so a
@@ -62,6 +74,9 @@ export function resolveSweepCron(raw: string | undefined): string {
 
 const KEPT_ON_ERASURE = /^consent_/
 
+/** What a caller that passes no key gets: erasure completes, no marker, one error event. */
+const NO_ERASURE_KEY: ErasureKey = parseErasureKey(undefined)
+
 /** The Telnyx key is read when a contact has a call to look up, not at startup. */
 export const telnyxClientFromEnv: TelnyxRecordingClientFactory = () => {
 	const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
@@ -78,6 +93,8 @@ export class VoiceRetentionSweepJob {
 		private storage: StorageProvider,
 		private cronExpression: string = CRON_EXPRESSION,
 		private telnyx: TelnyxRecordingClientFactory = telnyxClientFromEnv,
+		// Parsed once, when the job is built at startup. A bad key never stops the server.
+		private erasureKey: ErasureKey = parseErasureKey(process.env.VOICE_ERASURE_MARKER_KEY),
 	) {}
 
 	start(): void {
@@ -98,7 +115,13 @@ export class VoiceRetentionSweepJob {
 		if (this.running) return
 		this.running = true
 		try {
-			await processVoiceRetentionSweep(this.db, this.storage, this.telnyx)
+			await processVoiceRetentionSweep(
+				this.db,
+				this.storage,
+				this.telnyx,
+				new Date(),
+				this.erasureKey,
+			)
 		} finally {
 			this.running = false
 		}
@@ -115,10 +138,11 @@ export async function processVoiceRetentionSweep(
 	storage: StorageProvider,
 	telnyx: TelnyxRecordingClientFactory,
 	now: Date = new Date(),
+	erasureKey: ErasureKey = NO_ERASURE_KEY,
 ): Promise<VoiceRetentionSweepResult> {
 	const result = { expired: 0, erased: 0 }
 	try {
-		result.erased = await sweepErased(db, storage, telnyx)
+		result.erased = await sweepErased(db, storage, telnyx, erasureKey)
 	} catch (err) {
 		logger.error('voice retention sweepErased failed', {
 			error: err instanceof Error ? err.message : String(err),
@@ -207,6 +231,7 @@ export async function sweepErased(
 	db: Database,
 	storage: StorageProvider,
 	telnyx: TelnyxRecordingClientFactory,
+	erasureKey: ErasureKey = NO_ERASURE_KEY,
 ): Promise<number> {
 	const pending = await db
 		.select({
@@ -241,11 +266,20 @@ export async function sweepErased(
 					KEPT_ON_ERASURE.test(key),
 				),
 			)
+			// The marker is computed from the stored phone here, after the Telnyx and blob deletes, so a
+			// failed delete leaves the row untouched. Nothing else is added to the row.
+			const phone = (row.metadata as Record<string, unknown> | null)?.phone
+			const hasNumber = normalizeDanishNumber(phone) !== null
+			const marker = erasureKey.ok ? erasureMarkerFor(phone, erasureKey.key) : null
 			const updated = await db
 				.update(objects)
 				.set({
 					content: null,
-					metadata: { ...kept, erased_at: new Date().toISOString() },
+					metadata: {
+						...kept,
+						erased_at: new Date().toISOString(),
+						...(marker ? { [ERASURE_MARKER_FIELD]: marker } : {}),
+					},
 					updatedAt: new Date(),
 				})
 				.where(and(eq(objects.id, row.id), eq(objects.status, DELETED_BY_REQUEST)))
@@ -264,6 +298,18 @@ export async function sweepErased(
 					telnyx_recordings_deleted: telnyxDeleted,
 				},
 			})
+			if (hasNumber && !erasureKey.ok) {
+				// Stripped without a marker: the number is gone, so it can never get one. This event is the
+				// list of who to check once the key is set. Contact id only, never the number.
+				await recordEvent(db, {
+					workspaceId: row.workspaceId,
+					actorId: row.driver ?? row.createdBy,
+					action: 'voice_erasure_marker_failed',
+					entityType: 'object',
+					entityId: row.id,
+					data: { source: 'voice_retention_sweep', reason: erasureKey.reason },
+				})
+			}
 			erased++
 		} catch (err) {
 			logger.error('voice erasure for contact failed', {

@@ -86,6 +86,10 @@ export interface DialerStore {
 	/** Count of call_initiated events for the workspace since the given instant. */
 	countCallInitiated(workspaceId: string, since: Date): Promise<number>
 	recordEvent(event: DialerEvent): Promise<void>
+	/** Check 7: is there a deleted_by_request contact in the workspace carrying this marker? Reads one row at most. */
+	hasErasedMarker(workspaceId: string, marker: string): Promise<boolean>
+	/** Check 7(c): is a deleted_by_request contact the sweep has not reached yet (no erased_at) still storing this +45 number? */
+	hasUnsweptErasedNumber(workspaceId: string, e164: string): Promise<boolean>
 	/** Merges a patch into the contact's metadata. Does not touch status. */
 	stampMetadata(
 		workspaceId: string,
@@ -100,7 +104,7 @@ export interface DialerDeps {
 	store: DialerStore
 	telnyx: Pick<TelnyxClient, 'createCall'>
 	/** Gate inputs other than the clock, which the tick supplies. */
-	gate: Omit<DncGateDeps, 'now'>
+	gate: Omit<DncGateDeps, 'now' | 'matchesErasedContact' | 'matchesUnsweptErasedContact'>
 	config: DialerConfig
 	/** VOICE_OUTREACH_AUTOSEND resolved for this workspace. Off builds the queue and dials nothing. */
 	autosendEnabled: boolean
@@ -263,7 +267,12 @@ export async function runDialerTick(
 	for (const contact of queue) {
 		if (result.dialed_count >= slots) break
 
-		const verdict = await runDncGate(contact, { ...deps.gate, now })
+		const verdict = await runDncGate(contact, {
+			...deps.gate,
+			now,
+			matchesErasedContact: (marker) => deps.store.hasErasedMarker(workspaceId, marker),
+			matchesUnsweptErasedContact: (e164) => deps.store.hasUnsweptErasedNumber(workspaceId, e164),
+		})
 		if (!verdict.pass) {
 			result.refused_count++
 			await refuse(deps, workspaceId, actorId, contact, verdict, now)

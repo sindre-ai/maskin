@@ -15,6 +15,7 @@ import {
 	findWorkspacesWithDueContacts,
 } from '../../lib/outreach/voice/dialer-store'
 import { parseFounderActors, runDncGate } from '../../lib/outreach/voice/dnc-gate'
+import { parseErasureKey } from '../../lib/outreach/voice/erasure-key'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
 import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -25,6 +26,7 @@ const DUE = '2026-10-01T08:00:00.000Z'
 const LATER = '2026-10-02T09:00:00.000Z'
 
 const EXCLUSION = { founderSlugs: ['sebk'] }
+const ERASURE_KEY = parseErasureKey('test-erasure-marker-key-0123456789-abcdef')
 
 const CONFIG: DialerConfig = {
 	rateLimitPerMinute: 50,
@@ -60,6 +62,7 @@ function deps(workspaceId: string, over: Partial<DialerDeps> = {}) {
 		gate: {
 			founders: parseFounderActors(JSON.stringify({ sebk: getTestActorId() })),
 			findActor: async () => ({ type: 'human' }),
+			erasure: ERASURE_KEY,
 		},
 		config: CONFIG,
 		autosendEnabled: true,
@@ -227,7 +230,12 @@ describe('voice dialer against real Postgres', () => {
 				const { d } = deps(ws.id)
 				const verdict = await runDncGate(
 					{ id: c?.id ?? '', status: 'voice_queued', metadata },
-					{ ...d.gate, now: NOW },
+					{
+						...d.gate,
+						now: NOW,
+						matchesErasedContact: async () => false,
+						matchesUnsweptErasedContact: async () => false,
+					},
 				)
 				expect(verdict.pass === false && verdict.check).not.toBe('time_of_day')
 				expect((await readIds(ws.id)).includes(c?.id ?? '')).toBe(verdict.pass)

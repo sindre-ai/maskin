@@ -1,18 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
 	type DncGateDeps,
 	type GateContact,
 	checkEmailHookDenyList,
 	normalizeDanishNumber,
+	erasureMarkerFor,
 	parseFounderActors,
 	runDncGate,
 } from '../../../lib/outreach/voice/dnc-gate'
+import { parseErasureKey } from '../../../lib/outreach/voice/erasure-key'
 
 // Thu 2026-10-01 11:00 CEST, inside the dial window.
 const NOW = new Date('2026-10-01T09:00:00Z')
 const SEBK_ID = '11111111-1111-4111-8111-111111111111'
 const MAGNUS_ID = '22222222-2222-4222-8222-222222222222'
 const FOUNDERS = JSON.stringify({ sebk: SEBK_ID, magnus: MAGNUS_ID })
+const ERASURE_KEY = parseErasureKey('test-erasure-marker-key-0123456789-abcdef')
 
 function contact(status: string, metadata: Record<string, unknown> = {}) {
 	return { status, metadata }
@@ -31,6 +34,9 @@ function deps(overrides: Partial<DncGateDeps> = {}): DncGateDeps {
 		now: NOW,
 		founders: parseFounderActors(FOUNDERS),
 		findActor: async () => ({ type: 'human' }),
+		erasure: ERASURE_KEY,
+		matchesErasedContact: async () => false,
+		matchesUnsweptErasedContact: async () => false,
 		...overrides,
 	}
 }
@@ -312,6 +318,156 @@ describe('runDncGate', () => {
 			expect(await runDncGate(clean({ dial_attempt_n: 2 }, 'voice_busy'), deps())).toEqual({
 				pass: true,
 			})
+		})
+	})
+
+	describe('check 7: erased contact', () => {
+		const ERASED_NUMBER = '+4520123456'
+		const erasedMarker = () => {
+			if (!ERASURE_KEY.ok) throw new Error('test key must parse')
+			return erasureMarkerFor(ERASED_NUMBER, ERASURE_KEY.key)
+		}
+		const lookup = (erased: Array<string | null>) =>
+			vi.fn(async (marker: string) => erased.includes(marker))
+
+		it('refuses a fresh contact whose number hashes to the marker of an erased contact', async () => {
+			const matches = lookup([erasedMarker()])
+			const c = clean({ phone: ERASED_NUMBER })
+			const before = structuredClone(c)
+
+			const r = await refusal(c, deps({ matchesErasedContact: matches }))
+
+			expect(r).toEqual({ pass: false, check: 'erased', reason: 'matches erased contact' })
+			expect(matches).toHaveBeenCalledTimes(1)
+			// The refusal leaves the new contact exactly as it was.
+			expect(c).toEqual(before)
+		})
+
+		it('passes a contact with a different number', async () => {
+			const matches = lookup([erasedMarker()])
+			expect(
+				await runDncGate(clean({ phone: '+4520123457' }), deps({ matchesErasedContact: matches })),
+			).toEqual({ pass: true })
+			expect(matches).toHaveBeenCalledTimes(1)
+		})
+
+		it.each(['+4520123456', '+45 20 12 34 56', '0045 20123456', '20123456'])(
+			'looks up the same marker when the number is written as %s',
+			async (phone) => {
+				const matches = lookup([])
+				await runDncGate(clean({ phone }), deps({ matchesErasedContact: matches }))
+				expect(matches).toHaveBeenCalledWith(erasedMarker())
+			},
+		)
+
+		it('never puts the marker or the number in the refusal reason', async () => {
+			const r = await refusal(
+				clean({ phone: ERASED_NUMBER }),
+				deps({ matchesErasedContact: lookup([erasedMarker()]) }),
+			)
+			expect(JSON.stringify(r)).not.toContain(erasedMarker() ?? 'unreachable')
+			expect(JSON.stringify(r)).not.toContain('20123456')
+		})
+
+		it('refuses a row whose own metadata carries a marker, without a lookup', async () => {
+			const matches = lookup([])
+			const r = await refusal(
+				clean({ erasure_marker: 'v1:abc', phone: '+4520999999' }),
+				deps({ matchesErasedContact: matches }),
+			)
+			expect(r).toMatchObject({ check: 'erased', reason: 'matches erased contact' })
+			expect(matches).not.toHaveBeenCalled()
+		})
+
+		it.each([undefined, '', '   ', 'too-short-for-a-key'])(
+			'refuses every dial, with a reason naming the key, when the key is %j',
+			async (raw) => {
+				const matches = lookup([])
+				const r = await refusal(
+					clean(),
+					deps({ erasure: parseErasureKey(raw), matchesErasedContact: matches }),
+				)
+				expect(r.check).toBe('erased')
+				expect(r.reason).toContain('VOICE_ERASURE_MARKER_KEY')
+				expect(matches).not.toHaveBeenCalled()
+			},
+		)
+
+		it('refuses when the lookup fails', async () => {
+			const r = await refusal(
+				clean(),
+				deps({
+					matchesErasedContact: async () => {
+						throw new Error('db down')
+					},
+				}),
+			)
+			expect(r).toMatchObject({ check: 'erased' })
+			expect(r.reason).not.toContain('db down')
+		})
+
+		describe('sweep window (7c): an erased contact the sweep has not reached', () => {
+			it('refuses a number that equals the stored number of an unswept erased contact', async () => {
+				const unswept = vi.fn(async (e164: string) => e164 === ERASED_NUMBER)
+				const c = clean({ phone: '0045 20123456' })
+				const before = structuredClone(c)
+
+				const r = await refusal(c, deps({ matchesUnsweptErasedContact: unswept }))
+
+				expect(r).toEqual({ pass: false, check: 'erased', reason: 'matches erased contact' })
+				expect(unswept).toHaveBeenCalledWith(ERASED_NUMBER)
+				expect(c).toEqual(before)
+			})
+
+			it('passes a different number, and never puts the number in a refusal', async () => {
+				const unswept = vi.fn(async (e164: string) => e164 === ERASED_NUMBER)
+				expect(
+					await runDncGate(
+						clean({ phone: '+4520123457' }),
+						deps({ matchesUnsweptErasedContact: unswept }),
+					),
+				).toEqual({ pass: true })
+				const r = await refusal(
+					clean({ phone: ERASED_NUMBER }),
+					deps({ matchesUnsweptErasedContact: unswept }),
+				)
+				expect(JSON.stringify(r)).not.toContain('20123456')
+			})
+
+			it('is not asked when the marker already matched', async () => {
+				const unswept = vi.fn(async () => true)
+				await refusal(
+					clean({ phone: ERASED_NUMBER }),
+					deps({
+						matchesErasedContact: lookup([erasedMarker()]),
+						matchesUnsweptErasedContact: unswept,
+					}),
+				)
+				expect(unswept).not.toHaveBeenCalled()
+			})
+
+			it('refuses when the lookup fails', async () => {
+				const r = await refusal(
+					clean(),
+					deps({
+						matchesUnsweptErasedContact: async () => {
+							throw new Error('db down')
+						},
+					}),
+				)
+				expect(r).toMatchObject({ check: 'erased' })
+				expect(r.reason).not.toContain('db down')
+			})
+		})
+
+		it('runs after the other checks, so an earlier refusal wins', async () => {
+			const matches = lookup([erasedMarker()])
+			const r = await refusal(
+				clean({ dial_attempt_n: 3 }, 'voice_busy'),
+				deps({ matchesErasedContact: matches }),
+			)
+			expect(r).toMatchObject({ check: 'max_dials' })
+			expect(matches).not.toHaveBeenCalled()
 		})
 	})
 
