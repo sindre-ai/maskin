@@ -3,7 +3,8 @@ import type { Breadcrumb, ErrorEvent, Log } from '@sentry/node'
 // Everything apps/dev sends to Sentry (Logs, events, breadcrumbs) passes through
 // these hooks first, wired in sentry.ts. They remove bound SQL values from error
 // text: drizzle-orm builds "Failed query: <sql>\nparams: <every bound value>", so a
-// failed write that binds a token or hash would otherwise ship the value.
+// failed write that binds a token or hash would otherwise ship the value. They also
+// blank any Claude connector token (mat_ access, mrt_ refresh) found in a string.
 // Only string values are rewritten, keys never are, and stdout is never touched
 // (the logger prints before anything here runs).
 
@@ -20,6 +21,9 @@ const CONSOLE_CATEGORY = 'console'
 const PG_KEY_DETAIL_ANCHORED =
 	/(Key \([^)]*\)=\()[\s\S]*?(\)(?: already exists| is not present| is still referenced| conflicts with|\.?$))/g
 const PG_KEY_DETAIL_LOOSE = /(Key \([^)]*\)=\()[^)]*(\))/g
+// Claude connector tokens: mat_ (access) and mrt_ (refresh) plus 43 base64url characters. The
+// length floor keeps a short word that happens to start with mat_ from being blanked.
+const OAUTH_TOKEN = /\b(?:mat|mrt)_[A-Za-z0-9_-]{16,}/g
 
 /**
  * Rule 1: keep the SQL text (placeholders only), drop everything from the
@@ -27,6 +31,7 @@ const PG_KEY_DETAIL_LOOSE = /(Key \([^)]*\)=\()[^)]*(\))/g
  * unrelated "params:" is left alone. Param values can contain commas and
  * newlines, so there is no safe end marker short of the end of the string.
  * Rule 2: blank the value in Postgres "Key (col)=(value)" detail text.
+ * Rule 3: blank any mat_ / mrt_ Claude connector token wherever it appears.
  * Returns the same reference when nothing matched.
  */
 export function scrubString(input: string): string {
@@ -40,6 +45,7 @@ export function scrubString(input: string): string {
 		out = out.replace(PG_KEY_DETAIL_ANCHORED, `$1${REDACTED}$2`)
 		out = out.replace(PG_KEY_DETAIL_LOOSE, `$1${REDACTED}$2`)
 	}
+	out = out.replace(OAUTH_TOKEN, REDACTED)
 	return out === input ? input : out
 }
 
