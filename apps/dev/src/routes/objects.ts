@@ -81,7 +81,12 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceHumanAdminOrOwner,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 import type { SessionManager } from '../services/session-manager'
 import {
 	getStarredObjectIds,
@@ -100,6 +105,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		sessionManager: SessionManager
 		/** Set by app-factory when the request carried a well-formed
@@ -581,6 +588,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Fetch workspace to validate status
 	const [workspace] = await db
@@ -1788,7 +1796,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -2139,7 +2147,7 @@ app.openapi(undoWriteRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -2407,6 +2415,7 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const [workspace] = await db
 		.select()
@@ -2570,6 +2579,7 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { ids, patch } = c.req.valid('json')
 
 	// Dedup so duplicates in the request don't double-write or double-report.
@@ -2700,7 +2710,7 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 

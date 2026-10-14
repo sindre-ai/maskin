@@ -16,7 +16,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	detectCsvOptions,
 	executeImport,
@@ -28,6 +28,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		storageProvider: StorageProvider
 	}
@@ -103,6 +105,7 @@ app.openapi(createImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Fetch workspace for settings
 	const [workspace] = await db
@@ -273,6 +276,7 @@ app.openapi(updateMappingRoute, async (c) => {
 	const db = c.get('db')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 	const { mapping } = c.req.valid('json')
 
@@ -495,6 +499,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	// Fetch import record (needed for 404 and mapping check)
