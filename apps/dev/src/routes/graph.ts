@@ -51,6 +51,7 @@ const graphResponseSchema = z.object({
 const createGraphRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Graph'],
 	summary: 'Create objects and relationships in a single atomic operation',
 	description:
