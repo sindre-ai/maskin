@@ -1,3 +1,4 @@
+import { StatusPill } from '@/components/integrations/drive/status-pill'
 import {
 	ResendConnectDialog,
 	type ResendConnectPrefill,
@@ -31,8 +32,10 @@ import {
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo, ResendDnsRecord } from '@/lib/api'
+import { DRIVE_COPY } from '@/lib/drive-copy'
+import { DRIVE_PROVIDER } from '@/lib/drive-humans'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, Copy, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
 
@@ -71,6 +74,9 @@ function IntegrationsPage() {
 	// but the connect entry point stays hidden from everyone else until the flag
 	// flips on. Per-actor behaviour gate, never a shared-state change.
 	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
+	// Same shape for google-drive: backend registers it unconditionally, only the
+	// connect entry point is hidden until `google-drive-integration-ui` is on.
+	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
 	// Slice 2 of bet cf2bcc85 — off by default, tester-actor-only until the
 	// second workspace has connected cleanly. Same shape as `googleMeetVisible`:
 	// backend registers the provider unconditionally so its endpoints stay
@@ -80,6 +86,7 @@ function IntegrationsPage() {
 	const resendVisible = useFeatureFlag('resend-integration-ui')
 	const visibleProviders = (providers ?? []).filter((p) => {
 		if (p.name === 'google-meet' && !googleMeetVisible) return false
+		if (p.name === 'google-drive' && !googleDriveVisible) return false
 		if (p.name === 'resend' && !resendVisible) return false
 		return true
 	})
@@ -337,6 +344,7 @@ function ProviderRow({
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const isConnected = !!integration
+	const isDrive = provider.name === DRIVE_PROVIDER
 	const handleConnect = () => {
 		if (provider.authType === 'api_key') {
 			onRequestApiKey()
@@ -408,13 +416,26 @@ function ProviderRow({
 				}`}
 			/>
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
+				{isDrive ? (
+					<div className="flex items-center gap-2">
+						<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
+						<StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>
+					</div>
+				) : (
+					<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
+				)}
 				<p
 					className={`text-xs truncate ${needsReconnect ? 'text-warning' : 'text-muted-foreground'}`}
 					title={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
 				>
 					{connectedLabel}
 				</p>
+				{isDrive && (
+					<>
+						<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
+						<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.meta}</p>
+					</>
+				)}
 				{isFreeIdentityAddon && (
 					<p className="text-xs text-muted-foreground">
 						Included in your enterprise plan — no per-identity charge.
@@ -430,6 +451,13 @@ function ProviderRow({
 			</div>
 			{isConnected ? (
 				<div className="flex shrink-0 items-center gap-2">
+					{isDrive && (
+						<Button asChild variant="outline" size="sm">
+							<Link to="/$workspaceId/settings/integrations/google-drive" params={{ workspaceId }}>
+								Details
+							</Link>
+						</Button>
+					)}
 					{needsReconnect && (
 						<Button
 							variant="outline"
@@ -452,6 +480,13 @@ function ProviderRow({
 				</div>
 			) : (
 				<div className="flex shrink-0 items-center gap-2">
+					{isDrive && (
+						<Button asChild variant="outline" size="sm">
+							<Link to="/$workspaceId/settings/integrations/google-drive" params={{ workspaceId }}>
+								Details
+							</Link>
+						</Button>
+					)}
 					{linkableCount > 0 && (
 						<Button variant="outline" size="sm" onClick={onRequestLink}>
 							<Link2 className="mr-1 h-3.5 w-3.5" />

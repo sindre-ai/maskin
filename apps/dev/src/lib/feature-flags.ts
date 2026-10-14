@@ -91,6 +91,21 @@ export const FLAGS = {
 	 */
 	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
 	/**
+	 * Google Drive integration visibility on the Settings > Integrations page.
+	 * When off, the provider card + Connect button are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * — the customer sees no google-drive entry point at all. When on, google-drive
+	 * appears alongside every other OAuth provider with a standard Connect button.
+	 * Per-actor behaviour gate, never shared state: the backend still registers the
+	 * provider unconditionally, so `POST /api/integrations/google-drive/connect` and
+	 * the `google_drive__*` MCP tools stay reachable for tester actors (add them to
+	 * `FF_TESTER_ACTOR_IDS` + `google-drive-integration-ui` to `FF_TESTER_FEATURES`).
+	 * See parent bet [Google Drive MCP — cover the Drive-shaped JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5cd108b-ad30-498b-a4ac-e961587389c5)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * google-drive ships to every workspace.
+	 */
+	GOOGLE_DRIVE_INTEGRATION_UI: 'google-drive-integration-ui',
+	/**
 	 * Resend integration visibility on the Settings > Integrations page. When
 	 * off, the provider card + multi-step connect dialog are filtered out of the
 	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`

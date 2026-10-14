@@ -1,0 +1,71 @@
+{
+	"_note": "Hand-authored from the documented Drive v3 files.get, files.get?alt=media and files.export response shapes; not recorded from a live account.",
+	"interactions": [
+		{
+			"match": {
+				"path": "/drive/v3/files/1PdF",
+				"params": { "fields": "id,name,mimeType,size,trashed" }
+			},
+			"status": 200,
+			"json": {
+				"id": "1PdF",
+				"name": "Q3 board pack.pdf",
+				"mimeType": "application/pdf",
+				"size": "11"
+			}
+		},
+		{
+			"match": { "path": "/drive/v3/files/1PdF", "params": { "alt": "media" } },
+			"status": 200,
+			"bodyBase64": "JVBERi0xLjQKJSVFT0YK"
+		},
+		{
+			"match": {
+				"path": "/drive/v3/files/1DoC",
+				"params": { "fields": "id,name,mimeType,size,trashed" }
+			},
+			"status": 200,
+			"json": {
+				"id": "1DoC",
+				"name": "Meet notes",
+				"mimeType": "application/vnd.google-apps.document"
+			}
+		},
+		{
+			"match": {
+				"path": "/drive/v3/files/1DoC/export",
+				"params": { "mimeType": "application/pdf" }
+			},
+			"status": 200,
+			"bodyBase64": "JVBERi0xLjQKZXhwb3J0Cg=="
+		},
+		{
+			"match": { "path": "/drive/v3/files/1DoC/export", "params": { "mimeType": "image/png" } },
+			"status": 400,
+			"json": {
+				"error": {
+					"code": 400,
+					"message": "Export only supports Docs Editors files.",
+					"errors": [{ "reason": "invalidExportFormat" }]
+				}
+			}
+		},
+		{
+			"match": {
+				"path": "/drive/v3/files/1ShT",
+				"params": { "fields": "id,name,mimeType,size,trashed" }
+			},
+			"status": 200,
+			"json": {
+				"id": "1ShT",
+				"name": "KPIs",
+				"mimeType": "application/vnd.google-apps.spreadsheet"
+			}
+		},
+		{
+			"match": { "path": "/drive/v3/files/1ShT/export", "params": { "mimeType": "text/csv" } },
+			"status": 200,
+			"bodyBase64": "YSxiCjEsMgo="
+		}
+	]
+}

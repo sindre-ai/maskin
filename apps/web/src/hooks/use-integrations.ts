@@ -126,6 +126,19 @@ export function useCompleteIntegration(workspaceId: string) {
 	})
 }
 
+/** Bulk disconnect of one human's Google rows, from the Drive disable modal.
+ *  No toast: the detail page shows its own inline callout on success. */
+export function useDisconnectGoogle(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { email: string; scope: 'drive' | 'drive-meet' | 'google' }) =>
+			api.integrations.disconnectGoogle(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 export function useDisconnectIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -177,5 +190,23 @@ export function useLinkedInIdentities(workspaceId: string) {
 		queryKey: queryKeys.integrations.linkedinIdentities(workspaceId),
 		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
 		staleTime: FIVE_MINUTES,
+	})
+}
+
+/** Folder watches on the workspace Drive connections, for the Drive detail page. */
+export function useDriveWatches(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.driveWatches(workspaceId),
+		queryFn: () => api.integrations.driveWatches(workspaceId),
+	})
+}
+
+export function useStopDriveWatch(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (folderId: string) => api.integrations.stopDriveWatch(workspaceId, folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.driveWatches(workspaceId) })
+		},
 	})
 }

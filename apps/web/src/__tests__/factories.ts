@@ -2,6 +2,7 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	ActorWithKey,
+	DriveWatch,
 	EventResponse,
 	ImportResponse,
 	IntegrationResponse,
@@ -274,6 +275,21 @@ export function buildIntegrationResponse(
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		...overrides,
+	}
+}
+
+export function buildDriveWatch(overrides: Partial<DriveWatch> = {}): DriveWatch {
+	const id = overrides.folderId ?? nextId('folder')
+	return {
+		folderId: id,
+		name: 'Meet Recordings',
+		path: null,
+		addedAt: '2026-10-01T09:00:00.000Z',
+		lastFiredAt: null,
+		integrationId: 'integration-1',
+		account: 'priya@acme.test',
+		triggers: [],
 		...overrides,
 	}
 }

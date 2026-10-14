@@ -1,0 +1,89 @@
+{
+	"note": "Hand-authored in the documented Sheets API v4 spreadsheets.get and spreadsheets.values.get response shapes. Not a live recording.",
+	"interactions": [
+		{
+			"match": { "path": "/v4/spreadsheets/sheet-kpi" },
+			"status": 200,
+			"body": {
+				"sheets": [
+					{
+						"properties": { "title": "Data", "gridProperties": { "rowCount": 5, "columnCount": 2 } }
+					},
+					{
+						"properties": {
+							"title": "Bob's Tab",
+							"gridProperties": { "rowCount": 3, "columnCount": 4 }
+						}
+					}
+				]
+			}
+		},
+		{
+			"match": {
+				"path": "/v4/spreadsheets/sheet-kpi/values/'Data'!A1:B2",
+				"params": { "majorDimension": "ROWS" }
+			},
+			"status": 200,
+			"body": {
+				"range": "Data!A1:B2",
+				"majorDimension": "ROWS",
+				"values": [["date", "clicks"], ["2026-10-01", "1,204"]]
+			}
+		},
+		{
+			"match": {
+				"path": "/v4/spreadsheets/sheet-kpi/values/'Data'!A3:B4",
+				"params": { "majorDimension": "ROWS" }
+			},
+			"status": 200,
+			"body": {
+				"range": "Data!A3:B4",
+				"majorDimension": "ROWS",
+				"values": [["2026-10-02", "1,310"]]
+			}
+		},
+		{
+			"match": {
+				"path": "/v4/spreadsheets/sheet-kpi/values/'Data'!A5:B5",
+				"params": { "majorDimension": "ROWS" }
+			},
+			"status": 200,
+			"body": { "range": "Data!A5:B5", "majorDimension": "ROWS" }
+		},
+		{
+			"match": {
+				"path": "/v4/spreadsheets/sheet-kpi/values/'Data'!A1:B2",
+				"params": { "majorDimension": "COLUMNS" }
+			},
+			"status": 200,
+			"body": {
+				"range": "Data!A1:B2",
+				"majorDimension": "COLUMNS",
+				"values": [["date", "2026-10-01"], ["clicks", "1,204"]]
+			}
+		},
+		{
+			"match": {
+				"path": "/v4/spreadsheets/sheet-kpi/values/'Bob''s Tab'!1:3",
+				"params": { "majorDimension": "ROWS" }
+			},
+			"status": 200,
+			"body": {
+				"range": "'Bob''s Tab'!A1:D3",
+				"majorDimension": "ROWS",
+				"values": [["x"], ["y"], ["z"]]
+			}
+		},
+		{
+			"match": { "path": "/v4/spreadsheets/sheet-gone" },
+			"status": 404,
+			"body": {
+				"error": {
+					"code": 404,
+					"message": "Requested entity was not found.",
+					"status": "NOT_FOUND"
+				}
+			}
+		}
+	]
+}
