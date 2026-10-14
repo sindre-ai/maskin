@@ -28,7 +28,7 @@ import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import { findDirectChat } from './direct-chat'
-import { sendProactiveMessage } from './proactive-message'
+import { isOptedOut, sendProactiveMessage } from './proactive-message'
 
 /**
  * The half of the capability bet a person actually reads. Runs at the end of
@@ -140,6 +140,10 @@ async function digestForRecipient(db: Database, run: RecipientRun): Promise<stri
 
 	// Never create a chat: a person who has no 1-1 with Chief of Staff is not messaged.
 	if (!chat) return skip('no_direct_chat')
+	// A person who replied stop keeps their findings pending; they merge into the next note on start.
+	if (await isOptedOut(db, { conversationId: chat.id, recipientHumanId: recipientId })) {
+		return skip('opted_out')
+	}
 	if (!(await activeWithin(db, run, chat.id, RECENT_CHAT_DAYS))) return skip('inactive_chat')
 
 	// The previous note has to be read before another goes out; findings stay pending and merge.
