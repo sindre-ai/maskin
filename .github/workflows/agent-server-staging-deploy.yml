@@ -1,0 +1,187 @@
+name: Deploy agent-server (staging)
+
+# Installs and restarts the STAGING agent server on the production agent host.
+# Separate from agent-server-deploy.yml on purpose:
+#  - it never triggers on apps/agent-server/** (a production redeploy makes
+#    production's reconcile remove staging sandboxes, see deploy/staging/README.md)
+#  - it never touches /opt/maskin or the maskin-agent-server unit
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch, tag or sha) to deploy to /opt/maskin-staging'
+        required: false
+        default: 'main'
+      maskin_base_url:
+        description: 'Staging backend URL. Falls back to the STAGING_MASKIN_BASE_URL repo variable.'
+        required: false
+
+concurrency:
+  group: agent-server-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      STAGING_REF: ${{ inputs.ref || github.sha }}
+      STAGING_MASKIN_BASE_URL: ${{ inputs.maskin_base_url || vars.STAGING_MASKIN_BASE_URL }}
+    steps:
+      - name: Check required settings
+        env:
+          STAGING_AGENT_SERVER_SECRET: ${{ secrets.STAGING_AGENT_SERVER_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$STAGING_AGENT_SERVER_SECRET" ]; then
+            echo "::error::Repo secret STAGING_AGENT_SERVER_SECRET is not set"
+            exit 1
+          fi
+          if [ "${#STAGING_AGENT_SERVER_SECRET}" -lt 16 ]; then
+            echo "::error::STAGING_AGENT_SERVER_SECRET must be at least 16 characters"
+            exit 1
+          fi
+          if [ -z "$STAGING_MASKIN_BASE_URL" ]; then
+            echo "::error::Set the STAGING_MASKIN_BASE_URL repo variable or pass maskin_base_url"
+            exit 1
+          fi
+          case "$STAGING_MASKIN_BASE_URL" in
+            https://*) ;;
+            *) echo "::error::STAGING_MASKIN_BASE_URL must start with https://"; exit 1 ;;
+          esac
+          # Staging must never report to production's backend.
+          host="${STAGING_MASKIN_BASE_URL#https://}"
+          host="${host%%/*}"
+          case "$host" in
+            maskin.io|www.maskin.io|app.maskin.io)
+              echo "::error::STAGING_MASKIN_BASE_URL points at production ($host)"
+              exit 1 ;;
+          esac
+
+      - name: git pull, build, restart staging agent server
+        uses: appleboy/ssh-action@v1
+        env:
+          STAGING_AGENT_SERVER_SECRET: ${{ secrets.STAGING_AGENT_SERVER_SECRET }}
+          # Optional. Only written to the env file when set.
+          STAGING_S3_ENDPOINT: ${{ vars.STAGING_S3_ENDPOINT }}
+          STAGING_S3_BUCKET: ${{ vars.STAGING_S3_BUCKET }}
+          STAGING_S3_REGION: ${{ vars.STAGING_S3_REGION }}
+          STAGING_S3_ACCESS_KEY: ${{ secrets.STAGING_S3_ACCESS_KEY }}
+          STAGING_S3_SECRET_KEY: ${{ secrets.STAGING_S3_SECRET_KEY }}
+        with:
+          host: ${{ secrets.AGENT_SERVER_HOST }}
+          username: ${{ secrets.AGENT_SERVER_USER }}
+          key: ${{ secrets.AGENT_SERVER_SSH_KEY }}
+          command_timeout: 15m
+          envs: STAGING_REF,STAGING_MASKIN_BASE_URL,STAGING_AGENT_SERVER_SECRET,STAGING_S3_ENDPOINT,STAGING_S3_BUCKET,STAGING_S3_REGION,STAGING_S3_ACCESS_KEY,STAGING_S3_SECRET_KEY
+          script: |
+            set -euo pipefail
+
+            STAGING_DIR=/opt/maskin-staging
+            ENV_DIR=/etc/maskin-staging
+            ENV_FILE="$ENV_DIR/agent-server.env"
+            UNIT_NAME=maskin-agent-server-staging
+            UNIT_DST="/etc/systemd/system/$UNIT_NAME.service"
+
+            # Bootstrap the checkout. /opt/maskin is production's and is never
+            # touched here.
+            if [ ! -d "$STAGING_DIR/.git" ]; then
+              git clone https://github.com/sindre-ai/maskin.git "$STAGING_DIR"
+            fi
+            cd "$STAGING_DIR"
+
+            git fetch origin "$STAGING_REF"
+            git reset --hard FETCH_HEAD
+            echo "staging checkout at $(git rev-parse HEAD)"
+
+            pnpm install --frozen-lockfile
+            export MASKIN_COMMIT_SHA="$(git rev-parse HEAD)"
+            pnpm turbo run build --filter=@maskin/agent-server...
+
+            # Env file lives outside the checkout so git reset never removes it.
+            # Rewritten on every deploy from repo secrets and variables.
+            mkdir -p "$ENV_DIR" /agent/sessions-staging /root/.agent-server-staging/ssh
+            ( umask 077
+              {
+                echo "AGENT_SERVER_SECRET=$STAGING_AGENT_SERVER_SECRET"
+                echo "MASKIN_BASE_URL=$STAGING_MASKIN_BASE_URL"
+                [ -n "${STAGING_S3_ENDPOINT:-}" ] && echo "S3_ENDPOINT=$STAGING_S3_ENDPOINT"
+                [ -n "${STAGING_S3_BUCKET:-}" ] && echo "S3_BUCKET=$STAGING_S3_BUCKET"
+                [ -n "${STAGING_S3_REGION:-}" ] && echo "S3_REGION=$STAGING_S3_REGION"
+                [ -n "${STAGING_S3_ACCESS_KEY:-}" ] && echo "S3_ACCESS_KEY=$STAGING_S3_ACCESS_KEY"
+                [ -n "${STAGING_S3_SECRET_KEY:-}" ] && echo "S3_SECRET_KEY=$STAGING_S3_SECRET_KEY"
+                true
+              } > "$ENV_FILE.new" )
+            mv "$ENV_FILE.new" "$ENV_FILE"
+            chmod 600 "$ENV_FILE"
+
+            # AGENT_SERVER_ID must stay unset, or the boot-time reconcile pass
+            # would remove production's live sandboxes (host-wide msb list).
+            if grep -q '^AGENT_SERVER_ID=' "$ENV_FILE"; then
+              echo "AGENT_SERVER_ID is set in $ENV_FILE, refusing to continue" >&2
+              exit 1
+            fi
+            UNIT_SRC=deploy/staging/maskin-agent-server-staging.service
+            if grep -q 'AGENT_SERVER_ID' <(grep -v '^#' "$UNIT_SRC"); then
+              echo "AGENT_SERVER_ID appears in $UNIT_SRC, refusing to continue" >&2
+              exit 1
+            fi
+
+            restore_unit() {
+              [ "$UNIT_ROLLBACK" = 1 ] || return 1
+              echo "restoring previous unit file" >&2
+              mv "$UNIT_DST.bak" "$UNIT_DST" || return 0
+              systemctl daemon-reload || true
+              systemctl restart "$UNIT_NAME" || true
+              return 0
+            }
+            UNIT_ROLLBACK=0
+
+            if cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+              echo "unit file unchanged"
+            else
+              echo "unit file changed, verifying and installing"
+              if ! VERIFY_OUT=$(systemd-analyze verify "$UNIT_SRC" 2>&1); then
+                [ -n "$VERIFY_OUT" ] && echo "$VERIFY_OUT" >&2
+                echo "systemd-analyze verify rejected $UNIT_SRC" >&2
+                exit 1
+              fi
+              if [ -n "$VERIFY_OUT" ]; then
+                echo "$VERIFY_OUT" >&2
+                echo "systemd-analyze verify emitted warnings, refusing to install" >&2
+                exit 1
+              fi
+              if [ -f "$UNIT_DST" ]; then
+                cp -p "$UNIT_DST" "$UNIT_DST.bak"
+                UNIT_ROLLBACK=1
+              fi
+              install -m 644 -o root -g root "$UNIT_SRC" "$UNIT_DST"
+            fi
+
+            systemctl daemon-reload
+            systemctl enable "$UNIT_NAME"
+
+            # Restarts ONLY the staging unit.
+            if ! systemctl restart "$UNIT_NAME"; then
+              echo "$UNIT_NAME failed to restart" >&2
+              restore_unit || echo "no previous unit to restore" >&2
+              exit 1
+            fi
+
+            HEALTHY=0
+            for i in $(seq 1 15); do
+              if curl -sf http://localhost:3002/health > /dev/null; then
+                HEALTHY=1
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$HEALTHY" != 1 ]; then
+              echo "$UNIT_NAME did not become healthy on :3002 within 30s" >&2
+              journalctl -u "$UNIT_NAME" -n 40 --no-pager >&2 || true
+              restore_unit || echo "no previous unit to restore" >&2
+              exit 1
+            fi
+
+            echo "$UNIT_NAME healthy on :3002"
+            rm -f "$UNIT_DST.bak"
