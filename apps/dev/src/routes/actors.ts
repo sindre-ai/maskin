@@ -995,6 +995,28 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// A default workspace is a personal preference: only the actor itself may set
+	// it, and only to a workspace it belongs to (null clears it).
+	if (body.default_workspace_id !== undefined) {
+		if (id !== actorId) {
+			return c.json(
+				createApiError('FORBIDDEN', 'Only an actor can change its own default workspace'),
+				403,
+			)
+		}
+		if (
+			body.default_workspace_id !== null &&
+			!(await isWorkspaceMember(db, id, body.default_workspace_id))
+		) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'You are not a member of that workspace', [
+					{ field: 'default_workspace_id', message: 'Not a member of this workspace' },
+				]),
+				400,
+			)
+		}
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1046,6 +1068,9 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
 			...(llmConfig !== undefined && { llmConfig }),
+			...(body.default_workspace_id !== undefined && {
+				defaultWorkspaceId: body.default_workspace_id,
+			}),
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1063,7 +1088,9 @@ app.openapi(updateActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
+			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
 	if (!updated) {
@@ -1247,6 +1274,10 @@ const deleteActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Agent files could not be removed from storage; the agent was not deleted',
+		},
 	},
 })
 
@@ -1285,6 +1316,28 @@ app.openapi(deleteActorRoute, (async (c) => {
 	// that no longer exists. Best-effort and outside the transaction — see
 	// stopSessionsForActors.
 	await stopSessionsForActors(db, c.get('sessionManager'), [id], c.get('actorId'))
+
+	// Remove the agent's S3 folder before the DB rows. POST /actors accepts a
+	// caller-supplied id, so objects left behind would be pulled into a later
+	// agent created with the same id. Doing it first means a storage failure
+	// returns an error while the actor still exists and the delete can be retried;
+	// after the actor row is gone a retry would 404 and strand the objects.
+	try {
+		await c.get('agentStorage').deleteAllAgentFiles(id, workspaceId)
+	} catch (err) {
+		logger.error('Agent delete aborted: could not remove agent files from storage', {
+			actorId: id,
+			workspaceId,
+			error: String(err),
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'Could not delete agent files from storage; agent not deleted',
+			),
+			500,
+		)
+	}
 
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor

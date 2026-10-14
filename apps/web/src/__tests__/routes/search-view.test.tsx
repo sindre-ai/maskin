@@ -68,6 +68,7 @@ vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
 	trackCommandPaletteOpened: vi.fn(),
 	trackSearchResultOpened: vi.fn(),
+	trackSearchPerformed: vi.fn(),
 }))
 
 vi.mock('@/lib/search-recents', () => ({
@@ -77,7 +78,11 @@ vi.mock('@/lib/search-recents', () => ({
 	pushRecentObject: vi.fn(),
 }))
 
-import { trackCommandPaletteOpened, trackSearchResultOpened } from '@/lib/analytics'
+import {
+	trackCommandPaletteOpened,
+	trackSearchPerformed,
+	trackSearchResultOpened,
+} from '@/lib/analytics'
 import {
 	getRecentObjectIds,
 	getRecentSearches,
@@ -96,8 +101,10 @@ beforeEach(() => {
 	paletteOpenMock.mockClear()
 	vi.mocked(trackCommandPaletteOpened).mockClear()
 	vi.mocked(trackSearchResultOpened).mockClear()
+	vi.mocked(trackSearchPerformed).mockClear()
 	vi.mocked(pushRecentObject).mockClear()
 	vi.mocked(pushRecentSearch).mockClear()
+	vi.mocked(getRecentObjectIds).mockReturnValue([])
 	searchResultsRef.current = { data: undefined, isFetching: false }
 	objectsRef.current = { data: [] }
 	loopsRef.current = { data: [] }
@@ -244,6 +251,11 @@ describe('SearchView', () => {
 			entity_id: 'bet-1',
 			entity_type: 'bet',
 			surface: 'search_view',
+			search_id: vi.mocked(trackSearchPerformed).mock.calls[0]?.[0].search_id,
+			has_query: true,
+			result_count: 1,
+			position: 1,
+			result_group: 'objects',
 		})
 		expect(pushRecentObject).toHaveBeenCalledWith('ws-1', 'bet-1')
 		expect(navigateMock).toHaveBeenCalledWith({
@@ -354,5 +366,184 @@ describe('SearchView', () => {
 		expect(pushRecentSearch).toHaveBeenCalledWith('ws-1', 'docs')
 		const lastCall = navigateMock.mock.calls.at(-1) as [{ search: Record<string, unknown> }]
 		expect(lastCall?.[0].search.q).toBe('docs')
+	})
+})
+
+describe('SearchView search_performed', () => {
+	it('fires exactly one search_performed for a nonsense word, with a zero count', () => {
+		searchState.current.q = 'qzxqzx'
+		searchResultsRef.current = { data: [], isFetching: false }
+		// The real query hooks report isError as a boolean; is_partial is read from it.
+		conversationsRef.current = { data: undefined, isError: false } as never
+
+		const { rerender } = render(<SearchView />)
+		rerender(<SearchView />)
+
+		expect(trackSearchPerformed).toHaveBeenCalledTimes(1)
+		expect(trackSearchPerformed).toHaveBeenCalledWith({
+			surface: 'search_view',
+			search_id: expect.any(String),
+			result_count: 0,
+			is_partial: false,
+			query_length: 6,
+			words_count: 1,
+			type_filter: null,
+			status_filter: null,
+		})
+	})
+
+	it('counts the words in a two-word query and never sends the query text', () => {
+		searchState.current.q = 'billing  catch-up'
+		searchResultsRef.current = { data: [], isFetching: false }
+
+		render(<SearchView />)
+
+		const payload = vi.mocked(trackSearchPerformed).mock.calls[0]?.[0]
+		expect(payload?.words_count).toBe(2)
+		expect(JSON.stringify(payload)).not.toContain('billing')
+	})
+
+	it('waits for every source before firing, so a cold deep link is not a false zero', () => {
+		searchState.current.q = 'qzxqzx'
+		searchResultsRef.current = { data: undefined, isFetching: true, isPending: true } as never
+		loopsRef.current = { data: undefined, isPending: true } as never
+
+		const { rerender } = render(<SearchView />)
+		expect(trackSearchPerformed).not.toHaveBeenCalled()
+
+		searchResultsRef.current = { data: [], isFetching: false }
+		rerender(<SearchView />)
+		expect(trackSearchPerformed).not.toHaveBeenCalled()
+
+		loopsRef.current = { data: [] }
+		rerender(<SearchView />)
+		expect(trackSearchPerformed).toHaveBeenCalledTimes(1)
+	})
+
+	it('fires nothing when the object search failed', () => {
+		searchState.current.q = 'qzxqzx'
+		searchResultsRef.current = { data: undefined, isFetching: false, isError: true } as never
+
+		render(<SearchView />)
+
+		expect(trackSearchPerformed).not.toHaveBeenCalled()
+	})
+
+	it('reports a partial result when a secondary source failed', () => {
+		searchState.current.q = 'qzxqzx'
+		searchResultsRef.current = { data: [], isFetching: false }
+		loopsRef.current = { data: undefined, isError: true } as never
+
+		render(<SearchView />)
+
+		expect(trackSearchPerformed).toHaveBeenCalledWith(
+			expect.objectContaining({ result_count: 0, is_partial: true }),
+		)
+	})
+
+	it('fires again for a changed filter but not for a group chip change', () => {
+		searchState.current.q = 'relay'
+		searchResultsRef.current = { data: [], isFetching: false }
+		actorsRef.current = { data: [{ id: 'a-1', type: 'agent', name: 'Relay', description: null }] }
+
+		const { rerender } = render(<SearchView />)
+		expect(trackSearchPerformed).toHaveBeenCalledTimes(1)
+
+		searchState.current = { ...searchState.current, group: 'agents' }
+		rerender(<SearchView />)
+		expect(trackSearchPerformed).toHaveBeenCalledTimes(1)
+
+		searchState.current = { ...searchState.current, group: undefined, type: 'bet' }
+		rerender(<SearchView />)
+		expect(trackSearchPerformed).toHaveBeenCalledTimes(2)
+		expect(trackSearchPerformed).toHaveBeenLastCalledWith(
+			expect.objectContaining({ type_filter: 'bet', status_filter: null }),
+		)
+	})
+
+	it('fires nothing for an empty query', () => {
+		render(<SearchView />)
+
+		expect(trackSearchPerformed).not.toHaveBeenCalled()
+	})
+})
+
+describe('SearchView search_result_opened', () => {
+	it('reports chat, loop, agent and automation opens with their group and the search id', async () => {
+		const user = userEvent.setup()
+		searchState.current.q = 'relay'
+		searchResultsRef.current = { data: [], isFetching: false }
+		conversationsRef.current = {
+			data: {
+				pages: [
+					{
+						conversations: [
+							{
+								id: 'chat-1',
+								title: 'Relay chat',
+								participants: [{ actorName: 'Coach' }],
+								snippet: null,
+							},
+						],
+					},
+				],
+			},
+		}
+		loopsRef.current = {
+			data: [
+				{ id: 'loop-1', name: 'Relay loop', content: null, entryCondition: null, status: 'on' },
+			],
+		}
+		actorsRef.current = { data: [{ id: 'a-1', type: 'agent', name: 'Relay', description: null }] }
+		triggersRef.current = {
+			data: [{ id: 'trg-1', name: 'Relay sweep', type: 'cron', actionPrompt: 'x' }],
+		}
+
+		render(<SearchView />)
+		const searchId = vi.mocked(trackSearchPerformed).mock.calls[0]?.[0].search_id
+		expect(vi.mocked(trackSearchPerformed).mock.calls[0]?.[0].result_count).toBe(4)
+
+		// Rendered order is grouped chats, loops, agents, objects, automations.
+		const cases = [
+			{ name: /Relay chat/, id: 'chat-1', type: 'conversation', group: 'chats', position: 1 },
+			{ name: /Relay loop/, id: 'loop-1', type: 'loop', group: 'loops', position: 2 },
+			{ name: /Relay\s*AGENT$/, id: 'a-1', type: 'agent', group: 'agents', position: 3 },
+			{ name: /Relay sweep/, id: 'trg-1', type: 'trigger', group: 'automations', position: 4 },
+		]
+		for (const c of cases) {
+			await user.click(screen.getByRole('button', { name: c.name }))
+			expect(trackSearchResultOpened).toHaveBeenLastCalledWith({
+				entity_id: c.id,
+				entity_type: c.type,
+				surface: 'search_view',
+				search_id: searchId,
+				has_query: true,
+				result_count: 4,
+				position: c.position,
+				result_group: c.group,
+			})
+		}
+	})
+
+	it('marks a recent object open as has_query false with no search id', async () => {
+		const user = userEvent.setup()
+		const obj = buildObjectResponse({ id: 'obj-1', title: 'Alpha Insight', type: 'insight' })
+		vi.mocked(getRecentObjectIds).mockReturnValue(['obj-1'])
+		objectsRef.current = { data: [obj] }
+
+		render(<SearchView />)
+		await user.click(screen.getByRole('button', { name: /Alpha Insight/ }))
+
+		expect(trackSearchPerformed).not.toHaveBeenCalled()
+		expect(trackSearchResultOpened).toHaveBeenCalledWith({
+			entity_id: 'obj-1',
+			entity_type: 'insight',
+			surface: 'search_view',
+			search_id: null,
+			has_query: false,
+			result_count: 1,
+			position: 1,
+			result_group: 'objects',
+		})
 	})
 })

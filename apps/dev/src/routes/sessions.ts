@@ -793,6 +793,10 @@ const inputSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -806,6 +810,7 @@ const inputSessionRoute = createRoute({
 
 app.openapi(inputSessionRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
@@ -813,6 +818,13 @@ app.openapi(inputSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	// The turn is written as the session's user, so only whoever started the
+	// session may add one. Checked before the state gates so a stranger learns
+	// nothing about whether it is running.
+	if (session.createdBy !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	if (!session.interactive) {
 		return c.json(createApiError('CONFLICT', 'Session is not interactive'), 409)

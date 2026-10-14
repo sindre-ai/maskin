@@ -1915,6 +1915,8 @@ interface RawWorkspace {
 	id: string
 	name?: string | null
 	role?: string | null
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault?: boolean
 	createdAt?: string | null
 	updatedAt?: string | null
 	onboardingEnabled?: boolean | null
@@ -1923,8 +1925,9 @@ interface RawWorkspace {
 /**
  * The default list_workspaces row: the five fields the heroCard renders plus
  * the top-level onboarding flag the workspace-observer-onboarding skill reads
- * (the API row carries it as `onboardingEnabled`). Always exactly these six
- * keys, so a missing value is null rather than a dropped key.
+ * (the API row carries it as `onboardingEnabled`), and the default-workspace
+ * marker `isDefault`. Always exactly these seven keys, so a missing value is
+ * null (false for isDefault) rather than a dropped key.
  */
 function slimWorkspaceRow(workspace: RawWorkspace) {
 	return {
@@ -1934,6 +1937,7 @@ function slimWorkspaceRow(workspace: RawWorkspace) {
 		createdAt: workspace.createdAt ?? null,
 		updatedAt: workspace.updatedAt ?? null,
 		onboardingEnabled: workspace.onboardingEnabled ?? null,
+		isDefault: workspace.isDefault ?? false,
 	}
 }
 
@@ -2047,6 +2051,7 @@ export function redactWorkspaceSettings<T>(workspace: T): T {
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
 	const age = ageLabel(workspace.updatedAt ?? workspace.createdAt)
 	const parts = ['workspace']
+	if (workspace.isDefault) parts.push('default')
 	if (age) parts.push(age)
 	return parts.join(' · ')
 }
@@ -5026,14 +5031,16 @@ export function createMcpServer(config: McpConfig) {
 			// SESSION_ID is injected by session-manager into every agent
 			// container's env — stamping it here lets the conversations route
 			// attribute this message back to the session that produced it
-			// (messages.session_id), for cost/token drill-down. Undefined
+			// (messages.session_id), for cost/token drill-down. Over HTTP the
+			// server runs inside apps/dev, so that env is the host process's;
+			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: process.env.SESSION_ID },
+				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
 				{ workspaceId: workspace_id },
 			)
 			return {

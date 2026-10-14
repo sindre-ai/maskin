@@ -91,6 +91,11 @@ export interface FallbackConfig {
 	model?: string
 	smallModel?: string
 	/**
+	 * Lower-case substrings of model ids that cannot read images. Unset means
+	 * DEFAULT_TEXT_ONLY_MODEL_PATTERNS; an empty list turns image stripping off.
+	 */
+	textOnlyModels?: string[]
+	/**
 	 * Ask OpenRouter to route in-process chat calls to zero-data-retention
 	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
 	 */
@@ -101,6 +106,25 @@ export interface AgentLlmConfig {
 	provider?: string | null
 	apiKey?: string | null
 	model?: string | null
+}
+
+/**
+ * Model ids containing any of these (case-insensitive) get image blocks swapped
+ * for a text note by the strip-images proxy in the agent container. Hardcoded
+ * list, no capability table: a new text-only model is a code change.
+ * MASKIN_TEXT_ONLY_MODELS (comma separated) overrides it when set; empty or
+ * "none" is the kill switch that turns stripping off.
+ */
+export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
+
+function readTextOnlyModels(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_TEXT_ONLY_MODELS
+	if (raw === undefined) return DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim().toLowerCase())
+		.filter(Boolean)
 }
 
 /**
@@ -117,6 +141,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
 			'deepseek/deepseek-v4.1-flash',
+		textOnlyModels: readTextOnlyModels(env),
 		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
 	}
 }
@@ -431,14 +456,21 @@ function buildMaskinPlanEnv(
 	if (enterprise) return null
 	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
-	return {
+	const model = fallback.model ?? 'deepseek/deepseek-v4.1-flash'
+	const env: Record<string, string> = {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
-		ANTHROPIC_SMALL_FAST_MODEL:
-			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+		ANTHROPIC_MODEL: model,
+		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
 	}
+	// Decided on the main model only: the small-fast model can differ, and the
+	// proxy strips for the whole session either way.
+	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
+		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	return env
 }
 
 /**

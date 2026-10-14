@@ -47,9 +47,17 @@ describe('readStripeEnv', () => {
 		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_TEAM/)
 	})
 
-	it('throws when STRIPE_PRICE_CREDITS_CUSTOM is missing', () => {
+	it('does not throw when STRIPE_PRICE_CREDITS_CUSTOM is missing — priceCreditsCustom is null', () => {
 		const { STRIPE_PRICE_CREDITS_CUSTOM: _omit, ...missing } = VALID_ENV
-		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_CREDITS_CUSTOM/)
+		const env = readStripeEnv(missing)
+		expect(env.priceCreditsCustom).toBeNull()
+		expect(env.pricePro).toBe('price_pro')
+	})
+
+	it('treats an empty STRIPE_PRICE_CREDITS_CUSTOM as unset', () => {
+		expect(
+			readStripeEnv({ ...VALID_ENV, STRIPE_PRICE_CREDITS_CUSTOM: '' }).priceCreditsCustom,
+		).toBe(null)
 	})
 
 	it('does not require the Pro or Team cap env vars', () => {
@@ -287,6 +295,30 @@ describe('createCreditCheckoutSession', () => {
 		expect(params.automatic_tax).toEqual({ enabled: true })
 		expect(params.tax_id_collection).toEqual({ enabled: true, required: 'never' })
 		expect(params.invoice_creation).toEqual({ enabled: true })
+	})
+
+	it('throws without calling Stripe when the top-up price env is unset', async () => {
+		const create = vi.fn()
+		const pricesRetrieve = vi.fn()
+		const stripe = {
+			checkout: { sessions: { create } },
+			prices: { retrieve: pricesRetrieve },
+		} as unknown as Stripe
+		const { STRIPE_PRICE_CREDITS_CUSTOM: _omit, ...missing } = VALID_ENV
+		await expect(
+			createCreditCheckoutSession(
+				stripe,
+				{
+					workspaceId: 'ws-1',
+					amountUsdCents: 2_500,
+					successUrl: 'https://app.test/success',
+					cancelUrl: 'https://app.test/cancel',
+				},
+				readStripeEnv(missing),
+			),
+		).rejects.toThrow(/STRIPE_PRICE_CREDITS_CUSTOM/)
+		expect(pricesRetrieve).not.toHaveBeenCalled()
+		expect(create).not.toHaveBeenCalled()
 	})
 })
 

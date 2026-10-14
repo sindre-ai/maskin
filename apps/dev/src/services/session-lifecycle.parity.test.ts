@@ -72,6 +72,8 @@ interface ParityRowSelect {
 	cacheReadInputTokens: number | null
 	cacheCreationInputTokens: number | null
 	totalCostUsd: string | null
+	modelName?: string | null
+	durationMs?: number | null
 }
 
 function makeRow(host: Host, id: string): ParityRowSelect {
@@ -297,6 +299,45 @@ describe('§5.2 parity matrix — 10 rows × 11 columns', () => {
 						findEmit('maskin_plan_session_completed'),
 						'plan-route baseline still fires',
 					).toBeDefined()
+				})
+
+				// Col 12 ($ai_generation): one per session at terminal state, never on a
+				// pause (the resume settles the same totals again).
+				it('col 12 - $ai_generation emits once per terminal settle, never on pause', async () => {
+					const row = {
+						...makeRow(host, `${host}-${kind}-ai-generation`),
+						modelName: 'deepseek/deepseek-v4.1-flash',
+						durationMs: 120_000,
+					}
+					const { db } = makeDb(row)
+					await settleSession(row.id, outcomeFor(kind), {
+						db,
+						stopSandbox: async () => (host === 'remote' ? 'remote' : 'local'),
+						pushAgentFiles: async () => 'ok',
+					})
+
+					const aiCalls = capturePosthogEventMock.mock.calls.filter(
+						(call) => (call as PosthogCaptureArgs)[0] === '$ai_generation',
+					)
+					if (kind === 'pause') {
+						expect(aiCalls).toHaveLength(0)
+						return
+					}
+					expect(aiCalls).toHaveLength(1)
+					const [, distinctId, props] = aiCalls[0] as PosthogCaptureArgs
+					expect(distinctId).toBe('ws-parity')
+					expect(props.$ai_trace_id).toBe(row.id)
+					expect(props.$ai_model).toBe('deepseek/deepseek-v4.1-flash')
+					expect(props.$ai_input_tokens).toBe(100)
+					expect(props.$ai_output_tokens).toBe(200)
+					expect(props.$ai_total_cost_usd).toBe(0.01)
+					expect(props.active_seconds).toBe(120)
+					expect(props.workspace_id).toBe('ws-parity')
+					expect(props.outcome).toBe(
+						{ complete: 'completed', fail: 'failed', timeout: 'timeout', stop: 'user_stopped' }[
+							kind
+						],
+					)
 				})
 
 				// Col 9 (idle-pause specific): only meaningful on kind === 'pause'.
