@@ -1393,6 +1393,32 @@ describe('Integrations Routes', () => {
 			expect(eventInsert.data).toEqual({ expose_to_agent_sessions: false })
 		})
 
+		it('does not return the wrapped data key of a vaulted credential', async () => {
+			const integration = buildIntegration({ workspaceId: wsId, provider: 'resend' })
+			const updated = {
+				...integration,
+				dekCiphertext: 'wrapped-data-key',
+				config: { expose_to_agent_sessions: false },
+			}
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/integrations/${integration.id}`,
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).not.toHaveProperty('dekCiphertext')
+			expect(JSON.stringify(body)).not.toContain('wrapped-data-key')
+		})
+
 		it('returns 400 when expose_to_agent_sessions is not a boolean', async () => {
 			const integration = buildIntegration({ workspaceId: wsId })
 			const { app } = createTestApp(integrationsRoutes, '/api/integrations')

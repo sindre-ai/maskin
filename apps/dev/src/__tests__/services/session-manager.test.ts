@@ -2080,6 +2080,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildKeychainEnv: no bring-your-own keys in this workspace
+				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
 				[scopedBet],
 				// resolveGithubRepoSlug: bet.metadata lookup by id

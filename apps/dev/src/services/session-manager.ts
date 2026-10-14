@@ -79,7 +79,17 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
-import { isAuthRevokedError } from '../lib/integrations/errors'
+import {
+	CredentialUndoneError,
+	ScopeDeniedError,
+	isAuthRevokedError,
+} from '../lib/integrations/errors'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
+import {
+	findUnresolvedKeychainReferences,
+	stripSessionLevelMcps,
+} from '../lib/integrations/keychain-mcp-guard'
+import { getCredential } from '../lib/integrations/lookup'
 import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
@@ -2450,12 +2460,20 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (rtConfig.command) envVars.CUSTOM_COMMAND = rtConfig.command as string
 		}
 
-		// Load integration credentials for MCP servers
+		// Load integration credentials for MCP servers. Registered providers only:
+		// a bring-your-own key (a chat-captured github or slack key, say) carries a
+		// provider name too, and reading it here would hand it to every session in
+		// the workspace under that provider's env var. Those go through the scoped
+		// Keychain read below.
 		const activeIntegrations = await this.db
 			.select()
 			.from(integrations)
 			.where(
-				and(eq(integrations.workspaceId, session.workspaceId), eq(integrations.status, 'active')),
+				and(
+					eq(integrations.workspaceId, session.workspaceId),
+					eq(integrations.status, 'active'),
+					eq(integrations.providerMode, 'registered'),
+				),
 			)
 			.orderBy(asc(integrations.createdAt))
 
@@ -2624,6 +2642,10 @@ ${HUMAN_MESSAGE_STYLE}`
 			}
 		}
 
+		// Keychain credentials: bring-your-own keys this session's actor may read.
+		const keychainEnv = await this.buildKeychainEnv(session)
+		Object.assign(envVars, keychainEnv)
+
 		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
 		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
@@ -2755,8 +2777,23 @@ ${HUMAN_MESSAGE_STYLE}`
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
-			for (const [i, mcp] of mcps.entries()) {
-				sessionMcpServers[`session-mcp-${i}`] = mcp
+			if (Object.keys(keychainEnv).length > 0) {
+				// A vaulted key reached this session: a session-level command could dump it,
+				// and a session-level http entry could send it to a server the caller chose.
+				const { kept, dropped } = stripSessionLevelMcps(mcps)
+				Object.assign(sessionMcpServers, kept)
+				for (const entry of dropped) {
+					logger.warn('Session-level MCP entry dropped: a Keychain key is in this session', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						entry: entry.name,
+						reason: entry.reason,
+					})
+				}
+			} else {
+				for (const [i, mcp] of mcps.entries()) {
+					sessionMcpServers[`session-mcp-${i}`] = mcp
+				}
 			}
 		}
 
@@ -2898,6 +2935,30 @@ ${HUMAN_MESSAGE_STYLE}`
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
+		// A KEYCHAIN_ reference the launch env does not hold expands to an empty string
+		// in the container: an agent that is not granted the key, or a name that matches
+		// none. Log the reference name and the reason, never a value.
+		for (const { server, envName } of [
+			...findUnresolvedKeychainReferences(stampedAgentToolsMcpServers ?? {}, envVars),
+			...findUnresolvedKeychainReferences(stampedSessionMcpServers, envVars),
+		]) {
+			logger.warn('Keychain reference resolves to nothing', {
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				server,
+				envName,
+				reason: 'key not granted to this agent, or no key by this name',
+			})
+		}
+
+		// One start log for both launch paths (local launchContainer and the
+		// production buildStartRequest), with every value redacted: see redactLaunchEnv.
+		logger.info('Session launch env built', {
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			env: redactLaunchEnv(envVars),
+		})
+
 		return {
 			image,
 			env: envVars,
@@ -2909,6 +2970,95 @@ ${HUMAN_MESSAGE_STYLE}`
 			skillsManifest,
 			skillsAttached,
 		}
+	}
+
+	/**
+	 * Env vars for the Keychain credentials this session may read: bring-your-own API
+	 * keys, active or still inside their undo window, whose scope grants name the
+	 * session's actor or the whole workspace. The scope filter runs in SQL so a key
+	 * scoped to another actor is never decrypted and never writes a denied-read event
+	 * on every launch of an unrelated agent. Each match then goes through getCredential,
+	 * which re-checks status and scope, decrypts, and writes the audit row.
+	 *
+	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
+	 * other integration.
+	 *
+	 * A loop-kind grant matches nothing here: a session carries no loop id today, so a
+	 * loop grant stays fail-closed at launch.
+	 *
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
+	 * characters is skipped, and so is a later key whose slug an earlier one already took
+	 * (oldest wins), each with a warning that carries no value.
+	 */
+	private async buildKeychainEnv(
+		session: typeof sessions.$inferSelect,
+	): Promise<Record<string, string>> {
+		const env: Record<string, string> = {}
+		const rows = await this.db
+			.select({ id: integrations.id, displayName: integrations.displayName })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, session.workspaceId),
+					eq(integrations.providerMode, 'byo_apikey'),
+					inArray(integrations.status, ['active', 'pending_undo']),
+					// Main's per-integration switch (config.expose_to_agent_sessions === false):
+					// a switched-off key is neither injected nor decrypted, so no read is audited.
+					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
+					or(
+						sql`${integrations.scopeGrants} @> '[{"kind":"workspace"}]'::jsonb`,
+						sql`${integrations.scopeGrants} @> ${JSON.stringify([{ kind: 'actor', actorId: session.actorId }])}::jsonb`,
+					),
+				),
+			)
+			.orderBy(asc(integrations.createdAt))
+
+		for (const row of rows) {
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
+			if (!name) {
+				logger.warn('Keychain credential has no usable name for an env var; not injected', {
+					sessionId: session.id,
+					integrationId: row.id,
+				})
+				continue
+			}
+			if (name in env) {
+				logger.warn('Keychain credential skipped: another one already took this env var name', {
+					sessionId: session.id,
+					integrationId: row.id,
+					envName: name,
+				})
+				continue
+			}
+			try {
+				const credential = await getCredential(this.db, session.workspaceId, row.id, {
+					requestingActorId: session.actorId,
+					sessionId: session.id,
+					requestId: `launch:${session.id}:${row.id}`,
+				})
+				env[name] = credential.value
+			} catch (err) {
+				// Undone, or its grants changed, between the query and the read. Either way
+				// this session does not get it.
+				if (err instanceof CredentialUndoneError || err instanceof ScopeDeniedError) {
+					logger.info('Keychain credential no longer readable at launch; not injected', {
+						sessionId: session.id,
+						integrationId: row.id,
+						reason: err.name,
+					})
+					continue
+				}
+				// Anything else (KMS unreachable, a broken row): skip this one key and log. A
+				// session that starts without it fails visibly on the first call that needs
+				// it; failing the launch would take every agent in the workspace down with it.
+				logger.error('Keychain credential could not be read at launch; not injected', {
+					sessionId: session.id,
+					integrationId: row.id,
+					error: err instanceof Error ? err.name : 'unknown',
+				})
+			}
+		}
+		return env
 	}
 
 	/**

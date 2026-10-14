@@ -13,6 +13,7 @@ import {
 	conversationListQuerySchema,
 	createConversationSchema,
 	editMessageSchema,
+	findHighConfidenceSecret,
 	messageQuerySchema,
 	postMessageSchema,
 	stripServerOwnedMetadata,
@@ -800,6 +801,10 @@ const postMessageRoute = createRoute({
 			content: { 'application/json': { schema: messageResponseSchema } },
 			description: 'Message posted',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Body contains a raw secret (RAW_SECRET_DETECTED)',
+		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
 	},
 })
@@ -816,6 +821,28 @@ app.openapi(postMessageRoute, (async (c) => {
 	const row = await loadConversationWithAuth(db, id, callerId)
 	if (!row || row.conversation.workspaceId !== workspaceId) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	// Keychain backstop: the composer guard should have caught a pasted secret
+	// before this request existed, so reaching here with one is a bypass. Refuse it
+	// and keep a record. The event names the pattern, never the value.
+	const secretHit = findHighConfidenceSecret(body.content)
+	if (secretHit) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'credential_scanner_bypass_attempt',
+			entityType: 'conversation',
+			entityId: id,
+			data: { attention: 3, pattern_id: secretHit.patternId, caller_type: callerType },
+		})
+		return c.json(
+			createApiError(
+				'RAW_SECRET_DETECTED',
+				'This message looks like it contains a secret, so it was not sent. Vault it in Keychain instead.',
+			),
+			400,
+		)
 	}
 
 	// Stamp session_id only when the caller is the agent that ran that
