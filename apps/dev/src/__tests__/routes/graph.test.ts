@@ -136,6 +136,35 @@ describe('Graph Routes', () => {
 			expect(body.error.message).toContain('not a valid $id or UUID')
 		})
 
+		it('returns 404 and creates nothing when an edge endpoint is not in the workspace', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
+			// workspace lookup, then the endpoint lookups (objects, files, and the
+			// remaining kinds) all come back empty for the foreign id.
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/graph',
+					{
+						nodes: [{ $id: 'task-1', type: 'task', title: 'A', status: 'todo' }],
+						edges: [
+							{
+								source: 'task-1',
+								target: '00000000-0000-0000-0000-0000000000aa',
+								type: 'relates_to',
+							},
+						],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
 		it('returns generic 500 on transaction failure (does not leak internal details)', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')

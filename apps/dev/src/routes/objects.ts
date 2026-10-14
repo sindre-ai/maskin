@@ -79,6 +79,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import type { SessionManager } from '../services/session-manager'
@@ -397,8 +398,32 @@ export function tokenizeSearchQuery(q: string): string[] {
 	return tokens
 }
 
+// Per-token rank weight for a title hit; a content hit is worth 1. A title
+// match therefore outranks any content-only match for realistic queries
+// (fewer than 1000 tokens), while more matched tokens still rank higher.
+const TITLE_HIT_WEIGHT = 1000
+
+// A title hit also earns up to this many points for the share of the title the
+// token covers, so "hans" ranks "Hans" (100%) above "Hans Solutions" (~29%).
+// Kept below TITLE_HIT_WEIGHT so coverage never outranks an extra matched token.
+const TITLE_COVERAGE_SCALE = 100
+
+// A title that contains the whole typed phrase starting at a word boundary
+// ("anna b" → "Anna Baker") earns this on top of the token hits. Needed
+// because the tokenizer drops terms under 3 chars, so "b" would otherwise not
+// influence the order at all. Between one and two token hits, so it beats the
+// coverage bonus but never an extra matched token.
+const TITLE_PHRASE_PREFIX_BONUS = 500
+
 function tokenIlikePattern(token: string): string {
 	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+function phraseWordPrefixPatterns(q: string): [string, string] | null {
+	const phrase = q.trim().toLowerCase().replace(/\s+/g, ' ')
+	if (!phrase) return null
+	const escaped = phrase.replace(/[%_\\]/g, '\\$&')
+	return [`${escaped}%`, `% ${escaped}%`]
 }
 
 export function buildObjectListConditions(
@@ -441,7 +466,14 @@ export function buildObjectListConditions(
 				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 				if (match) perTokenMatches.push(match)
 				perTokenHits.push(
-					sql`(case when ${objects.title} ilike ${pattern} or ${objects.content} ilike ${pattern} then 1 else 0 end)`,
+					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(${objects.title}), 1)) else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
+				)
+			}
+			const phrasePatterns = phraseWordPrefixPatterns(query.q)
+			if (phrasePatterns) {
+				const [atStart, atWord] = phrasePatterns
+				perTokenHits.push(
+					sql`(case when (${objects.title} ilike ${atStart} or ${objects.title} ilike ${atWord}) then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end)`,
 				)
 			}
 			const combined = or(...perTokenMatches)
@@ -467,9 +499,10 @@ export function buildObjectListConditions(
 }
 
 /**
- * Ordering when a tokenized `q` produced a rank expression: token-hit count
- * DESC, then title ASC (T1's deterministic tie-break), then id ASC to keep
- * pagination stable across ties.
+ * Ordering when a tokenized `q` produced a rank expression: rank DESC (title
+ * hits, weighted by how much of the title the query covers), then title ASC
+ * (T1's deterministic tie-break), then id ASC to keep pagination stable across
+ * ties.
  */
 export function tokenRankOrderBy(rankExpr: SQL): SQL[] {
 	return [desc(rankExpr), asc(objects.title), asc(objects.id)]
@@ -588,6 +621,14 @@ app.openapi(createObjectRoute, async (c) => {
 			400,
 		)
 	}
+
+	const taskStatusError = checkTaskInitialStatus({
+		type: body.type,
+		status: body.status,
+		actorId,
+		field: 'status',
+	})
+	if (taskStatusError) return c.json(taskStatusError, 400)
 
 	if (body.type === 'knowledge') {
 		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
@@ -1146,7 +1187,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		connectedObjects = await db
 			.select()
 			.from(objects)
-			.where(inArray(objects.id, [...connectedIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...connectedIds])))
 	}
 
 	// Fetch recent activity + comments for this object. Events use the object's
@@ -1237,7 +1278,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		else if (rel.targetType === 'session') provenanceSessionIds.add(rel.targetId)
 	}
 	if (provenanceConversationIds.size > 0 || provenanceSessionIds.size > 0) {
-		const provenanceTitles = await resolveEndpointTitles(db, {
+		const provenanceTitles = await resolveEndpointTitles(db, workspaceId, {
 			conversationIds: [...provenanceConversationIds],
 			sessionIds: [...provenanceSessionIds],
 		})

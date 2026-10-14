@@ -365,7 +365,7 @@ describe('S2 · graph provenance writer + read hydration', () => {
 				actionPrompt: 'Investigate the pipeline lag\nSecond line ignored',
 			})
 
-			const titles = await resolveEndpointTitles(db, {
+			const titles = await resolveEndpointTitles(db, workspace.id, {
 				conversationIds: [conversationId],
 				sessionIds: [session.id],
 			})

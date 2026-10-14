@@ -86,6 +86,8 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	// workspace creation seeds agent actors as `workspace_members` rows, so a
 	// raw COUNT(*) would report a brand-new solo workspace as seven people.
 	memberCount: z.number().int().nonnegative(),
+	// True for the one workspace the caller chose as their default (actors.default_workspace_id).
+	isDefault: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -289,10 +291,19 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		if (Number.isFinite(total)) countByWorkspace.set(row.workspaceId, total)
 	}
 
+	// Matched against the memberships above, so a stale default (the caller was
+	// removed from that workspace since) simply marks nothing.
+	const [{ defaultWorkspaceId = null } = {}] = await db
+		.select({ defaultWorkspaceId: actors.defaultWorkspaceId })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+
 	// The caller is a member of every row here, so 1 is the floor, never 0.
 	const withCounts = withEntitlement.map((w) => ({
 		...w,
 		memberCount: countByWorkspace.get(w.id) ?? 1,
+		isDefault: w.id === defaultWorkspaceId,
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
@@ -679,7 +690,6 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 					// Onboarding kickoff — spawned on workspace flip, not on
 					// any originating object. Explicit null/null.
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 				})
 				.catch((err) =>
 					logger.error('Failed to create onboarding session', { workspaceId: id, err }),

@@ -1,4 +1,4 @@
-﻿import { vi } from 'vitest'
+﻿import { type MockInstance, vi } from 'vitest'
 
 // Mock external dependencies
 vi.mock('node:fs/promises', () => ({
@@ -80,10 +80,7 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
-	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
-	appendToLedger: vi.fn().mockResolvedValue(undefined),
-	readLedgerTail: vi.fn().mockResolvedValue([]),
-	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
+	loadSenderLine: vi.fn().mockResolvedValue(''),
 }))
 
 const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
@@ -103,6 +100,7 @@ import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapsh
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
+import { buildWorkspaceStartupBlock } from '../../services/workspace-briefing'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -219,7 +217,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -235,7 +232,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toThrow('Failed to create session')
@@ -257,7 +253,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Reply to the comment',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: 9001,
@@ -286,7 +281,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Run the cron job',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerId: 'trig-1',
 				triggerType: 'cron',
@@ -325,7 +319,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({
@@ -365,7 +358,6 @@ describe('SessionManager', () => {
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
@@ -397,7 +389,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -416,7 +407,6 @@ describe('SessionManager', () => {
 				config: { interactive: true },
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -432,7 +422,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -453,7 +442,6 @@ describe('SessionManager', () => {
 				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -469,7 +457,6 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -539,6 +526,8 @@ describe('SessionManager', () => {
 				[], // launchContainer: integrations lookup
 			]
 
+			vi.mocked(buildWorkspaceStartupBlock).mockReturnValueOnce('STARTUP-BLOCK\n\n')
+
 			await manager.startSession(session.id)
 
 			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
@@ -548,6 +537,12 @@ describe('SessionManager', () => {
 			}
 			expect(createArgs.env.INTERACTIVE).toBe('1')
 			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
+			// A chat has no ACTION_PROMPT, so it gets the startup block in its system prompt.
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: true }),
+			)
+			expect(createArgs.env.SYSTEM_PROMPT).toMatch(/^STARTUP-BLOCK\n\n/)
+			expect(createArgs.env.SYSTEM_PROMPT).toContain('You are Workspace Coach.')
 			expect(createArgs.interactive).toBe(true)
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 			// actionPrompt is '' here — no seed turn should be sent once attached.
@@ -739,10 +734,71 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 				interactive?: boolean
 			}
-			expect(createArgs.env.ACTION_PROMPT).toBe('Do the thing')
+			// The goal block sits between the startup text and the prompt itself,
+			// and is saved on the session so the later check can see what was shown.
+			expect(createArgs.env.ACTION_PROMPT).toContain('## Your goal this run')
+			expect(createArgs.env.ACTION_PROMPT?.endsWith('Do the thing')).toBe(true)
+			expect(buildWorkspaceStartupBlock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ interactive: false }),
+			)
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
 			expect(createArgs.interactive).toBe(false)
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
+			// First launch: one jsonb-merge write of the block onto the session row.
+			expect(
+				calls.updates.some(
+					(u) =>
+						typeof u === 'object' &&
+						u !== null &&
+						'config' in u &&
+						!('llm_route' in (u as { config: object }).config),
+				),
+			).toBe(true)
+		})
+
+		it('reuses the saved goal block on resume instead of rebuilding or overwriting it', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				config: { run_goal: '## Your goal this run\n\nSaved earlier.\n\n---\n\n' },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.ACTION_PROMPT).toContain('Saved earlier.')
+			// No second merge write; the route write carries the saved text through.
+			const configWrites = calls.updates.filter(
+				(u) => typeof u === 'object' && u !== null && 'config' in u,
+			) as { config: Record<string, unknown> }[]
+			expect(configWrites).toHaveLength(1)
+			expect(configWrites[0]?.config.run_goal).toContain('Saved earlier.')
 		})
 
 		it('refuses to launch when the agent has no apiKey', async () => {
@@ -1640,6 +1696,120 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('MCP health report — per-session record and cap timer', () => {
+		type Internals = {
+			emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void>
+			clearActiveSession(sessionId: string): Promise<void>
+			mcpHealth: Map<string, { timer?: NodeJS.Timeout; resolved: boolean }>
+		}
+
+		const initChunk = (servers: Array<{ name: string; status: string }>) =>
+			`${JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })}\n`
+		const toolUseChunk = (toolName: string) =>
+			`${JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id: 'toolu_1', name: toolName, input: {} }] },
+			})}\n`
+
+		let internals: Internals
+		let logSpy: MockInstance<(sessionId: string, content: string) => Promise<void>>
+
+		beforeEach(() => {
+			internals = manager as unknown as Internals
+			logSpy = vi.spyOn(manager, 'insertSystemLog').mockResolvedValue(undefined)
+		})
+
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('clears the cap timer on teardown and emits nothing afterwards', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-teardown'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+			expect(internals.mcpHealth.get(sessionId)?.timer).toBeDefined()
+			expect(vi.getTimerCount()).toBe(1)
+
+			await internals.clearActiveSession(sessionId)
+			expect(internals.mcpHealth.has(sessionId)).toBe(false)
+			expect(vi.getTimerCount()).toBe(0)
+
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('labels a server slow-unknown exactly once when nothing resolves it by the cap', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-cap'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			await vi.advanceTimersByTimeAsync(119_000)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[1]?.[1]).toContain('did not finish starting')
+			expect(logSpy.mock.calls[1]?.[1]).toContain('not a confirmed failure')
+
+			// A chunk after the cap neither re-opens the record nor emits again.
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, toolUseChunk('mcp__playwright__x'))
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('emits the correction exactly once when a pending server shows tool use', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-correction'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				toolUseChunk('mcp__playwright__browser_navigate'),
+			)
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				toolUseChunk('mcp__playwright__browser_click'),
+			)
+			// A replayed init line cannot flip it back to pending.
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[0]?.[1]).toContain('still starting')
+			expect(logSpy.mock.calls[1]?.[1]).toContain('connected after starting')
+			// Settled: the cap timer is gone and never fires a third line.
+			expect(vi.getTimerCount()).toBe(0)
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('keeps the straddle buffer after emitting so a split line later in the window still parses', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-straddle'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			const line = toolUseChunk('mcp__playwright__browser_navigate')
+			const cut = Math.floor(line.length / 2)
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, line.slice(0, cut))
+			expect(logSpy).toHaveBeenCalledTimes(1)
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, line.slice(cut))
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[1]?.[1]).toContain('connected after starting')
+		})
+	})
+
 	describe('startSession() — GitHub installations', () => {
 		const githubProviderConfig = {
 			config: {
@@ -1897,15 +2067,15 @@ describe('SessionManager', () => {
 
 			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
 
-			// Skip the session row's own `config` write (buildLaunchSpec persists
-			// the resolved llm_route there) — the update under test is the
-			// integration row's.
+			// Skip the session row's own `config` writes (buildLaunchSpec persists
+			// the resolved llm_route and the run goal there) — the update under
+			// test is the integration row's.
 			const updateCall = calls.updates.find(
 				(u): u is { config: { owner_login?: string } } =>
 					typeof u === 'object' &&
 					u !== null &&
 					'config' in u &&
-					!('llm_route' in ((u as { config: Record<string, unknown> }).config ?? {})),
+					'owner_login' in ((u as { config: Record<string, unknown> }).config ?? {}),
 			) as { config: { owner_login?: string } } | undefined
 			expect(updateCall?.config.owner_login).toBe('acme-org')
 
@@ -3841,7 +4011,7 @@ describe('SessionManager', () => {
 					stream: 'stdout',
 					content: `${initLine([
 						{ name: 'maskin', status: 'connected' },
-						{ name: 'playwright', status: 'pending' },
+						{ name: 'playwright', status: 'failed' },
 					])}
 `,
 				},
@@ -3849,7 +4019,7 @@ describe('SessionManager', () => {
 
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 			expect(warnings[0].content).not.toContain('maskin')
 		})
 
@@ -3862,7 +4032,7 @@ describe('SessionManager', () => {
 			const sessionId = randomUUID()
 			const line = `${initLine([
 				{ name: 'maskin', status: 'connected' },
-				{ name: 'playwright', status: 'pending' },
+				{ name: 'playwright', status: 'failed' },
 			])}
 `
 			const cut = Math.floor(line.length / 2)
@@ -3878,7 +4048,7 @@ describe('SessionManager', () => {
 			await emit(sessionId, line.slice(cut))
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 		})
 
 		// The stream re-attaches with `tail: 'all'` on resume and with a ~1s
@@ -3886,7 +4056,7 @@ describe('SessionManager', () => {
 		// The warning should read once per session, not once per reconnect.
 		it('warns only once when the init line is replayed', async () => {
 			const sessionId = randomUUID()
-			const chunk = `${initLine([{ name: 'playwright', status: 'pending' }])}
+			const chunk = `${initLine([{ name: 'playwright', status: 'failed' }])}
 `
 			const emit = (
 				manager as unknown as {
