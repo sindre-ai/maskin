@@ -1963,6 +1963,12 @@ export interface MessageQuestion {
 	questions: MessageQuestionItem[]
 }
 
+/** An agent's request to connect an integration, surfaced into chat as a Connect card. */
+export interface MessageIntegrationConnect {
+	session_id: string
+	provider: string
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -1988,6 +1994,11 @@ export interface MessageMetadata {
 	question?: MessageQuestion
 	/** Client-supplied: pairs a human's reply back to the question it answers. */
 	question_answer?: MessageQuestionAnswer
+	/**
+	 * Backend-owned; stripped from anything a client sends. An agent's request to
+	 * connect an integration, rendered as a Connect card.
+	 */
+	integration_connect?: MessageIntegrationConnect
 }
 
 export interface MessageResponse {

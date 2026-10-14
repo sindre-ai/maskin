@@ -1667,7 +1667,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). OAuth providers return an install_url that must be opened in a browser to complete the flow; the callback is handled automatically by the server. API-key providers (e.g. "posthog") require `api_key` and are activated immediately, with no install_url.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
@@ -1679,7 +1679,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'API key for providers whose auth type is "api_key" (e.g. "posthog"). Required for those providers and ignored for OAuth providers.',
+					'Only for the non-chat fallback: the API key for providers whose auth type is "api_key" (e.g. "posthog"). Ignored in a chat — the user types the key into the card — so never ask the user for one.',
 				),
 		}),
 	},

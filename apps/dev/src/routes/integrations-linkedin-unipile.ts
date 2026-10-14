@@ -9,6 +9,7 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
@@ -143,6 +144,8 @@ type StoredAuthBlob = {
 	account_id?: string
 	auth_nonce?: string
 	nonce_expires_at?: string
+	/** Workspace-relative path to land on after connecting (already sanitised). */
+	return_to?: string
 }
 
 /**
@@ -238,6 +241,12 @@ app.openapi(connectRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
+	// Where to land after the wizard: the chat that showed the Connect card, when
+	// there was one. Kept in the sealed pending blob alongside the nonce, so it is
+	// as tamper-proof as the nonce itself, and dropped when the credential lands.
+	const connectBody = (await c.req.json().catch(() => ({}))) as { return_to?: unknown }
+	const returnTo = sanitizeReturnPath(connectBody.return_to, workspaceId)
+
 	// Look up or insert a pending row keyed by (workspace, actor, provider).
 	// credentials starts as an empty string because the column is NOT NULL
 	// but we don't have any credential material until /callback fires.
@@ -276,6 +285,7 @@ app.openapi(connectRoute, (async (c) => {
 						...(prior.account_id ? { account_id: prior.account_id } : {}),
 						auth_nonce: authNonce,
 						nonce_expires_at: nonceExpiresAt,
+						...(returnTo ? { return_to: returnTo } : {}),
 					}),
 				),
 				...(existing[0].status === CONNECTED_STATUS ? {} : { status: 'pending' as const }),
@@ -291,7 +301,11 @@ app.openapi(connectRoute, (async (c) => {
 				provider: PROVIDER,
 				status: 'pending',
 				credentials: encrypt(
-					JSON.stringify({ auth_nonce: authNonce, nonce_expires_at: nonceExpiresAt }),
+					JSON.stringify({
+						auth_nonce: authNonce,
+						nonce_expires_at: nonceExpiresAt,
+						...(returnTo ? { return_to: returnTo } : {}),
+					}),
 				),
 				createdBy: actorId,
 			})
@@ -548,7 +562,7 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	return redirectToSettings(c, 'connected', account_id, pending.workspaceId)
+	return redirectAfterConnect(c, pending, account_id)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 /**
@@ -576,6 +590,21 @@ function redirectToSettings(
 	url.searchParams.set('linkedin_status', status)
 	url.searchParams.set('linkedin_detail', detail)
 	return c.redirect(url.toString(), 302)
+}
+
+/**
+ * Success redirect: back to the chat that started the connect when one did,
+ * otherwise Settings → Integrations with the status pair the page renders.
+ * Reads the return path from the row as it was BEFORE the credential landed —
+ * landing replaces the blob, which is also what makes the state single-use.
+ */
+function redirectAfterConnect(c: Context, pending: Integration, detail: string): Response {
+	const returnTo = sanitizeReturnPath(
+		readStoredAuthBlob(pending.credentials).return_to,
+		pending.workspaceId,
+	)
+	if (returnTo) return c.redirect(frontendUrlForReturn(pending.workspaceId, returnTo), 302)
+	return redirectToSettings(c, 'connected', detail, pending.workspaceId)
 }
 
 async function handleCallbackError(
@@ -630,7 +659,7 @@ async function handleCallbackError(
 					integrationId: pending.id,
 				})
 			}
-			return redirectToSettings(c, 'connected', error_detail, pending.workspaceId)
+			return redirectAfterConnect(c, pending, error_detail)
 		}
 		logger.warn('linkedin-unipile callback already_exists: state rejected', {
 			reason: resolved.reason,

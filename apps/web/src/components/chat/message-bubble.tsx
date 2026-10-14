@@ -16,6 +16,7 @@ import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { HandedOffStrip } from './handed-off-strip'
+import { IntegrationConnectCard } from './integration-connect-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -310,6 +311,16 @@ export function MessageBubble({
 						questionMessageId={message.id}
 						question={message.metadata.question}
 						answered={questionAnswered}
+					/>
+				) : null}
+				{/* An agent's connect_integration call, surfaced as a Connect card. Like
+				    the question chips, the message's markdown already says what to
+				    connect; the card adds the button / key input. */}
+				{message.metadata?.integration_connect ? (
+					<IntegrationConnectCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						provider={message.metadata.integration_connect.provider}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip
