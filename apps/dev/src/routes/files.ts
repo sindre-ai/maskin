@@ -15,6 +15,7 @@ import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pag
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -34,7 +35,12 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUrl: string) {
+function buildResponse(
+	row: typeof files.$inferSelect,
+	bytes: Buffer,
+	frontendUrl: string,
+	warning?: string,
+) {
 	const encoding = isTextMimeType(row.mimeType) ? 'utf8' : 'base64'
 	return {
 		...serialize(row),
@@ -42,6 +48,7 @@ function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUr
 		encoding,
 		annotations: row.annotations ?? [],
 		url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
+		...(warning ? { warning } : {}),
 	}
 }
 
@@ -177,7 +184,15 @@ app.openapi(createFileRoute, (async (c) => {
 		})
 	}
 
-	return c.json(buildResponse(created, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>, 201)
+	return c.json(
+		buildResponse(
+			created,
+			bytes,
+			frontendUrl,
+			htmlViewerWarning(created.mimeType, bytes.toString('utf8')),
+		) as z.infer<typeof fileDetailSchema>,
+		201,
+	)
 }) as RouteHandler<typeof createFileRoute, Env>)
 
 // -- GET / — List files -------------------------------------------------------
@@ -454,7 +469,12 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	return c.json(
-		buildResponse(updated, responseBytes, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		buildResponse(
+			updated,
+			responseBytes,
+			frontendUrl,
+			newBytes ? htmlViewerWarning(updated.mimeType, newBytes.toString('utf8')) : undefined,
+		) as z.infer<typeof fileDetailSchema>,
 		200,
 	)
 }) as RouteHandler<typeof updateFileRoute, Env>)
