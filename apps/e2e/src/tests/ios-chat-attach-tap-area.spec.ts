@@ -46,6 +46,11 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 					beforePosition: before.position,
 					beforeWidth: Number.parseFloat(before.width),
 					beforeHeight: Number.parseFloat(before.height),
+					beforeRight: Number.parseFloat(before.right),
+					// matrix(a, b, c, d, tx, ty) — tx is the 5th value, 0 when there is no x-translate.
+					beforeTranslateX: Number.parseFloat(
+						before.transform.replace(/^matrix\((.*)\)$/, '$1').split(',')[4] ?? '0',
+					),
 					dataSize: el.getAttribute('data-size'),
 				}
 			})
@@ -78,6 +83,18 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 				measurements.beforeHeight,
 				`::before height must be ≥ ${TAP_TARGET_MIN_PX} px at ${viewport.label}`,
 			).toBeGreaterThanOrEqual(TAP_TARGET_MIN_PX)
+
+			// The hit surface is anchored to the button's right edge and grows leftward
+			// only. A centred or left-anchored 44 px box pokes past the right edge and
+			// shows up as horizontal overflow (scrollWidth > clientWidth) on the composer.
+			expect(
+				measurements.beforeRight,
+				`::before must be flush with the button's right edge at ${viewport.label}`,
+			).toBe(0)
+			expect(
+				measurements.beforeTranslateX,
+				`::before must not be translated horizontally at ${viewport.label}`,
+			).toBe(0)
 
 			// A revert that reintroduces a visible-glyph size variant would ship
 			// the exact regression PR #1040 fixed.
