@@ -179,7 +179,7 @@ describe('authMiddleware: mat_ access token', () => {
 	})
 })
 
-describe('authMiddleware: mat_ access token and the person\'s role', () => {
+describe("authMiddleware: mat_ access token and the person's role", () => {
 	it('puts the role on the context, like the ank_ branch, so write routes can refuse a viewer', async () => {
 		const res = await request(createApp(createMockDb([[{ role: 'viewer' }]])))
 		expect(res.status).toBe(200)
@@ -198,7 +198,9 @@ describe('authMiddleware: mat_ access token and the person\'s role', () => {
 describe('authMiddleware: a key and a token for the same person and workspace share one cache', () => {
 	const KEY = 'ank_samepersonkey'
 	const keyRequest = (app: ReturnType<typeof createApp>) =>
-		app.request('/api/objects', { headers: { Authorization: `Bearer ${KEY}`, 'X-Workspace-Id': PINNED } })
+		app.request('/api/objects', {
+			headers: { Authorization: `Bearer ${KEY}`, 'X-Workspace-Id': PINNED },
+		})
 	const keyRow = [{ id: ACTOR, type: 'human' }]
 
 	it('token first: the key then sees the viewer role, not a yes/no', async () => {
