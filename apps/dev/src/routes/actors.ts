@@ -1216,6 +1216,10 @@ const deleteActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Agent files could not be removed from storage; the agent was not deleted',
+		},
 	},
 })
 
@@ -1254,6 +1258,28 @@ app.openapi(deleteActorRoute, (async (c) => {
 	// that no longer exists. Best-effort and outside the transaction — see
 	// stopSessionsForActors.
 	await stopSessionsForActors(db, c.get('sessionManager'), [id], c.get('actorId'))
+
+	// Remove the agent's S3 folder before the DB rows. POST /actors accepts a
+	// caller-supplied id, so objects left behind would be pulled into a later
+	// agent created with the same id. Doing it first means a storage failure
+	// returns an error while the actor still exists and the delete can be retried;
+	// after the actor row is gone a retry would 404 and strand the objects.
+	try {
+		await c.get('agentStorage').deleteAllAgentFiles(id, workspaceId)
+	} catch (err) {
+		logger.error('Agent delete aborted: could not remove agent files from storage', {
+			actorId: id,
+			workspaceId,
+			error: String(err),
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'Could not delete agent files from storage; agent not deleted',
+			),
+			500,
+		)
+	}
 
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
