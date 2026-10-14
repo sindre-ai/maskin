@@ -227,6 +227,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 const createCommentRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['events'],
 	summary: 'Create a comment on an object',
 	request: {

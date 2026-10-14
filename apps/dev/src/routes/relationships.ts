@@ -41,6 +41,7 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const createRelationshipRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Create relationship',
 	request: {
@@ -373,6 +374,7 @@ function bucket(
 const deleteRelationshipRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Delete relationship',
 	request: {

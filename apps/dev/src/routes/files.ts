@@ -77,6 +77,7 @@ const listQuerySchema = z.object({
 const createFileRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Create a file',
 	request: {
@@ -342,6 +343,7 @@ app.openapi(getFileRoute, (async (c) => {
 const updateFileRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Update file metadata or content',
 	request: {
@@ -491,6 +493,7 @@ app.openapi(updateFileRoute, (async (c) => {
 const deleteFileRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Delete a file',
 	request: { params: idParamSchema },
