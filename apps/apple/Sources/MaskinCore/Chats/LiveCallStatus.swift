@@ -9,11 +9,11 @@ public enum LiveCallStatus {
 	) -> String {
 		if let failure { return failure }
 		if let notice { return notice }
-		if isMuted { return "Microphone off" }
+		if isMuted { return "Muted" }
 		switch phase {
-		case .listening: return hasWords ? "Hearing you…" : "Listening"
-		case .thinking: return "\(leadName) is working on it"
-		case .speaking: return yourTurn ? "Your turn…" : "\(leadName) is speaking · talk to interrupt"
+		case .listening: return hasWords ? "Hearing you…" : "Listening…"
+		case .thinking: return "\(leadName) is thinking…"
+		case .speaking: return yourTurn ? "Your turn…" : "\(leadName) is speaking…"
 		}
 	}
 

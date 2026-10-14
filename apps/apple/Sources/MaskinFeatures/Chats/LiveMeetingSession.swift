@@ -54,6 +54,9 @@ final class LiveMeetingSession {
 		voice.agentName = lead.name
 	}
 
+	/// Words heard but not yet sent: "Send now" is offered while there are some.
+	var hasPendingWords: Bool { voice.phase != .speaking && voice.machine.pendingText != nil }
+
 	var isLive: Bool { startedAt != nil && endedAt == nil }
 
 	func elapsed(at date: Date) -> TimeInterval {
@@ -80,8 +83,8 @@ final class LiveMeetingSession {
 					interruptionEnded: { [weak self] in self?.voice.interruptionEnded(shouldResume: $0) },
 					routeChanged: { [weak self] in self?.routeName = $0 },
 					mediaServicesReset: { [weak self] in self?.voice.audioReset() },
-					setMuted: { [weak self] in self?.setMuted($0) },
-					toggleMuted: { [weak self] in self?.toggleMute() }))
+					setMuted: { [weak self] in self?.remoteMute($0) },
+					toggleMuted: { [weak self] in self?.remoteToggleMute() }))
 			routeName = audio.routeName
 		} catch {
 			voice.begin(existing: chat.messages)
@@ -98,8 +101,16 @@ final class LiveMeetingSession {
 		refreshNowPlaying()
 	}
 
-	private func setMuted(_ muted: Bool) {
+	/// Mute from the lock screen or headphones. The system can send a play/pause as the audio session
+	/// or a Bluetooth route comes up; one in the first moments is not the person pressing mute.
+	private func remoteMute(_ muted: Bool) {
+		guard let startedAt, now().timeIntervalSince(startedAt) > 2 else { return }
 		if voice.isMuted != muted { toggleMute() }
+	}
+
+	private func remoteToggleMute() {
+		guard let startedAt, now().timeIntervalSince(startedAt) > 2 else { return }
+		toggleMute()
 	}
 
 	/// Keeps the lock screen's card and its elapsed time current.
