@@ -300,7 +300,8 @@ function decodeCursor(token: string, range: string): Cursor {
 	const bad = () =>
 		new DriveError({
 			code: 'INVALID_INPUT',
-			message: 'pageToken is not valid for this range. Use the nextPageToken from the previous page.',
+			message:
+				'pageToken is not valid for this range. Use the nextPageToken from the previous page.',
 		})
 	let raw: Partial<Cursor>
 	try {

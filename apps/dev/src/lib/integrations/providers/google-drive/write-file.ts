@@ -215,9 +215,7 @@ async function trashOnFailure<T>(
 		return await fill()
 	} catch (err) {
 		const url = `${DRIVE_API}/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`
-		await googleJson(http, url, { method: 'PATCH', body: { trashed: true } }).catch(
-			() => undefined,
-		)
+		await googleJson(http, url, { method: 'PATCH', body: { trashed: true } }).catch(() => undefined)
 		throw err
 	}
 }

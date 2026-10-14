@@ -70,9 +70,7 @@ export async function getDocumentStructured(
 	const ranged = input.startIndex !== undefined || input.endIndex !== undefined
 	const from = input.startIndex ?? 0
 	const to = input.endIndex ?? Number.POSITIVE_INFINITY
-	const overlapping = content.filter(
-		(el) => (el.endIndex ?? 0) > from && (el.startIndex ?? 0) < to,
-	)
+	const overlapping = content.filter((el) => (el.endIndex ?? 0) > from && (el.startIndex ?? 0) < to)
 
 	const out: GetDocumentStructuredOutput = {
 		documentId: doc.documentId ?? input.documentId,

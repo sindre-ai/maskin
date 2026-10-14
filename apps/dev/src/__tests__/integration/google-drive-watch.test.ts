@@ -9,9 +9,9 @@ import {
 	runDriveFanOut,
 } from '../../lib/integrations/providers/google-drive/fan-out'
 import { watchFolder } from '../../lib/integrations/providers/google-drive/tools/watch-folder'
-import { processDriveWebhook } from '../../lib/integrations/providers/google-drive/webhook-handler'
-import { stopDriveWatch as stopWatchEntry } from '../../lib/integrations/providers/google-drive/watched-folders'
 import { renewDriveWatch } from '../../lib/integrations/providers/google-drive/watch'
+import { stopDriveWatch as stopWatchEntry } from '../../lib/integrations/providers/google-drive/watched-folders'
+import { processDriveWebhook } from '../../lib/integrations/providers/google-drive/webhook-handler'
 import { webhookApp } from '../../routes/integrations'
 import { insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'

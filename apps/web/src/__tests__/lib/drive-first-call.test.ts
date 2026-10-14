@@ -48,7 +48,11 @@ describe('hasDriveIngested', () => {
 	it('is true when an earlier Drive row is revoked and a later active one is stamped', () => {
 		expect(
 			hasDriveIngested([
-				drive({ externalId: 'old@b.test', status: 'revoked', config: { first_tool_call_at: STAMP } }),
+				drive({
+					externalId: 'old@b.test',
+					status: 'revoked',
+					config: { first_tool_call_at: STAMP },
+				}),
 				drive({ externalId: 'new@b.test', config: { first_tool_call_at: STAMP } }),
 			]),
 		).toBe(true)

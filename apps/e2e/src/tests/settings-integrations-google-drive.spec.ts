@@ -301,10 +301,7 @@ test.describe('Settings — Google Drive detail page', () => {
 		await request
 	})
 
-	test('all-disconnected: the wizard starts the Drive connect flow', async ({
-		page,
-		account,
-	}) => {
+	test('all-disconnected: the wizard starts the Drive connect flow', async ({ page, account }) => {
 		await setFlag(page, 'on')
 		await stubConnect(page)
 		await stubIntegrations(page, [])
