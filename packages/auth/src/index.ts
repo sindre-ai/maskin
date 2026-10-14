@@ -1,4 +1,6 @@
 export { generateApiKey, validateApiKey } from './api-keys'
 export { hashPassword, verifyPassword } from './password'
 export { authMiddleware } from './middleware'
-export { evictActor, evictApiKey, evictMembership } from './auth-cache'
+export { evictActor, evictApiKey, evictMembership, evictOAuthTokens } from './auth-cache'
+export { mintToken, sha256Hex } from './token-hash'
+export { validateOAuthAccessToken } from './oauth-token'
