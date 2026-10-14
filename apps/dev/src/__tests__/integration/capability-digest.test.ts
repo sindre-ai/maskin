@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import {
+	events,
 	actors,
 	conversationParticipants,
-	events,
 	integrations,
 	messages,
 	sessions,

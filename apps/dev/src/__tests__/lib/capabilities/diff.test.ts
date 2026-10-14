@@ -201,9 +201,7 @@ describe('diffCapabilities', () => {
 	it('handles a 500-tool list: 3 added, 2 removed, 1 changed among 500', () => {
 		const prevTools: Record<string, string> = {}
 		for (let i = 0; i < 500; i++) prevTools[`tool_${String(i).padStart(3, '0')}`] = `h${i}`
-		const currTools = { ...prevTools }
-		delete currTools.tool_000
-		delete currTools.tool_001
+		const { tool_000: _removedA, tool_001: _removedB, ...currTools } = prevTools
 		currTools.tool_002 = 'changed'
 		currTools.new_a = 'n1'
 		currTools.new_b = 'n2'

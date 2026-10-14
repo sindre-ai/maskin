@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-	findAvailableNotAttached,
 	type IntegrationRow,
+	findAvailableNotAttached,
 	resolveToolAddedKind,
 } from '../../../lib/capabilities/connection-findings'
 import type { ProviderConfig } from '../../../lib/integrations/types'
@@ -229,6 +229,11 @@ describe('findAvailableNotAttached', () => {
 			configFor,
 			holdersBySource: new Map(),
 		})
-		expect(Object.keys(finding ?? {}).sort()).toEqual(['kind', 'provider', 'sourceKey'])
+		expect(Object.keys(finding ?? {}).sort()).toEqual([
+			'integrationId',
+			'kind',
+			'provider',
+			'sourceKey',
+		])
 	})
 })

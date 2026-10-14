@@ -1,7 +1,7 @@
 import {
+	events,
 	actors,
 	conversationParticipants,
-	events,
 	messages,
 	sessions,
 	workspaceMembers,

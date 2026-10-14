@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { actors, events, integrations, sessions, workspaceMembers } from '@maskin/db/schema'
+import { events, actors, integrations, sessions, workspaceMembers } from '@maskin/db/schema'
 import { and, asc, eq, inArray, like } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
