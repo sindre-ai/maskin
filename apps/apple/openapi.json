@@ -28456,7 +28456,8 @@
 								"waiting_for_input",
 								"completed",
 								"failed",
-								"timeout"
+								"timeout",
+								"user_stopped"
 							]
 						},
 						"required": false,
@@ -28722,7 +28723,8 @@
 															"waiting_for_input",
 															"completed",
 															"failed",
-															"timeout"
+															"timeout",
+															"user_stopped"
 														]
 													},
 													"updated_at": {

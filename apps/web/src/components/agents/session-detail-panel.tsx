@@ -344,7 +344,7 @@ function RawLogsView({ logs }: { logs: SessionLogResponse[] }) {
 
 type LogView = 'transcript' | 'raw'
 
-const RESTARTABLE_STATUSES = new Set(['failed', 'timeout', 'completed'])
+const RESTARTABLE_STATUSES = new Set(['failed', 'timeout', 'completed', 'user_stopped'])
 
 function RestartSessionButton({
 	session,

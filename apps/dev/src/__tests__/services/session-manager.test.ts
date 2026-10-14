@@ -2806,7 +2806,7 @@ describe('SessionManager', () => {
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
 		})
 
-		it('routes to the agent-server and marks the session terminal when agentServerId is set', async () => {
+		it('routes to the agent-server and marks the session user_stopped when agentServerId is set', async () => {
 			const session = buildSession({
 				status: 'running',
 				agentServerId: 'agent-server-1',
@@ -2818,18 +2818,15 @@ describe('SessionManager', () => {
 				secret: 'x'.repeat(32),
 			}
 			// 1st select: stopSession's own session lookup. 2nd: the agent_servers
-			// row lookup. markRemoteSessionComplete no longer does its own SELECT —
-			// it does a single CAS UPDATE ... RETURNING instead (see updateQueue
-			// below); the subsequent hasOtherActiveSessions select falls through to
-			// the unset static `mockResults.select` default of [], i.e. "no other
-			// active sessions", which drives the actors-table update below.
-			mockResults.selectQueue = [[session], [server]]
-			// 1st update: markRemoteSessionComplete's CAS on `sessions` — its
-			// .returning() must yield the row so workspaceId/actorId are available
-			// for the events insert. 2nd update: the actors.agentState sync inside
-			// hasOtherActiveSessions' branch — its return value is unused by the
-			// code, so an empty array is fine.
-			mockResults.updateQueue = [[session], []]
+			// row lookup. 3rd: markRemoteSessionComplete's stdout read (empty).
+			// Every later select (its open-row check, settleSession's own SELECT, the
+			// re-read after settling) falls through to the static default below, the
+			// still-running row.
+			mockResults.selectQueue = [[session], [server], []]
+			mockResults.select = [session]
+			// 1st update: the CAS inside settleSession — its .returning() must yield
+			// a row for the flip to land and the event to be written.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 				new Response(JSON.stringify({ ok: true }), {
@@ -2855,10 +2852,14 @@ describe('SessionManager', () => {
 				// Local Docker must never be touched for a remotely-dispatched session.
 				expect(mockContainerManager.stop).not.toHaveBeenCalled()
 
+				// A user stop is stored as user_stopped, not failed.
 				const statusUpdate = calls.updates.find(
-					(u) => (u as Record<string, unknown>).status === 'failed',
+					(u) => (u as Record<string, unknown>).status === 'user_stopped',
 				) as Record<string, unknown> | undefined
 				expect(statusUpdate).toBeDefined()
+				expect(calls.updates.some((u) => (u as Record<string, unknown>).status === 'failed')).toBe(
+					false,
+				)
 			} finally {
 				fetchSpy.mockRestore()
 			}
@@ -2961,8 +2962,19 @@ describe('SessionManager', () => {
 	})
 
 	describe('markRemoteSessionComplete()', () => {
-		it('no-ops without writing an event when the CAS update matches no row (already terminal / lost the race)', async () => {
-			mockResults.update = [] // .returning() → no row: UPDATE matched nothing
+		// Mock-DB choreography for these tests. Select order inside the method:
+		// 1) the stdout read, 2) (only when usage parses) the route/model lookup,
+		// 3) the open-row check, then settleSession's own SELECT, the re-read after
+		// settling and hasOtherActiveSessions. Tests queue the first and leave the
+		// rest to the static `mockResults.select` default, a still-running row.
+		// Updates: (only when usage parses) the usage columns, then the CAS inside
+		// settleSession, whose .returning() must yield a row for the flip to land.
+		const settleFlips = (session: { id: string }) => [{ id: session.id }]
+
+		it('no-ops without writing an event when the session is already terminal', async () => {
+			// 1st select: the stdout read (empty). 2nd: the open-row check finds a
+			// terminal status. 3rd: the lookup that enriches the dropped-signal log.
+			mockResults.selectQueue = [[], [{ status: 'completed' }], [{ status: 'completed' }]]
 			const initialInsertCount = calls.inserts.length
 
 			await manager.markRemoteSessionComplete('some-session-id', 1)
@@ -2971,18 +2983,13 @@ describe('SessionManager', () => {
 		})
 
 		// Regression coverage for docs/runbooks/agent-session-failures-2026-08-11.md,
-		// Issue 3's suggested fix: the CAS-miss no-op used to be completely
-		// silent (no log at any level), which is exactly why the null-vs-1 exit
-		// code mismatch for session 4d1f3c8b required host log spelunking to
-		// diagnose instead of being visible from app logs alone.
-		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
+		// Issue 3's suggested fix: the no-op used to be completely silent (no log at
+		// any level), which is exactly why the null-vs-1 exit code mismatch for
+		// session 4d1f3c8b required host log spelunking to diagnose instead of being
+		// visible from app logs alone.
+		it('logs a warning with the dropped exit code and current session state when the session is already terminal', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
-			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
-			// 1st select: the single stdout read from session_logs that serves both
-			// the usage parse and the credit classification — empty means "no usage
-			// found, nothing to classify". 2nd select: the best-effort lookup used
-			// only to enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [session]]
+			mockResults.selectQueue = [[], [{ status: 'completed' }], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -3001,12 +3008,13 @@ describe('SessionManager', () => {
 
 		it('still reaches a terminal state when the stdout read for usage and classification throws', async () => {
 			// The stdout read (shared by usage parsing and credit classification) is
-			// best-effort: it runs before the CAS update, and stopSession() calls this
+			// best-effort: it runs before settling, and stopSession() calls this
 			// method after the remote sandbox is already dead. A throw escaping here
 			// would surface as a spurious "stop failed" 400 for a stop that actually
 			// succeeded.
 			const session = buildSession({ status: 'running' })
-			mockResults.updateQueue = [[session], []]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
 			// 1st select: the stdout read, which throws.
 			mockResults.selectErrorQueue = [new Error('connection reset')]
 
@@ -3018,33 +3026,36 @@ describe('SessionManager', () => {
 			expect(eventInsert).toBeDefined()
 		})
 
-		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
+		it('inserts exactly one session_failed event (nonzero exit code)', async () => {
 			const session = buildSession({ status: 'running' })
-			mockResults.updateQueue = [[session], []]
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
-			const eventInsert = calls.inserts.find(
+			const eventInserts = calls.inserts.filter(
 				(v) => (v as Record<string, unknown>).action === 'session_failed',
 			)
-			expect(eventInsert).toBeDefined()
+			expect(eventInserts).toHaveLength(1)
 		})
 
-		it('retries the CAS update on a thrown DB error and succeeds once a retry clears', async () => {
+		it('retries on a thrown DB error and succeeds once a retry clears', async () => {
 			const session = buildSession({ status: 'running' })
-			// hasOtherActiveSessions' SELECT — a non-empty result means "yes, other
-			// active sessions exist", so the actors-table update branch is skipped
-			// and doesn't consume an extra update() call, keeping the retry count
-			// below attributable only to the CAS update.
-			mockResults.select = [{ id: 'other-session' }]
-			// 1st and 2nd CAS attempts throw; 3rd (final, within CAS_UPDATE_RETRIES)
-			// succeeds and returns the row via .returning().
-			mockResults.updateErrorQueue = [
-				new Error('connection reset'),
-				new Error('connection reset'),
+			// A non-empty select result means "yes, other active sessions exist", so
+			// the actors-table update branch is skipped and doesn't consume an extra
+			// update() call.
+			mockResults.select = [session]
+			mockResults.selectQueue = [[]]
+			// 1st call (the stdout read) is fine; the open-row check throws on the
+			// 1st and 2nd attempts, and the 3rd (final, within CAS_UPDATE_RETRIES)
+			// goes through.
+			mockResults.selectErrorQueue = [
 				undefined,
+				new Error('connection reset'),
+				new Error('connection reset'),
 			]
-			mockResults.updateQueue = [[session]]
+			mockResults.updateQueue = [settleFlips(session)]
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
@@ -3055,12 +3066,14 @@ describe('SessionManager', () => {
 		})
 
 		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
-			mockResults.updateErrorQueue = [
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [
+				undefined,
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// The fallback lookup after CAS retries are exhausted finds nothing
+			// The fallback lookup after the retries are exhausted finds nothing
 			// (unconfigured select defaults to []) — nothing left to clean up.
 			// This is a legitimate terminal outcome (not a DB failure a caller
 			// could usefully retry), so it still resolves `true`.
@@ -3080,17 +3093,15 @@ describe('SessionManager', () => {
 		// every other early-return above (already terminal / not found /
 		// resolved by a concurrent call), which are legitimate no-ops and
 		// still resolve `true`.
-		it('gives up and returns false when the fallback lookup after CAS retries also throws', async () => {
-			mockResults.updateErrorQueue = [
+		it('gives up and returns false when the fallback lookup after the retries also throws', async () => {
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [
+				undefined,
+				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: the stdout read for usage and credit classification (empty
-			// = no-op). 2nd select: the fallback lookup itself throws — the DB is
-			// still unreachable.
-			mockResults.selectQueue = [[]]
-			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
@@ -3098,35 +3109,25 @@ describe('SessionManager', () => {
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 
-		it('still runs terminal side effects via a fallback lookup when CAS retries are exhausted but the session is still running (Bug 2 regression)', async () => {
+		it('returns false, so the caller retries, when settling keeps failing and the session is still open', async () => {
 			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			// The CAS inside settleSession throws on every attempt.
 			mockResults.updateErrorQueue = [
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found", a no-op. 2nd select:
-			// the fallback lookup after CAS retries are exhausted, finds the
-			// session still 'running'. 3rd select: hasOtherActiveSessions' check —
-			// a non-empty result skips the actors-table update branch.
-			mockResults.selectQueue = [[], [session], [{ id: 'other-session' }]]
+			const initialInsertCount = calls.inserts.length
 
-			await manager.markRemoteSessionComplete(session.id, 137)
+			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(false)
 
-			const eventInsert = calls.inserts.find(
-				(v) => (v as Record<string, unknown>).action === 'session_failed',
-			)
-			expect(eventInsert).toBeDefined()
+			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 
-		it('persists non-null usage fields via the fallback direct update when CAS retries are exhausted', async () => {
+		it('writes the parsed usage onto the row before settling it', async () => {
 			const session = buildSession({ status: 'running' })
-			mockResults.updateErrorQueue = [
-				new Error('connection reset'),
-				new Error('connection reset'),
-				new Error('connection reset'),
-			]
 			const resultLogRow = {
 				content: JSON.stringify({
 					type: 'result',
@@ -3140,51 +3141,94 @@ describe('SessionManager', () => {
 					},
 				}),
 			}
-			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — finds the result event this time, unlike the sibling
-			// "still runs terminal side effects" test above. 2nd select: the
-			// fallback lookup after CAS retries are exhausted, finds the session
-			// still 'running'. 3rd select: hasOtherActiveSessions' check — a
-			// non-empty result skips the actors-table update branch.
-			mockResults.selectQueue = [[resultLogRow], [session], [{ id: 'other-session' }]]
+			mockResults.selectQueue = [[resultLogRow]]
+			mockResults.select = [session]
+			// 1st update: the usage columns. 2nd: the CAS inside settleSession.
+			mockResults.updateQueue = [[], settleFlips(session)]
 
 			await manager.markRemoteSessionComplete(session.id, 0)
 
 			// calls.updates captures every .update().set() in call order, across
-			// every table touched (sessions, then later actors/objects) — not just
-			// the sessions-table update we care about. clearActiveSession() runs
-			// after the fallback and would land last if we just took .at(-1), so
-			// filter for the sessions-shaped payload (identified by totalCostUsd)
-			// and take its last occurrence — the fallback direct update (~2830),
-			// distinct from the 3 preceding (and failing) primary CAS attempts.
-			const sessionUpdates = calls.updates.filter(
+			// every table touched — filter for the sessions-shaped usage payload
+			// (identified by totalCostUsd).
+			const usageUpdate = calls.updates.find(
 				(v): v is Record<string, unknown> =>
 					typeof v === 'object' && v !== null && 'totalCostUsd' in v,
-			)
-			const fallbackUpdate = sessionUpdates.at(-1) as Record<string, unknown>
-			expect(fallbackUpdate.totalCostUsd).toBe('0.1234')
-			expect(fallbackUpdate.inputTokens).toBe(100)
-			expect(fallbackUpdate.outputTokens).toBe(200)
-			expect(fallbackUpdate.cacheCreationInputTokens).toBe(10)
-			expect(fallbackUpdate.cacheReadInputTokens).toBe(20)
-			expect(fallbackUpdate.durationMs).toBe(5000)
+			) as Record<string, unknown>
+			expect(usageUpdate.totalCostUsd).toBe('0.1234')
+			expect(usageUpdate.inputTokens).toBe(100)
+			expect(usageUpdate.outputTokens).toBe(200)
+			expect(usageUpdate.cacheCreationInputTokens).toBe(10)
+			expect(usageUpdate.cacheReadInputTokens).toBe(20)
+			expect(usageUpdate.durationMs).toBe(5000)
 		})
 
-		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
-			const session = buildSession({ status: 'failed' })
-			mockResults.updateErrorQueue = [
-				new Error('connection reset'),
-				new Error('connection reset'),
-				new Error('connection reset'),
-			]
-			// 1st select: the usage-extraction select (empty = no-op). 2nd select:
-			// the fallback lookup, which finds the session already resolved.
-			mockResults.selectQueue = [[], [session]]
+		it('no-ops when a concurrent call already resolved the session', async () => {
+			mockResults.selectQueue = [[]]
+			mockResults.select = [{ status: 'failed' }]
 			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete('some-session-id', 137)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('settles an explicit stop as user_stopped with one session_stopped event and no session_failed', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
+
+			await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
+
+			expect(
+				calls.updates.some((u) => (u as Record<string, unknown>).status === 'user_stopped'),
+			).toBe(true)
+			expect(calls.updates.some((u) => (u as Record<string, unknown>).status === 'failed')).toBe(
+				false,
+			)
+			const actions = calls.inserts.map((v) => (v as Record<string, unknown>).action)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+		})
+
+		it('treats an agent-server report that lands while the stop is in flight as a stop', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
+			// stopSession records the request before it calls the agent-server.
+			;(manager as unknown as { stopRequested: Set<string> }).stopRequested.add(session.id)
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
+			expect(
+				calls.updates.some((u) => (u as Record<string, unknown>).status === 'user_stopped'),
+			).toBe(true)
+			const actions = calls.inserts.map((v) => (v as Record<string, unknown>).action)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+		})
+
+		it('back-fills the exit code onto a stopped session without writing a second event', async () => {
+			const stopped = buildSession({ status: 'user_stopped', result: { exit_code: null } })
+			// 1st select: the stdout read (empty). Every later select returns the
+			// stopped row: the open-row check, then the lookup before the back-fill.
+			mockResults.selectQueue = [[]]
+			mockResults.select = [stopped]
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete(stopped.id, 137)
+
 			expect(calls.inserts.length).toBe(initialInsertCount)
+			const backfill = calls.updates.find(
+				(u) =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					!('status' in (u as Record<string, unknown>)),
+			)
+			expect(backfill).toBeDefined()
 		})
 	})
 
@@ -4457,6 +4501,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 			]
 
 			await (
@@ -4483,6 +4528,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 			]
 
 			await (
@@ -4510,6 +4556,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -4560,7 +4607,10 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4598,7 +4648,8 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4637,7 +4688,8 @@ describe('SessionManager', () => {
 				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
 			})
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4671,7 +4723,8 @@ describe('SessionManager', () => {
 				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
 			})
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4735,6 +4788,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -4758,13 +4812,15 @@ describe('SessionManager', () => {
 				], // recordRuntimeClaudeOAuthFailover locked workspace read
 			]
 			mockResults.insertQueue = [
-				[], // completion event
+				[], // completion event (written by settleSession)
 				[], // failover event
 				[], // retry notice system log
 				[retrySession], // createSession row insert
 				[], // createSession event
 				[], // terminal system log
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4845,11 +4901,13 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
 					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
 				]
 				mockResults.insertQueue = [[], [], [], [], [], []]
+				mockResults.updateQueue = [[{ id: session.id }]]
 				await (
 					manager as unknown as {
 						handleCompletion(
@@ -4991,17 +5049,20 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthBackupExhausted locked read
 			]
 			mockResults.insertQueue = [
-				[], // completion event
+				[], // completion event (written by settleSession)
 				[], // backup exhausted event
 				[], // backup exhausted system log
 				[], // terminal system log
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -5079,12 +5140,15 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 			]
 			mockResults.insertQueue = [
-				[], // completion event
+				[], // completion event (written by settleSession)
 				[], // terminal system log
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -5129,7 +5193,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [session]]
 
 			await (
 				manager as unknown as {
@@ -5163,7 +5227,9 @@ describe('SessionManager', () => {
 				'usage exceeded the plan cap and no usage credits are available',
 			)
 
-			mockResults.selectQueue = [[session], []]
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
 			// carries no stdout signal for classifyCreditExhaustion to classify.
@@ -5221,7 +5287,9 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], []]
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -5238,6 +5306,102 @@ describe('SessionManager', () => {
 			)
 			expect(sessionUpdate).toMatchObject({ status: 'failed', result: { exit_code: 1 } })
 			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+		})
+	})
+
+	describe('handleCompletion() — user stop', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		type Internals = {
+			activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+			stopRequested: Set<string>
+			budgetStopped: Map<string, string>
+			handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+		}
+
+		function arm(session: { id: string }) {
+			const internals = manager as unknown as Internals
+			internals.activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[session], // settleSession's own SELECT of the row
+			]
+			mockResults.updateQueue = [[{ id: session.id }]]
+			return internals
+		}
+
+		it('stores a stop the user asked for as user_stopped, with one session_stopped event', async () => {
+			const session = buildSession({ status: 'running' })
+			const internals = arm(session)
+			internals.stopRequested.add(session.id)
+
+			// 143 = SIGTERM, the exit code stopSession()'s container kill produces.
+			await internals.handleCompletion(session.id, 'container-abc', 143)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'user_stopped', result: { exit_code: 143 } })
+			const actions = calls.inserts.map((i) => (i as { action?: string }).action)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+			// A stop is not a failure: the agent goes back to idle, not failed.
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+			expect(internals.stopRequested.has(session.id)).toBe(false)
+		})
+
+		it('keeps a budget stop as failed, with its plan_cap_exceeded reason', async () => {
+			const session = buildSession({ status: 'running' })
+			const internals = arm(session)
+			// A budget stop goes through stopSession too, so it is in stopRequested.
+			internals.stopRequested.add(session.id)
+			internals.budgetStopped.set(session.id, 'usage exceeded the plan cap')
+
+			await internals.handleCompletion(session.id, 'container-abc', 143)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { failure_reason: { reason_code: 'plan_cap_exceeded' } },
+			})
+			const actions = calls.inserts.map((i) => (i as { action?: string }).action)
+			expect(actions).toContain('session_failed')
+			expect(actions).not.toContain('session_stopped')
+		})
+
+		it('still stores a clean exit as completed when a stop was requested at the same moment', async () => {
+			const session = buildSession({ status: 'running' })
+			const internals = arm(session)
+			internals.stopRequested.add(session.id)
+
+			await internals.handleCompletion(session.id, 'container-abc', 0)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'completed' })
 		})
 	})
 
