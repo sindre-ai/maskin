@@ -16,6 +16,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import {
 	buildAgentFile,
@@ -30,10 +31,11 @@ import {
 	insertWorkspace,
 } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, setTestAgentStorage } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 const { default: eventsRoutes } = await import('../../routes/events')
+const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
@@ -265,11 +267,47 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 	})
 })
 
+function createMemoryStorage(): StorageProvider {
+	const store = new Map<string, Buffer>()
+	return {
+		async put(key, data) {
+			store.set(key, Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array))
+		},
+		async get(key) {
+			const buf = store.get(key)
+			if (!buf) throw new Error(`Not found: ${key}`)
+			return buf
+		},
+		async list(prefix) {
+			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
+		},
+		async delete(key) {
+			store.delete(key)
+		},
+		async exists(key) {
+			return store.has(key)
+		},
+		async ensureBucket() {},
+	}
+}
+
 describe('Actors Integration — DELETE', () => {
 	let workspaceId: string
 	let agentId: string
+	let storage: StorageProvider
+
+	afterAll(() => {
+		setTestAgentStorage(undefined)
+	})
 
 	beforeEach(async () => {
+		storage = createMemoryStorage()
+		setTestAgentStorage(new AgentStorageManager(storage, db))
 		const ws = await insertWorkspace(db, getTestActorId())
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Delete Me' })
@@ -470,6 +508,68 @@ describe('Actors Integration — DELETE', () => {
 		await reader.cancel().catch(() => {})
 		expect(sseText).toContain('Delete Me')
 		expect(sseText).not.toMatch(/fake-/)
+	})
+
+	it('removes every storage object under the deleted agent and leaves other agents untouched', async () => {
+		const app = createApp()
+		const body = Buffer.from('fake memory')
+		const own = [
+			`agents/${workspaceId}/${agentId}/memory/CLAUDE.md`,
+			`agents/${workspaceId}/${agentId}/learnings/session-1.md`,
+			`agents/${workspaceId}/${agentId}/skills/s/SKILL.md`,
+		]
+		// Keys that must survive: another agent in the same workspace, the same
+		// id in another workspace, and an id that merely starts with this one.
+		const otherAgentId = randomUUID()
+		const otherWorkspaceId = randomUUID()
+		const survivors = [
+			`agents/${workspaceId}/${otherAgentId}/memory/CLAUDE.md`,
+			`agents/${otherWorkspaceId}/${agentId}/memory/CLAUDE.md`,
+			`agents/${workspaceId}/${agentId}-extra/memory/CLAUDE.md`,
+		]
+		for (const key of [...own, ...survivors]) await storage.put(key, body)
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		expect(await storage.list(`agents/${workspaceId}/${agentId}/`)).toEqual([])
+		for (const key of own) expect(await storage.exists(key)).toBe(false)
+		for (const key of survivors) expect(await storage.exists(key)).toBe(true)
+	})
+
+	it('returns 500 and keeps the agent when a storage object cannot be deleted', async () => {
+		const app = createApp()
+		const failingKey = `agents/${workspaceId}/${agentId}/memory/CLAUDE.md`
+		const otherKey = `agents/${workspaceId}/${agentId}/learnings/session-1.md`
+		await storage.put(failingKey, Buffer.from('fake memory'))
+		await storage.put(otherKey, Buffer.from('fake learning'))
+		const realDelete = storage.delete.bind(storage)
+		storage.delete = async (key: string) => {
+			if (key === failingKey) throw new Error('s3 unavailable')
+			await realDelete(key)
+		}
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(500)
+		expect((await res.json()).deleted).toBeUndefined()
+
+		// The agent is still there so the delete can be retried, and no
+		// deleted event was recorded.
+		const remaining = await db.select().from(actors).where(eq(actors.id, agentId))
+		expect(remaining).toHaveLength(1)
+		const rows = await db.select().from(events).where(eq(events.entityId, agentId))
+		expect(rows.filter((r) => r.action === 'deleted')).toHaveLength(0)
+		// Every other key was still attempted, the failing one remains.
+		expect(await storage.exists(failingKey)).toBe(true)
+		expect(await storage.exists(otherKey)).toBe(false)
 	})
 })
 
