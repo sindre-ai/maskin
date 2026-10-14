@@ -51,6 +51,7 @@ import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationsRoutes from './routes/notifications'
+import oauthDiscoveryRoutes from './routes/oauth-discovery'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -239,7 +240,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// webviews vary by origin. Do NOT add `credentials: true` to the /mcp
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
-	app.use('/mcp', cors())
+	app.use('/mcp', cors({ exposeHeaders: ['WWW-Authenticate'] }))
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use('*', honoLogger())
 
@@ -443,6 +444,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
+
+	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
+	// otherwise answer these paths with index.html.
+	app.route('/', oauthDiscoveryRoutes)
 
 	// Public method-site routes — mounted BEFORE the SPA static fallthrough
 	// below so `/method/*` never falls through to `index.html`. The editorial
