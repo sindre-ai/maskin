@@ -7,6 +7,7 @@ import SwiftUI
 /// when a running flow needs the viewer a "{n} need you ›" pill appears under it and filters the
 /// list to those flows (handoff `7-Chat.md` §10). Flows carry no tags, so there is no filter bar.
 struct LoopsListView: View {
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	let store: LoopsStore
 	@Binding var selection: String?
 	let search: String
@@ -50,7 +51,9 @@ struct LoopsListView: View {
 					}
 				}
 				LazyVGrid(
-					columns: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
+					columns: sizeClass == .regular
+						? Array(repeating: GridItem(.flexible(), spacing: MaskinSpace.s9, alignment: .top), count: 2)
+						: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
 					alignment: .leading, spacing: MaskinSpace.s9
 				) {
 					ForEach(loops) { loop in

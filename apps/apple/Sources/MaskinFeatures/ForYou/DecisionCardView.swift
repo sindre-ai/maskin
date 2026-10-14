@@ -694,6 +694,17 @@ struct DecisionCardView: View {
 		return false
 	}
 
+	/// "Queued offline — Approve sends when you're back."
+	static func queuedText(_ record: DecisionRecord) -> String {
+		var label = ""
+		switch record.kind {
+		case .option(let option): label = option
+		case .reply: label = "Your reply"
+		case .dismissed: label = "Mark read"
+		}
+		return "Queued offline \u{2014} \(label) sends when you\u{2019}re back."
+	}
+
 	private func queuedNote(_ record: DecisionRecord) -> some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s4) {
 			Image(systemName: "arrow.up")
@@ -702,7 +713,7 @@ struct DecisionCardView: View {
 				.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
 				.background(MaskinSurface.inverse, in: Circle())
 				.accessibilityHidden(true)
-			Text("Queued offline \u{2014} sends when you\u{2019}re back.")
+			Text(Self.queuedText(record))
 				.maskinText(.subhead).foregroundStyle(MaskinColor.noticeFg)
 				.frame(maxWidth: .infinity, alignment: .leading)
 		}
