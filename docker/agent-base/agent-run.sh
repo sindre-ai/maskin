@@ -293,6 +293,37 @@ setup_cdp_retry_proxy() {
   fi
 }
 
+STRIP_IMAGES_PROXY_PORT=9334
+
+# Start a local proxy in front of the model endpoint that replaces image blocks
+# with a text note, and repoint ANTHROPIC_BASE_URL at it. Only runs when
+# llm-routing.ts set MASKIN_STRIP_IMAGES=1 for a text-only model: such a model
+# answers any request holding an image (e.g. a playwright screenshot tool
+# result) with a 400 that ends the turn. Best-effort: if the proxy fails to
+# start, ANTHROPIC_BASE_URL is left pointing at the real endpoint.
+setup_strip_images_proxy() {
+  [ "$MASKIN_STRIP_IMAGES" = "1" ] || return
+  [ -z "$ANTHROPIC_BASE_URL" ] && return
+  node /strip-images-proxy.js "$STRIP_IMAGES_PROXY_PORT" "$ANTHROPIC_BASE_URL" \
+    > >(tee "${TMPDIR:-/tmp}/strip-images-proxy.log" | sed -u 's/^/[strip-images-proxy] /' >&2) 2>&1 &
+  local proxy_pid=$!
+  local deadline=$(( $(date +%s) + 3 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+      echo "[system] WARNING: strip-images-proxy exited immediately, using ANTHROPIC_BASE_URL directly" >&2
+      return
+    fi
+    grep -q "listening on" "${TMPDIR:-/tmp}/strip-images-proxy.log" 2>/dev/null && break
+    sleep 0.2
+  done
+  if grep -q "listening on" "${TMPDIR:-/tmp}/strip-images-proxy.log" 2>/dev/null; then
+    echo "[system] strip-images proxy up, routing ANTHROPIC_BASE_URL through 127.0.0.1:${STRIP_IMAGES_PROXY_PORT}"
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:${STRIP_IMAGES_PROXY_PORT}"
+  else
+    echo "[system] WARNING: strip-images-proxy did not confirm startup, using ANTHROPIC_BASE_URL directly" >&2
+  fi
+}
+
 setup_mcps() {
   # Skip if no MCP config provided and no browser CDP endpoint
   if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
@@ -657,6 +688,7 @@ install_runtime
 assert_skills_symlink
 build_context
 setup_mcps
+setup_strip_images_proxy
 setup_claude_credentials
 setup_git_identity
 setup_github_credential_helper
