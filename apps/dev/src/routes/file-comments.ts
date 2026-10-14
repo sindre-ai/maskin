@@ -414,6 +414,7 @@ app.openapi(sendRoundRoute, (async (c) => {
 				eq(relationships.targetId, fileId),
 				eq(relationships.type, 'attached'),
 				eq(relationships.sourceType, 'object'),
+				eq(objects.workspaceId, file.workspaceId),
 			),
 		)
 
