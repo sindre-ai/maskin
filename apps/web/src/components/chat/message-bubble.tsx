@@ -328,17 +328,9 @@ export function MessageBubble({
 				{handedOffStripEnabled &&
 				message.spawned_sessions &&
 				message.spawned_sessions.length > 0 ? (
-					threadsPane ? (
-						<div className="mt-2 flex flex-col gap-2">
-							{message.spawned_sessions.map((session) => (
-								<HandoffCard
-									key={session.id}
-									session={session}
-									onViewThread={threadsPane.openThread}
-								/>
-							))}
-						</div>
-					) : (
+					// With the Threads pane available, ThreadMessages draws each handoff as
+					// its own card in the timeline; the strip is the fallback without it.
+					threadsPane ? null : (
 						<HandedOffStrip
 							workspaceId={workspaceId}
 							messageId={message.id}

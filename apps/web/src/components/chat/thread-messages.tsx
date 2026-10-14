@@ -13,7 +13,8 @@ import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
@@ -68,10 +69,24 @@ export function ThreadMessages({
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const threadsPane = useThreadsPane()
-	const pendingHandoffs = useConversationThreads(workspaceId, conversationId).filter(
-		(t) => t.messageId === null,
-	)
 	const messages = flattenMessagesOldestFirst(data)
+	const handoffs = useConversationThreads(workspaceId, conversationId)
+	// Each handoff is its own row in the timeline, at the moment its session was
+	// created: before the first message written after it, or at the foot of the
+	// thread when nothing has been written since.
+	const showHandoffCards = Boolean(threadsPane) && handedOffStripEnabled
+	const handoffsByNextMessage = useMemo(() => {
+		if (!showHandoffCards) return new Map<number | 'end', typeof handoffs>()
+		return groupHandoffsByNextMessage(handoffs, messages)
+	}, [handoffs, messages, showHandoffCards])
+	const renderHandoffCards = (items: typeof handoffs | undefined) =>
+		items && items.length > 0 && threadsPane ? (
+			<div className="ml-[39px] flex max-w-[660px] flex-col gap-2">
+				{items.map((session) => (
+					<HandoffCard key={session.id} session={session} onViewThread={threadsPane.openThread} />
+				))}
+			</div>
+		) : null
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
@@ -99,6 +114,18 @@ export function ThreadMessages({
 			.map((m) => m.metadata?.question_answer?.question_message_id)
 			.filter((id): id is number => typeof id === 'number'),
 	)
+
+	// A helper's question and the person's answer are a conversation with that
+	// helper, which lives in its thread. Until it is answered the question stays
+	// here with its buttons; once answered, both messages leave the main chat.
+	const helperQuestionIds = new Set(
+		messages.filter((m) => m.metadata?.question?.reply_to_session).map((m) => m.id),
+	)
+	const visibleMessages = messages.filter((m) => {
+		if (helperQuestionIds.has(m.id)) return !answeredQuestionIds.has(m.id)
+		const answered = m.metadata?.question_answer?.question_message_id
+		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
+	})
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -276,9 +303,9 @@ export function ThreadMessages({
 				</div>
 			) : null}
 			<div className="flex flex-col gap-4">
-				{messages.map((message, index) => {
-					const prev = messages[index - 1]
-					const isLast = index === messages.length - 1
+				{visibleMessages.map((message, index) => {
+					const prev = visibleMessages[index - 1]
+					const isLast = index === visibleMessages.length - 1
 					// Turns this message's own reply resulted from render above
 					// it; turns this message triggered (still in progress, no
 					// reply yet) render below it, in the gap before that reply
@@ -287,67 +314,55 @@ export function ThreadMessages({
 					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
-						<div
-							key={message.id}
-							data-message-id={message.id}
-							className="flex flex-col gap-1 scroll-mt-[60px]"
-						>
-							{/* A divider separates two days; there is nothing above the
+						<Fragment key={message.id}>
+							{renderHandoffCards(handoffsByNextMessage.get(message.id))}
+							<div data-message-id={message.id} className="flex flex-col gap-1 scroll-mt-[60px]">
+								{/* A divider separates two days; there is nothing above the
 							    first message to separate it from, so the thread doesn't
 							    open with a "Today" rule floating over its own first line. */}
-							{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
-								<MessageDivider date={message.createdAt} />
-							) : null}
-							{/* A finished turn belongs to the reply it produced, so it
+								{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
+									<MessageDivider date={message.createdAt} />
+								) : null}
+								{/* A finished turn belongs to the reply it produced, so it
 							    renders *inside* that message under the agent's name
 							    rather than as a separate row above it — which read as
 							    a stray line belonging to nothing. Live turns stay
 							    standalone below their trigger, where they carry their
 							    own avatar. */}
-							<MessageBubble
-								workspaceId={workspaceId}
-								message={message}
-								questionAnswered={answeredQuestionIds.has(message.id)}
-								v4Polish={v4PolishBubbles}
-								spawnInfo={spawnByMessageId.get(message.id)}
-								handedOffStripEnabled={handedOffStripEnabled}
-								// Keyed by index as well as session: one session can put two
-								// turns under the same message (a result segment plus the
-								// live turn that follows it), so `sessionId` alone is not
-								// unique and React would reconcile the two as one row.
-								activity={turnsAbove.map((turn, turnIndex) => (
+								<MessageBubble
+									workspaceId={workspaceId}
+									message={message}
+									questionAnswered={answeredQuestionIds.has(message.id)}
+									v4Polish={v4PolishBubbles}
+									spawnInfo={spawnByMessageId.get(message.id)}
+									handedOffStripEnabled={handedOffStripEnabled}
+									// Keyed by index as well as session: one session can put two
+									// turns under the same message (a result segment plus the
+									// live turn that follows it), so `sessionId` alone is not
+									// unique and React would reconcile the two as one row.
+									activity={turnsAbove.map((turn, turnIndex) => (
+										<MessageActivity
+											key={`${turn.sessionId}-above-${turnIndex}`}
+											workspaceId={workspaceId}
+											turn={turn}
+											layout="inline"
+										/>
+									))}
+								/>
+								{turnsBelowHere.map((turn, turnIndex) => (
 									<MessageActivity
-										key={`${turn.sessionId}-above-${turnIndex}`}
+										key={`${turn.sessionId}-below-${turnIndex}`}
 										workspaceId={workspaceId}
 										turn={turn}
-										layout="inline"
 									/>
 								))}
-							/>
-							{turnsBelowHere.map((turn, turnIndex) => (
-								<MessageActivity
-									key={`${turn.sessionId}-below-${turnIndex}`}
-									workspaceId={workspaceId}
-									turn={turn}
-								/>
-							))}
-						</div>
+							</div>
+						</Fragment>
 					)
 				})}
-				{/* Handoffs started this turn that no message carries yet: shown at the
-				    foot of the transcript so the person sees the work begin instead of
-				    waiting for the agent's next message to anchor it. */}
-				{threadsPane && handedOffStripEnabled && pendingHandoffs.length > 0 ? (
-					<div className="ml-[39px] flex max-w-[660px] flex-col gap-2">
-						{pendingHandoffs.map((session) => (
-							<HandoffCard
-								key={session.id}
-								session={session}
-								onViewThread={threadsPane.openThread}
-							/>
-						))}
-					</div>
-				) : null}
+				{/* Handoffs created after the newest message: the person sees the work
+				    begin instead of waiting for the agent's next message. */}
+				{renderHandoffCards(handoffsByNextMessage.get('end'))}
 			</div>
 			<div ref={bottomAnchorRef} />
 		</div>

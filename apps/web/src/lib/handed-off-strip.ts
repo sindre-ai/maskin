@@ -148,3 +148,22 @@ export function handoffTitle(actionPrompt: string, actorName: string): string {
 	if (!firstLine) return actorName
 	return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine
 }
+
+/**
+ * Place each handoff in the chat's timeline: keyed by the first message written
+ * after its session was created, or `'end'` when nothing has been written since.
+ * Messages must be oldest-first.
+ */
+export function groupHandoffsByNextMessage<T extends { createdAt: string | null }>(
+	handoffs: readonly T[],
+	messages: readonly { id: number; createdAt: string | null }[],
+): Map<number | 'end', T[]> {
+	const byMessage = new Map<number | 'end', T[]>()
+	for (const handoff of handoffs) {
+		const at = handoff.createdAt ? Date.parse(handoff.createdAt) : Number.POSITIVE_INFINITY
+		const next = messages.find((m) => (m.createdAt ? Date.parse(m.createdAt) : 0) > at)
+		const key = next ? next.id : 'end'
+		byMessage.set(key, [...(byMessage.get(key) ?? []), handoff])
+	}
+	return byMessage
+}

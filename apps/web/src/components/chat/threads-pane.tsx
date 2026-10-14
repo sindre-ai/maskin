@@ -1,8 +1,9 @@
 import {
-	SessionLogTranscript,
 	getSessionResultDisplay,
 	isSessionIdleAwaitingInput,
+	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
+import { MessageActivity } from '@/components/chat/message-activity'
 import { QuestionOptions } from '@/components/chat/question-options'
 import { ProducedFilesGroup, ProducedObjectsGroup } from '@/components/objects/produced-pane'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -182,6 +183,11 @@ function ThreadOutcome({
 }) {
 	const group = groupOf(thread)
 	const result = useMemo(() => getSessionResultDisplay(logs), [logs])
+	// A helper has no `maskin_message_id` turns, so its whole trace is one run of steps.
+	const steps = useMemo(() => {
+		const { segments, unassigned } = segmentActivityByMessage(logs)
+		return [...unassigned, ...segments.flatMap((s) => s.steps)]
+	}, [logs])
 	if (isLoading) return <Spinner />
 	if (group === 'waiting' && thread.awaiting) {
 		return (
@@ -197,7 +203,22 @@ function ThreadOutcome({
 			</div>
 		)
 	}
-	if (group === 'working') return <SessionLogTranscript logs={logs} />
+	// Live work reads like it does in the chat — who is working, how long, and the
+	// steps taken — rather than the raw log.
+	if (group === 'working') {
+		return (
+			<MessageActivity
+				workspaceId={workspaceId}
+				turn={{
+					sessionId: thread.id,
+					actorId: thread.actorId,
+					steps,
+					inProgress: true,
+					starting: statusToPill(thread.status) === 'QUEUED',
+				}}
+			/>
+		)
+	}
 	const text = result?.text ?? (group === 'failed' ? failureText(thread.result) : null)
 	return (
 		<div className="rounded-lg border border-border bg-card px-3 py-2">

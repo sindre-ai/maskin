@@ -3,6 +3,7 @@ import { formatDurationMs } from '@/lib/format-duration'
 import {
 	failureText,
 	formatDepNames,
+	groupHandoffsByNextMessage,
 	handoffTitle,
 	resolveDepNames,
 	statusToPill,
@@ -24,6 +25,7 @@ function session(overrides: Partial<SpawnedSession> = {}): SpawnedSession {
 		currentActivity: null,
 		depends_on_session_ids: [],
 		awaiting: null,
+		createdAt: '2026-09-23T08:00:00.000Z',
 		...overrides,
 	}
 }
@@ -157,6 +159,38 @@ describe('statusToThreadGroup awaiting', () => {
 	it('ignores awaiting once the session has ended', () => {
 		expect(statusToThreadGroup('completed', true)).toBe('done')
 		expect(statusToThreadGroup('failed', true)).toBe('failed')
+	})
+})
+
+describe('groupHandoffsByNextMessage', () => {
+	const messages = [
+		{ id: 1, createdAt: '2026-09-23T10:01:00.000Z' },
+		{ id: 3, createdAt: '2026-09-23T10:03:00.000Z' },
+		{ id: 4, createdAt: '2026-09-23T10:04:00.000Z' },
+	]
+
+	it('puts a card before the first message written after its session was created', () => {
+		const grouped = groupHandoffsByNextMessage(
+			[{ createdAt: '2026-09-23T10:02:00.000Z' }],
+			messages,
+		)
+		expect([...grouped.keys()]).toEqual([3])
+	})
+
+	it('puts a card at the end when nothing was written after it', () => {
+		const grouped = groupHandoffsByNextMessage(
+			[{ createdAt: '2026-09-23T10:05:00.000Z' }],
+			messages,
+		)
+		expect([...grouped.keys()]).toEqual(['end'])
+	})
+
+	it('stacks handoffs created between the same two messages', () => {
+		const grouped = groupHandoffsByNextMessage(
+			[{ createdAt: '2026-09-23T10:02:00.000Z' }, { createdAt: '2026-09-23T10:02:30.000Z' }],
+			messages,
+		)
+		expect(grouped.get(3)).toHaveLength(2)
 	})
 })
 

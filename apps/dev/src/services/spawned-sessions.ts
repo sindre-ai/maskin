@@ -30,6 +30,8 @@ export interface SpawnedSessionEmbed {
 	actorId: string
 	actorName: string
 	actionPrompt: string
+	/** When the session was created: where its card sits in the chat's timeline. */
+	createdAt: string | null
 	startedAt: string | null
 	completedAt: string | null
 	durationMs: number | null
@@ -83,6 +85,7 @@ function toEmbed(row: {
 	actorId: string
 	actorName: string
 	actionPrompt: string
+	createdAt: Date | null
 	startedAt: Date | null
 	completedAt: Date | null
 	durationMs: number | null
@@ -97,6 +100,7 @@ function toEmbed(row: {
 		actorId: row.actorId,
 		actorName: row.actorName,
 		actionPrompt: row.actionPrompt,
+		createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 		startedAt: row.startedAt ? row.startedAt.toISOString() : null,
 		completedAt: row.completedAt ? row.completedAt.toISOString() : null,
 		durationMs: row.durationMs,
@@ -132,6 +136,7 @@ export async function loadSpawnedSessionsByMessage(
 			actorId: sessions.actorId,
 			actorName: actors.name,
 			actionPrompt: sessions.actionPrompt,
+			createdAt: sessions.createdAt,
 			startedAt: sessions.startedAt,
 			completedAt: sessions.completedAt,
 			durationMs: sessions.durationMs,
@@ -330,6 +335,7 @@ export async function loadPendingSpawnedSessions(
 			actorId: sessions.actorId,
 			actorName: actors.name,
 			actionPrompt: sessions.actionPrompt,
+			createdAt: sessions.createdAt,
 			startedAt: sessions.startedAt,
 			completedAt: sessions.completedAt,
 			durationMs: sessions.durationMs,

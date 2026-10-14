@@ -6008,6 +6008,47 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'ask_user_question',
+		{
+			description: tools.ask_user_question.description,
+			inputSchema: tools.ask_user_question.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string) => ({
+				_meta: meta('ask_user_question', config, undefined),
+				content: [{ type: 'text' as const, text }],
+			})
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId) {
+				return reply(
+					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
+				)
+			}
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+					questions: args.questions.map((q) => ({
+						question: q.question,
+						header: q.header,
+						multi_select: q.multi_select ?? false,
+						options: q.options,
+					})),
+				})
+			} catch (err) {
+				// 409 is the normal answer for a session with no chat to ask in.
+				console.error('ask_user_question: could not post the question', err)
+				return reply(
+					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			return reply(
+				'Your question has been posted and the person is being shown the options. Do not call this tool again and do not repeat the question in your own words. End your turn now, without a closing message; their answer will arrive as your next turn.',
+			)
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_sessions',
 		{
 			description: tools.list_sessions.description,

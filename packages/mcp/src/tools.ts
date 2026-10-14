@@ -1510,6 +1510,38 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	ask_user_question: {
+		description:
+			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. It only works inside an agent session started from a chat; elsewhere there is nobody to ask, and the tool says so — then decide for yourself and state the assumption you made. Give 2 to 4 options each; a person can always type something else.',
+		inputSchema: z.object({
+			questions: z
+				.array(
+					z.object({
+						question: z.string().min(1).max(1000).describe('The full question.'),
+						header: z
+							.string()
+							.min(1)
+							.max(24)
+							.describe('A short label for the question, e.g. "Job board".'),
+						multi_select: z
+							.boolean()
+							.optional()
+							.describe('Let the person pick more than one option.'),
+						options: z
+							.array(
+								z.object({
+									label: z.string().min(1).max(200),
+									description: z.string().max(1000).optional(),
+								}),
+							)
+							.min(2)
+							.max(4),
+					}),
+				)
+				.min(1)
+				.max(4),
+		}),
+	},
 	pause_session: {
 		description: 'Pause a running session and save a snapshot for later resumption',
 		inputSchema: z.object({

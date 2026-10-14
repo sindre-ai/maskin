@@ -2023,6 +2023,8 @@ export interface SpawnedSession {
 	actorId: string
 	actorName: string
 	actionPrompt: string
+	/** When the session was created: where its card sits in the chat's timeline. */
+	createdAt: string | null
 	startedAt: string | null
 	completedAt: string | null
 	durationMs: number | null

@@ -76,6 +76,7 @@ const ALL_TOOL_NAMES = [
 	'stop_session',
 	'pause_session',
 	'resume_session',
+	'ask_user_question',
 	'create_notification',
 	'list_notifications',
 	'get_notification',

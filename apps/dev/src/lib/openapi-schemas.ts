@@ -364,6 +364,7 @@ export const spawnedSessionResponseSchema = z.object({
 	actorId: z.string().uuid(),
 	actorName: z.string(),
 	actionPrompt: z.string(),
+	createdAt: z.string().nullable(),
 	startedAt: z.string().nullable(),
 	completedAt: z.string().nullable(),
 	durationMs: z.number().nullable(),
