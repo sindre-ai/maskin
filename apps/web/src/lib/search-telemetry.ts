@@ -58,6 +58,9 @@ export function useTrackSettledSearch(input: SettledSearchInput): void {
 	const { surface, active, query, type, status, isSettled, isError, isPartial, total } = input
 	const trimmed = query.trim()
 	const firedKey = useRef<string | null>(null)
+	// Kept next to the dedupe key so a StrictMode effect replay (cleanup, then the
+	// same effects again) can restore the search the cleanup below just dropped.
+	const firedSearch = useRef<SettledSearch | null>(null)
 
 	// A surface that unmounts takes its last search with it.
 	useEffect(
@@ -70,15 +73,20 @@ export function useTrackSettledSearch(input: SettledSearchInput): void {
 	useEffect(() => {
 		if (!active || !trimmed) {
 			firedKey.current = null
+			firedSearch.current = null
 			delete lastSearch[surface]
 			return
 		}
 		if (!isSettled || isError) return
 		const key = `${trimmed}\u0000${type ?? ''}\u0000${status ?? ''}`
-		if (firedKey.current === key) return
+		if (firedKey.current === key) {
+			if (firedSearch.current) lastSearch[surface] = firedSearch.current
+			return
+		}
 		firedKey.current = key
 		const searchId = newSearchId()
-		lastSearch[surface] = { id: searchId, resultCount: total }
+		firedSearch.current = { id: searchId, resultCount: total }
+		lastSearch[surface] = firedSearch.current
 		trackSearchPerformed({
 			surface,
 			search_id: searchId,
