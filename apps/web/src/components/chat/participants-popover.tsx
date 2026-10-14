@@ -64,7 +64,7 @@ export function ParticipantsPopover({
 	const candidates = useMemo(() => {
 		const byId = new Map<string, { id: string; name: string; type: string }>()
 		for (const m of members ?? []) {
-			if (!participantIds.has(m.actorId))
+			if (m.type !== 'system' && !participantIds.has(m.actorId))
 				byId.set(m.actorId, { id: m.actorId, name: m.name, type: m.type })
 		}
 		for (const a of actors ?? []) {

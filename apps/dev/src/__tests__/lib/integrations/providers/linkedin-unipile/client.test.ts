@@ -190,6 +190,24 @@ describe('read-surface routes', () => {
 		expect(mock.inbox().at(-1)?.path).toBe('/v2/acc_1/users/janedoe')
 	})
 
+	// The sections param is opt-in: a plain call must carry no query string, so
+	// the default request is byte-for-byte what it was before.
+	it('sends no with_sections by default', async () => {
+		await client().getProfile({ account_id, identifier: 'janedoe' })
+		expect(mock.inbox().at(-1)?.path).not.toContain('with_sections')
+	})
+
+	it('sends with_sections as a repeated query param when asked', async () => {
+		await client().getProfile({
+			account_id,
+			identifier: 'janedoe',
+			with_sections: ['linkedin_experience'],
+		})
+		expect(mock.inbox().at(-1)?.path).toBe(
+			'/v2/acc_1/users/janedoe?with_sections=linkedin_experience',
+		)
+	})
+
 	// An identifier can contain characters that would otherwise change the
 	// path shape.
 	it('url-encodes the identifier', async () => {

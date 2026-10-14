@@ -302,11 +302,13 @@ function LoopsRoute() {
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
-			<BuyCreditsDialog
-				open={buyCreditsOpen}
-				onOpenChange={setBuyCreditsOpen}
-				workspaceId={workspaceId}
-			/>
+			{billingUsage?.credit_topup_available && (
+				<BuyCreditsDialog
+					open={buyCreditsOpen}
+					onOpenChange={setBuyCreditsOpen}
+					workspaceId={workspaceId}
+				/>
+			)}
 		</div>
 	)
 }

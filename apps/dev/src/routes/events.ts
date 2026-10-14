@@ -16,17 +16,23 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
-import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
+import {
+	isAgentMentionFreeComment,
+	isCommentFallbackDriverEligible,
+} from '../services/trigger-runner'
 import { loadSenderLine } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
@@ -250,6 +256,7 @@ app.openapi(createCommentRoute, (async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	// Validate the target object exists and belongs to this workspace
@@ -384,7 +391,16 @@ app.openapi(createCommentRoute, (async (c) => {
 	// the `CommentDispatcher` will handle via the @-mention branch is excluded
 	// here so the thread-reply auto-spawn doesn't double up on the same agent
 	// for the same comment.
-	if (parentEventId !== undefined) {
+	//
+	// An agent's mention-free reply is low-attention and wakes nobody here, the
+	// same rule the dispatcher applies to cases 2 and 3.
+	if (
+		parentEventId !== undefined &&
+		!isAgentMentionFreeComment({
+			actorType: c.get('actorType'),
+			mentionCount: body.mentions?.length ?? 0,
+		})
+	) {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude
