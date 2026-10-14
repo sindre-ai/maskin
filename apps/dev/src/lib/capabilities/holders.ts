@@ -3,7 +3,6 @@ import { actors, integrations, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { transportOf } from '../actor-tools-redaction'
 import { getProvider, listProviders } from '../integrations/registry'
-import type { McpServerSpec } from '../integrations/types'
 import type { IntegrationConfig } from '../types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../workspace-auth'
 
@@ -75,15 +74,6 @@ async function loadActiveAgents(ctx: HolderContext): Promise<ActiveAgent[]> {
 				: []
 		return { id: row.id, mcpServers: servers }
 	})
-}
-
-function declaredServer(provider: string | undefined): McpServerSpec | null {
-	if (!provider) return null
-	try {
-		return getProvider(provider).config.mcp?.server ?? null
-	} catch {
-		return null
-	}
 }
 
 const GITHUB_STDIO_COMMAND = 'github-mcp-server'

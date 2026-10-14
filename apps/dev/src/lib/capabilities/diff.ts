@@ -204,7 +204,7 @@ export function diffCapabilities(input: DiffInput): DiffResult {
 			source,
 			tools: [name],
 			flagged,
-			dedupeKey: dedupeKeyFor(workspaceId, source, addedKind, name, curr[name]),
+			dedupeKey: dedupeKeyFor(workspaceId, source, addedKind, name, curr[name] ?? ''),
 			...(reconnect ? { missingScopes: reconnect } : {}),
 		})
 	}
