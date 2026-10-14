@@ -191,6 +191,16 @@ beforeAll(async () => {
 beforeEach(async () => {
 	// Clean all data except the test actor
 	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+
+	// actors.default_workspace_id references workspaces, so Postgres cascades the
+	// TRUNCATE above into actors (CASCADE follows FK definitions, not row data) and
+	// removes the test actor. Put it back under the same id so every test still
+	// finds it, as the comment above promises.
+	await sql`
+		INSERT INTO actors (id, type, name, email, api_key)
+		VALUES (${testActorId}, 'human', 'Integration Test Actor', 'integration@test.com', 'ank_testintegration')
+		ON CONFLICT (id) DO NOTHING
+	`
 })
 
 afterAll(async () => {

@@ -1857,6 +1857,8 @@ interface RawWorkspace {
 	id: string
 	name?: string | null
 	role?: string | null
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault?: boolean
 	createdAt?: string | null
 	updatedAt?: string | null
 }
@@ -1971,6 +1973,7 @@ export function redactWorkspaceSettings<T>(workspace: T): T {
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
 	const age = ageLabel(workspace.updatedAt ?? workspace.createdAt)
 	const parts = ['workspace']
+	if (workspace.isDefault) parts.push('default')
 	if (age) parts.push(age)
 	return parts.join(' · ')
 }

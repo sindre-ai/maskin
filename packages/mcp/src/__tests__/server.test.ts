@@ -4742,6 +4742,36 @@ describe('tool handlers', () => {
 			})
 		})
 
+		it('list_workspaces shows which workspace is the default', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).includes('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'ws-1', name: 'Maskin', role: 'owner', isDefault: false },
+								{ id: 'ws-2', name: 'Reflect Studio', role: 'member', isDefault: true },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_workspaces')
+			const result = (await handler({})) as {
+				structuredContent: {
+					workspaces: Array<{ id: string; isDefault: boolean }>
+					heroCard: { objects?: Array<{ title: string | null; contextLine?: string }> }
+				}
+			}
+
+			expect(
+				Object.fromEntries(result.structuredContent.workspaces.map((w) => [w.id, w.isDefault])),
+			).toEqual({ 'ws-1': false, 'ws-2': true })
+			const cards = result.structuredContent.heroCard.objects ?? []
+			expect(cards.find((o) => o.title === 'Reflect Studio')?.contextLine).toContain('default')
+			expect(cards.find((o) => o.title === 'Maskin')?.contextLine).not.toContain('default')
+		})
+
 		it('list_workspaces strips credentials and billing from settings, keeping the schema', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
