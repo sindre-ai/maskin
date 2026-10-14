@@ -21,7 +21,7 @@ import { grantedActorsAreInWorkspace } from '../lib/integrations/scope-grants'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 import { endSessionHoldingKey, relaunchChatSession } from '../services/chat-relaunch'
 import type { SessionManager } from '../services/session-manager'
 
@@ -30,6 +30,7 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		workspaceRole?: string
 		sessionManager: SessionManager
 	}
 }
@@ -99,6 +100,7 @@ const chatCaptureResponseSchema = z.object({
 const chatCaptureRoute = createRoute({
 	method: 'post',
 	path: '/chat-capture',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Vault a secret pasted in chat (humans only)',
 	request: { headers: workspaceIdHeader },
@@ -124,6 +126,7 @@ app.openapi(chatCaptureRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Agents never vault secrets: an agent that held one has already seen it.
 	if (c.get('actorType') !== 'human') {
@@ -207,6 +210,7 @@ const byoApiKeyBodySchema = z
 const byoApiKeyRoute = createRoute({
 	method: 'post',
 	path: '/byo-apikey',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Vault an API key pasted in the Keychain (humans only)',
 	request: { headers: workspaceIdHeader },
@@ -228,6 +232,7 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Agents never vault secrets: an agent that held one has already seen it.
 	if (c.get('actorType') !== 'human') {
@@ -273,6 +278,7 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 const undoRoute = createRoute({
 	method: 'post',
 	path: '/{id}/undo',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Undo a chat capture inside its 5 minute window',
 	request: { headers: workspaceIdHeader, params: idParamSchema },
@@ -307,6 +313,7 @@ app.openapi(undoRoute, (async (c) => {
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	const [row] = await db
@@ -421,6 +428,7 @@ app.openapi(undoRoute, (async (c) => {
 const relaunchRoute = createRoute({
 	method: 'post',
 	path: '/{id}/relaunch',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Retry stopping the session after a chat capture whose relaunch failed',
 	request: { headers: workspaceIdHeader, params: idParamSchema },
@@ -447,6 +455,7 @@ app.openapi(relaunchRoute, (async (c) => {
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	const [row] = await db
@@ -491,6 +500,7 @@ app.openapi(relaunchRoute, (async (c) => {
 const rotateDekRoute = createRoute({
 	method: 'post',
 	path: '/{id}/rotate-dek',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Re-wrap one credential under a fresh data key and the workspace current KEK',
 	request: { headers: workspaceIdHeader, params: idParamSchema },
@@ -519,6 +529,7 @@ app.openapi(rotateDekRoute, (async (c) => {
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
@@ -562,6 +573,7 @@ const scopeBodySchema = z.object({ scopeGrants: z.array(scopeGrantSchema).max(25
 const scopeRoute = createRoute({
 	method: 'put',
 	path: '/{id}/scope',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Replace which agents may use a saved API key (humans only)',
 	request: {
@@ -601,6 +613,7 @@ app.openapi(scopeRoute, (async (c) => {
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	// Agents never change who can read a key: grants come from a person, never from a session.
