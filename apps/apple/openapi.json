@@ -5794,6 +5794,13 @@
 												"type": "string"
 											}
 										}
+									},
+									"default_workspace_id": {
+										"type": [
+											"string",
+											"null"
+										],
+										"format": "uuid"
 									}
 								}
 							}
@@ -6223,6 +6230,63 @@
 					},
 					"404": {
 						"description": "Actor not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Agent files could not be removed from storage; the agent was not deleted",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -10063,6 +10127,9 @@
 											"memberCount": {
 												"type": "integer",
 												"minimum": 0
+											},
+											"isDefault": {
+												"type": "boolean"
 											}
 										},
 										"required": [
@@ -10076,7 +10143,8 @@
 											"createdAt",
 											"updatedAt",
 											"role",
-											"memberCount"
+											"memberCount",
+											"isDefault"
 										]
 									}
 								}
@@ -37311,6 +37379,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -37813,6 +37884,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -38145,6 +38219,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
