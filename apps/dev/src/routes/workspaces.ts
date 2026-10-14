@@ -1232,6 +1232,9 @@ app.openapi(updateMemberRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
 
+	// The cached auth lookup carries the role, so a role change must not wait out its TTL.
+	evictMembership(actorId, workspaceId)
+
 	return c.json(
 		serialize({
 			actorId: result.updated.actorId,

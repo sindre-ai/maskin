@@ -5,6 +5,7 @@ import {
 	oauthAuthorizationCodes,
 	oauthGrants,
 	oauthTokens,
+	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
 import { and, eq, gt, isNull } from 'drizzle-orm'
@@ -506,6 +507,8 @@ describe('cascades', () => {
 		const { ws } = await seed()
 		expect(await count('oauth_grants')).toBe(1)
 
+		// The workspace's own member rows do not cascade; clear them so the delete reaches the grant.
+		await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, ws.id))
 		await db.delete(workspaces).where(eq(workspaces.id, ws.id))
 
 		expect(await count('oauth_grants')).toBe(0)

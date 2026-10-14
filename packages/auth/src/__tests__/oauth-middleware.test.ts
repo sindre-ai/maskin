@@ -26,16 +26,17 @@ const context = (overrides: Record<string, unknown> = {}) => ({
 	...overrides,
 })
 
-type Env = { Variables: { actorId: string; actorType: string } }
+type Env = { Variables: { actorId: string; actorType: string; workspaceRole?: string } }
 
-function createApp(db: Database) {
+function createApp(db: Database, cacheTtlMs = 0) {
 	const app = new Hono<Env>()
-	app.use('/api/*', authMiddleware(db, { cacheTtlMs: 0 }))
+	app.use('/api/*', authMiddleware(db, { cacheTtlMs }))
 	// Registered the way the real app registers them, so the allowlist sees real patterns.
 	app.get('/api/objects', (c) =>
 		c.json({
 			actorId: c.get('actorId'),
 			actorType: c.get('actorType'),
+			workspaceRole: c.get('workspaceRole') ?? null,
 			workspaceHeader: c.req.header('X-Workspace-Id') ?? null,
 			pin: getOAuthPin() ?? null,
 		}),
@@ -59,7 +60,7 @@ function request(
 	})
 }
 
-const member = [{ actorId: ACTOR }]
+const member = [{ role: 'member' }]
 
 beforeEach(() => {
 	vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', 'true')
@@ -175,5 +176,55 @@ describe('authMiddleware: mat_ access token', () => {
 		expect(res.status).toBe(401)
 		expect((await res.json()).error.message).toBe('Invalid token format')
 		expect(vi.mocked(validateOAuthAccessToken)).not.toHaveBeenCalled()
+	})
+})
+
+describe("authMiddleware: mat_ access token and the person's role", () => {
+	it('puts the role on the context, like the ank_ branch, so write routes can refuse a viewer', async () => {
+		const res = await request(createApp(createMockDb([[{ role: 'viewer' }]])))
+		expect(res.status).toBe(200)
+		expect((await res.json()).workspaceRole).toBe('viewer')
+
+		const asMember = await request(createApp(createMockDb([member])))
+		expect((await asMember.json()).workspaceRole).toBe('member')
+	})
+
+	it('answers 401 for a person with no membership row, as it does for a removed member', async () => {
+		const res = await request(createApp(createMockDb([[]])))
+		expect(res.status).toBe(401)
+	})
+})
+
+describe('authMiddleware: a key and a token for the same person and workspace share one cache', () => {
+	const KEY = 'ank_samepersonkey'
+	const keyRequest = (app: ReturnType<typeof createApp>) =>
+		app.request('/api/objects', {
+			headers: { Authorization: `Bearer ${KEY}`, 'X-Workspace-Id': PINNED },
+		})
+	const keyRow = [{ id: ACTOR, type: 'human' }]
+
+	it('token first: the key then sees the viewer role, not a yes/no', async () => {
+		// Selects in order: the token's membership, then the key's actor. The key's membership
+		// must come from the cache the token filled.
+		const app = createApp(createMockDb([[{ role: 'viewer' }], keyRow]), 60_000)
+
+		const viaToken = await (await request(app)).json()
+		const viaKey = await (await keyRequest(app)).json()
+
+		expect(viaToken.workspaceRole).toBe('viewer')
+		expect(viaKey.workspaceRole).toBe('viewer')
+	})
+
+	it('key first: the token then sees the viewer role and still counts as a member', async () => {
+		// Selects in order: the key's actor, the key's membership. The token's membership must
+		// come from the cache the key filled.
+		const app = createApp(createMockDb([keyRow, [{ role: 'viewer' }]]), 60_000)
+
+		const viaKey = await (await keyRequest(app)).json()
+		const res = await request(app)
+
+		expect(viaKey.workspaceRole).toBe('viewer')
+		expect(res.status).toBe(200)
+		expect((await res.json()).workspaceRole).toBe('viewer')
 	})
 })

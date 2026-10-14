@@ -10,6 +10,7 @@ import {
 	evictOAuthTokens,
 	getMcpForwardMarker,
 	mintToken,
+	runWithOAuthPin,
 } from '@maskin/auth'
 import {
 	files,
@@ -20,9 +21,10 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../app-factory'
-import { __resetMcpActorCache, __resolveAgentActorId } from '../../routes/mcp'
+import { getWorkspaceRole, isWorkspaceWriter } from '../../lib/workspace-auth'
+import { __resetMcpActorCache, __resolveAgentActor } from '../../routes/mcp'
 import {
 	insertActor,
 	insertConversation,
@@ -33,7 +35,7 @@ import {
 	insertTrigger,
 	insertWorkspace,
 } from '../factories'
-import { db } from './global-setup'
+import { db, sql } from './global-setup'
 
 const CLIENT_ID = 'https://claude.ai/oauth/mcp-oauth-client-metadata'
 
@@ -61,6 +63,18 @@ beforeAll(async () => {
 	base = `http://localhost:${port}`
 	closeServer = () => server.close()
 }, 60_000)
+
+// A token use stamps its grant's last_used_at after the response has gone out. Let that write
+// finish before the next test's TRUNCATE takes its table locks; the two otherwise wait on each
+// other and Postgres reports a deadlock.
+afterEach(async () => {
+	for (let i = 0; i < 100; i++) {
+		const [{ busy }] = await sql`SELECT count(*)::int AS busy FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'`
+		if (busy === 0) return
+		await new Promise((resolve) => setTimeout(resolve, 20))
+	}
+})
 
 afterAll(() => {
 	closeServer?.()
@@ -260,7 +274,7 @@ describe('a mat_ token pinned to workspace A', () => {
 		})
 
 		expect(res.status).toBe(201)
-		expect(res.body.created_by).toBe(person.id)
+		expect(res.body.createdBy).toBe(person.id)
 		expect(res.body.workspaceId ?? res.body.workspace_id).toBe(wsA.id)
 	})
 
@@ -438,23 +452,23 @@ describe('who the caller is', () => {
 					body: { type: 'task', title: 'Who am I', status: 'todo' },
 					marker,
 				})
-			).body.created_by
+			).body.createdBy
 
 		const keyCaller = await created(person.apiKey, wsA.id, false)
 		const tokenCaller = await created(token, undefined, true)
 
 		expect(keyCaller).toBe(person.id)
 		expect(tokenCaller).toBe(person.id)
-		expect(await __resolveAgentActorId(db, person.apiKey)).toBe(keyCaller)
-		expect(await __resolveAgentActorId(db, token)).toBe(tokenCaller)
+		expect((await __resolveAgentActor(db, person.apiKey))?.actorId).toBe(keyCaller)
+		expect((await __resolveAgentActor(db, token))?.actorId).toBe(tokenCaller)
 	})
 
 	it('is nobody for a refresh token or an unknown token, on both paths', async () => {
 		await seedTwoWorkspaces()
 		__resetMcpActorCache()
 
-		expect(await __resolveAgentActorId(db, mintToken('mrt_').raw)).toBeNull()
-		expect(await __resolveAgentActorId(db, mintToken('mat_').raw)).toBeNull()
+		expect(await __resolveAgentActor(db, mintToken('mrt_').raw)).toBeNull()
+		expect(await __resolveAgentActor(db, mintToken('mat_').raw)).toBeNull()
 	})
 })
 
@@ -575,5 +589,146 @@ describe('through /mcp', () => {
 		const [row] = await db.select().from(objects).where(eq(objects.title, 'Created by a tool'))
 		expect(row?.createdBy).toBe(person.id)
 		expect(row?.workspaceId).toBe(wsA.id)
+	})
+})
+
+describe('a viewer connected through Claude is read-only', () => {
+	async function seedViewer() {
+		const { person, wsA, objA, token: memberToken } = await seedTwoWorkspaces()
+		const viewer = await insertActor(db)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: wsA.id, actorId: viewer.id, role: 'viewer' })
+		const { token } = await connect(viewer.id, wsA.id)
+		return { person, wsA, objA, viewer, token, memberToken }
+	}
+
+	it('answers 403 on a header-scoped write (create) and 201 for a member with the same call', async () => {
+		const { wsA, token, memberToken } = await seedViewer()
+		const body = { type: 'task', title: 'Viewer write', status: 'todo' }
+
+		const asViewer = await api('/api/objects', { token, method: 'POST', body })
+		const asMember = await api('/api/objects', { token: memberToken, method: 'POST', body })
+
+		expect(asViewer.status).toBe(403)
+		expect(asMember.status).toBe(201)
+		const rows = await db.select().from(objects).where(eq(objects.workspaceId, wsA.id))
+		expect(rows.filter((o) => o.title === 'Viewer write')).toHaveLength(1)
+	})
+
+	it('answers 403 on by-ID writes (patch, delete) and still serves the read', async () => {
+		const { objA, token } = await seedViewer()
+
+		const patch = await api(`/api/objects/${objA.id}`, {
+			token,
+			method: 'PATCH',
+			body: { title: 'renamed by a viewer' },
+		})
+		const del = await api(`/api/objects/${objA.id}`, { token, method: 'DELETE' })
+		const read = await api(`/api/objects/${objA.id}`, { token })
+
+		expect(patch.status).toBe(403)
+		expect(del.status).toBe(403)
+		expect(read.status).toBe(200)
+		const [row] = await db.select().from(objects).where(eq(objects.id, objA.id))
+		expect(row?.title).toBe('Task in A')
+	})
+
+	it('answers 403 on a header-scoped write whether the key or the token filled the shared cache first', async () => {
+		const { wsA, viewer, token } = await seedViewer()
+		const body = { type: 'task', title: 'Poisoned?', status: 'todo' }
+		const viaKey = () =>
+			api('/api/objects', {
+				token: viewer.apiKey,
+				workspaceId: wsA.id,
+				method: 'POST',
+				body,
+				marker: false,
+			})
+		const viaToken = () => api('/api/objects', { token, method: 'POST', body })
+
+		// Token first, then key, then token again: each reads the cache the other wrote.
+		expect((await viaToken()).status).toBe(403)
+		expect((await viaKey()).status).toBe(403)
+		expect((await viaToken()).status).toBe(403)
+
+		// Key first for a second viewer.
+		const second = await insertActor(db)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: wsA.id, actorId: second.id, role: 'viewer' })
+		const { token: secondToken } = await connect(second.id, wsA.id)
+		const keyFirst = await api('/api/objects', {
+			token: second.apiKey,
+			workspaceId: wsA.id,
+			method: 'POST',
+			body,
+			marker: false,
+		})
+		const tokenAfter = await api('/api/objects', { token: secondToken, method: 'POST', body })
+
+		expect(keyFirst.status).toBe(403)
+		expect(tokenAfter.status).toBe(403)
+		const rows = await db.select().from(objects).where(eq(objects.workspaceId, wsA.id))
+		expect(rows.filter((o) => o.title === 'Poisoned?')).toHaveLength(0)
+	})
+})
+
+describe('a token pinned to workspace A cannot write by id into workspace B', () => {
+	it('answers 404 and changes nothing, even though the person owns both workspaces', async () => {
+		const { person, wsB, objB, objA, token } = await seedTwoWorkspaces()
+		const [file] = await db
+			.insert(files)
+			.values({
+				workspaceId: wsB.id,
+				name: 'b.txt',
+				mimeType: 'text/plain',
+				sizeBytes: 1,
+				storageKey: 'kb',
+				createdBy: person.id,
+			})
+			.returning()
+
+		const patchObject = await api(`/api/objects/${objB.id}`, {
+			token,
+			method: 'PATCH',
+			body: { title: 'hijacked' },
+		})
+		const deleteObject = await api(`/api/objects/${objB.id}`, { token, method: 'DELETE' })
+		const patchFile = await api(`/api/files/${file.id}`, {
+			token,
+			method: 'PATCH',
+			body: { name: 'hijacked' },
+		})
+		// Same person, same call, inside the pin: allowed.
+		const ownPatch = await api(`/api/objects/${objA.id}`, {
+			token,
+			method: 'PATCH',
+			body: { title: 'renamed in A' },
+		})
+
+		expect(patchObject.status).toBe(404)
+		expect(deleteObject.status).toBe(404)
+		expect(patchFile.status).toBe(404)
+		expect(ownPatch.status).toBe(200)
+		const [stillB] = await db.select().from(objects).where(eq(objects.id, objB.id))
+		expect(stillB?.title).toBe('Task in B')
+		const [stillFile] = await db.select().from(files).where(eq(files.id, file.id))
+		expect(stillFile?.name).toBe('b.txt')
+	})
+
+	it('getWorkspaceRole and isWorkspaceWriter answer null and false outside the pin, and normally inside it', async () => {
+		const { person, wsA, wsB, grant } = await seedTwoWorkspaces()
+		const pin = { workspaceId: wsA.id, grantId: grant.id, clientId: CLIENT_ID }
+
+		expect(await getWorkspaceRole(db, person.id, wsB.id)).toBe('owner')
+		expect(await isWorkspaceWriter(db, person.id, wsB.id)).toBe(true)
+
+		await runWithOAuthPin(pin, async () => {
+			expect(await getWorkspaceRole(db, person.id, wsA.id)).toBe('owner')
+			expect(await isWorkspaceWriter(db, person.id, wsA.id)).toBe(true)
+			expect(await getWorkspaceRole(db, person.id, wsB.id)).toBeNull()
+			expect(await isWorkspaceWriter(db, person.id, wsB.id)).toBe(false)
+		})
 	})
 })

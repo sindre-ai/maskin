@@ -56,7 +56,10 @@ export function buildMcpChallenge(
 ): string {
 	const params: string[] = []
 	if (options.invalidToken) {
-		params.push('error="invalid_token"', 'error_description="The access token is invalid or expired"')
+		params.push(
+			'error="invalid_token"',
+			'error_description="The access token is invalid or expired"',
+		)
 	}
 	params.push(
 		`resource_metadata="${resolveOAuthIssuer(env)}${PROTECTED_RESOURCE_METADATA_PATH}"`,
