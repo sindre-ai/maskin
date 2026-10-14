@@ -21,7 +21,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../app-factory'
 import { getWorkspaceRole, isWorkspaceWriter } from '../../lib/workspace-auth'
 import { __resetMcpActorCache, __resolveAgentActor } from '../../routes/mcp'
@@ -35,7 +35,7 @@ import {
 	insertTrigger,
 	insertWorkspace,
 } from '../factories'
-import { db } from './global-setup'
+import { db, sql } from './global-setup'
 
 const CLIENT_ID = 'https://claude.ai/oauth/mcp-oauth-client-metadata'
 
@@ -63,6 +63,18 @@ beforeAll(async () => {
 	base = `http://localhost:${port}`
 	closeServer = () => server.close()
 }, 60_000)
+
+// A token use stamps its grant's last_used_at after the response has gone out. Let that write
+// finish before the next test's TRUNCATE takes its table locks; the two otherwise wait on each
+// other and Postgres reports a deadlock.
+afterEach(async () => {
+	for (let i = 0; i < 100; i++) {
+		const [{ busy }] = await sql`SELECT count(*)::int AS busy FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'`
+		if (busy === 0) return
+		await new Promise((resolve) => setTimeout(resolve, 20))
+	}
+})
 
 afterAll(() => {
 	closeServer?.()
