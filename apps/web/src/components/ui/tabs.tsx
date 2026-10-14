@@ -9,9 +9,10 @@ const Tabs = TabsPrimitive.Root
  * `default` is shadcn's filled tab strip. `segmented` is the compact 2-way
  * switch v2 puts at the right of a section rule (mockup 1140–1143): a hairline
  * box holding 24px items, where the active item takes the muted fill instead
- * of the strip doing so.
+ * of the strip doing so. `line` is underline tabs (active = 2px foreground
+ * underline) for a scrolling row of names inside a card header.
  */
-type TabsVariant = 'default' | 'segmented'
+type TabsVariant = 'default' | 'segmented' | 'line'
 
 const TabsVariantContext = React.createContext<TabsVariant>('default')
 
@@ -26,11 +27,13 @@ const TabsList = React.forwardRef<
 				'inline-flex items-center justify-center',
 				variant === 'segmented'
 					? 'gap-0.5 rounded-[9px] border border-border p-0.5 text-muted-foreground'
-					: // `text-muted-foreground` (#71717a) on `bg-muted` (#f4f4f5) is 4.39:1 —
-						// just under WCAG AA. Inactive triggers sit on that muted surface, so
-						// the list's resting colour is a dimmed `foreground` instead. The
-						// segmented variant has no muted fill, so it keeps the muted token.
-						'h-10 rounded-md bg-muted p-1 text-foreground/70',
+					: variant === 'line'
+						? 'w-full justify-start overflow-x-auto overflow-y-hidden border-b border-border text-muted-foreground'
+						: // `text-muted-foreground` (#71717a) on `bg-muted` (#f4f4f5) is 4.39:1 —
+							// just under WCAG AA. Inactive triggers sit on that muted surface, so
+							// the list's resting colour is a dimmed `foreground` instead. The
+							// segmented variant has no muted fill, so it keeps the muted token.
+							'h-10 rounded-md bg-muted p-1 text-foreground/70',
 				className,
 			)}
 			{...props}
@@ -51,7 +54,9 @@ const TabsTrigger = React.forwardRef<
 				'inline-flex items-center justify-center whitespace-nowrap ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:text-foreground',
 				variant === 'segmented'
 					? 'h-6 gap-1.5 rounded-[7px] px-2.5 text-[11.5px] font-semibold data-[state=active]:bg-muted'
-					: 'rounded-sm px-3 py-1.5 text-sm font-medium data-[state=active]:bg-background data-[state=active]:shadow-sm',
+					: variant === 'line'
+						? '-mb-px border-b-2 border-transparent focus-visible:ring-inset focus-visible:ring-offset-0 px-[11px] pb-2.5 pt-2 text-[12.5px] font-medium hover:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold'
+						: 'rounded-sm px-3 py-1.5 text-sm font-medium data-[state=active]:bg-background data-[state=active]:shadow-sm',
 				className,
 			)}
 			{...props}
