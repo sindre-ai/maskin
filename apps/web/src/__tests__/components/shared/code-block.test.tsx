@@ -47,11 +47,11 @@ describe('CodeBlock', () => {
 
 	it('keeps a file-name label in its written case', () => {
 		render(<CodeBlock label="~/.cursor/mcp.json" fileName text="{}" toastMessage="x" />)
-		expect(screen.getByText('~/.cursor/mcp.json').className).toContain('normal-case')
+		expect(screen.getByText('~/.cursor/mcp.json').className).toContain('normal-case!')
 	})
 
 	it('leaves a plain-word label to the uppercase eyebrow style', () => {
 		render(<CodeBlock label="Headers" text="a: b" toastMessage="x" />)
-		expect(screen.getByText('Headers').className).not.toContain('normal-case')
+		expect(screen.getByText('Headers').className).not.toContain('normal-case!')
 	})
 })

@@ -107,13 +107,13 @@ describe('McpConnectionSection', () => {
 		render(<McpConnectionSection workspaceId="ws-1" />)
 
 		await user.click(screen.getByRole('tab', { name: 'Cursor' }))
-		expect(screen.getByText('~/.cursor/mcp.json').className).toContain('normal-case')
+		expect(screen.getByText('~/.cursor/mcp.json').className).toContain('normal-case!')
 
 		await user.click(screen.getByRole('tab', { name: 'Claude Desktop' }))
-		expect(screen.getByText('claude_desktop_config.json').className).toContain('normal-case')
+		expect(screen.getByText('claude_desktop_config.json').className).toContain('normal-case!')
 
 		await user.click(screen.getByRole('tab', { name: 'Other' }))
-		expect(screen.getByText('Server URL').className).not.toContain('normal-case')
+		expect(screen.getByText('Server URL').className).not.toContain('normal-case!')
 	})
 
 	it('builds the Claude Desktop config around mcp-remote with both headers', async () => {

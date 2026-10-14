@@ -142,9 +142,9 @@ test.describe('Settings — MCP — one tab per app', () => {
 		account,
 	}) => {
 		await gotoMcp(page, account.workspaceId)
+		// A reload would bounce to /login (the route guard needs a key), so drop the key in place
+		// and let the next tab switch re-render the page without one.
 		await page.evaluate(() => localStorage.removeItem('maskin-api-key'))
-		await page.reload()
-		await page.waitForLoadState('load')
 
 		await page.getByRole('tab', { name: 'Cursor' }).click()
 		await expect(page.getByRole('alert').filter({ hasText: 'Sign out and back in' })).toBeVisible()

@@ -68,7 +68,7 @@ export function CodeBlock({
 	return (
 		<div className={cn('overflow-hidden rounded-lg border border-border', className)}>
 			<div className="flex h-9 items-center justify-between gap-2 border-b border-border-subtle bg-surface-sunken pl-3 pr-1.5">
-				<span className={cn('eyebrow min-w-0 truncate', fileName && 'normal-case')}>{label}</span>
+				<span className={cn('eyebrow min-w-0 truncate', fileName && 'normal-case!')}>{label}</span>
 				<Button
 					type="button"
 					variant="outline"

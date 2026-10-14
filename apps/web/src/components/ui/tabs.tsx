@@ -28,7 +28,7 @@ const TabsList = React.forwardRef<
 				variant === 'segmented'
 					? 'gap-0.5 rounded-[9px] border border-border p-0.5 text-muted-foreground'
 					: variant === 'line'
-						? 'w-full justify-start overflow-x-auto border-b border-border text-muted-foreground'
+						? 'w-full justify-start overflow-x-auto overflow-y-hidden border-b border-border text-muted-foreground'
 						: // `text-muted-foreground` (#71717a) on `bg-muted` (#f4f4f5) is 4.39:1 —
 							// just under WCAG AA. Inactive triggers sit on that muted surface, so
 							// the list's resting colour is a dimmed `foreground` instead. The
@@ -55,7 +55,7 @@ const TabsTrigger = React.forwardRef<
 				variant === 'segmented'
 					? 'h-6 gap-1.5 rounded-[7px] px-2.5 text-[11.5px] font-semibold data-[state=active]:bg-muted'
 					: variant === 'line'
-						? '-mb-px border-b-2 border-transparent px-[11px] pb-2.5 pt-2 text-[12.5px] font-medium hover:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold'
+						? '-mb-px border-b-2 border-transparent focus-visible:ring-inset focus-visible:ring-offset-0 px-[11px] pb-2.5 pt-2 text-[12.5px] font-medium hover:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold'
 						: 'rounded-sm px-3 py-1.5 text-sm font-medium data-[state=active]:bg-background data-[state=active]:shadow-sm',
 				className,
 			)}
