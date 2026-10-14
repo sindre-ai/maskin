@@ -8,7 +8,13 @@ import { recordEvent } from '../../lib/events/record-event'
 import { MENTION_GUARD_LIMITS } from '../../services/mention-guards'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
+import {
+	ensureWorkspaceMember,
+	insertActor,
+	insertObject,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -63,6 +69,10 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 				apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
 			})
 		;[caller, stranger, target] = await Promise.all([mk('Caller'), mk('Stranger'), mk('Target')])
+		// Starting a session needs the agent to belong to the workspace.
+		for (const agent of [caller, stranger, target]) {
+			await ensureWorkspaceMember(db, workspaceId, agent.id)
+		}
 	})
 
 	beforeAll(() => {

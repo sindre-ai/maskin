@@ -241,9 +241,7 @@ describe('Actor and id scoping across workspaces', () => {
 
 	describe('notifications', () => {
 		function create(body: Record<string, unknown>) {
-			return app.request(
-				jsonRequest('POST', '/api/notifications', body, { 'x-workspace-id': wsA }),
-			)
+			return app.request(jsonRequest('POST', '/api/notifications', body, { 'x-workspace-id': wsA }))
 		}
 
 		async function notificationsInA() {

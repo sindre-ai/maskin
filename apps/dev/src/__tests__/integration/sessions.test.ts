@@ -180,9 +180,7 @@ describe('Sessions Integration', () => {
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Test Agent' })
 		agentActorId = agent.id
-		await db
-			.insert(workspaceMembers)
-			.values({ workspaceId, actorId: agentActorId, role: 'member' })
+		await db.insert(workspaceMembers).values({ workspaceId, actorId: agentActorId, role: 'member' })
 	})
 
 	describe('Create + Get lifecycle', () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, type vi } from 'vitest'
 import { configureSessionLifecycle, startSession } from '../../services/session-lifecycle'
 import { createMockSessionManager, createTestContext } from '../setup'
 
