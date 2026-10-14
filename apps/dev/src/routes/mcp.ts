@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
-import { getMcpForwardMarker, resolveMcpCredential } from '@maskin/auth/mcp'
+import { getMcpForwardMarker, isMcpOAuthEnabled, resolveMcpCredential } from '@maskin/auth/mcp'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
-import { resolveWebAppBaseUrl } from '@maskin/shared'
+import { OAUTH_ACCESS_TOKEN_PREFIX, resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { type McpClient, classifyMcpClient, oauthClientLabel } from '../lib/analytics/mcp-client'
 import {
 	type JsonRpcErrorLike,
@@ -23,6 +23,7 @@ import {
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
+import { buildMcpChallenge } from '../lib/oauth-server/discovery'
 
 // Only `db` is set on the /mcp path — the auth middleware runs under /api/*.
 type Env = {
@@ -51,7 +52,32 @@ interface JsonRpcMessage {
 	error?: JsonRpcErrorLike
 }
 
+// The sign-in challenge. Only with MASKIN_MCP_OAUTH_ENABLED on, and only for a caller that offered
+// no usable credential (no Authorization header, not Bearer, or an empty bearer) or a Claude
+// connector token (mat_) that does not validate. An ank_ key, valid or not, and any other bearer
+// string are left alone: they reach the transport as they always have. Bearer is matched the way
+// the rest of this route reads it, exactly "Bearer " (the string is forwarded to the API as is).
+async function mcpAuthChallenge(c: Context<Env>) {
+	const header = c.req.header('Authorization')
+	const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : ''
+	let invalidToken = false
+	if (bearer.trim()) {
+		if (!bearer.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) return null
+		if (await resolveMcpCredential(c.get('db'), bearer)) return null
+		invalidToken = true
+	}
+	c.header('WWW-Authenticate', buildMcpChallenge({ invalidToken }))
+	return c.json(
+		{ jsonrpc: '2.0', error: { code: -32001, message: 'Authentication required' }, id: null },
+		401,
+	)
+}
+
 app.post('/', async (c) => {
+	if (isMcpOAuthEnabled()) {
+		const challenge = await mcpAuthChallenge(c)
+		if (challenge) return challenge
+	}
 	const url = new URL(c.req.url, 'http://localhost')
 	const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''

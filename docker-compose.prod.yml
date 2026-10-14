@@ -115,6 +115,10 @@ services:
       # notifications@maskin.io default.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       APP_URL: ${APP_URL:-}
+      # Claude sign-in for the MCP server. Off unless MASKIN_MCP_OAUTH_ENABLED is true; the issuer
+      # defaults to the web app origin. See docs/reference/mcp-oauth.md.
+      MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-}
+      MASKIN_OAUTH_ISSUER: ${MASKIN_OAUTH_ISSUER:-}
     depends_on:
       postgres:
         condition: service_healthy

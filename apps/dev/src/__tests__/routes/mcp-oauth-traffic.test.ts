@@ -39,6 +39,7 @@ vi.mock('@maskin/auth', () => ({
 const resolveMcpCredential = vi.fn()
 vi.mock('@maskin/auth/mcp', () => ({
 	resolveMcpCredential,
+	isMcpOAuthEnabled: () => false,
 	getMcpForwardMarker: () => 'test-forward-marker',
 }))
 
