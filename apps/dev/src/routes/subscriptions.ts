@@ -114,7 +114,7 @@ const unreadItemSchema = z.object({
 			created_at: z.string(),
 			// The whole comment. For You is where the reader decides, so the card
 			// must not send them elsewhere to finish reading the ask; the body is
-			// bounded by createCommentSchema's 2000-character cap.
+			// bounded by createCommentSchema's COMMENT_MAX_LENGTH cap.
 			content: z.string(),
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The

@@ -144,6 +144,13 @@ export type LinkedInGetProfileQuery = {
 	 * request goes out — see `normalizeProfileIdentifier`.
 	 */
 	identifier: string
+	/**
+	 * Extra profile sections to pull, as Unipile v2 `with_sections` values (e.g.
+	 * `linkedin_experience`). Omit for the base profile: the param is only sent
+	 * when set, because LinkedIn may throttle section pulls and callers that do
+	 * not need them should pay nothing.
+	 */
+	with_sections?: readonly string[]
 }
 
 /**
@@ -595,7 +602,13 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			// with INVALID_INPUT.
 			const acc = encodeURIComponent(query.account_id)
 			const identifier = normalizeProfileIdentifier(query.identifier)
-			return call('GET', `/v2/${acc}/users/${encodeURIComponent(identifier)}`)
+			// Unipile encodes an array query param as one `with_sections` pair
+			// per value.
+			const params = new URLSearchParams()
+			for (const section of query.with_sections ?? []) params.append('with_sections', section)
+			const qs = params.toString()
+			const path = `/v2/${acc}/users/${encodeURIComponent(identifier)}`
+			return call('GET', qs ? `${path}?${qs}` : path)
 		},
 		getManagedCompanyPages(query) {
 			// GET /v2/{account_id}/linkedin/company/pages — pages the connected
