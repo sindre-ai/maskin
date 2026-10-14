@@ -9,7 +9,7 @@ type Env = { Variables: { actorId: string; actorType: string } }
 const KEY = 'Bearer ank_cachedkey'
 const WS = '11111111-1111-4111-8111-111111111111'
 const ACTOR_ROW = { id: 'actor-1', type: 'human' }
-const MEMBER_ROW = { actorId: 'actor-1' }
+const MEMBER_ROW = { role: 'member' }
 
 function appWith(db: Database, cacheTtlMs: number) {
 	const app = new Hono<Env>()

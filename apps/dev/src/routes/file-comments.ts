@@ -16,7 +16,7 @@ import { reserveRoundSlot } from '../lib/file-comment-round-limiter'
 import { migrateLegacyAnnotationsIfNeeded } from '../lib/file-comments-migration'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -191,7 +191,7 @@ app.openapi(createFileCommentRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [file] = await db.select().from(files).where(eq(files.id, fileId)).limit(1)
-	if (!file || !(await isWorkspaceMember(db, actorId, file.workspaceId))) {
+	if (!file || !(await isWorkspaceWriter(db, actorId, file.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404 as never)
 	}
 
@@ -269,7 +269,7 @@ app.openapi(patchFileCommentRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [file] = await db.select().from(files).where(eq(files.id, fileId)).limit(1)
-	if (!file || !(await isWorkspaceMember(db, actorId, file.workspaceId))) {
+	if (!file || !(await isWorkspaceWriter(db, actorId, file.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
 	}
 
@@ -356,7 +356,7 @@ app.openapi(sendRoundRoute, (async (c) => {
 	const { roundId, targetObjectId, commentIds } = c.req.valid('json')
 
 	const [file] = await db.select().from(files).where(eq(files.id, fileId)).limit(1)
-	if (!file || !(await isWorkspaceMember(db, actorId, file.workspaceId))) {
+	if (!file || !(await isWorkspaceWriter(db, actorId, file.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404 as never)
 	}
 

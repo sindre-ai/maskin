@@ -26,6 +26,57 @@ export async function isWorkspaceMember(
 	return !!member
 }
 
+/** Thrown when a viewer reaches a write route. app.onError turns the status into a 403. */
+export class ViewerReadOnlyError extends Error {
+	readonly status = 403
+	constructor() {
+		super('Viewers have read-only access to this workspace')
+		this.name = 'ViewerReadOnlyError'
+	}
+}
+
+/** The actor's role in a workspace, or null when they are not a member. */
+export async function getWorkspaceRole(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<string | null> {
+	const [member] = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(eq(workspaceMembers.actorId, actorId), eq(workspaceMembers.workspaceId, workspaceId)),
+		)
+		.limit(1)
+	return member?.role ?? null
+}
+
+/**
+ * isWorkspaceMember for write routes: false for a non-member (the caller keeps
+ * its own 404), true for any role that may write, and a 403 for a viewer.
+ * Reads keep using isWorkspaceMember, so viewers stay read-only, not locked out.
+ */
+export async function isWorkspaceWriter(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	const role = await getWorkspaceRole(db, actorId, workspaceId)
+	if (role === null) return false
+	if (role === 'viewer') throw new ViewerReadOnlyError()
+	return true
+}
+
+/**
+ * Write check for routes scoped by the X-Workspace-Id header. authMiddleware
+ * already looked the role up for the membership check and put it on the
+ * context, so this costs no query. The role is undefined when no header was
+ * sent, and by-ID routes use isWorkspaceWriter instead.
+ */
+export function assertWorkspaceWriterRole(role: string | undefined): void {
+	if (role === 'viewer') throw new ViewerReadOnlyError()
+}
+
 /**
  * Whether `callerId` may reach `targetId` through a workspace they both belong
  * to: the caller itself, or two members of one workspace. When `workspaceId`
