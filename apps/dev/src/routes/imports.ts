@@ -66,6 +66,7 @@ function findImport(db: Database, id: string, workspaceId: string) {
 const createImportRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Upload a file and create an import job with auto-mapped fields',
 	request: {
@@ -239,6 +240,7 @@ app.openapi(createImportRoute, async (c) => {
 const updateMappingRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/mapping',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Update the field mapping for an import job',
 	request: {
@@ -468,6 +470,7 @@ function runImportInBackground(opts: {
 const confirmImportRoute = createRoute({
 	method: 'post',
 	path: '/{id}/confirm',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Confirm and execute the import, creating objects in batches',
 	request: {
