@@ -6,6 +6,7 @@ import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -18,10 +19,21 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 })
 
 function AgentsRoute() {
+	useDocumentTitle('Agents')
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
-	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: true })
+	// Live status comes from the 100-newest list the sidebar uses (one request,
+	// coalesced refetches). The full-history walk only refines per-agent counts,
+	// so it must never gate or overwrite status.
+	const { data: recentSessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
+	const { data: allSessions } = useWorkspaceSessions(workspaceId, { paged: true })
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+
+	const sessions = useMemo(() => {
+		const byId = new Map((allSessions ?? []).map((s) => [s.id, s]))
+		for (const s of recentSessions ?? []) byId.set(s.id, s)
+		return Array.from(byId.values())
+	}, [allSessions, recentSessions])
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -41,7 +53,7 @@ function AgentsRoute() {
 		? `${agents.length} agent${agents.length === 1 ? '' : 's'} · each owns one outcome`
 		: undefined
 
-	if (isLoading) {
+	if (isLoading || recentLoading) {
 		return (
 			<div>
 				<PageHeader title="Agents" />
@@ -67,7 +79,7 @@ function AgentsRoute() {
 					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
 				/>
 			) : (
-				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions ?? []} />
+				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions} />
 			)}
 			<CreatePicker
 				open={createPickerOpen}

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
-// Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
+// Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
 export const MESSAGE_MAX_LENGTH = 8000
 export const MAX_CONVERSATION_PARTICIPANTS = 50
 export const MESSAGE_MAX_ATTACHMENTS = 10
@@ -77,6 +77,21 @@ export const messageFinalOutputSchema = z.object({
 			occurrences: z.number().int().min(0),
 			tags: z.array(z.string().max(64)).max(20),
 			nudges: z.number().int().min(0).max(10),
+		})
+		.optional(),
+	/**
+	 * Set when the turn ended because the model returned an empty completion
+	 * (no reply, no tool call) and retrying did not produce one. A separate axis
+	 * from `error_kind` and `pseudo_tool_calls`: nothing was wrong with the API
+	 * call and nothing was written as text, the model simply said nothing.
+	 * `attempts` counts the extra asks after the CLI's own nudge; `model` is the
+	 * one the session runs on and `fallback_model` the one tried last, if any.
+	 */
+	empty_completion: z
+		.object({
+			attempts: z.number().int().min(0).max(10),
+			model: z.string().max(128).nullable(),
+			fallback_model: z.string().max(128).optional(),
 		})
 		.optional(),
 	subtype: z.string().max(64).optional(),

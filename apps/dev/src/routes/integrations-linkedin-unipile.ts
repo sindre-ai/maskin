@@ -402,7 +402,7 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 	const { account_id, provider, state } = parsed.data
 	if (provider !== 'linkedin') {
-		logger.warn('linkedin-unipile callback: unexpected provider', { provider, state })
+		logger.warn('linkedin-unipile callback: unexpected provider', { provider })
 		return redirectToSettings(c, 'error', 'wrong_provider')
 	}
 

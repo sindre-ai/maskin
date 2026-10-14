@@ -40,7 +40,7 @@ export interface StopSessionsForActorsResult {
 	failed: string[]
 }
 
-function withTimeout(promise: Promise<void>, ms: number, label: string): Promise<void> {
+function withTimeout(promise: Promise<unknown>, ms: number, label: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
 		promise.then(
@@ -251,7 +251,11 @@ export async function stopCapturedSandboxes(
 			if (!serverRow) return
 			const client = new AgentServerClient({ server: serverRow })
 			try {
-				await withTimeout(client.stopSession(row.id), STOP_TIMEOUT_MS, `stopSession ${row.id}`)
+				await withTimeout(
+					client.stopSession(row.id, { reason: 'stop', source: 'user-stop' }),
+					STOP_TIMEOUT_MS,
+					`stopSession ${row.id}`,
+				)
 			} catch (err) {
 				logger.error('Failed to stop a stranded sandbox after its session was deleted', {
 					sessionId: row.id,

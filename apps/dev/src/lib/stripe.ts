@@ -1,5 +1,5 @@
 import Stripe from 'stripe'
-import { parsePositiveIntEnv } from './billing-defaults'
+import { PRO_HARD_CAP_DEFAULT_USD_CENTS, TEAM_HARD_CAP_DEFAULT_USD_CENTS } from './billing-defaults'
 import { logger } from './logger'
 
 type PaidMaskinPlan = 'pro' | 'team'
@@ -117,9 +117,9 @@ export interface StripeEnv {
 	webhookSecret: string
 	pricePro: string
 	priceTeam: string
-	/** USD cents. */
+	/** USD cents. From billing-defaults.ts, not env: a stale prod env once pinned Pro at $20. */
 	proHardCapUsdCents: number
-	/** USD cents. */
+	/** USD cents. From billing-defaults.ts, not env. */
 	teamHardCapUsdCents: number
 	/**
 	 * Recurring $49/month price for one connected LinkedIn identity. Optional,
@@ -134,9 +134,11 @@ export interface StripeEnv {
 	 * picks the number" credit top-up Price whose Product carries the tax_code
 	 * Stripe Tax classifies against. Environment-specific (test-mode and
 	 * live-mode Products are different Stripe objects with different ids), so
-	 * it must come from env rather than the codebase.
+	 * it must come from env rather than the codebase. Optional: null when unset,
+	 * which disables the credit top-up (`POST /billing/credits/checkout` → 404)
+	 * without affecting subscription checkout.
 	 */
-	priceCreditsCustom: string
+	priceCreditsCustom: string | null
 }
 
 interface CheckoutInputs {
@@ -178,40 +180,20 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_WEBHOOK_SECRET',
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
-		'STRIPE_PRICE_CREDITS_CUSTOM',
-		'MASKIN_PRO_HARD_CAP_USD_CENTS',
-		'MASKIN_TEAM_HARD_CAP_USD_CENTS',
 	] as const
 	const missing = required.filter((k) => !env[k])
 	if (missing.length > 0) {
 		throw new Error(`Stripe env vars missing: ${missing.join(', ')}`)
-	}
-	const parseCapCents = (
-		key: 'MASKIN_PRO_HARD_CAP_USD_CENTS' | 'MASKIN_TEAM_HARD_CAP_USD_CENTS',
-	) => {
-		// Boot-time strict variant: env was just confirmed non-empty by the
-		// `missing` check above, so a `null` return from the shared parser means
-		// the value is malformed (non-digit, zero, or negative). Throw so misconfig
-		// surfaces at first request instead of silently falling back.
-		const parsed = parsePositiveIntEnv(key, env)
-		if (parsed === null) {
-			// Intentionally does not echo the raw env value — billing caps aren't
-			// secrets today, but normalising "no env values in thrown errors"
-			// prevents the next contributor from leaking a secret-bearing key
-			// through error monitors when they reuse this helper.
-			throw new Error(`${key} must be a positive integer string`)
-		}
-		return parsed
 	}
 	return {
 		secretKey: env.STRIPE_SECRET_KEY as string,
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
-		proHardCapUsdCents: parseCapCents('MASKIN_PRO_HARD_CAP_USD_CENTS'),
-		teamHardCapUsdCents: parseCapCents('MASKIN_TEAM_HARD_CAP_USD_CENTS'),
+		proHardCapUsdCents: PRO_HARD_CAP_DEFAULT_USD_CENTS,
+		teamHardCapUsdCents: TEAM_HARD_CAP_DEFAULT_USD_CENTS,
 		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
-		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM as string,
+		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM || null,
 	}
 }
 
@@ -319,6 +301,9 @@ export async function createCreditCheckoutSession(
 	env: StripeEnv,
 ): Promise<Stripe.Checkout.Session> {
 	const currency: MaskinCreditsCurrency = inputs.currency ?? 'usd'
+	if (!env.priceCreditsCustom) {
+		throw new Error('STRIPE_PRICE_CREDITS_CUSTOM is not configured')
+	}
 
 	// Delta 1b: migrate off ad-hoc `price_data` onto the Stripe-managed
 	// `maskin_credits_custom` Price. Stripe Tax can only classify a Price

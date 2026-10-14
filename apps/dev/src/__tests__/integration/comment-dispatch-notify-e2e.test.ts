@@ -1,6 +1,7 @@
 import { events, workspaceMembers } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { CommentDispatcher } from '../../services/trigger-runner'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
@@ -68,6 +69,7 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 		// wrong reason and every positive assertion time out.
 		await bridge.start()
 		sessionManager = createMockSessionManager()
+		configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 		dispatcher = new CommentDispatcher(db, bridge, sessionManager as unknown as SessionManager)
 		dispatcher.start()
 	})

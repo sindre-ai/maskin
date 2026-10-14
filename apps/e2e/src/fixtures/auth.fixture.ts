@@ -56,6 +56,7 @@ export const test = base.extend<AuthFixtures>({
 				apiKey: string
 				actor: { id: string; name: string; type: string; email: string | null }
 				workspaceId: string
+				flags: readonly string[]
 			}) => {
 				localStorage.setItem('maskin-api-key', data.apiKey)
 				localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
@@ -65,7 +66,7 @@ export const test = base.extend<AuthFixtures>({
 				// Mark-as-unread control), so the specs must render what CI's
 				// flag-less backend would otherwise gate off. The client's
 				// test-only override beats the fetched flag state.
-				for (const flag of CHATS_V4_FLAGS) {
+				for (const flag of data.flags) {
 					localStorage.setItem(`ff:${flag}`, 'on')
 				}
 			},
@@ -78,6 +79,9 @@ export const test = base.extend<AuthFixtures>({
 					email: actor.email,
 				},
 				workspaceId: workspace.id,
+				// The init script runs in the browser, so the flag list has to be
+				// serialised in rather than referenced as a Node-side variable.
+				flags: CHATS_V4_FLAGS,
 			},
 		)
 

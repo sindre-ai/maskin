@@ -157,13 +157,12 @@ export function useSessionAffectedObjects(
 		? {
 				after: startedAt,
 				...(completedAt ? { before: completedAt } : {}),
-				limit: '200',
 			}
 		: undefined
 
 	const query = useQuery({
 		queryKey: ['sessions', 'affected-objects', startedAt, completedAt],
-		queryFn: () => api.events.history(workspaceId, filters),
+		queryFn: () => api.events.historyUpTo(workspaceId, filters ?? {}, 200),
 		enabled: enabled && !!startedAt,
 	})
 

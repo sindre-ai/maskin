@@ -34,6 +34,7 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
 	deriveEntryAgentRole,
 	trackChatMentionInserted,
@@ -287,6 +288,11 @@ export function Composer({
 		}
 		writeDraft(draftKey, value)
 	}, [draftKey, value, controlledValue, setValue])
+	// Mobile soft keyboards have no Shift key, so the desktop `Shift+Enter`
+	// newline shortcut is unreachable on a phone — plain Enter sends instead.
+	// On touch viewports we let the browser insert a newline and rely on the
+	// visible send button as the send affordance.
+	const isMobile = useIsMobile()
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
@@ -552,11 +558,16 @@ export function Composer({
 				unifiedPickerRef.current?.selectActive()
 				return
 			}
+			// On touch viewports there is no Shift key, so Enter must insert a
+			// newline rather than send. The visible send button is the send
+			// affordance there.
+			if (isMobile) return
 			e.preventDefault()
 			void handleSubmit()
 		},
 		[
 			handleSubmit,
+			isMobile,
 			unifiedPickerEnabled,
 			unifiedOpen,
 			typeFilterChip,

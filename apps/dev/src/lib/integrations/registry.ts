@@ -28,6 +28,7 @@ import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as resendConfig } from './providers/resend/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
@@ -131,6 +132,19 @@ providers.set('google-meet', {
 
 providers.set('posthog', {
 	config: posthogConfig,
+})
+
+// resend — bring-your-own integration for customer-domain email send+receive
+// (bet cf2bcc85). Deliberately no `extractDeliveryId` / `customWebhookVerifier`
+// / `customNormalizer` / `webhookFanOut` / `postInstall` / `preDisconnect` on
+// this entry — Resend deliveries land on a dedicated `webhookApp.post(
+// '/resend/:token', ...)` route (Task 3) that reads the per-row Svix secret
+// inline and dedupes on `data.email_id` from the payload. If anyone later
+// tries to route Resend through the `/:provider` catch-all, they will silently
+// lose dedup because there's no `extractDeliveryId` here — the config comment
+// spells the same warning out at the source of truth (spec §12.3).
+providers.set('resend', {
+	config: resendConfig,
 })
 
 providers.set('skjald', {

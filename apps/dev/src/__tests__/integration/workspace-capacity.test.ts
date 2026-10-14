@@ -377,14 +377,12 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			// Added as role='owner' (access control) but never made billing owner.
+			// Role='owner' (access control) but never made billing owner. Seeded
+			// directly: add-member can no longer grant the owner role.
 			const accessOwner = await insertActor(db, { name: 'Access Owner Only' })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: accessOwner.id,
-					role: 'owner',
-				}),
-			)
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: accessOwner.id, role: 'owner' })
 			const target = await insertActor(db, { name: 'Transfer Target 2' })
 			await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: target.id }),

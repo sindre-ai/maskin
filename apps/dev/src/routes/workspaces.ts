@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { evictMembership } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -11,6 +13,7 @@ import {
 	updateWorkspaceSchema,
 } from '@maskin/shared'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -71,7 +74,9 @@ const memberResponseSchema = z.object({
 
 const addMemberBodySchema = z.object({
 	actor_id: z.string().uuid(),
-	role: z.string().optional(),
+	// 'owner' is never grantable here; ownership moves through the dedicated
+	// transfer flow, not through add-member.
+	role: z.enum(['admin', 'member']).optional(),
 })
 
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
@@ -81,6 +86,8 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	// workspace creation seeds agent actors as `workspace_members` rows, so a
 	// raw COUNT(*) would report a brand-new solo workspace as seven people.
 	memberCount: z.number().int().nonnegative(),
+	// True for the one workspace the caller chose as their default (actors.default_workspace_id).
+	isDefault: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -284,14 +291,62 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		if (Number.isFinite(total)) countByWorkspace.set(row.workspaceId, total)
 	}
 
+	// Matched against the memberships above, so a stale default (the caller was
+	// removed from that workspace since) simply marks nothing.
+	const [{ defaultWorkspaceId = null } = {}] = await db
+		.select({ defaultWorkspaceId: actors.defaultWorkspaceId })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+
 	// The caller is a member of every row here, so 1 is the floor, never 0.
 	const withCounts = withEntitlement.map((w) => ({
 		...w,
 		memberCount: countByWorkspace.get(w.id) ?? 1,
+		isDefault: w.id === defaultWorkspaceId,
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
 })
+
+type SettingsPatch = NonNullable<z.infer<typeof updateWorkspaceSchema>['settings']>
+
+/**
+ * Reduces the admin-only settings keys of a PATCH body (llm_keys per provider,
+ * custom_llm) to the parts that differ from the stored settings. A submitted
+ * value equal to the stored one is not a change, and neither is a null for a
+ * provider that is not stored. Returns the patch without the unchanged parts,
+ * and whether anything admin-only is left.
+ */
+function pickChangedAdminSettings(
+	patch: SettingsPatch,
+	stored: Record<string, unknown>,
+): { settings: SettingsPatch; changed: boolean } {
+	const { llm_keys, custom_llm, ...rest } = patch
+	const settings: SettingsPatch = { ...rest }
+	let changed = false
+
+	if (llm_keys) {
+		const storedKeys = (stored.llm_keys ?? {}) as Record<string, string | null | undefined>
+		const changedKeys: Record<string, string | null> = {}
+		for (const [provider, value] of Object.entries(llm_keys)) {
+			if (value === undefined) continue
+			if ((value ?? undefined) === (storedKeys[provider] ?? undefined)) continue
+			changedKeys[provider] = value
+		}
+		if (Object.keys(changedKeys).length > 0) {
+			settings.llm_keys = changedKeys
+			changed = true
+		}
+	}
+
+	if (custom_llm !== undefined && !isDeepStrictEqual(custom_llm, stored.custom_llm)) {
+		settings.custom_llm = custom_llm
+		changed = true
+	}
+
+	return { settings, changed }
+}
 
 // PATCH /api/workspaces/:id
 const updateWorkspaceRoute = createRoute({
@@ -319,11 +374,12 @@ const updateWorkspaceRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Workspace is not entitled to BYO LLM credentials',
+			description:
+				'Caller is not a human workspace admin or owner (for name, llm_keys or custom_llm), or the workspace is not entitled to BYO LLM credentials',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace not found',
+			description: 'Workspace not found, or the caller is not a member of it',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -334,6 +390,34 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
+
+	// Renaming and the LLM credential keys are admin surfaces; every other
+	// settings key (pinned_files, display names, extensions, ...) stays
+	// member-level. Gate on a changed value, not a present key: the web app
+	// PATCHes with the whole settings object spread back in, so a member's
+	// ordinary edit carries llm_keys/custom_llm exactly as stored. A null that
+	// deletes a stored key is a change and is gated.
+	const { settings: patchSettings, changed: changesLlm } = body.settings
+		? pickChangedAdminSettings(body.settings, existingSettings)
+		: { settings: undefined, changed: false }
+	const changesName = body.name !== undefined && body.name !== existing.name
+	if ((changesName || changesLlm) && !(await isWorkspaceHumanAdminOrOwner(db, actorId, id))) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only a workspace admin or owner can change the workspace name or LLM credentials',
+			),
+			403,
+		)
+	}
 
 	// claude_oauth has its own locked, slot-aware, audited read-modify-write
 	// routes (POST /api/claude-oauth/import, DELETE /api/claude-oauth,
@@ -375,18 +459,18 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
-	if (body.settings) {
+	if (patchSettings) {
 		// Merge settings with existing. Top-level keys are shallow-merged, but
 		// `llm_keys` is deep-merged so concurrent single-provider updates (UI +
 		// MCP) don't clobber sibling providers. `null` values inside `llm_keys`
-		// are treated as deletions.
-		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
-		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		// are treated as deletions. patchSettings only carries the admin keys
+		// that differ from the stored value, so an unchanged key re-sent by a
+		// member neither trips the entitlement gate nor the BYO-LLM mutex below.
 
 		// Entitlement gate: every workspace defaults to the Maskin-provided LLM
 		// plan; only ops-flagged exception workspaces may add a BYO Anthropic/
 		// OpenAI key or enable custom_llm. See PR #970.
-		if (!isEnterprise(existing) && patchAddsAnyByoCredential(body.settings)) {
+		if (!isEnterprise(existing) && patchAddsAnyByoCredential(patchSettings)) {
 			return c.json(
 				createApiError(
 					'FORBIDDEN',
@@ -396,12 +480,11 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			)
 		}
 
-		const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
-		const merged: Record<string, unknown> = { ...existingSettings, ...body.settings }
-		if (body.settings.llm_keys) {
+		const merged: Record<string, unknown> = { ...existingSettings, ...patchSettings }
+		if (patchSettings.llm_keys) {
 			const existingLlm = (existingSettings.llm_keys ?? {}) as Record<string, string>
 			const mergedLlm: Record<string, string> = { ...existingLlm }
-			for (const [k, v] of Object.entries(body.settings.llm_keys)) {
+			for (const [k, v] of Object.entries(patchSettings.llm_keys)) {
 				if (v === null || v === undefined) delete mergedLlm[k]
 				else mergedLlm[k] = v
 			}
@@ -413,7 +496,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		// cancel the subscription via API first and roll the billing slot
 		// into the same merged write. The .deleted webhook will arrive
 		// shortly after and is idempotent against this exact terminal state.
-		if (patchAddsByoSource(body.settings)) {
+		if (patchAddsByoSource(patchSettings)) {
 			const errorRes = await cancelPaidPlanForByoTransition(existingSettings, merged, id)
 			if (errorRes) return c.json(...errorRes)
 		}
@@ -604,6 +687,9 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 					actionPrompt:
 						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. For each reply, call create_objects ONCE with both the knowledge node and the `about` edge in the same batch — owner-targeted prompts (product_vision, icp, first_bet_hypothesis, customer_evidence) edge to the workspace owner\'s actor id; the north_star_metric prompt edges to the workspace id. Populate metadata.source = "workspace_onboarding", subject_kind, subject_id, claim, confidence, valid_from, valid_to per the skill. Do NOT write to the actor\'s memory field.\n5. Close the session when all prompts are answered (or after 24h).',
 					createdBy: actorId,
+					// Onboarding kickoff — spawned on workspace flip, not on
+					// any originating object. Explicit null/null.
+					initiatedFromObjectId: null,
 				})
 				.catch((err) =>
 					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
@@ -649,12 +735,17 @@ const addMemberRoute = createRoute({
 			description: 'Member added (or already a member — idempotent)',
 			content: { 'application/json': { schema: z.object({ added: z.boolean() }) } },
 		},
+		400: {
+			description: 'Invalid body (role must be admin or member)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: {
-			description: 'Caller is not a workspace member, or the workspace has reached its seat cap',
+			description:
+				'Caller is a member but not a human admin or owner, or the workspace has reached its seat cap',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace or actor not found',
+			description: 'Workspace not found, caller is not a member of it, or actor not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -666,8 +757,16 @@ app.openapi(addMemberRoute, (async (c) => {
 	const { id: workspaceId } = c.req.valid('param')
 	const { actor_id, role } = c.req.valid('json')
 
+	// Non-members get the same 404 as a missing workspace, so the response does
+	// not confirm the id exists. Members who are not human admins/owners get 403.
 	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
-		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human admin or owner can add workspace members'),
+			403,
+		)
 	}
 
 	const [targetActor] = await db
@@ -747,6 +846,17 @@ app.openapi(addMemberRoute, (async (c) => {
 		return c.json(seatCapErrorBody(err), 403)
 	}
 
+	// Telemetry for the retirement-observation window: counts residual actor-ID
+	// adds so we can see whether this endpoint's usage goes to zero. Only a real
+	// insert counts; the idempotent already-a-member no-op is not an invite.
+	if (outcome.kind === 'added') {
+		void capturePosthogEvent('workspace_member_invited', callerId, {
+			invite_method: 'actor_id',
+			workspace_id: workspaceId,
+			role: role || 'member',
+		})
+	}
+
 	return c.json({ added: outcome.kind === 'added' }, 201)
 }) as RouteHandler<typeof addMemberRoute, Env>)
 
@@ -764,12 +874,21 @@ const listMembersRoute = createRoute({
 			description: 'List of members',
 			content: { 'application/json': { schema: z.array(memberResponseSchema) } },
 		},
+		404: {
+			description: 'Workspace not found, or the caller is not a member of it',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(listMembersRoute, async (c) => {
+app.openapi(listMembersRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	const members = await db
 		.select({
@@ -784,7 +903,7 @@ app.openapi(listMembersRoute, async (c) => {
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
-})
+}) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership
 const transferOwnershipRoute = createRoute({
@@ -1207,6 +1326,9 @@ app.openapi(removeMemberRoute, (async (c) => {
 				409,
 			)
 		case 'removed':
+			// Takes effect on the member's next request, not when its cached auth
+			// lookup expires.
+			evictMembership(targetActorId, workspaceId)
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

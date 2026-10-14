@@ -89,6 +89,33 @@ export function parseResultLine(line: string): StreamJsonResult | null {
 }
 
 /**
+ * Model names accepted by buildSetModelRequest: provider slugs such as
+ * `deepseek/deepseek-v4-flash` or Anthropic ids. Bounded and free of
+ * whitespace and quotes because the value is written into the CLI's stdin.
+ */
+export const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/
+
+/**
+ * The stream-json control request that switches the running CLI onto another
+ * model for its next turns, keeping the conversation history. The CLI answers
+ * with a `control_response`; nothing else reads it.
+ */
+export type StreamJsonSetModelRequest = {
+	type: 'control_request'
+	request_id: string
+	request: { subtype: 'set_model'; model: string }
+}
+
+export function buildSetModelRequest(model: string, requestId: string): StreamJsonSetModelRequest {
+	if (!MODEL_NAME_RE.test(model)) throw new Error(`Invalid model name: ${model}`)
+	return {
+		type: 'control_request',
+		request_id: requestId,
+		request: { subtype: 'set_model', model },
+	}
+}
+
+/**
  * What a scan backwards through a turn's stdout finds on one line.
  *
  * `boundary` marks where the current turn began, so a caller walking backwards
@@ -124,16 +151,32 @@ export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion'
 export const POST_MESSAGE_TOOL_SUFFIX = 'post_conversation_message'
 
 /**
+ * What a backwards turn scan finds on one line, with the detail
+ * detectEmptyTurn needs and scanTurnLine deliberately flattens.
+ *
+ *  - `turn_start`: the previous turn's close, or this turn's opening user
+ *    envelope (see StreamJsonScanLine for why those two).
+ *  - `reply_tool`: an `assistant` line calling AskUserQuestion or
+ *    post_conversation_message — the agent already spoke to the human.
+ *  - `work_tool`: an `assistant` line calling any other tool. `text` is the
+ *    narration that rode along in the same line ('' when there was none).
+ *  - `assistant_text`: an `assistant` line with text and no tool call.
+ */
+export type StreamJsonTurnLine =
+	| { kind: 'turn_start' }
+	| { kind: 'reply_tool' }
+	| { kind: 'work_tool'; text: string }
+	| { kind: 'assistant_text'; text: string }
+	| { kind: 'other' }
+
+/**
  * Classify ONE already-complete line for a backwards turn scan.
  *
- * Exists for the interactive turn finalizer's recovery path: when the `result`
- * envelope carries no text, the agent's actual reply is still sitting in an
- * earlier `assistant` line of the same turn. Assistant messages carrying
- * `parent_tool_use_id` are sub-agent (Task tool) output and are reported as
- * 'other' — surfacing one would leak a sub-agent's internal answer into the
- * chat, the same reason parseResultLine rejects them.
+ * Assistant messages carrying `parent_tool_use_id` are sub-agent (Task tool)
+ * output and are reported as 'other' — surfacing one would leak a sub-agent's
+ * internal answer into the chat, the same reason parseResultLine rejects them.
  */
-export function scanTurnLine(line: string): StreamJsonScanLine {
+export function classifyTurnLine(line: string): StreamJsonTurnLine {
 	const trimmed = line.trim()
 	if (!trimmed || trimmed[0] !== '{') return { kind: 'other' }
 
@@ -152,10 +195,12 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 		// turn's close. Treating it as a boundary would abandon recovery in the
 		// middle of a turn that dispatched a Task and then ended on a blank
 		// result — exactly the turn this scan exists to save.
-		return obj.parent_tool_use_id != null ? { kind: 'other' } : { kind: 'boundary' }
+		return obj.parent_tool_use_id != null ? { kind: 'other' } : { kind: 'turn_start' }
 	}
 	if (obj.type === 'user') {
-		return obj.maskin_message_id !== undefined ? { kind: 'boundary' } : { kind: 'other' }
+		// A user envelope without that tag is a tool_result fed back mid-turn, a
+		// replayed or nudged turn, or a seeded first turn — none of them a start.
+		return obj.maskin_message_id !== undefined ? { kind: 'turn_start' } : { kind: 'other' }
 	}
 	if (obj.type !== 'assistant') return { kind: 'other' }
 	if (obj.parent_tool_use_id != null) return { kind: 'other' }
@@ -164,6 +209,16 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 	if (!message || typeof message !== 'object') return { kind: 'other' }
 	const content = (message as Record<string, unknown>).content
 	if (!Array.isArray(content)) return { kind: 'other' }
+
+	const toolNames = content
+		.filter(
+			(block): block is { type: 'tool_use'; name: string } =>
+				!!block &&
+				typeof block === 'object' &&
+				(block as { type?: unknown }).type === 'tool_use' &&
+				typeof (block as { name?: unknown }).name === 'string',
+		)
+		.map((block) => block.name)
 
 	// Two tool calls end the scan, both because everything before them belongs to
 	// a message the human has already been shown:
@@ -184,15 +239,11 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 	//   finalizer's dedupe cannot catch that — it keys on the `result` line,
 	//   not on messages already persisted in the conversation.
 	if (
-		content.some((block) => {
-			if (!block || typeof block !== 'object') return false
-			if ((block as { type?: unknown }).type !== 'tool_use') return false
-			const name = (block as { name?: unknown }).name
-			if (typeof name !== 'string') return false
-			return name === ASK_USER_QUESTION_TOOL || name.endsWith(POST_MESSAGE_TOOL_SUFFIX)
-		})
+		toolNames.some(
+			(name) => name === ASK_USER_QUESTION_TOOL || name.endsWith(POST_MESSAGE_TOOL_SUFFIX),
+		)
 	) {
-		return { kind: 'boundary' }
+		return { kind: 'reply_tool' }
 	}
 
 	// One streamed `assistant` line can carry several blocks; join the text ones
@@ -208,5 +259,32 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 		.map((block) => block.text)
 		.join('')
 
+	if (toolNames.length > 0) return { kind: 'work_tool', text }
 	return text.trim() ? { kind: 'assistant_text', text } : { kind: 'other' }
+}
+
+/**
+ * Classify ONE already-complete line for a backwards turn scan.
+ *
+ * Exists for the interactive turn finalizer's recovery path: when the `result`
+ * envelope carries no text, the agent's actual reply is still sitting in an
+ * earlier `assistant` line of the same turn. A flattened view of
+ * classifyTurnLine: text that shares a line with a tool call still counts as
+ * text here, which is what recovery wants and what an emptiness check does not.
+ */
+export function scanTurnLine(line: string): StreamJsonScanLine {
+	const scanned = classifyTurnLine(line)
+	switch (scanned.kind) {
+		case 'turn_start':
+		case 'reply_tool':
+			return { kind: 'boundary' }
+		case 'assistant_text':
+			return { kind: 'assistant_text', text: scanned.text }
+		case 'work_tool':
+			return scanned.text.trim()
+				? { kind: 'assistant_text', text: scanned.text }
+				: { kind: 'other' }
+		default:
+			return { kind: 'other' }
+	}
 }

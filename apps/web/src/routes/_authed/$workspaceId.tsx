@@ -15,6 +15,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { setFaroUser } from '@/lib/faro'
+import { setLastWorkspaceId } from '@/lib/last-workspace'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
@@ -48,6 +49,13 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
+	// Remember the workspace once it resolves from the user's memberships, so a
+	// stale or foreign id in the URL is never stored as "last used".
+	const hasWorkspace = Boolean(workspace)
+	useEffect(() => {
+		if (hasWorkspace) setLastWorkspaceId(workspaceId)
+	}, [hasWorkspace, workspaceId])
+
 	const matches = useMatches()
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
@@ -78,7 +86,10 @@ function WorkspaceLayout() {
 		// it is crash reporting, the same category as Sentry, which is likewise
 		// ungated.
 		setFaroUser(actor.id, workspaceId)
-		void identifyForWorkspace(actor.id, anonymizeWorkspace)
+		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
+			name: actor.name,
+			email: actor.email,
+		})
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
 	if (!workspace) {

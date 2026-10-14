@@ -7,7 +7,11 @@ export function createLLMAdapter(provider: string, config: Record<string, unknow
 		case 'anthropic':
 			return new AnthropicAdapter(config.api_key as string, config.base_url as string | undefined)
 		case 'openai':
-			return new OpenAIAdapter(config.api_key as string, config.base_url as string | undefined)
+			return new OpenAIAdapter(
+				config.api_key as string,
+				config.base_url as string | undefined,
+				config.extra_body as Record<string, unknown> | undefined,
+			)
 		case 'ollama':
 			return new OpenAIAdapter('ollama', (config.base_url as string) || 'http://localhost:11434/v1')
 		default:

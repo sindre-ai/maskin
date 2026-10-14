@@ -14,7 +14,7 @@ export function useAuth() {
 	const navigate = useNavigate()
 
 	const login = useCallback(
-		async (data: LoginInput) => {
+		async (data: LoginInput, redirectTo?: string | null) => {
 			const result = await api.auth.login(data)
 			setApiKey(result.api_key)
 			setStoredActor({
@@ -23,7 +23,10 @@ export function useAuth() {
 				type: result.type,
 				email: result.email,
 			})
-			navigate({ to: '/' })
+			// Sent here from a page that needed a login (the Skjald connect page): go back to it, in full, so
+			// its query string survives. `redirectTo` has already been checked by `safeInternalPath`.
+			if (redirectTo) window.location.assign(redirectTo)
+			else navigate({ to: '/' })
 			return result
 		},
 		[navigate],

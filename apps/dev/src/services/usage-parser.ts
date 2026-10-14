@@ -56,6 +56,20 @@ export async function extractSessionUsage(
 	db: Database,
 	sessionId: string,
 ): Promise<SessionUsage | null> {
+	return parseUsageFromLogChunks(await readSessionStdoutChunks(db, sessionId))
+}
+
+/**
+ * The newest stdout chunks of a session, oldest first — the one read that both
+ * the usage parser and the failure classifier work from at completion. Callers
+ * that need both should read once and share the result: each read pulls up to
+ * `MAX_LOG_ROWS_FETCHED` rows (~4.6 KB each in production), and doing it twice
+ * per completion was ~40% of database egress.
+ *
+ * Ordered by `id` (bigserial, monotonic) rather than `createdAt`, which can
+ * tie at millisecond granularity and shuffle chunks within a tie.
+ */
+export async function readSessionStdoutChunks(db: Database, sessionId: string): Promise<string[]> {
 	const rows = await db
 		.select({ content: sessionLogs.content })
 		.from(sessionLogs)
@@ -63,12 +77,8 @@ export async function extractSessionUsage(
 		.orderBy(desc(sessionLogs.id))
 		.limit(MAX_LOG_ROWS_FETCHED)
 
-	if (rows.length === 0) return null
 	// Rows came back newest-first; flip so chunks are in arrival order.
-	// Order by `id` (bigserial, monotonic) rather than `createdAt`, which can
-	// tie at millisecond granularity and shuffle chunks within a tie.
-	const chunks = rows.map((r) => r.content).reverse()
-	return parseUsageFromLogChunks(chunks)
+	return rows.map((r) => r.content).reverse()
 }
 
 /**
@@ -222,15 +232,5 @@ export async function resolveSessionCostUsd({
  * millisecond and shuffles chunks.
  */
 export async function readSessionStdoutTail(db: Database, sessionId: string): Promise<string> {
-	const rows = await db
-		.select({ content: sessionLogs.content })
-		.from(sessionLogs)
-		.where(and(eq(sessionLogs.sessionId, sessionId), eq(sessionLogs.stream, 'stdout')))
-		.orderBy(desc(sessionLogs.id))
-		.limit(MAX_LOG_ROWS_FETCHED)
-
-	return rows
-		.map((r) => r.content)
-		.reverse()
-		.join('')
+	return (await readSessionStdoutChunks(db, sessionId)).join('')
 }

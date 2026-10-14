@@ -33,3 +33,15 @@ export interface LLMAdapter {
 		max_tokens?: number
 	}): Promise<LLMResponse>
 }
+
+/**
+ * OpenRouter found no host that satisfies the request's provider preferences
+ * (for example no zero-data-retention endpoint for the model). Distinct from
+ * an outage so callers and alerts can tell a policy miss from a failure.
+ */
+export class LlmNoEligibleHostError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = 'LlmNoEligibleHostError'
+	}
+}

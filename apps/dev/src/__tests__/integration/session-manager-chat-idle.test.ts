@@ -244,7 +244,14 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
 			const completed = eventRows.find((e) => e.action === 'session_completed')
 			expect(completed).toBeTruthy()
-			expect((completed?.data as { reason?: string })?.reason).toBe('idle_conversation')
+			// settleSession's buildEventData records classification + source; the
+			// pre-settle recordEvent that wrote `reason: 'idle_conversation'` is
+			// gone with the migration (idle-watcher is the source that carried
+			// the same semantic).
+			expect((completed?.data as { classification?: string })?.classification).toBe(
+				'agent_completed',
+			)
+			expect((completed?.data as { source?: string })?.source).toBe('idle-watcher')
 
 			// SSE /logs/stream matches this prefix to emit its `done` event.
 			const logRows = await db

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@sentry/node', () => ({
 	captureMessage: vi.fn(),
 	addBreadcrumb: vi.fn(),
+	logger: { info: vi.fn(), warn: vi.fn() },
 }))
 
 import * as Sentry from '@sentry/node'
@@ -17,6 +18,8 @@ describe('logger', () => {
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 		vi.mocked(Sentry.captureMessage).mockReset()
 		vi.mocked(Sentry.addBreadcrumb).mockReset()
+		vi.mocked(Sentry.logger.info).mockReset()
+		vi.mocked(Sentry.logger.warn).mockReset()
 	})
 
 	afterEach(() => {
@@ -50,6 +53,24 @@ describe('logger', () => {
 			expect(entry.method).toBe('GET')
 			expect(entry.path).toBe('/api/health')
 		})
+
+		it('sends the message and context as attributes to Sentry.logger.info', () => {
+			logger.info('reaper step', { step: 'scan', durationMs: 12 })
+			expect(Sentry.logger.info).toHaveBeenCalledOnce()
+			expect(Sentry.logger.info).toHaveBeenCalledWith('reaper step', {
+				step: 'scan',
+				durationMs: 12,
+			})
+			expect(Sentry.captureMessage).not.toHaveBeenCalled()
+		})
+
+		it('does not throw and still logs when Sentry.logger.info itself throws', () => {
+			vi.mocked(Sentry.logger.info).mockImplementation(() => {
+				throw new Error('sentry down')
+			})
+			expect(() => logger.info('reaper step')).not.toThrow()
+			expect(parseOutput(logSpy).msg).toBe('reaper step')
+		})
 	})
 
 	describe('debug', () => {
@@ -60,6 +81,13 @@ describe('logger', () => {
 			const entry = parseOutput(logSpy)
 			expect(entry.level).toBe('debug')
 			expect(entry.msg).toBe('trace info')
+		})
+
+		it('stays stdout only and does not send to Sentry', () => {
+			logger.debug('trace info', { a: 1 })
+			expect(Sentry.logger.info).not.toHaveBeenCalled()
+			expect(Sentry.logger.warn).not.toHaveBeenCalled()
+			expect(Sentry.captureMessage).not.toHaveBeenCalled()
 		})
 	})
 
@@ -82,6 +110,25 @@ describe('logger', () => {
 				message: 'deprecation notice',
 				data: { feature: 'x' },
 			})
+		})
+
+		it('sends the message and context as attributes to Sentry.logger.warn', () => {
+			logger.warn('slow step', { step: 'scan', durationMs: 900 })
+			expect(Sentry.logger.warn).toHaveBeenCalledOnce()
+			expect(Sentry.logger.warn).toHaveBeenCalledWith('slow step', {
+				step: 'scan',
+				durationMs: 900,
+			})
+			expect(Sentry.captureMessage).not.toHaveBeenCalled()
+		})
+
+		it('does not throw and still adds the breadcrumb when Sentry.logger.warn itself throws', () => {
+			vi.mocked(Sentry.logger.warn).mockImplementation(() => {
+				throw new Error('sentry down')
+			})
+			expect(() => logger.warn('slow step')).not.toThrow()
+			expect(logSpy).toHaveBeenCalledOnce()
+			expect(Sentry.addBreadcrumb).toHaveBeenCalledOnce()
 		})
 
 		it('does not throw and still logs when Sentry.addBreadcrumb itself throws', () => {
@@ -118,6 +165,12 @@ describe('logger', () => {
 				level: 'error',
 				extra: { code: 'X' },
 			})
+		})
+
+		it('does not also send through Sentry.logger', () => {
+			logger.error('something broke', { code: 'X' })
+			expect(Sentry.logger.info).not.toHaveBeenCalled()
+			expect(Sentry.logger.warn).not.toHaveBeenCalled()
 		})
 
 		it('does not report to Sentry when skipSentry is set, to avoid double-reporting an error already captured directly', () => {

@@ -4,6 +4,10 @@ import { objects, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
+import {
+	detectSuspiciousFilterEntries,
+	trackTriggerConfigSuspicious,
+} from '../lib/analytics/trigger-matcher-events'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
@@ -44,6 +48,34 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
  * behaviour (no join, no confirmation, no metadata write).
  */
+/**
+ * Write-time warning for filters whose values the matcher will never resolve
+ * (a non-array object, or `null`). Emits one `trigger_config_suspicious`
+ * PostHog row per suspicious entry so bet #8's dashboard catches bad configs
+ * at save time instead of after they sit dead in the runtime. Non-blocking on
+ * purpose — `triggers.config` is `jsonb` and hard-rejecting on save could
+ * strand triggers whose author already relied on the config being writable
+ * (tech spec §2.3, last paragraph). Fire-and-forget: the PostHog helper
+ * swallows its own errors, so a rejected promise here would be a code bug.
+ */
+function warnOnSuspiciousFilter(
+	actorId: string,
+	row: { id: string; workspaceId: string; config: unknown },
+): void {
+	const config = row.config as { filter?: Record<string, unknown> } | null
+	const filter = config?.filter
+	if (!filter) return
+	for (const entry of detectSuspiciousFilterEntries(filter)) {
+		void trackTriggerConfigSuspicious({
+			workspaceId: row.workspaceId,
+			triggerId: row.id,
+			actorId,
+			filterKey: entry.key,
+			filterShape: entry.shape,
+		})
+	}
+}
+
 function kickOffSlackSetup(
 	db: Database,
 	actorId: string,
@@ -156,6 +188,9 @@ app.openapi(createTriggerRoute, async (c) => {
 	// Slack setup service (join channels + post confirmations) if the trigger
 	// is Slack-shaped. Never blocks the response.
 	kickOffSlackSetup(db, actorId, created)
+	// Emit `trigger_config_suspicious` for any filter entry whose value is a
+	// non-array object or `null` — matcher will never resolve those.
+	warnOnSuspiciousFilter(actorId, created)
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -369,6 +404,10 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	// uses the trigger name). Body.enabled toggles don't need a re-run, but
 	// we skip via the empty-channel-list short-circuit anyway.
 	kickOffSlackSetup(db, actorId, updated)
+	// Re-check for suspicious filter shapes only when the config actually
+	// changed — otherwise a plain enable/disable would spam PostHog with the
+	// same suspicious entry every toggle.
+	if (body.config) warnOnSuspiciousFilter(actorId, updated)
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)

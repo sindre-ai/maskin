@@ -3,6 +3,7 @@ import { MarketplaceItemDetail } from '@/components/marketplace/marketplace-item
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoop } from '@/hooks/use-marketplace-loops'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -17,6 +18,7 @@ function MarketplaceItemDetailRoute() {
 	const { loopId, itemId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading, isError } = useMarketplaceLoop(loopId)
+	useDocumentTitle(data?.loop.name)
 	const { data: installsData } = useInstalledLoops(workspaceId)
 	const { data: installedItemsData } = useInstalledMarketplaceItems(workspaceId)
 
