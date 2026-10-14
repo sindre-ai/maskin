@@ -95,7 +95,9 @@ export class TtlPromiseCache<T> {
 
 export interface AuthCaches {
 	apiKeys: TtlPromiseCache<{ actorId: string; type: string } | null>
-	memberships: TtlPromiseCache<boolean>
+	// Role of the actor in the workspace, or null for a non-member. The ank_ and mat_ branches
+	// share this cache under the same key, so both must store the role.
+	memberships: TtlPromiseCache<string | null>
 	// Keyed by the token's SHA-256 hash, never the raw token. Positive results only.
 	oauthTokens: TtlPromiseCache<OauthAccessTokenContext | null>
 }

@@ -34,10 +34,10 @@ describe('oauthTokens cache', () => {
 
 	it('evictOAuthTokens leaves the API key and membership caches alone', async () => {
 		const caches = createAuthCaches(10_000)
-		const load = vi.fn(async () => true)
-		await caches.memberships.get('a|w', load, (v) => v, 0)
+		const load = vi.fn(async () => 'member' as string | null)
+		await caches.memberships.get('a|w', load, present, 0)
 		evictOAuthTokens()
-		await caches.memberships.get('a|w', load, (v) => v, 1)
+		await caches.memberships.get('a|w', load, present, 1)
 		expect(load).toHaveBeenCalledTimes(1)
 	})
 })

@@ -99,12 +99,13 @@ export async function authenticateOAuthToken(
 	}
 
 	// Membership is checked on every request, not only when a header is sent: removing the
-	// person from the workspace must end the connection.
-	const isMember = await caches.memberships.get(
+	// person from the workspace must end the connection. Same cache key and value (the role)
+	// as the ank_ branch, which shares this cache.
+	const role = await caches.memberships.get(
 		`${credential.actorId}|${pinned}`,
 		async () => {
 			const [member] = await db
-				.select({ actorId: workspaceMembers.actorId })
+				.select({ role: workspaceMembers.role })
 				.from(workspaceMembers)
 				.where(
 					and(
@@ -113,14 +114,17 @@ export async function authenticateOAuthToken(
 					),
 				)
 				.limit(1)
-			return Boolean(member)
+			return member?.role ?? null
 		},
-		(value) => value,
+		(value) => value !== null,
 	)
-	if (!isMember) return invalidToken(c)
+	if (role === null) return invalidToken(c)
 
 	c.set('actorId', credential.actorId)
 	c.set('actorType', credential.actorType)
+	// So write routes refuse a viewer's Claude token exactly as they refuse a viewer's key
+	// (assertWorkspaceWriterRole in workspace-auth.ts).
+	c.set('workspaceRole', role)
 	// Routes that read the header must see the pinned workspace even if the client sent none.
 	if (!requested) c.req.raw.headers.set(WORKSPACE_HEADER, pinned)
 
