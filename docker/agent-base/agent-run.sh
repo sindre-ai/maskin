@@ -302,7 +302,9 @@ STRIP_IMAGES_PROXY_PORT=9334
 # result) with a 400 that ends the turn. Best-effort: if the proxy fails to
 # start, ANTHROPIC_BASE_URL is left pointing at the real endpoint.
 setup_strip_images_proxy() {
-  [ "$MASKIN_STRIP_IMAGES" = "1" ] || return
+  # `return 0`, not a bare `return`: that would pass on the failed test's status
+  # (1), and `set -e` would abort the whole script for every non-stripping session.
+  [ "$MASKIN_STRIP_IMAGES" = "1" ] || return 0
   [ -z "$ANTHROPIC_BASE_URL" ] && return
   node /strip-images-proxy.js "$STRIP_IMAGES_PROXY_PORT" "$ANTHROPIC_BASE_URL" \
     > >(tee "${TMPDIR:-/tmp}/strip-images-proxy.log" | sed -u 's/^/[strip-images-proxy] /' >&2) 2>&1 &
