@@ -260,7 +260,7 @@ struct NewConversationForm: View {
 			let shown = showAll ? all : Array(all.prefix(Self.suggestedCount))
 			if !all.isEmpty {
 				sectionLabel("Suggested")
-				card(rows: shown, more: shown.count < all.count ? "Show all \(all.count)" : nil)
+				card(rows: shown, more: shown.count < all.count ? "Show all \(all.count)" : (showAll && all.count > Self.suggestedCount ? "Show fewer" : nil))
 			}
 		}
 	}
@@ -310,7 +310,7 @@ struct NewConversationForm: View {
 			}
 			if let more {
 				Button {
-					withAnimation(MaskinMotion.standard) { showAll = true }
+					withAnimation(MaskinMotion.standard) { showAll.toggle() }
 				} label: {
 					HStack {
 						Text(more)
@@ -320,6 +320,7 @@ struct NewConversationForm: View {
 						Image(systemName: "chevron.right")
 							.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 							.foregroundStyle(MaskinColor.inkPlaceholder)
+							.rotationEffect(.degrees(showAll ? -90 : 90))
 					}
 					.padding(.horizontal, MaskinSpace.s8 + 1)
 					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2)

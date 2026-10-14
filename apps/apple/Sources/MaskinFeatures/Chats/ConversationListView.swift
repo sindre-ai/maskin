@@ -80,7 +80,7 @@ struct ConversationListView: View {
 					}
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
-					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
+					TeamSectionHeader(label: "Pinned", count: nil)
 				}
 			}
 			ForEach(layout.sections) { section in
@@ -88,18 +88,21 @@ struct ConversationListView: View {
 					ForEach(section.rows) { row in
 						rowView(row, now: now)
 					}
-					if let more = section.moreLabel {
+					if let footer = section.canCollapse ? "Show fewer" : section.moreLabel {
 						Button {
-							withAnimation(MaskinMotion.standard) { _ = expandedSections.insert(section.id) }
+							withAnimation(MaskinMotion.standard) {
+								if section.canCollapse { expandedSections.remove(section.id) } else { expandedSections.insert(section.id) }
+							}
 						} label: {
 							HStack(spacing: MaskinSpace.s5) {
-								Text(more)
+								Text(footer)
 									.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
 									.foregroundStyle(MaskinColor.ink2)
 								Spacer()
 								Image(systemName: "chevron.right")
 									.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 									.foregroundStyle(MaskinColor.inkPlaceholder)
+									.rotationEffect(.degrees(section.canCollapse ? -90 : 90))
 							}
 							.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s12)
 							.contentShape(Rectangle())
@@ -433,14 +436,14 @@ extension View {
 /// A section header in the Team list: a mono label, its count and an optional action.
 struct TeamSectionHeader<Trailing: View>: View {
 	let label: String
-	let count: Int
+	let count: Int?
 	var countColor: Color = MaskinColor.inkPlaceholder
 	@ViewBuilder var trailing: Trailing
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 			MonoLabel(label, color: MaskinColor.ink5, size: .section)
-			MonoLabel("\(count)", color: countColor, size: .section)
+			if let count { MonoLabel("\(count)", color: countColor, size: .section) }
 			Spacer(minLength: 0)
 			trailing
 		}
@@ -451,7 +454,7 @@ struct TeamSectionHeader<Trailing: View>: View {
 }
 
 extension TeamSectionHeader where Trailing == EmptyView {
-	init(label: String, count: Int, countColor: Color = MaskinColor.inkPlaceholder) {
+	init(label: String, count: Int?, countColor: Color = MaskinColor.inkPlaceholder) {
 		self.init(label: label, count: count, countColor: countColor) { EmptyView() }
 	}
 }

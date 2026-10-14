@@ -136,7 +136,7 @@ struct PeopleSheet: View {
 			.searchable(text: $query, isPresented: .constant(adding), prompt: "Search people and agents")
 			.scrollContentBackground(.hidden)
 			.ambientBackground(showsBottom: false)
-			.sheetTitle(adding ? "Add people" : "People", subtitle: adding ? nil : "\(chat.participants.count) in this chat")
+			.sheetTitle(adding ? "Add people" : "People · \(chat.participants.count)")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
