@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
+import { getMcpForwardMarker, resolveMcpCredential } from '@maskin/auth/mcp'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
+import { type McpClient, classifyMcpClient, oauthClientLabel } from '../lib/analytics/mcp-client'
 import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
@@ -12,7 +14,6 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
-import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
 	type McpSessionSource,
 	argKeys,
@@ -100,6 +101,9 @@ app.post('/', async (c) => {
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
 		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
+		// Only a Claude connector token (mat_) needs it: the API accepts such a token solely on
+		// calls that carry this per-process secret, which keeps it usable through /mcp alone.
+		forwardMarker: apiKey.startsWith('mat_') ? getMcpForwardMarker() : undefined,
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
@@ -400,10 +404,13 @@ const ACTOR_CACHE_MAX = 5_000
 // long-lived process map end up in every heap dump.
 const actorCache = new Map<string, { actor: ResolvedActor | null; at: number }>()
 
-/** What validateApiKey told us about the caller; null when the key did not resolve. */
+/** What the credential told us about the caller; null when the bearer did not resolve. */
 interface ResolvedActor {
 	actorId: string
 	actorType: 'human' | 'agent' | null
+	authMethod: 'api_key' | 'oauth'
+	/** For a Claude connector token, the client label from its grant; null for an API key. */
+	oauthClient: McpClient | null
 }
 
 function actorCacheKey(apiKey: string): string {
@@ -564,10 +571,10 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					responseBytes,
 					transport: 'http',
 					agentActorId,
-					// `api_key` only when the key resolved: an unknown caller or a bad
+					// Whichever credential actually matched: an unknown caller or a bad
 					// token is null, never an authenticated-looking value.
-					authMethod: actor ? 'api_key' : null,
-					client,
+					authMethod: actor?.authMethod ?? null,
+					client: actor?.oauthClient ?? client,
 					actorType: actor?.actorType ?? null,
 				})
 			}),
@@ -718,8 +725,20 @@ async function resolveAgentActor(db: Database, apiKey: string): Promise<Resolved
 	const cached = actorCache.get(key)
 	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actor
 	try {
-		const row = await validateApiKey(db, apiKey)
-		const actor = row ? { actorId: row.actorId, actorType: normalizeActorType(row.type) } : null
+		// The same resolver authMiddleware uses for a Claude connector token, so the label here
+		// cannot disagree with what the API accepted: an API key and a token both resolve to the
+		// person behind them, and the method is whichever credential actually matched.
+		const credential = await resolveMcpCredential(db, apiKey, {
+			apiKey: (apiKeyToCheck) => validateApiKey(db, apiKeyToCheck),
+		})
+		const actor: ResolvedActor | null = credential
+			? {
+					actorId: credential.actorId,
+					actorType: normalizeActorType(credential.actorType),
+					authMethod: credential.kind,
+					oauthClient: credential.kind === 'oauth' ? oauthClientLabel(credential.clientId) : null,
+				}
+			: null
 		rememberActor(key, actor, Date.now())
 		return actor
 	} catch (err) {
@@ -727,6 +746,9 @@ async function resolveAgentActor(db: Database, apiKey: string): Promise<Resolved
 		return null
 	}
 }
+
+/** Who the /mcp telemetry label attributes a bearer to. Only used in tests. */
+export const __resolveAgentActor = resolveAgentActor
 
 /** Clears the memoized API-key → actor mapping. Only used in tests. */
 export function __resetMcpActorCache(): void {

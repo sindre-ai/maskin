@@ -90,6 +90,13 @@ interface McpConfig {
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
 	/**
+	 * Per-process secret the HTTP transport (`routes/mcp.ts`) adds to the REST calls this
+	 * server makes back to the API, as `X-Maskin-Mcp-Forward`. The API accepts a Claude
+	 * connector token (mat_) only when it is present, so such a token works through /mcp
+	 * and nowhere else. Never set on stdio, where the bearer is an API key.
+	 */
+	forwardMarker?: string
+	/**
 	 * `events.id` of the comment that dispatched this agent session, when the
 	 * session was triggered by a comment. `create_comment` uses it as the
 	 * default `parent_event_id` unless the caller explicitly opts out via
@@ -367,6 +374,9 @@ async function apiFetch(
 	}
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`
+	}
+	if (config.forwardMarker) {
+		headers['X-Maskin-Mcp-Forward'] = config.forwardMarker
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
@@ -2305,6 +2315,7 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		forwardMarker: config.forwardMarker,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream

@@ -6,7 +6,14 @@
 // an identity. The output is one of a fixed set of labels, so no header value
 // can reach analytics through this function.
 
-export const MCP_CLIENTS = ['claude_code', 'cursor', 'vscode', 'claude_desktop', 'other'] as const
+export const MCP_CLIENTS = [
+	'claude_code',
+	'cursor',
+	'vscode',
+	'claude_desktop',
+	'claude_ai',
+	'other',
+] as const
 
 export type McpClient = (typeof MCP_CLIENTS)[number]
 
@@ -28,4 +35,18 @@ export function classifyMcpClient(userAgent: string | null | undefined): McpClie
 		if (pattern.test(userAgent)) return client
 	}
 	return 'other'
+}
+
+// A Claude connector token names its client by the host of the client_id URL on its grant.
+// Only allowlisted clients get a label of their own, so the grant can never inject free text.
+const OAUTH_CLIENT_HOSTS: Readonly<Record<string, McpClient>> = {
+	'claude.ai': 'claude_ai',
+}
+
+export function oauthClientLabel(clientId: string): McpClient {
+	try {
+		return OAUTH_CLIENT_HOSTS[new URL(clientId).hostname.toLowerCase()] ?? 'other'
+	} catch {
+		return 'other'
+	}
 }
