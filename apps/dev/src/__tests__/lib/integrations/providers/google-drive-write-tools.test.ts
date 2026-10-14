@@ -28,7 +28,7 @@ import {
 	commentInputShape,
 	writeFileInputShape,
 } from '../../../../lib/integrations/providers/google-drive/write-tools'
-import { googleError, jsonResponse } from './google-drive-fakes'
+import { fakeResumableDrive, googleError, jsonResponse, sha256 } from './google-drive-fakes'
 
 /** Boots the real Drive MCP server in memory; Google is whatever fetchImpl says. */
 async function setup(fetchImpl: () => Promise<Response>, storage?: unknown) {
@@ -230,20 +230,19 @@ describe('tool calls through the Drive MCP server', () => {
 	it('write_file reads a storageUrl through the storage provider and uploads it', async () => {
 		const bytes = Buffer.from('from storage')
 		const storage = { get: vi.fn(async () => bytes) }
-		const { call } = await setup(
-			async () => jsonResponse({ id: 'f2', name: 'b.bin', mimeType: 'application/octet-stream' }),
-			storage,
-		)
+		const drive = fakeResumableDrive()
+		const { call } = await setup(drive.fetchImpl as never, storage)
 		const res = await call('google_drive__write_file', {
 			name: 'b.bin',
 			mimeType: 'application/octet-stream',
 			content: { storageUrl: 'workspaces/ws-1/integrations/google-drive/downloads/abc' },
 		})
 		expect(res.isError).toBeFalsy()
-		expect(res.body.fileId).toBe('f2')
+		expect(res.body.fileId).toBe('file-1')
 		expect(storage.get).toHaveBeenCalledWith(
 			'workspaces/ws-1/integrations/google-drive/downloads/abc',
 		)
+		expect(sha256(drive.received())).toBe(sha256(bytes))
 	})
 
 	it('comment_on_document returns the output shape and emits drive_comment_created', async () => {
