@@ -178,6 +178,7 @@ public struct APIShareRemote: ShareRemote {
 			switch output {
 			case .created: return
 			case .badRequest: throw ShareError.rejected
+			case .notFound: throw ShareError.rejected
 			case .internalServerError: throw ShareError.server
 			case .undocumented(let status, _): throw Self.failure(status: status)
 			}

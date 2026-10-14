@@ -643,8 +643,12 @@ describe('Sessions Routes', () => {
 	})
 
 	describe('POST /api/sessions/:id/input', () => {
+		// createSessionTestApp calls as 'test-actor-id', so this session was started by the caller.
+		const buildOwnSession = (overrides?: Record<string, unknown>) =>
+			buildSession({ workspaceId: wsId, createdBy: 'test-actor-id', ...overrides })
+
 		it('returns 200 and forwards formatted payload when session is interactive + running', async () => {
-			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const session = buildOwnSession({ interactive: true, status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -680,7 +684,7 @@ describe('Sessions Routes', () => {
 		// is what lets reload render image attachments inline without a
 		// second POST to `/files`.
 		it('forwards attachments to writeInput as a separate maskinAttachments argument', async () => {
-			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const session = buildOwnSession({ interactive: true, status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -719,6 +723,77 @@ describe('Sessions Routes', () => {
 			)
 		})
 
+		it('returns 403 and writes nothing when another member started the session', async () => {
+			const session = buildOwnSession({
+				interactive: true,
+				status: 'running',
+				createdBy: 'someone-else',
+			})
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('FORBIDDEN')
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+		})
+
+		it('returns 403 and writes nothing when the caller is another agent', async () => {
+			const session = buildOwnSession({ interactive: true, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+				'other-agent-id',
+				'agent',
+			)
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+		})
+
+		it('returns 403 before the state checks so a stranger cannot probe session state', async () => {
+			const session = buildOwnSession({
+				interactive: false,
+				status: 'completed',
+				createdBy: 'someone-else',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
 		it('returns 404 when session not found', async () => {
 			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 
@@ -735,7 +810,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 409 when session is not interactive', async () => {
-			const session = buildSession({ workspaceId: wsId, interactive: false, status: 'running' })
+			const session = buildOwnSession({ interactive: false, status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -758,7 +833,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 409 when interactive session is not in running state', async () => {
-			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'paused' })
+			const session = buildOwnSession({ interactive: true, status: 'paused' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -781,7 +856,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 400 when writeInput throws (e.g. no stdin stream attached)', async () => {
-			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const session = buildOwnSession({ interactive: true, status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -806,7 +881,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 400 when content is missing', async () => {
-			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const session = buildOwnSession({ interactive: true, status: 'running' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.selectQueue = [[session]]
 

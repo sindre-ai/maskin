@@ -27,6 +27,9 @@ const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session
 // (lib/events/record-event.ts), so a refetch is never answered from a snapshot
 // older than the event no matter how long the window is.
 const SESSIONS_REFETCH_MS = 5_000
+// The paged list walks the whole session history, so it gets a longer window.
+// It only feeds per-agent counts; live status comes from the 100-row list.
+const SESSIONS_PAGED_REFETCH_MS = 30_000
 const BILLING_REFETCH_MS = 15_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -172,12 +175,16 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'session': {
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
-			// which is coalesced below. The prefix also matches it, so exclude it here.
+			// which is coalesced below, and the paged full-history list
+			// (['sessions', ws, 'paged']), which walks every page sequentially. The prefix
+			// matches both, so exclude them here — invalidating the paged walk per event
+			// cancels and restarts it, so under steady session traffic it never finishes.
 			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
 					const key = query.queryKey
-					return !(key.length === 2 && key[1] === workspaceId)
+					if (key[1] !== workspaceId) return true
+					return !(key.length === 2 || (key.length === 3 && key[2] === 'paged'))
 				},
 			})
 			scheduleTrailingRefetch(
@@ -188,6 +195,15 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					exact: true,
 				},
 				SESSIONS_REFETCH_MS,
+			)
+			scheduleTrailingRefetch(
+				queryClient,
+				`sessions-paged:${workspaceId}`,
+				{
+					queryKey: [...queryKeys.sessions.all(workspaceId), 'paged'],
+					exact: true,
+				},
+				SESSIONS_PAGED_REFETCH_MS,
 			)
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
