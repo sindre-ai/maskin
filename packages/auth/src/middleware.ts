@@ -5,6 +5,8 @@ import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 import { createAuthCaches, resolveAuthCacheTtlMs } from './auth-cache'
+import { isMcpOAuthEnabled, isOAuthTokenPrefix } from './mcp-credential'
+import { authenticateOAuthToken } from './oauth-middleware'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -84,6 +86,11 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 
 			return next()
 		}
+
+		// Claude connector tokens (mat_). Off unless MASKIN_MCP_OAUTH_ENABLED is set; when off they
+		// fall through to the 401 below like any unknown token format.
+		if (isMcpOAuthEnabled() && isOAuthTokenPrefix(token))
+			return authenticateOAuthToken(c, next, { db, caches }, token)
 
 		// Future: Better Auth session validation
 		return c.json(

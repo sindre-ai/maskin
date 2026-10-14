@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
+import { getMcpForwardMarker, isMcpOAuthEnabled, resolveMcpCredential } from '@maskin/auth/mcp'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
-import { resolveWebAppBaseUrl } from '@maskin/shared'
+import { OAUTH_ACCESS_TOKEN_PREFIX, resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
+import { type McpClient, classifyMcpClient, oauthClientLabel } from '../lib/analytics/mcp-client'
 import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
@@ -12,10 +14,16 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
-import { type McpSessionSource, argKeys, captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
+import {
+	type McpSessionSource,
+	argKeys,
+	captureMcpToolCall,
+	normalizeActorType,
+} from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
+import { buildMcpChallenge } from '../lib/oauth-server/discovery'
 
 // Only `db` is set on the /mcp path — the auth middleware runs under /api/*.
 type Env = {
@@ -44,7 +52,32 @@ interface JsonRpcMessage {
 	error?: JsonRpcErrorLike
 }
 
+// The sign-in challenge. Only with MASKIN_MCP_OAUTH_ENABLED on, and only for a caller that offered
+// no usable credential (no Authorization header, not Bearer, or an empty bearer) or a Claude
+// connector token (mat_) that does not validate. An ank_ key, valid or not, and any other bearer
+// string are left alone: they reach the transport as they always have. Bearer is matched the way
+// the rest of this route reads it, exactly "Bearer " (the string is forwarded to the API as is).
+async function mcpAuthChallenge(c: Context<Env>) {
+	const header = c.req.header('Authorization')
+	const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : ''
+	let invalidToken = false
+	if (bearer.trim()) {
+		if (!bearer.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) return null
+		if (await resolveMcpCredential(c.get('db'), bearer)) return null
+		invalidToken = true
+	}
+	c.header('WWW-Authenticate', buildMcpChallenge({ invalidToken }))
+	return c.json(
+		{ jsonrpc: '2.0', error: { code: -32001, message: 'Authentication required' }, id: null },
+		401,
+	)
+}
+
 app.post('/', async (c) => {
+	if (isMcpOAuthEnabled()) {
+		const challenge = await mcpAuthChallenge(c)
+		if (challenge) return challenge
+	}
 	const url = new URL(c.req.url, 'http://localhost')
 	const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
@@ -94,6 +127,9 @@ app.post('/', async (c) => {
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
 		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
+		// Only a Claude connector token (mat_) needs it: the API accepts such a token solely on
+		// calls that carry this per-process secret, which keeps it usable through /mcp alone.
+		forwardMarker: apiKey.startsWith('mat_') ? getMcpForwardMarker() : undefined,
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
@@ -178,6 +214,7 @@ app.post('/', async (c) => {
 			apiKey,
 			workspaceId,
 			requestBody: body,
+			userAgent: c.req.header('User-Agent'),
 			responseBytes: captured.consume(),
 			session,
 			elapsedMs,
@@ -391,7 +428,16 @@ const ACTOR_CACHE_MAX = 5_000
 // Keyed by a SHA-256 of the API key, never the key itself: this map outlives
 // the 60s TTL of any individual entry, and plaintext credentials sitting in a
 // long-lived process map end up in every heap dump.
-const actorCache = new Map<string, { actorId: string | null; at: number }>()
+const actorCache = new Map<string, { actor: ResolvedActor | null; at: number }>()
+
+/** What the credential told us about the caller; null when the bearer did not resolve. */
+interface ResolvedActor {
+	actorId: string
+	actorType: 'human' | 'agent' | null
+	authMethod: 'api_key' | 'oauth'
+	/** For a Claude connector token, the client label from its grant; null for an API key. */
+	oauthClient: McpClient | null
+}
 
 function actorCacheKey(apiKey: string): string {
 	return createHash('sha256').update(apiKey).digest('hex')
@@ -403,7 +449,7 @@ function actorCacheKey(apiKey: string): string {
  * request into a `validateApiKey` query — trading bounded memory for unbounded
  * DB load. The cap below is what keeps the memory side honest.
  */
-function rememberActor(key: string, actorId: string | null, at: number): void {
+function rememberActor(key: string, actor: ResolvedActor | null, at: number): void {
 	if (!actorCache.has(key) && actorCache.size >= ACTOR_CACHE_MAX) {
 		for (const [k, v] of actorCache) {
 			if (at - v.at >= ACTOR_CACHE_TTL_MS) actorCache.delete(k)
@@ -415,7 +461,7 @@ function rememberActor(key: string, actorId: string | null, at: number): void {
 			actorCache.delete(oldest.value)
 		}
 	}
-	actorCache.set(key, { actorId, at })
+	actorCache.set(key, { actor, at })
 }
 
 /**
@@ -471,6 +517,8 @@ interface EmitMcpTraceArgs {
 	apiKey: string
 	workspaceId: string
 	requestBody: unknown
+	/** Reduced to a client family before it is emitted; never stored raw. */
+	userAgent: string | undefined
 	responseBytes: Buffer
 	session: McpSessionIdentity
 	/**
@@ -483,15 +531,18 @@ interface EmitMcpTraceArgs {
 
 async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	let responses: JsonRpcMessage[]
-	let agentActorId: string | null = null
+	let actor: ResolvedActor | null = null
 	try {
 		responses = parseJsonRpcResponses(args.responseBytes)
 		if (args.plannedCalls.length === 0 && responses.length === 0) return
-		agentActorId = args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+		actor = args.apiKey && args.db ? await resolveAgentActor(args.db, args.apiKey) : null
 	} catch (err) {
 		logger.warn('mcp trace response parse failed', { error: String(err) })
 		return
 	}
+
+	const agentActorId = actor?.actorId ?? null
+	const client = classifyMcpClient(args.userAgent)
 
 	const responsesById = new Map<string, JsonRpcMessage>()
 	for (const r of responses) {
@@ -546,6 +597,11 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					responseBytes,
 					transport: 'http',
 					agentActorId,
+					// Whichever credential actually matched: an unknown caller or a bad
+					// token is null, never an authenticated-looking value.
+					authMethod: actor?.authMethod ?? null,
+					client: actor?.oauthClient ?? client,
+					actorType: actor?.actorType ?? null,
 				})
 			}),
 		)
@@ -690,20 +746,35 @@ function extractToolName(
 	return match?.[1] ?? null
 }
 
-async function resolveAgentActorId(db: Database, apiKey: string): Promise<string | null> {
+async function resolveAgentActor(db: Database, apiKey: string): Promise<ResolvedActor | null> {
 	const key = actorCacheKey(apiKey)
 	const cached = actorCache.get(key)
-	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actorId
+	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actor
 	try {
-		const actor = await validateApiKey(db, apiKey)
-		const actorId = actor?.actorId ?? null
-		rememberActor(key, actorId, Date.now())
-		return actorId
+		// The same resolver authMiddleware uses for a Claude connector token, so the label here
+		// cannot disagree with what the API accepted: an API key and a token both resolve to the
+		// person behind them, and the method is whichever credential actually matched.
+		const credential = await resolveMcpCredential(db, apiKey, {
+			apiKey: (apiKeyToCheck) => validateApiKey(db, apiKeyToCheck),
+		})
+		const actor: ResolvedActor | null = credential
+			? {
+					actorId: credential.actorId,
+					actorType: normalizeActorType(credential.actorType),
+					authMethod: credential.kind,
+					oauthClient: credential.kind === 'oauth' ? oauthClientLabel(credential.clientId) : null,
+				}
+			: null
+		rememberActor(key, actor, Date.now())
+		return actor
 	} catch (err) {
 		logger.warn('mcp trace actor lookup failed', { error: String(err) })
 		return null
 	}
 }
+
+/** Who the /mcp telemetry label attributes a bearer to. Only used in tests. */
+export const __resolveAgentActor = resolveAgentActor
 
 /** Clears the memoized API-key → actor mapping. Only used in tests. */
 export function __resetMcpActorCache(): void {

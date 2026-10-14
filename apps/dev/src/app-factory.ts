@@ -51,6 +51,9 @@ import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationsRoutes from './routes/notifications'
+import oauthRoutes from './routes/oauth'
+import oauthDiscoveryRoutes from './routes/oauth-discovery'
+import oauthTokenRoutes from './routes/oauth-token'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -239,7 +242,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// webviews vary by origin. Do NOT add `credentials: true` to the /mcp
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
-	app.use('/mcp', cors())
+	app.use('/mcp', cors({ origin: '*', exposeHeaders: ['WWW-Authenticate'] }))
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use('*', honoLogger())
 
@@ -421,6 +424,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// surface without touching files.ts.
 	app.route('/api/files', fileCommentsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
+	// The consent and connections API for the Claude connector. Behind authMiddleware like the rest
+	// of /api, and refused for Claude's own (mat_) tokens.
+	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
@@ -443,6 +449,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
+
+	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
+	// otherwise answer these paths with index.html.
+	app.route('/', oauthDiscoveryRoutes)
+
+	// POST /oauth/token (public: the one-time code or refresh token is the credential). Same reason
+	// for the position: the SPA fallthrough below would otherwise swallow the path.
+	app.route('/', oauthTokenRoutes)
 
 	// Public method-site routes — mounted BEFORE the SPA static fallthrough
 	// below so `/method/*` never falls through to `index.html`. The editorial

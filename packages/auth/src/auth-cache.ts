@@ -1,3 +1,5 @@
+import type { OauthAccessTokenContext } from '@maskin/shared'
+
 /**
  * Short-lived, per-process cache for the two lookups `authMiddleware` runs on
  * every request: API key → actor, and (actor, workspace) → membership.
@@ -93,8 +95,11 @@ export class TtlPromiseCache<T> {
 
 export interface AuthCaches {
 	apiKeys: TtlPromiseCache<{ actorId: string; type: string } | null>
-	// Role of the actor in the workspace, or null for a non-member.
+	// Role of the actor in the workspace, or null for a non-member. The ank_ and mat_ branches
+	// share this cache under the same key, so both must store the role.
 	memberships: TtlPromiseCache<string | null>
+	// Keyed by the token's SHA-256 hash, never the raw token. Positive results only.
+	oauthTokens: TtlPromiseCache<OauthAccessTokenContext | null>
 }
 
 // Every live cache, so eviction reaches whichever middleware instance holds the
@@ -105,6 +110,7 @@ export function createAuthCaches(ttlMs: number): AuthCaches {
 	const caches: AuthCaches = {
 		apiKeys: new TtlPromiseCache(ttlMs),
 		memberships: new TtlPromiseCache(ttlMs),
+		oauthTokens: new TtlPromiseCache(ttlMs),
 	}
 	registry.add(caches)
 	return caches
@@ -136,4 +142,13 @@ export function evictActor(actorId: string): void {
 /** Call after removing a member from a workspace. */
 export function evictMembership(actorId: string, workspaceId: string): void {
 	for (const caches of registry) caches.memberships.delete(`${actorId}|${workspaceId}`)
+}
+
+/**
+ * Call after revoking an OAuth grant or its tokens. Clears the whole OAuth cache:
+ * revocations are rare, and entries are keyed by hash so a single token cannot be
+ * found from a grant id.
+ */
+export function evictOAuthTokens(): void {
+	for (const caches of registry) caches.oauthTokens.clear()
 }

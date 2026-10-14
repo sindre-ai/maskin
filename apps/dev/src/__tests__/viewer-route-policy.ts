@@ -63,6 +63,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'the one-time code and its PKCE verifier are the credential',
 	],
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
+	// The Claude connector. A token a viewer approves carries the viewer role, so writes through it are refused.
+	['POST', '/api/oauth/authorize/approve', 'approves a Claude connection for the caller only'],
+	['POST', '/api/oauth/authorize/deny', 'declines a Claude connection for the caller only'],
+	['DELETE', '/api/oauth/grants/:id', 'ends a Claude connection of the caller only'],
+	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group E: personal state a viewer may keep.
 	['POST', '/api/notifications', 'Group E, personal state'],
 	[

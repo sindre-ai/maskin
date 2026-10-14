@@ -165,6 +165,106 @@ export const workspaceInvitations = pgTable(
 export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect
 export type NewWorkspaceInvitation = typeof workspaceInvitations.$inferInsert
 
+// ── MCP OAuth ───────────────────────────────────────────────────────────────
+// Claude connector sign-in. Tokens and codes live here as SHA-256 hex only: a raw
+// mat_ / mrt_ value or authorization code is never written to any column or event.
+
+export const oauthGrants = pgTable(
+	'oauth_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The client's metadata URL, exactly as presented at consent.
+		clientId: text('client_id').notNull(),
+		// Snapshot at consent time, for the grants list.
+		clientName: text('client_name').notNull(),
+		scope: text('scope').notNull().default('mcp'),
+		// Canonical MCP URL the grant was issued for.
+		resource: text('resource').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// Written at most once per 5 minutes per grant.
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		revokedByActorId: uuid('revoked_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		// user | member_removed | code_reuse | refresh_reuse | pkce_failure | admin
+		revokeReason: text('revoke_reason'),
+	},
+	(t) => [
+		// One live grant per person, workspace and client. A second approval revokes the
+		// old grant in the same transaction; this index is the backstop.
+		uniqueIndex('oauth_grants_live_uniq')
+			.on(t.actorId, t.workspaceId, t.clientId)
+			.where(sql`${t.revokedAt} IS NULL`),
+		index('oauth_grants_workspace_live_idx').on(t.workspaceId).where(sql`${t.revokedAt} IS NULL`),
+	],
+)
+
+export const oauthAuthorizationCodes = pgTable(
+	'oauth_authorization_codes',
+	{
+		// SHA-256 hex of the code.
+		codeHash: text('code_hash').primaryKey(),
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: 'cascade' }),
+		// The exact string from the authorize request.
+		redirectUri: text('redirect_uri').notNull(),
+		// S256 only, so there is no method column.
+		codeChallenge: text('code_challenge').notNull(),
+		resource: text('resource').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// created_at + 60 s
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		consumedAt: timestamp('consumed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('oauth_authorization_codes_grant_idx').on(t.grantId),
+		index('oauth_authorization_codes_expires_at_idx').on(t.expiresAt),
+	],
+)
+
+export const oauthTokens = pgTable(
+	'oauth_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: 'cascade' }),
+		// 'access' | 'refresh'
+		kind: text('kind').notNull(),
+		// SHA-256 hex of the raw token.
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// access: +1 h. refresh: +30 d, set again on each rotation.
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		// Refresh only: set when rotated. A second presentation is reuse.
+		usedAt: timestamp('used_at', { withTimezone: true }),
+		replacedBy: uuid('replaced_by').references((): AnyPgColumn => oauthTokens.id, {
+			onDelete: 'set null',
+		}),
+	},
+	(t) => [
+		check('oauth_tokens_kind_check', sql`${t.kind} in ('access', 'refresh')`),
+		index('oauth_tokens_grant_idx').on(t.grantId),
+		index('oauth_tokens_expires_at_idx').on(t.expiresAt),
+	],
+)
+
+export type OauthGrant = typeof oauthGrants.$inferSelect
+export type NewOauthGrant = typeof oauthGrants.$inferInsert
+export type OauthAuthorizationCode = typeof oauthAuthorizationCodes.$inferSelect
+export type NewOauthAuthorizationCode = typeof oauthAuthorizationCodes.$inferInsert
+export type OauthToken = typeof oauthTokens.$inferSelect
+export type NewOauthToken = typeof oauthTokens.$inferInsert
+
 // ── Objects ─────────────────────────────────────────────────────────────────
 
 export const objects = pgTable(
