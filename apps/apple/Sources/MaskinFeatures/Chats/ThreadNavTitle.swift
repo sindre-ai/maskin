@@ -38,19 +38,9 @@ enum ThreadNav {
 	static func status(
 		presences: [(agent: ChatParticipant, presence: ChatAgentPresence)], flow: ChatFlowContext?
 	) -> ThreadNavStatus? {
-		if let flow {
-			let typing = presences.filter { $0.presence == .typing }
-			if presences.count == 1, let only = typing.first { return .live("\(only.agent.name) is typing…") }
-			let working = presences.count
-			if working > 0 { return .live("▮ \(working) working") }
-			return .quiet("\(flow.name) flow")
-		}
-		// Typing wins over working: it is what the reader is waiting for.
-		if let p = presences.first(where: { $0.presence == .typing }) ?? presences.first(where: { $0.presence == .replying })
-			?? presences.first
-		{
-			return .live(p.presence.label)
-		}
+		if presences.count > 1, flow != nil { return .live("\(presences.count) working") }
+		if !presences.isEmpty { return .live("working") }
+		if let flow { return .quiet("\(flow.name) flow") }
 		return nil
 	}
 

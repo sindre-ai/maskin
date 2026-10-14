@@ -68,6 +68,9 @@ struct ChatThreadView: View {
 	private static let unreadOpenOffset: CGFloat = 150
 	private static let matchOffset: CGFloat = 170
 	private static let skeletonAfter: Duration = .milliseconds(300)
+	/// How long a thread stays hidden after it appears, while its rows measure and the scroll pins.
+	/// Held back too long it reads as a blank screen on open (it was 320ms).
+	private static let revealDelay = 120
 
 	private var isNearBottom: Bool { distanceFromBottom <= JumpToLatest.showAfterDistance }
 	private var flow: ChatFlowContext? { store.flowContext }
@@ -396,8 +399,8 @@ struct ChatThreadView: View {
 			}
 			.onChange(of: geometry.size.height) { _, height in viewportHeight = height }
 			.onUserScroll {
-				followingOpen = false
-				revealed = true
+				if followingOpen { followingOpen = false }
+				if !revealed { revealed = true }
 			}
 			.trackingDistanceFromBottom { distance in
 				distanceFromBottom = distance
@@ -413,8 +416,32 @@ struct ChatThreadView: View {
 					newestIsMine: store.messages.last?.actorID == store.currentActorID)
 				{
 				case .jump: jumpToBottom(proxy)
-				case .follow: scrollToBottom(proxy)
+				case .follow:
+					let last = store.messages.last
+					// Next turn, once the lazy stack has measured the new row: scrolling in the same
+					// pass animates toward an estimated bottom that then moves, which reads as a jerk.
+					Task { @MainActor in
+						await Task.yield()
+						if let last, last.actorID != store.currentActorID, last.author == .agent {
+							// A reply is read from its first line: bring its top into view. A short one still
+							// ends at the bottom (the scroll view clamps), a long one doesn't start mid-way.
+							unseenCount = 0
+							withAnimation(MaskinMotion.standard) {
+								proxy.scrollTo(last.id, anchor: topAnchor(Self.matchOffset))
+							}
+						} else {
+							scrollToBottom(proxy)
+						}
+					}
 				case .countUnseen: unseenCount += 1
+				}
+			}
+			// The live activity card grows a line per step: keep it in view while the reader is at the bottom.
+			.onChange(of: liveStepCount) { _, _ in
+				guard isNearBottom, !followingOpen else { return }
+				Task { @MainActor in
+					await Task.yield()
+					scrollToBottom(proxy)
 				}
 			}
 			// The "speaking…" bubble appears at the bottom: keep it in view while you are following.
@@ -640,7 +667,7 @@ struct ChatThreadView: View {
 			followingOpen = false
 			proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 			Task {
-				try? await Task.sleep(for: .milliseconds(320))
+				try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 				proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 				revealed = true
 			}
@@ -648,7 +675,7 @@ struct ChatThreadView: View {
 		}
 		jumpToBottom(proxy)
 		Task {
-			try? await Task.sleep(for: .milliseconds(320))
+			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 			revealed = true
 		}
@@ -662,6 +689,11 @@ struct ChatThreadView: View {
 			try? await Task.sleep(for: .milliseconds(200))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 		}
+	}
+
+	/// Live steps across running sessions: changes whenever the activity card gains a line.
+	private var liveStepCount: Int {
+		store.liveSessions().reduce(0) { $0 + (store.trace?.liveTurn(sessionID: $1.id)?.steps.count ?? 0) }
 	}
 
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -750,8 +782,8 @@ struct ThreadTranscript: View {
 		var id: String { agent.id }
 	}
 
-	/// The agents' live state under the newest message: a typing bubble (or the streaming reply)
-	/// for one composing an answer, the live activity card for one working, `Stopped` for one the
+	/// The agents' live state under the newest message: the live activity card (the one indicator,
+	/// whether the agent is thinking or running tools) or the streaming reply, `Stopped` for one the
 	/// user cut short, and a Resume banner for one that paused.
 	@ViewBuilder
 	private func activity(at date: Date) -> some View {
@@ -759,15 +791,10 @@ struct ThreadTranscript: View {
 		let sessions = store.liveSessions(at: date)
 		ForEach(live) { row in
 			Group {
-				switch row.presence {
-				case .typing, .replying:
-					if let draft = store.liveReplyDraft(for: row.agent.id) {
-						StreamingReplyBubble(agent: row.agent, text: draft)
-					} else {
-						TypingIndicator(agent: row.agent)
-					}
-				case .working:
-					let session = sessions.first { $0.actorID == row.agent.id }
+				let session = sessions.first { $0.actorID == row.agent.id }
+				if let draft = store.liveReplyDraft(for: row.agent.id) {
+					StreamingReplyBubble(agent: row.agent, text: draft)
+				} else {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
 						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) }, startedAt: session?.startedAt)
@@ -897,7 +924,12 @@ extension View {
 			return AnyView(
 				onScrollGeometryChange(for: CGFloat.self) { geometry in
 					// The visible rect is in content coordinates, so insets (the composer bar) can't skew it.
-					max(geometry.contentSize.height - geometry.visibleRect.maxY, 0)
+					// Bucketed: the action only fires when the bucket changes, not on every scroll frame.
+					// Writing the raw offset into @State re-rendered the whole thread each frame.
+					let distance = max(geometry.contentSize.height - geometry.visibleRect.maxY, 0)
+					if distance < MaskinSpace.touchMin { return 0 }
+					if distance <= JumpToLatest.showAfterDistance { return MaskinSpace.touchMin }
+					return JumpToLatest.showAfterDistance + 1
 				} action: { _, distance in
 					action(distance)
 				})
