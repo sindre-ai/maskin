@@ -15,6 +15,8 @@ interface QuestionOptionsProps {
 	question: MessageQuestion
 	/** A later message in the thread already answered this one. */
 	answered: boolean
+	/** Sits at the right end of the action row, beside "Send answer". */
+	trailingAction?: React.ReactNode
 }
 
 /**
@@ -36,6 +38,7 @@ export function QuestionOptions({
 	questionMessageId,
 	question,
 	answered,
+	trailingAction,
 }: QuestionOptionsProps) {
 	// question index -> chosen labels. Deliberately NOT keyed by header: nothing
 	// makes headers unique (the schema validates each one independently, and the
@@ -169,6 +172,7 @@ export function QuestionOptions({
 						or type your reply
 					</Button>
 				)}
+				{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
 			</div>
 			{typing ? (
 				<div className="flex items-end gap-2">

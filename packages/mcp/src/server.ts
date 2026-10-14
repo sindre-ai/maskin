@@ -1062,7 +1062,14 @@ async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
 ) {
-	const { workspace_id, wait: _wait, notify_on_complete, ...createBody } = args
+	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
+	// ignored, and it is never sent on this create call (registered below instead).
+	const {
+		workspace_id,
+		wait: _wait,
+		notify_on_complete: _ignored,
+		...createBody
+	} = args as typeof args & { notify_on_complete?: unknown }
 	const wsOpts = { workspaceId: workspace_id }
 
 	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
@@ -1132,7 +1139,7 @@ async function createSessionAndWait(
 	let notifyOnComplete:
 		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
 		| undefined
-	if (notify_on_complete && !settled) {
+	if (!settled) {
 		try {
 			const patched = (await apiCall(
 				config,
@@ -5984,8 +5991,11 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			if (args.wait) return createSessionAndWait(config, args)
 
-			// `wait` never goes to the create route.
-			const { workspace_id, wait, ...createBody } = args
+			// `wait` never goes to the create route. The result is always sent back to
+			// the caller, with no opt-out: not waiting means not holding the call open,
+			// not never finding out how it went.
+			const { workspace_id, wait, ...rest } = args
+			const createBody = { ...rest, notify_on_complete: true }
 
 			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
 				workspaceId: workspace_id,

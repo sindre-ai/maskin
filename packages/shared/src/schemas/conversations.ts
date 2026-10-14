@@ -183,6 +183,8 @@ export const messageMetadataSchema = z.object({
 	question: messageQuestionSchema.optional(),
 	/** Client-supplied: which options the human picked for a `question`. */
 	question_answer: messageQuestionAnswerSchema.optional(),
+	/** Backend-owned: the helper session whose result this message hands to its sender. */
+	helper_return: z.string().uuid().optional(),
 })
 
 /**

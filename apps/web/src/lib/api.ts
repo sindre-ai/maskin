@@ -1990,6 +1990,8 @@ export interface MessageMetadata {
 	question?: MessageQuestion
 	/** Client-supplied: pairs a human's reply back to the question it answers. */
 	question_answer?: MessageQuestionAnswer
+	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
+	helper_return?: string
 }
 
 export interface MessageResponse {

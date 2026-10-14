@@ -1,4 +1,5 @@
 import { HandoffCard } from '@/components/chat/handoff-card'
+import { HelperQuestionCard } from '@/components/chat/helper-question-card'
 import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
@@ -122,6 +123,9 @@ export function ThreadMessages({
 		messages.filter((m) => m.metadata?.question?.reply_to_session).map((m) => m.id),
 	)
 	const visibleMessages = messages.filter((m) => {
+		// A helper's result handed to the agent that started it: the agent gets it, the
+		// person reads it in the helper's thread as its final output.
+		if (m.metadata?.helper_return) return false
 		if (helperQuestionIds.has(m.id)) return !answeredQuestionIds.has(m.id)
 		const answered = m.metadata?.question_answer?.question_message_id
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
@@ -313,6 +317,28 @@ export function ThreadMessages({
 					const turnsAbove = byReplyMessageId.get(message.id) ?? []
 					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
+					// A helper's question is put to the person from outside this chat, so it
+					// is drawn as a card rather than as a message from the helper.
+					const helperQuestion = message.metadata?.question?.reply_to_session
+						? message.metadata.question
+						: null
+					if (helperQuestion) {
+						return (
+							<Fragment key={message.id}>
+								{renderHandoffCards(handoffsByNextMessage.get(message.id))}
+								<HelperQuestionCard
+									workspaceId={workspaceId}
+									conversationId={conversationId}
+									questionMessageId={message.id}
+									actorId={message.actorId}
+									actorName={message.actorName}
+									question={helperQuestion}
+									answered={answeredQuestionIds.has(message.id)}
+									onViewThread={threadsPane?.openThread}
+								/>
+							</Fragment>
+						)
+					}
 					return (
 						<Fragment key={message.id}>
 							{renderHandoffCards(handoffsByNextMessage.get(message.id))}

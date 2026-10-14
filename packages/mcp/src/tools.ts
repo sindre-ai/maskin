@@ -1350,7 +1350,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 			actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -1368,12 +1368,6 @@ export const tools = {
 				.optional()
 				.describe(
 					'The bet, task, insight or other object this work is for. Leave it out if the work is not about a specific object.',
-				),
-			notify_on_complete: z
-				.boolean()
-				.optional()
-				.describe(
-					"Set true to get the agent's final message back when it finishes. It arrives as a new turn in your own chat if you are in one, otherwise as a comment on the object you were started from. With `wait: true` it only takes effect if the wait runs out before the agent finishes; otherwise you get the result from the call itself.",
 				),
 			spawned_by_message_id: z
 				.number()

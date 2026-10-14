@@ -227,7 +227,9 @@ async function doReturn(
 		workspaceId: helper.workspaceId,
 		actorId: helper.actorId,
 		content,
-		metadata: null,
+		// Marks this as the helper's result handed to the sender: it wakes the sender
+		// but is not part of the conversation the person reads (the chat hides it).
+		metadata: { helper_return: sessionId },
 		sessionId: null,
 	})
 	if (message && opts.sessionManager) {
