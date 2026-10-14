@@ -98,6 +98,124 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid object type')
 		})
+
+		describe('task initial status', () => {
+			beforeEach(() => {
+				capturePosthogEventMock.mockClear()
+				capturePosthogEventMock.mockResolvedValue(undefined)
+			})
+
+			it('rejects a task created at in_progress, naming todo and backlog, and emits one event', async () => {
+				const ws = buildWorkspace({ id: wsId })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({ status: 'in_progress', title: 'Secret title' }),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.message).toContain('todo')
+				expect(body.error.message).toContain('backlog')
+				const calls = capturePosthogEventMock.mock.calls.filter(
+					([name]) => name === 'task_created_invalid_initial_status',
+				)
+				expect(calls).toHaveLength(1)
+				expect(calls[0]).toEqual([
+					'task_created_invalid_initial_status',
+					'test-actor-id',
+					{ attempted_status: 'in_progress', actor_id: 'test-actor-id' },
+				])
+			})
+
+			it.each(['todo', 'backlog'])('accepts a task created at %s', async (status) => {
+				const base = buildWorkspace({ id: wsId })
+				const ws = {
+					...base,
+					settings: {
+						...base.settings,
+						statuses: { ...base.settings.statuses, task: ['backlog', 'todo', 'in_progress'] },
+					},
+				}
+				const obj = buildObject({ workspaceId: wsId, type: 'task', status })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody({ status }), {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(201)
+				expect(capturePosthogEventMock).not.toHaveBeenCalledWith(
+					'task_created_invalid_initial_status',
+					expect.anything(),
+					expect.anything(),
+				)
+			})
+
+			it('accepts a task created at a custom workspace status', async () => {
+				const base = buildWorkspace({ id: wsId })
+				const ws = {
+					...base,
+					settings: {
+						...base.settings,
+						statuses: { ...base.settings.statuses, task: ['todo', 'awaiting_legal'] },
+					},
+				}
+				const obj = buildObject({ workspaceId: wsId, type: 'task', status: 'awaiting_legal' })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody({ status: 'awaiting_legal' }), {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(201)
+			})
+
+			it('leaves non-task objects unchanged at any status', async () => {
+				const base = buildWorkspace({ id: wsId })
+				const ws = {
+					...base,
+					settings: {
+						...base.settings,
+						statuses: { ...base.settings.statuses, insight: ['new', 'in_progress'] },
+					},
+				}
+				const obj = buildObject({ workspaceId: wsId, type: 'insight', status: 'in_progress' })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({ type: 'insight', status: 'in_progress' }),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				expect(capturePosthogEventMock).not.toHaveBeenCalledWith(
+					'task_created_invalid_initial_status',
+					expect.anything(),
+					expect.anything(),
+				)
+			})
+		})
 	})
 
 	describe('GET /api/objects', () => {

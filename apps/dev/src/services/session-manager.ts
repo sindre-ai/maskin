@@ -23,6 +23,7 @@ import {
 } from '@maskin/db/schema'
 import {
 	AGENT_PUSH_DIRECTORIES,
+	HUMAN_MESSAGE_STYLE,
 	type SessionResult,
 	type SessionResultFailureReason,
 	buildSetModelRequest,
@@ -109,7 +110,15 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
+import {
+	type McpServerHealthMap,
+	applyMcpEnvelope,
+	applyMcpToolUse,
+	expireMcpPending,
+	hasPendingMcpServers,
+	parseMcpInit,
+	registerMcpInit,
+} from '../lib/mcp-health'
 import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
@@ -166,6 +175,22 @@ const NO_CONTAINER_ASSIGNED_MESSAGE =
  * that never emits a newline. Matches InteractiveTurnFinalizer's cap.
  */
 const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
+
+/**
+ * How long a server that was still pending at init is watched for signs of
+ * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
+ */
+const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** Per-session MCP health record: what has been said about each server. */
+interface McpHealthSession {
+	servers: McpServerHealthMap
+	capAt: number
+	/** Cap timer; absent when nothing was pending at init. */
+	timer?: NodeJS.Timeout
+	/** True once nothing non-terminal remains. Set before the final emit. */
+	resolved: boolean
+}
 
 /**
  * Mirrors the allowlist regex enforced on the API side by
@@ -542,12 +567,13 @@ export class SessionManager extends EventEmitter {
 	private readonly mcpHealthBuffers = new Map<string, string>()
 
 	/**
-	 * Sessions that have already had their MCP health reported. The init line
-	 * is replayed whenever the log stream re-attaches (`tail: 'all'` on resume,
-	 * `sinceUnixSec` overlap after a transient drop), and the warning should
-	 * read once per session, not once per reconnect.
+	 * Per-session MCP health record. The init line is replayed whenever the log
+	 * stream re-attaches (`tail: 'all'` on resume, `sinceUnixSec` overlap after
+	 * a transient drop), so the record is also what keeps the warning at once
+	 * per server, and what stops a replay from downgrading a server that has
+	 * since connected. Deleted only in clearActiveSession.
 	 */
-	private readonly mcpHealthReported = new Set<string>()
+	private readonly mcpHealth = new Map<string, McpHealthSession>()
 
 	constructor(
 		private db: Database,
@@ -2116,6 +2142,21 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// The CLI under the session (Claude Code, Codex, …) injects its own
+		// identity text into the model's context, and an agent's own persona
+		// prompt never contradicts it — so an agent asked what it runs on
+		// answers with the underlying model/vendor instead of Maskin, which is
+		// the branding leak this fixes. We cannot remove the CLI's text, only
+		// out-instruct it; prepending to SYSTEM_PROMPT is the agent-agnostic
+		// place to do that, for the same reason the conversationPreamble below
+		// is prepended rather than left to the first user turn. It states a true
+		// identity and asks the agent to decline, never to deny: told to hide a
+		// fact about itself, the model refuses and quotes the instruction back,
+		// and told only "you are a Maskin agent" it answers a closed "are you
+		// <vendor>?" with a false "No".
+		const identityPreamble =
+			"You are a Maskin agent. Maskin is the product you belong to and speak for, so when someone asks who or what you are, that is your answer. Maskin does not publish details about the model or vendor behind its agents, so you decline to discuss them. That includes yes-or-no questions such as whether you are a particular model: answer that you can't confirm or deny it, not yes and not no, because either answer would disclose or misstate what is behind you. Never say anything untrue about yourself.\n\n"
+
 		// A conversation-triggered session's own system prompt is the agent's
 		// full persona/workflow doc (often long and domain-specific, e.g. an
 		// autonomous bet-shaping or triage workflow) — it says nothing about
@@ -2132,9 +2173,11 @@ export class SessionManager extends EventEmitter {
 		// agent into calling the MCP tool — it has to tell the agent that its
 		// closing words ARE the reply, and that a heads-up is optional.
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. Keep it short and free of jargon, and never use the long dash (em dash). If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+
+${HUMAN_MESSAGE_STYLE}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -5402,16 +5445,29 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Surface MCP servers that never connected, from the runtime's own `init`
-	 * envelope. A server stuck at "pending"/"failed" contributes no tools, and
-	 * nothing else in the pipeline notices — the agent simply finds the
-	 * capability missing and tells the user it was never wired, while the
-	 * service behind it looks healthy everywhere else. Emitting a `system` log
-	 * makes it visible to both the user and the agent. Errors are swallowed: a
-	 * health-check hiccup must not drop the original log write.
+	 * Surface MCP servers that are not up, from the runtime's own `init`
+	 * envelope. A server stuck at "failed" contributes no tools, and nothing
+	 * else in the pipeline notices — the agent simply finds the capability
+	 * missing and tells the user it was never wired, while the service behind it
+	 * looks healthy everywhere else. Emitting a `system` log makes it visible
+	 * to both the user and the agent.
+	 *
+	 * A server that is only "pending" at init is not a failure: it is reported
+	 * as still starting, then re-sampled event by event on this same stream
+	 * (MCP tool use proves it is up) until it settles or the cap timer fires.
+	 * Corrections are a second log line; system logs are append-only. Errors are
+	 * swallowed: a health-check hiccup must not drop the original log write.
 	 */
 	private async emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void> {
-		if (chunk.length === 0 || this.mcpHealthReported.has(sessionId)) return
+		if (chunk.length === 0) return
+
+		const existing = this.mcpHealth.get(sessionId)
+		if (existing?.resolved) return
+		// Checked before any parse work so a chunk after the cap cannot re-open it.
+		if (existing && Date.now() >= existing.capAt) {
+			await this.expireMcpHealth(sessionId, existing)
+			return
+		}
 
 		let lines: string[]
 		try {
@@ -5420,9 +5476,7 @@ export class SessionManager extends EventEmitter {
 			lines = split.lines
 			const { remainder } = split
 			if (remainder.length > MAX_BUFFERED_MCP_HEALTH_BYTES) {
-				// A stream that never emits a newline must not eat memory. The
-				// init line comes first in a session, so a remainder this large
-				// means we are long past it and nothing is left to detect.
+				// A stream that never emits a newline must not eat memory.
 				this.mcpHealthBuffers.delete(sessionId)
 			} else if (remainder) {
 				this.mcpHealthBuffers.set(sessionId, remainder)
@@ -5440,19 +5494,66 @@ export class SessionManager extends EventEmitter {
 		for (const line of lines) {
 			if (line.length === 0) continue
 			try {
-				const unhealthy = detectUnhealthyMcpServers(line)
-				if (!unhealthy) continue
-				this.mcpHealthReported.add(sessionId)
-				this.mcpHealthBuffers.delete(sessionId)
-				logger.warn('MCP servers did not connect for session', { sessionId, servers: unhealthy })
-				await this.insertSystemLog(sessionId, formatUnhealthyMcpWarning(unhealthy))
-				return
+				await this.processMcpHealthLine(sessionId, line)
 			} catch (err) {
 				logger.warn('mcp health check failed for a line', {
 					sessionId,
 					error: err instanceof Error ? err.message : String(err),
 				})
 			}
+		}
+	}
+
+	private async processMcpHealthLine(sessionId: string, line: string): Promise<void> {
+		let entry = this.mcpHealth.get(sessionId)
+		if (entry?.resolved) return
+
+		const init = parseMcpInit(line)
+		let messages: string[]
+		if (init && !entry) {
+			const servers: McpServerHealthMap = new Map()
+			messages = registerMcpInit(servers, init)
+			if (servers.size === 0) return
+			entry = { servers, capAt: Date.now() + MCP_HEALTH_RESAMPLE_CAP_MS, resolved: false }
+			this.mcpHealth.set(sessionId, entry)
+			logger.warn('MCP servers not connected at init', { sessionId, count: servers.size })
+			if (hasPendingMcpServers(servers)) {
+				const armed = entry
+				armed.timer = setTimeout(() => {
+					void this.expireMcpHealth(sessionId, armed)
+				}, MCP_HEALTH_RESAMPLE_CAP_MS)
+				armed.timer.unref()
+			}
+		} else if (!entry) {
+			return
+		} else {
+			messages = init ? applyMcpEnvelope(entry.servers, init) : applyMcpToolUse(entry.servers, line)
+		}
+
+		// Settle before awaiting any emit, so a concurrent chunk or the cap timer
+		// cannot double-emit.
+		if (!hasPendingMcpServers(entry.servers)) {
+			entry.resolved = true
+			clearTimeout(entry.timer)
+		}
+		for (const message of messages) await this.insertSystemLog(sessionId, message)
+	}
+
+	/** The cap fired (timer or chunk): still-pending servers become slow-unknown. */
+	private async expireMcpHealth(sessionId: string, entry: McpHealthSession): Promise<void> {
+		// The timer can outlive the session; the record is gone after teardown.
+		if (entry.resolved || this.mcpHealth.get(sessionId) !== entry) return
+		entry.resolved = true
+		clearTimeout(entry.timer)
+		try {
+			for (const message of expireMcpPending(entry.servers)) {
+				await this.insertSystemLog(sessionId, message)
+			}
+		} catch (err) {
+			logger.warn('mcp health cap emit failed', {
+				sessionId,
+				error: err instanceof Error ? err.message : String(err),
+			})
 		}
 	}
 
@@ -6006,7 +6107,8 @@ export class SessionManager extends EventEmitter {
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.turnFinalizer.forgetSession(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
-		this.mcpHealthReported.delete(sessionId)
+		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
+		this.mcpHealth.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })
