@@ -1,14 +1,17 @@
-import { type IncomingMessage, type Server, createServer } from 'node:http'
+import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
+
+type Block = { type: string; text?: string; content?: Block[] }
+type Payload = { messages: { content: Block[] }[] }
 
 // The proxy is plain CommonJS shipped in the agent image, not part of this package.
 const { PLACEHOLDER, stripImages, createProxyServer } = createRequire(import.meta.url)(
 	'../../../../docker/agent-base/strip-images-proxy.js',
 ) as {
 	PLACEHOLDER: string
-	stripImages: (payload: unknown) => { payload: any; count: number }
+	stripImages: (payload: unknown) => { payload: Payload; count: number }
 	createProxyServer: (upstreamBaseUrl: string) => Server
 }
 
@@ -34,8 +37,8 @@ describe('stripImages', () => {
 			],
 		})
 		expect(count).toBe(2)
-		expect(payload.messages[0].content).toEqual([{ type: 'text', text: 'look' }, note])
-		expect(payload.messages[1].content[0].content).toEqual([
+		expect(payload.messages[0]?.content).toEqual([{ type: 'text', text: 'look' }, note])
+		expect(payload.messages[1]?.content[0]?.content).toEqual([
 			{ type: 'text', text: 'Screenshot taken' },
 			note,
 		])
@@ -62,7 +65,9 @@ describe('strip-images proxy over HTTP', () => {
 		return (server.address() as AddressInfo).port
 	}
 
-	async function startStub(respond: (req: IncomingMessage, body: Buffer, res: any) => void) {
+	async function startStub(
+		respond: (req: IncomingMessage, body: Buffer, res: ServerResponse) => void,
+	) {
 		const seen: { url?: string; headers?: IncomingMessage['headers']; body?: Buffer } = {}
 		const port = await listen(
 			createServer((req, res) => {
