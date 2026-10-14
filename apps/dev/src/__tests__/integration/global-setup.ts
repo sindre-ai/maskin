@@ -9,6 +9,7 @@ import postgres from 'postgres'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '../../lib/errors'
 import { PlanCapExceededError } from '../../lib/llm-routing'
 import { OwnershipCapExceededError, SeatCapExceededError } from '../../lib/workspace-capacity'
+import type { AgentStorageManager } from '../../services/agent-storage'
 import type { SessionManager } from '../../services/session-manager'
 
 type Env = {
@@ -18,6 +19,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -27,6 +29,14 @@ export let db: Database
 export let sql: ReturnType<typeof postgres>
 
 let testActorId: string
+
+// Set by tests whose routes read c.get('agentStorage'). Kept as a setter so this
+// shared harness does not import the storage service for every test file.
+let testAgentStorage: AgentStorageManager | undefined
+
+export function setTestAgentStorage(agentStorage: AgentStorageManager | undefined) {
+	testAgentStorage = agentStorage
+}
 
 /**
  * Creates an integration test app with a real DB, auth bypassed.
@@ -66,6 +76,7 @@ export function createIntegrationApp(
 			stopSession: async () => {},
 			createSession: async () => ({}),
 		} as unknown as SessionManager)
+		if (testAgentStorage) c.set('agentStorage', testAgentStorage)
 		await next()
 	})
 
@@ -191,6 +202,16 @@ beforeAll(async () => {
 beforeEach(async () => {
 	// Clean all data except the test actor
 	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+
+	// actors.default_workspace_id references workspaces, so Postgres cascades the
+	// TRUNCATE above into actors (CASCADE follows FK definitions, not row data) and
+	// removes the test actor. Put it back under the same id so every test still
+	// finds it, as the comment above promises.
+	await sql`
+		INSERT INTO actors (id, type, name, email, api_key)
+		VALUES (${testActorId}, 'human', 'Integration Test Actor', 'integration@test.com', 'ank_testintegration')
+		ON CONFLICT (id) DO NOTHING
+	`
 })
 
 afterAll(async () => {

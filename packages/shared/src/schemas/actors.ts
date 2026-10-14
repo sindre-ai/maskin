@@ -66,6 +66,9 @@ export const updateActorSchema = z.object({
 	memory: z.record(z.unknown()).optional(),
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
+	// The caller's own default workspace; null clears it. Only accepted when the
+	// target actor is the caller, and only for a workspace the caller belongs to.
+	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 export const actorParamsSchema = z.object({
@@ -100,6 +103,7 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
+	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>

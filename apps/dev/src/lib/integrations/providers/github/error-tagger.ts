@@ -23,6 +23,7 @@ export type GithubErrorCause =
 	| 'missing-token'
 	| 'anon-rate-limit'
 	| '403-permission'
+	| '404-not-found'
 	| '401-unauth'
 	| 'schema-validation'
 	| 'mergeable-blocked'
@@ -91,6 +92,8 @@ const RATE_LIMIT_REMAINING_HEADER = 'x-ratelimit-remaining'
  *      an installation ID that no longer resolves
  *   6. `401-unauth` — any other 401
  *   7. `403-permission` — any other 403
+ *   8. `404-not-found` — any other 404 (the call reached GitHub and the
+ *      resource, or the token's view of it, does not exist)
  */
 export function classifyGithubError(
 	failure: GithubFailureInput,
@@ -119,6 +122,7 @@ function pickPrimary(failure: GithubFailureInput, ctx: ClassificationContext): G
 	if (status === 401 && isTokenExpiredMidSession(ctx)) return 'token-expired-mid-session'
 	if (status === 401) return '401-unauth'
 	if (status === 403) return '403-permission'
+	if (status === 404) return '404-not-found'
 	// Fall back to a 401-unauth reading when the failure lacks a status but
 	// carries an auth-shaped body — better than dropping the tag entirely.
 	if (/Bad credentials|401|Requires authentication/i.test(bodyText)) return '401-unauth'

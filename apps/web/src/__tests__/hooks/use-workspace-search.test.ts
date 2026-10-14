@@ -138,6 +138,29 @@ describe('useWorkspaceSearch', () => {
 		expect(result.current.isPending).toBe(false)
 	})
 
+	it('lists title matches before content-only matches, across groups', () => {
+		conversationsRef.current = {
+			data: {
+				pages: [
+					{
+						conversations: [
+							{ id: 'c-1', title: 'Standup', snippet: 'about the relay', participants: [] },
+						],
+					},
+				],
+			},
+		}
+		objectsRef.current = {
+			data: [
+				{ id: 'o-1', type: 'bet', title: 'Other', content: 'relay in body', status: 'active' },
+				{ id: 'o-2', type: 'bet', title: 'Relay bet', content: null, status: 'active' },
+			],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))
+
+		expect(result.current.rows.map((r) => r.id)).toEqual(['o-2', 'c-1', 'o-1'])
+	})
+
 	it('reports pending while the object search has not resolved', () => {
 		objectsRef.current = { data: undefined }
 		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))

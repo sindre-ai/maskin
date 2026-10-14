@@ -1160,6 +1160,76 @@ describe('Events Routes', () => {
 				)
 			})
 
+			it('does NOT spawn thread-reply sessions for a mention-free reply by an agent, even with earlier agent posters', async () => {
+				const objectId = randomUUID()
+				const commenterAgentId = '00000000-0000-0000-0000-000000000bbb'
+				const earlierAgentId = randomUUID()
+				const rootCommentId = 730100
+				const newCommentId = 730200
+
+				const newComment = buildEvent({
+					id: newCommentId,
+					workspaceId: wsId,
+					actorId: commenterAgentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'status note', parentEventId: rootCommentId },
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					eventsRoutes,
+					'/api/events',
+					commenterAgentId,
+					'agent',
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				// Full spawn-path data is queued on purpose: without the guard the earlier
+				// agent poster below would be woken, so a missing guard fails this test.
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // object lookup
+					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[{ driver: null }], // driver lookup for the fallback exclusion
+					[
+						{
+							id: newCommentId,
+							actorId: commenterAgentId,
+							actorType: 'agent',
+							data: { content: 'status note', parentEventId: rootCommentId },
+						},
+						{
+							id: 730101,
+							actorId: earlierAgentId,
+							actorType: 'agent',
+							data: { content: 'earlier agent reply', parentEventId: rootCommentId },
+						},
+						{
+							id: rootCommentId,
+							actorId: randomUUID(),
+							actorType: 'human',
+							data: { content: 'Root' },
+						},
+					],
+				]
+				mockResults.insert = [newComment]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'status note',
+							parent_event_id: rootCommentId,
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
 			it('does NOT spawn a thread-reply session for the agent who authored the new comment', async () => {
 				const objectId = randomUUID()
 				const agentAId = '00000000-0000-0000-0000-000000000aaa'
@@ -1180,7 +1250,7 @@ describe('Events Routes', () => {
 					eventsRoutes,
 					'/api/events',
 					agentAId,
-					'agent',
+					'human', // route actor type: an agent's mention-free reply is skipped before this logic
 				)
 				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 				mockResults.selectQueue = [
@@ -1366,7 +1436,7 @@ describe('Events Routes', () => {
 					eventsRoutes,
 					'/api/events',
 					agentNewId,
-					'agent',
+					'human', // route actor type: an agent's mention-free reply is skipped before this logic
 				)
 				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 				// Build a thread where the most recent 5 comments are all agent-authored
