@@ -1,3 +1,5 @@
+import { HandoffCard } from '@/components/chat/handoff-card'
+import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -7,6 +9,7 @@ import {
 	useConversationMessages,
 } from '@/hooks/use-conversation'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -64,6 +67,10 @@ export function ThreadMessages({
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const threadsPane = useThreadsPane()
+	const pendingHandoffs = useConversationThreads(workspaceId, conversationId).filter(
+		(t) => t.messageId === null,
+	)
 	const messages = flattenMessagesOldestFirst(data)
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
@@ -327,6 +334,20 @@ export function ThreadMessages({
 						</div>
 					)
 				})}
+				{/* Handoffs started this turn that no message carries yet: shown at the
+				    foot of the transcript so the person sees the work begin instead of
+				    waiting for the agent's next message to anchor it. */}
+				{threadsPane && handedOffStripEnabled && pendingHandoffs.length > 0 ? (
+					<div className="flex flex-col gap-2 px-[var(--chat-gut)]">
+						{pendingHandoffs.map((session) => (
+							<HandoffCard
+								key={session.id}
+								session={session}
+								onViewThread={threadsPane.openThread}
+							/>
+						))}
+					</div>
+				) : null}
 			</div>
 			<div ref={bottomAnchorRef} />
 		</div>

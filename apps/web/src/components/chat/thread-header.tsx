@@ -25,6 +25,7 @@ import {
 	ArrowLeft,
 	Copy,
 	EyeOff,
+	Hand,
 	Layers,
 	Maximize2,
 	Minimize2,
@@ -55,6 +56,11 @@ interface ThreadHeaderProps {
 	producedCount?: number
 	producedOpen?: boolean
 	onToggleProduced?: () => void
+	/** Threads pane (handed-off sessions). The toggle mounts iff the route passes
+	 *  a handler, which it does only under the `handed-off-strip` flag. */
+	threadsCount?: number
+	threadsOpen?: boolean
+	onToggleThreads?: () => void
 }
 
 const LOOP_CHIP_MAX = 24
@@ -73,6 +79,9 @@ export function ThreadHeader({
 	producedCount = 0,
 	producedOpen = false,
 	onToggleProduced,
+	threadsCount = 0,
+	threadsOpen = false,
+	onToggleThreads,
 }: ThreadHeaderProps) {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
@@ -337,6 +346,27 @@ export function ThreadHeader({
 							{producedOpen ? 'Hide Produced pane' : 'Show Produced pane · press P'}
 						</TooltipContent>
 					</Tooltip>
+				) : null}
+				{onToggleThreads ? (
+					<button
+						type="button"
+						onClick={onToggleThreads}
+						aria-pressed={threadsOpen}
+						aria-label={threadsOpen ? 'Close Threads pane' : 'Open Threads pane'}
+						className={cn(
+							'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+							threadsOpen && 'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
+						)}
+					>
+						<Hand size={11} aria-hidden />
+						Threads
+						<span
+							className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[10px] font-bold text-muted-foreground"
+							aria-label={`${threadsCount} threads`}
+						>
+							{threadsCount}
+						</span>
+					</button>
 				) : null}
 				<span className="ml-auto" />
 				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a

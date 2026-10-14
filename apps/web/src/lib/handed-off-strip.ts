@@ -16,6 +16,14 @@ import type { SpawnedSession } from './api'
  */
 export type StripPill = 'QUEUED' | 'WORKING' | 'DONE' | 'FAILED'
 
+/** Pill colours, shared by the strip rows and the handoff cards. */
+export const STRIP_PILL_CLASSES: Record<StripPill, string> = {
+	QUEUED: 'bg-[var(--st-todo-bg)] text-[var(--st-todo-text)]',
+	WORKING: 'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
+	DONE: 'bg-[var(--st-active-bg)] text-[var(--st-active-text)]',
+	FAILED: 'bg-destructive/10 text-destructive',
+}
+
 /**
  * Backend `sessions.status` value → strip pill. Any status the spec doesn't
  * enumerate (BLOCKED, STOPPED, unknown future values) returns null so the row
@@ -87,4 +95,35 @@ export function failureText(result: unknown): string {
 		}
 	}
 	return 'Sub-agent stopped before finishing'
+}
+
+/**
+ * Group a handoff lands in on the Threads pane. Reuses the strip's pill mapping
+ * so a row can never be "Done" in one place and "Working" in the other; FAILED
+ * gets its own group because a failed handoff is the one a human has to act on.
+ */
+export type ThreadGroup = 'working' | 'failed' | 'done'
+
+export function statusToThreadGroup(status: string | null | undefined): ThreadGroup | null {
+	switch (statusToPill(status)) {
+		case 'QUEUED':
+		case 'WORKING':
+			return 'working'
+		case 'FAILED':
+			return 'failed'
+		case 'DONE':
+			return 'done'
+		default:
+			return null
+	}
+}
+
+/** One-line title for a handoff: the first line of the prompt, trimmed. */
+export function handoffTitle(actionPrompt: string, actorName: string): string {
+	const firstLine = actionPrompt
+		.split('\n')
+		.find((l) => l.trim().length > 0)
+		?.trim()
+	if (!firstLine) return actorName
+	return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine
 }

@@ -33,6 +33,7 @@ import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
+import { canAnchorToMessage } from '../services/spawned-sessions'
 
 type Env = {
 	Variables: {
@@ -125,6 +126,22 @@ app.openapi(createSessionRoute, (async (c) => {
 			}
 		: baseConfig
 
+	// A caller-named anchor message is a claim too: honour it only for a chat the
+	// caller is in, otherwise this session's prompt would surface in someone
+	// else's conversation. Dropped (not rejected) so a bad id never blocks the work.
+	let spawnedByMessageId = body.spawned_by_message_id
+	if (
+		spawnedByMessageId !== undefined &&
+		!(await canAnchorToMessage(db, { messageId: spawnedByMessageId, workspaceId, actorId }))
+	) {
+		logger.warn('Ignoring spawned_by_message_id the caller cannot anchor to', {
+			message_id: spawnedByMessageId,
+			actor_id: actorId,
+			workspace_id: workspaceId,
+		})
+		spawnedByMessageId = undefined
+	}
+
 	const handle = await startSession({
 		workspaceId,
 		actorId: body.actor_id,
@@ -138,7 +155,7 @@ app.openapi(createSessionRoute, (async (c) => {
 		spawnedBySessionId: link.linked ? link.spawnedBySessionId : undefined,
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
 		await: 'none',
-		spawnedByMessageId: body.spawned_by_message_id,
+		spawnedByMessageId,
 		dependsOnSessionIds: body.depends_on_session_ids,
 	})
 

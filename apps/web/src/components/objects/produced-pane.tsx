@@ -88,7 +88,7 @@ export function ProducedPane({
 	)
 }
 
-function ProducedObjectsGroup({
+export function ProducedObjectsGroup({
 	workspaceId,
 	items,
 }: { workspaceId: string; items: ProducedObjectItem[] }) {
@@ -111,7 +111,7 @@ function ProducedObjectsGroup({
 	)
 }
 
-function ProducedFilesGroup({
+export function ProducedFilesGroup({
 	workspaceId,
 	items,
 }: { workspaceId: string; items: ProducedFileItem[] }) {

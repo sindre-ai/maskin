@@ -1,6 +1,8 @@
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
+import { ThreadsPaneContext } from '@/components/chat/threads-context'
+import { ThreadsPane } from '@/components/chat/threads-pane'
 import { ProducedPane } from '@/components/objects/produced-pane'
 import { RouteError } from '@/components/shared/route-error'
 import {
@@ -17,6 +19,7 @@ import {
 } from '@/hooks/use-conversation'
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
+import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
@@ -24,7 +27,7 @@ import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { z } from 'zod'
 
 // `?msg=<message id>` is the Origin block's deep-link — see `<Origin>` at
@@ -66,7 +69,7 @@ function ConversationThreadPage() {
 	// writes AND read UI in one flip, per bet spec §Slice 2 §Feature flag.
 	const producedEnabled = useFeatureFlag('graph-provenance-writes')
 	const { produced: producedSearch } = useSearch({ from: '/_authed/$workspaceId/chats' })
-	const producedOpen = producedEnabled && !!producedSearch
+	const producedRequested = producedEnabled && !!producedSearch
 	const navigate = useNavigate()
 	// Desktop (≥1024) gets the persistent right-rail column when open;
 	// everything smaller (mobile + tablet portrait/landscape at 641-1023) opens
@@ -79,6 +82,19 @@ function ConversationThreadPage() {
 	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
 	// flags use above.
 	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
+	// Threads pane: local state, not a search param — it is a transient view over
+	// data already on the page. `'list'` shows the list; a session id opens it.
+	// Shares the right rail with Produced, so opening one closes the other.
+	const [threadsPane, setThreadsPane] = useState<null | { sessionId: string | null }>(null)
+	const threadsEnabled = handedOffStripEnabled
+	const threads = useConversationThreads(workspaceId, conversationId)
+	const threadsOpen = threadsEnabled && threadsPane !== null
+	// One right rail: an open Threads pane takes it over from Produced.
+	const producedOpen = producedRequested && !threadsOpen
+	const threadsContext = useMemo(
+		() => ({ openThread: (sessionId: string) => setThreadsPane({ sessionId }) }),
+		[],
+	)
 	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
@@ -93,6 +109,11 @@ function ConversationThreadPage() {
 	} = useConversationProduced(workspaceId, conversationId, producedEnabled)
 
 	const toggleProduced = useCallback(() => {
+		if (threadsOpen) {
+			// Switching rails: Threads closes and Produced opens in one click.
+			setThreadsPane(null)
+			if (producedRequested) return
+		}
 		navigate({
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId, conversationId },
@@ -101,7 +122,19 @@ function ConversationThreadPage() {
 				produced: prev.produced ? undefined : true,
 			}),
 		})
-	}, [navigate, workspaceId, conversationId])
+	}, [navigate, workspaceId, conversationId, threadsOpen, producedRequested])
+
+	const toggleThreads = useCallback(() => {
+		setThreadsPane((prev) => (prev ? null : { sessionId: null }))
+		// Hand the rail over: clear Produced so closing Threads doesn't reveal it.
+		if (producedRequested) {
+			navigate({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId, conversationId },
+				search: (prev: { produced?: boolean }) => ({ ...prev, produced: undefined }),
+			})
+		}
+	}, [navigate, workspaceId, conversationId, producedRequested])
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).
@@ -143,87 +176,122 @@ function ConversationThreadPage() {
 		dataTrigger: messagesData,
 	})
 
+	const threadsPaneNode = (
+		<ThreadsPane
+			workspaceId={workspaceId}
+			conversationId={conversationId}
+			openSessionId={threadsPane?.sessionId ?? null}
+			onOpenSession={(sessionId) => setThreadsPane({ sessionId })}
+			onClose={() => setThreadsPane(null)}
+			className="h-full"
+		/>
+	)
+
 	return (
-		<div className="flex min-h-0 flex-1">
-			{/* `min-w-0` caps min-content on the cross axis so a wide descendant
+		<ThreadsPaneContext.Provider value={threadsEnabled ? threadsContext : null}>
+			<div className="flex min-h-0 flex-1">
+				{/* `min-w-0` caps min-content on the cross axis so a wide descendant
 			    (markdown table, long unbroken URL) can't widen this column past the
 			    viewport. Without it the column — and its header/composer children —
 			    blow out past the phone's right edge, which `overflow-x: clip` on
 			    html/body then hides instead of surfacing as a scrollbar. */}
-			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
-				<ThreadHeader
-					workspaceId={workspaceId}
-					conversationId={conversationId}
-					v4Polish={chatsV4Enabled && headerV4Enabled}
-					producedEnabled={producedEnabled}
-					producedCount={totalCount}
-					producedOpen={producedOpen}
-					onToggleProduced={producedEnabled ? toggleProduced : undefined}
-				/>
-				<ThreadMessages
-					workspaceId={workspaceId}
-					conversationId={conversationId}
-					v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
-					v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
-					producedEnabled={producedEnabled}
-					handedOffStripEnabled={handedOffStripEnabled}
-				/>
-				{/* Live region for the Origin deep-link jump — announced once per
+				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+					<ThreadHeader
+						workspaceId={workspaceId}
+						conversationId={conversationId}
+						v4Polish={chatsV4Enabled && headerV4Enabled}
+						producedEnabled={producedEnabled}
+						producedCount={totalCount}
+						producedOpen={producedOpen}
+						onToggleProduced={producedEnabled ? toggleProduced : undefined}
+						threadsCount={threads.length}
+						threadsOpen={threadsOpen}
+						onToggleThreads={threadsEnabled ? toggleThreads : undefined}
+					/>
+					<ThreadMessages
+						workspaceId={workspaceId}
+						conversationId={conversationId}
+						v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
+						v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
+						producedEnabled={producedEnabled}
+						handedOffStripEnabled={handedOffStripEnabled}
+					/>
+					{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
 				    it isn't torn down when the message list scrolls. `<output>` has
 				    an implicit `role="status"` + `aria-live="polite"`. */}
-				<output className="sr-only">{announcement}</output>
-				{/* No rule above the composer (mockup 517): the composer draws its own
+					<output className="sr-only">{announcement}</output>
+					{/* No rule above the composer (mockup 517): the composer draws its own
 				    border, and a second full-bleed hairline behind it cut the thread in
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
-				<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
-					<ThreadComposer workspaceId={workspaceId} conversationId={conversationId} />
+					<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
+						<ThreadComposer workspaceId={workspaceId} conversationId={conversationId} />
+					</div>
 				</div>
-			</div>
-			{/* Desktop (≥1024): persistent right-rail column at 320px, sliding
+				{/* Desktop (≥1024): persistent right-rail column at 320px, sliding
 			    in on --duration-slide + ease-emphasized. Reduced motion drops the
 			    animation via `motion-reduce:animate-none` — the underlying
 			    Tailwind utility zeros the duration to the base ~0ms, matching
 			    the "Reduced motion drops to 0.001ms" requirement. */}
-			{producedEnabled && producedOpen && isDesktop ? (
-				<aside
-					aria-label="Produced pane"
-					className="duration-slide ease-emphasized w-[320px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none"
-				>
-					<ProducedPane
-						workspaceId={workspaceId}
-						producedObjects={producedObjects}
-						producedFiles={producedFiles}
-						isLoading={producedLoading}
-					/>
-				</aside>
-			) : null}
-			{producedEnabled && !isDesktop ? (
-				<Sheet
-					open={producedOpen}
-					onOpenChange={(open) => {
-						if (!open) toggleProduced()
-					}}
-				>
-					<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
-						<SheetHeader className="sr-only">
-							<SheetTitle>Produced</SheetTitle>
-							<SheetDescription>
-								Objects and files produced downstream of this chat's sessions.
-							</SheetDescription>
-						</SheetHeader>
+				{threadsOpen && isDesktop ? (
+					<aside
+						aria-label="Threads pane"
+						className="duration-slide ease-emphasized w-[320px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none"
+					>
+						{threadsPaneNode}
+					</aside>
+				) : null}
+				{threadsOpen && !isDesktop ? (
+					<Sheet open onOpenChange={(open) => !open && setThreadsPane(null)}>
+						<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
+							<SheetHeader className="sr-only">
+								<SheetTitle>Threads</SheetTitle>
+								<SheetDescription>Sessions this chat handed work to.</SheetDescription>
+							</SheetHeader>
+							{threadsPaneNode}
+						</SheetContent>
+					</Sheet>
+				) : null}
+				{producedEnabled && producedOpen && isDesktop ? (
+					<aside
+						aria-label="Produced pane"
+						className="duration-slide ease-emphasized w-[320px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none"
+					>
 						<ProducedPane
 							workspaceId={workspaceId}
 							producedObjects={producedObjects}
 							producedFiles={producedFiles}
 							isLoading={producedLoading}
-							onClose={toggleProduced}
-							className="h-full"
 						/>
-					</SheetContent>
-				</Sheet>
-			) : null}
-		</div>
+					</aside>
+				) : null}
+				{producedEnabled && !isDesktop ? (
+					<Sheet
+						open={producedOpen}
+						onOpenChange={(open) => {
+							if (!open) toggleProduced()
+						}}
+					>
+						<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
+							<SheetHeader className="sr-only">
+								<SheetTitle>Produced</SheetTitle>
+								<SheetDescription>
+									Objects and files produced downstream of this chat's sessions.
+								</SheetDescription>
+							</SheetHeader>
+							<ProducedPane
+								workspaceId={workspaceId}
+								producedObjects={producedObjects}
+								producedFiles={producedFiles}
+								isLoading={producedLoading}
+								onClose={toggleProduced}
+								className="h-full"
+							/>
+						</SheetContent>
+					</Sheet>
+				) : null}
+			</div>
+		</ThreadsPaneContext.Provider>
 	)
 }

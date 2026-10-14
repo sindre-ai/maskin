@@ -1,6 +1,13 @@
 import type { SpawnedSession } from '@/lib/api'
 import { formatDurationMs } from '@/lib/format-duration'
-import { failureText, formatDepNames, resolveDepNames, statusToPill } from '@/lib/handed-off-strip'
+import {
+	failureText,
+	formatDepNames,
+	handoffTitle,
+	resolveDepNames,
+	statusToPill,
+	statusToThreadGroup,
+} from '@/lib/handed-off-strip'
 import { describe, expect, it } from 'vitest'
 
 function session(overrides: Partial<SpawnedSession> = {}): SpawnedSession {
@@ -120,5 +127,35 @@ describe('formatDurationMs (contract sanity)', () => {
 
 	it('renders minutes with seconds', () => {
 		expect(formatDurationMs(13 * 60_000)).toBe('13m 0s')
+	})
+})
+
+describe('statusToThreadGroup', () => {
+	it('groups queued and running sessions as working', () => {
+		expect(statusToThreadGroup('pending')).toBe('working')
+		expect(statusToThreadGroup('running')).toBe('working')
+	})
+
+	it('groups failed and timed-out sessions as failed, completed as done', () => {
+		expect(statusToThreadGroup('failed')).toBe('failed')
+		expect(statusToThreadGroup('timeout')).toBe('failed')
+		expect(statusToThreadGroup('completed')).toBe('done')
+	})
+
+	it('returns null for statuses the strip does not render', () => {
+		expect(statusToThreadGroup('paused')).toBeNull()
+	})
+})
+
+describe('handoffTitle', () => {
+	it('uses the first non-empty line of the prompt', () => {
+		expect(handoffTitle('\n  Draft pitch for emagine\nmore detail', 'Writer')).toBe(
+			'Draft pitch for emagine',
+		)
+	})
+
+	it('truncates long first lines and falls back to the agent name', () => {
+		expect(handoffTitle('x'.repeat(100), 'Writer')).toHaveLength(80)
+		expect(handoffTitle('   ', 'Writer')).toBe('Writer')
 	})
 })

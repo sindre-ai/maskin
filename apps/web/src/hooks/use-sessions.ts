@@ -236,3 +236,15 @@ export function useSessionLogs(
 		refetchInterval: live ? 3000 : false,
 	})
 }
+
+/** Sends a user turn to a running interactive session (`POST /sessions/:id/input`). */
+export function useSendSessionInput(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, content }: { id: string; content: string }) =>
+			api.sessions.input(id, { content }, workspaceId),
+		onSuccess: (_data, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.logs(id) })
+		},
+	})
+}

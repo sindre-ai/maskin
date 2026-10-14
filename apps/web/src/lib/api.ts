@@ -2050,6 +2050,8 @@ export interface EditMessageInput {
 export interface MessagesListResponse {
 	messages: MessageResponse[]
 	has_more: boolean
+	/** Handoffs no message carries yet; present on the newest page only. */
+	pending_handoffs?: SpawnedSession[]
 }
 
 export interface CreateConversationInput {

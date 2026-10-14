@@ -1350,7 +1350,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object.",
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 			actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -1381,7 +1381,7 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					'The message of yours that led to this work being started, so the chat can show it next to that message. Leave it out if there is none.',
+					'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
 				),
 			wait: z
 				.boolean()
