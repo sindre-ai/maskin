@@ -1,7 +1,7 @@
 import { mintToken, sha256Hex, validateOAuthAccessToken } from '@maskin/auth'
 import {
-	actors,
 	events,
+	actors,
 	oauthAuthorizationCodes,
 	oauthGrants,
 	oauthTokens,
