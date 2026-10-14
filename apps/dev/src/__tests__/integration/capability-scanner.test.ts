@@ -1,8 +1,12 @@
+import { randomBytes } from 'node:crypto'
 import { actors, events, integrations, sessions, workspaceMembers } from '@maskin/db/schema'
 import { and, asc, eq, inArray, like } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
+import { encrypt } from '../../lib/crypto'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { getProvider } from '../../lib/integrations/registry'
+import { integrationScopeGaps } from '../../lib/integrations/scope-drift'
 import { CapabilityScanner } from '../../services/capability-scanner'
 import { buildIntegration, insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -31,6 +35,7 @@ describe('CapabilityScanner (integration)', () => {
 	let answers: Map<string, Answer>
 	let probe: ProbeFn
 	let previousFlagEnv: string | undefined
+	let previousEncryptionKey: string | undefined
 
 	const BUILTIN = 'maskin:builtin'
 	const slackKey = () => `integration:slack:${slackIntegrationId}`
@@ -102,6 +107,8 @@ describe('CapabilityScanner (integration)', () => {
 
 	beforeEach(async () => {
 		previousFlagEnv = process.env.FF_WORKSPACE_FEATURES
+		previousEncryptionKey = process.env.INTEGRATION_ENCRYPTION_KEY
+		process.env.INTEGRATION_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 		spies.createLLMAdapter.mockClear()
 		spies.startSession.mockClear()
 		const seeded = await seedWorkspace()
@@ -124,6 +131,7 @@ describe('CapabilityScanner (integration)', () => {
 
 	afterEach(() => {
 		process.env.FF_WORKSPACE_FEATURES = previousFlagEnv ?? undefined
+		process.env.INTEGRATION_ENCRYPTION_KEY = previousEncryptionKey ?? undefined
 		_resetFeatureFlagConfig()
 	})
 
@@ -244,7 +252,12 @@ describe('CapabilityScanner (integration)', () => {
 		answers.set(meetKey, tools({ meet_list: 'h1', meet_new: 'h2' }))
 		const result = await scanner().scanWorkspace(workspaceId)
 		expect(result).toMatchObject({ status: 'scanned', findingsWritten: 0 })
-		expect(await eventsFor('capability_changed')).toHaveLength(0)
+		// The only finding is the connection-level one from the first scan: the new
+		// tool itself is stored and never flagged.
+		const changed = await eventsFor('capability_changed')
+		expect(changed.map((e) => (e.data as { kind: string }).kind)).toEqual([
+			'available_not_attached',
+		])
 		const meetSnapshots = (await eventsFor('capability_snapshot')).filter(
 			(e) => (e.data as { source: string }).source === meetKey,
 		)
@@ -375,6 +388,141 @@ describe('CapabilityScanner (integration)', () => {
 		answers.set(BUILTIN, tools({ create_objects: 'h-create', brand_new: 'h-new' }))
 		await scanner().scanWorkspace(workspaceId)
 		expect(JSON.stringify(await snapshotOf())).toBe(before)
+	})
+
+	describe('connection-level findings', () => {
+		const credentialsOf = (scope: string) => encrypt(JSON.stringify({ scope }))
+
+		async function insertGmail() {
+			const [gmail] = await db
+				.insert(integrations)
+				.values(
+					buildIntegration({
+						workspaceId,
+						provider: 'gmail',
+						status: 'active',
+						createdBy: getTestActorId(),
+					}) as never,
+				)
+				.returning()
+			// Gmail is a probed source too: answer it so only the connection-level finding appears.
+			answers.set(`integration:gmail:${gmail.id}`, tools({ gmail_send: 'h-gs' }))
+			return gmail
+		}
+
+		it('writes needs_reconnect and available_not_attached once each, and changes nothing else', async () => {
+			const gmail = await insertGmail()
+			const gmailKey = `integration:gmail:${gmail.id}`
+			// Slack is auto-injected, so every agent holds it; its token predates most of today's scopes.
+			await db
+				.update(integrations)
+				.set({ credentials: credentialsOf('chat:write') })
+				.where(eq(integrations.id, slackIntegrationId))
+			const missing = integrationScopeGaps(getProvider('slack').config, {
+				scope: 'chat:write',
+			}).missing
+			expect(missing.length).toBeGreaterThan(0)
+
+			const snapshotOf = async () => ({
+				actorTools: await db
+					.select({ id: actors.id, tools: actors.tools })
+					.from(actors)
+					.where(inArray(actors.id, agentIds))
+					.orderBy(asc(actors.id)),
+				integrations: await db
+					.select()
+					.from(integrations)
+					.where(eq(integrations.workspaceId, workspaceId))
+					.orderBy(asc(integrations.id)),
+			})
+			const before = JSON.stringify(await snapshotOf())
+
+			// Tick 1: baseline. Gmail declares a server, is opt-in and nobody holds it.
+			const first = await scanner().scanWorkspace(workspaceId)
+			expect(first).toEqual({ status: 'scanned', mode: 'baseline', findingsWritten: 1 })
+
+			// Tick 2: Slack gains a tool the stored token cannot use yet.
+			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_search: 'h-search' }))
+			const second = await scanner().scanWorkspace(workspaceId)
+			expect(second).toEqual({ status: 'scanned', mode: 'diff', findingsWritten: 1 })
+
+			// Tick 3: nothing changed, so nothing new, including the unattached gmail.
+			const third = await scanner().scanWorkspace(workspaceId)
+			expect(third).toEqual({ status: 'scanned', mode: 'diff', findingsWritten: 0 })
+
+			const changed = await eventsFor('capability_changed')
+			expect(changed).toHaveLength(2)
+			const [notAttached, needsReconnect] = changed
+			const slackSnapshots = (await eventsFor('capability_snapshot')).filter(
+				(e) => (e.data as { source: string }).source === slackKey(),
+			)
+
+			expect(notAttached.actorId).toBe(chiefOfStaffId)
+			expect(notAttached.entityType).toBe('capability_source')
+			expect(notAttached.entityId).toBe(gmail.id)
+			expect(notAttached.data).toEqual({
+				source: gmailKey,
+				kind: 'available_not_attached',
+				tools: [],
+				holders: [],
+				dedupe_key: expect.stringMatching(/^[0-9a-f]{64}$/),
+				snapshot_event_id: null,
+				provider: 'gmail',
+			})
+
+			expect(needsReconnect.actorId).toBe(chiefOfStaffId)
+			expect(needsReconnect.entityId).toBe(slackIntegrationId)
+			expect(needsReconnect.data).toEqual({
+				source: slackKey(),
+				kind: 'needs_reconnect',
+				tools: ['slack_search'],
+				holders: [...agentIds].sort(),
+				dedupe_key: expect.stringMatching(/^[0-9a-f]{64}$/),
+				snapshot_event_id: slackSnapshots[slackSnapshots.length - 1].id,
+				provider: 'slack',
+				missing_scopes: missing,
+			})
+
+			const scans = await eventsFor('capability_scan_completed')
+			const eligible = scans.map((e) => (e.data as Record<string, number>).findings_eligible)
+			expect(eligible).toEqual([1, 1, 0])
+
+			expect(spies.createLLMAdapter).not.toHaveBeenCalled()
+			expect(spies.startSession).not.toHaveBeenCalled()
+			const sessionRows = await db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(eq(sessions.workspaceId, workspaceId))
+			expect(sessionRows).toHaveLength(0)
+			expect(JSON.stringify(await snapshotOf())).toBe(before)
+		})
+
+		it('a token with every required scope stays tool_added, and an attached gmail is not reported', async () => {
+			const gmail = await insertGmail()
+			const slackAuth = getProvider('slack').config.auth
+			if (slackAuth.type !== 'oauth2') throw new Error('slack is expected to be oauth2')
+			const everyScope = JSON.stringify({
+				scope: slackAuth.config.scopes.join(','),
+				userScope: slackAuth.config.extraAuthParams?.user_scope,
+			})
+			await db
+				.update(integrations)
+				.set({ credentials: encrypt(everyScope) })
+				.where(eq(integrations.id, slackIntegrationId))
+			// A hand-attached server whose transport matches Gmail's declared one.
+			await db
+				.update(actors)
+				.set({ tools: { mcpServers: { gmail: { ...getProvider('gmail').config.mcp?.server } } } })
+				.where(eq(actors.id, agentIds[1]))
+
+			await scanner().scanWorkspace(workspaceId)
+			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_search: 'h-search' }))
+			await scanner().scanWorkspace(workspaceId)
+
+			const changed = await eventsFor('capability_changed')
+			expect(changed.map((e) => (e.data as { kind: string }).kind)).toEqual(['tool_added'])
+			expect(changed.some((e) => e.entityId === gmail.id)).toBe(false)
+		})
 	})
 
 	it('counts hand-attached servers no provider covers as unscanned_servers', async () => {
