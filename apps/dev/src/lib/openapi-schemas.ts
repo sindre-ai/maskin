@@ -370,6 +370,7 @@ export const spawnedSessionResponseSchema = z.object({
 	result: jsonbField.nullable(),
 	currentActivity: z.string().nullable(),
 	depends_on_session_ids: z.array(z.string().uuid()),
+	awaiting: z.object({ message_id: z.number(), question: z.unknown() }).nullable(),
 })
 
 /**

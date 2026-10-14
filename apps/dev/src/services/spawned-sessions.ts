@@ -36,6 +36,8 @@ export interface SpawnedSessionEmbed {
 	result: unknown
 	currentActivity: string | null
 	depends_on_session_ids: string[]
+	/** What the session is waiting on the person for; null when it is not waiting. */
+	awaiting: { message_id: number; question: unknown } | null
 }
 
 export interface SessionStateChangedPayload {
@@ -67,6 +69,14 @@ export async function isConversationParticipant(
 	return Boolean(row)
 }
 
+/** `config.awaiting`, written when the session asks a question and cleared on the answer. */
+function readAwaiting(config: unknown): SpawnedSessionEmbed['awaiting'] {
+	const awaiting = (config as { awaiting?: unknown } | null)?.awaiting
+	if (!awaiting || typeof awaiting !== 'object') return null
+	const { message_id, question } = awaiting as { message_id?: unknown; question?: unknown }
+	return typeof message_id === 'number' ? { message_id, question } : null
+}
+
 function toEmbed(row: {
 	id: string
 	status: string
@@ -79,6 +89,7 @@ function toEmbed(row: {
 	result: unknown
 	currentActivity: string | null
 	depends_on_session_ids: string[] | null
+	config: unknown
 }): SpawnedSessionEmbed {
 	return {
 		id: row.id,
@@ -92,6 +103,7 @@ function toEmbed(row: {
 		result: row.result ?? null,
 		currentActivity: row.currentActivity,
 		depends_on_session_ids: row.depends_on_session_ids ?? [],
+		awaiting: readAwaiting(row.config),
 	}
 }
 
@@ -126,6 +138,7 @@ export async function loadSpawnedSessionsByMessage(
 			result: sessions.result,
 			currentActivity: sessions.currentActivity,
 			depends_on_session_ids: sessions.dependsOnSessionIds,
+			config: sessions.config,
 			spawnedByMessageId: sessions.spawnedByMessageId,
 		})
 		.from(sessions)
@@ -323,6 +336,7 @@ export async function loadPendingSpawnedSessions(
 			result: sessions.result,
 			currentActivity: sessions.currentActivity,
 			depends_on_session_ids: sessions.dependsOnSessionIds,
+			config: sessions.config,
 		})
 		.from(sessions)
 		.innerJoin(actors, eq(actors.id, sessions.actorId))
@@ -335,4 +349,29 @@ export async function loadPendingSpawnedSessions(
 		)
 		.orderBy(sessions.createdAt)
 	return rows.map(toEmbed)
+}
+
+/**
+ * The chat a helper session may ask its questions in: the conversation of the
+ * session that started it (or, for a helper of a helper, the one it inherited).
+ * Null when the spawner is not in a chat — there is then nobody to ask.
+ *
+ * It is stored on the helper's config, not on `sessions.conversation_id`: that
+ * column makes a session a chat session (workspace-capacity exemption, the
+ * one-active-session-per-agent-per-chat index, the responder's session lookup),
+ * and a helper must be none of those.
+ */
+export async function resolveAskConversationId(
+	db: Database,
+	spawnerSessionId: string,
+): Promise<string | null> {
+	const [row] = await db
+		.select({ conversationId: sessions.conversationId, config: sessions.config })
+		.from(sessions)
+		.where(eq(sessions.id, spawnerSessionId))
+		.limit(1)
+	if (!row) return null
+	if (row.conversationId) return row.conversationId
+	const inherited = (row.config as { ask_conversation_id?: unknown } | null)?.ask_conversation_id
+	return typeof inherited === 'string' ? inherited : null
 }

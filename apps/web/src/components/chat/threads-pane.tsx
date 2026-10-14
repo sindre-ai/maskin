@@ -3,6 +3,7 @@ import {
 	getSessionResultDisplay,
 	isSessionIdleAwaitingInput,
 } from '@/components/agents/session-log-transcript'
+import { QuestionOptions } from '@/components/chat/question-options'
 import { ProducedFilesGroup, ProducedObjectsGroup } from '@/components/objects/produced-pane'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -18,23 +19,26 @@ import type { SessionLogResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
-	STRIP_PILL_CLASSES,
 	type ThreadGroup,
 	failureText,
 	handoffTitle,
 	statusToPill,
 	statusToThreadGroup,
+	threadPill,
 } from '@/lib/handed-off-strip'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, ExternalLink, Send, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 const GROUP_LABEL: Record<ThreadGroup, string> = {
+	waiting: 'Waiting on you',
 	working: 'Working',
 	failed: 'Needs attention',
 	done: 'Done',
 }
-const GROUP_ORDER: ThreadGroup[] = ['failed', 'working', 'done']
+const GROUP_ORDER: ThreadGroup[] = ['waiting', 'failed', 'working', 'done']
+
+const groupOf = (t: ConversationThread) => statusToThreadGroup(t.status, t.awaiting !== null)
 
 interface ThreadsPaneProps {
 	workspaceId: string
@@ -70,6 +74,7 @@ export function ThreadsPane({
 			{open ? (
 				<ThreadView
 					workspaceId={workspaceId}
+					conversationId={conversationId}
 					thread={open}
 					onBack={() => onOpenSession(null)}
 					onClose={onClose}
@@ -85,16 +90,19 @@ function ThreadsList({
 	threads,
 	onOpen,
 }: { threads: ConversationThread[]; onOpen: (id: string) => void }) {
-	const working = threads.filter((t) => statusToThreadGroup(t.status) === 'working').length
-	const failed = threads.filter((t) => statusToThreadGroup(t.status) === 'failed').length
+	const waiting = threads.filter((t) => groupOf(t) === 'waiting').length
+	const working = threads.filter((t) => groupOf(t) === 'working').length
+	const failed = threads.filter((t) => groupOf(t) === 'failed').length
 	const summary =
 		threads.length === 0
 			? 'Nothing has been handed off yet.'
-			: failed > 0
-				? `${failed} ${failed === 1 ? 'thread needs' : 'threads need'} your attention.`
-				: working > 0
-					? `${working} ${working === 1 ? 'thread is' : 'threads are'} working.`
-					: 'All threads are done.'
+			: waiting > 0
+				? `${waiting} ${waiting === 1 ? 'thread is' : 'threads are'} waiting on you.`
+				: failed > 0
+					? `${failed} ${failed === 1 ? 'thread needs' : 'threads need'} your attention.`
+					: working > 0
+						? `${working} ${working === 1 ? 'thread is' : 'threads are'} working.`
+						: 'All threads are done.'
 	return (
 		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
 			<div>
@@ -108,7 +116,7 @@ function ThreadsList({
 				/>
 			) : (
 				GROUP_ORDER.map((group) => {
-					const items = threads.filter((t) => statusToThreadGroup(t.status) === group)
+					const items = threads.filter((t) => groupOf(t) === group)
 					if (items.length === 0) return null
 					return (
 						<section key={group} aria-label={`${GROUP_LABEL[group]} · ${items.length}`}>
@@ -160,13 +168,35 @@ function ThreadsList({
  * The prompt the agent was handed is deliberately not shown.
  */
 function ThreadOutcome({
+	workspaceId,
+	conversationId,
 	thread,
 	logs,
 	isLoading,
-}: { thread: ConversationThread; logs: SessionLogResponse[]; isLoading: boolean }) {
-	const group = statusToThreadGroup(thread.status)
+}: {
+	workspaceId: string
+	conversationId: string
+	thread: ConversationThread
+	logs: SessionLogResponse[]
+	isLoading: boolean
+}) {
+	const group = groupOf(thread)
 	const result = useMemo(() => getSessionResultDisplay(logs), [logs])
 	if (isLoading) return <Spinner />
+	if (group === 'waiting' && thread.awaiting) {
+		return (
+			<div className="rounded-lg border border-border bg-card px-3 py-2">
+				<span className="eyebrow">Waiting on you</span>
+				<QuestionOptions
+					conversationId={conversationId}
+					workspaceId={workspaceId}
+					questionMessageId={thread.awaiting.message_id}
+					question={{ ...thread.awaiting.question, reply_to_session: true }}
+					answered={false}
+				/>
+			</div>
+		)
+	}
 	if (group === 'working') return <SessionLogTranscript logs={logs} />
 	const text = result?.text ?? (group === 'failed' ? failureText(thread.result) : null)
 	return (
@@ -185,16 +215,19 @@ function ThreadOutcome({
 
 function ThreadView({
 	workspaceId,
+	conversationId,
 	thread,
 	onBack,
 	onClose,
 }: {
 	workspaceId: string
+	conversationId: string
 	thread: ConversationThread
 	onBack: () => void
 	onClose?: () => void
 }) {
 	const pill = statusToPill(thread.status)
+	const display = threadPill(thread.status, thread.awaiting !== null)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
 	const { data: session } = useSession(thread.id, workspaceId)
 	const { data: logs, isLoading } = useSessionLogs(thread.id, workspaceId, true, { live })
@@ -233,14 +266,14 @@ function ThreadView({
 						{handoffTitle(thread.actionPrompt, thread.actorName)}
 					</span>
 				</div>
-				{pill ? (
+				{display ? (
 					<span
 						className={cn(
 							'shrink-0 rounded px-1.5 py-1 font-mono text-[10px] font-bold uppercase leading-none tracking-wider',
-							STRIP_PILL_CLASSES[pill],
+							display.className,
 						)}
 					>
-						{idle && pill === 'WORKING' ? 'IDLE' : pill}
+						{idle && display.label === 'WORKING' ? 'IDLE' : display.label}
 					</span>
 				) : null}
 				{onClose ? (
@@ -258,7 +291,13 @@ function ThreadView({
 			</div>
 
 			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
-				<ThreadOutcome thread={thread} logs={logs ?? []} isLoading={isLoading} />
+				<ThreadOutcome
+					workspaceId={workspaceId}
+					conversationId={conversationId}
+					thread={thread}
+					logs={logs ?? []}
+					isLoading={isLoading}
+				/>
 				<ProducedObjectsGroup workspaceId={workspaceId} items={producedObjects} />
 				<ProducedFilesGroup workspaceId={workspaceId} items={producedFiles} />
 				<Link

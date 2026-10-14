@@ -99,13 +99,19 @@ export function failureText(result: unknown): string {
 
 /**
  * Group a handoff lands in on the Threads pane. Reuses the strip's pill mapping
- * so a row can never be "Done" in one place and "Working" in the other; FAILED
- * gets its own group because a failed handoff is the one a human has to act on.
+ * so a row can never be "Done" in one place and "Working" in another. A session
+ * that has asked the person something is "waiting" while it is otherwise live;
+ * FAILED gets its own group because a failed handoff is one a human has to act on.
  */
-export type ThreadGroup = 'working' | 'failed' | 'done'
+export type ThreadGroup = 'waiting' | 'working' | 'failed' | 'done'
 
-export function statusToThreadGroup(status: string | null | undefined): ThreadGroup | null {
-	switch (statusToPill(status)) {
+export function statusToThreadGroup(
+	status: string | null | undefined,
+	awaiting = false,
+): ThreadGroup | null {
+	const pill = statusToPill(status)
+	if (awaiting && (pill === 'QUEUED' || pill === 'WORKING')) return 'waiting'
+	switch (pill) {
 		case 'QUEUED':
 		case 'WORKING':
 			return 'working'
@@ -116,6 +122,21 @@ export function statusToThreadGroup(status: string | null | undefined): ThreadGr
 		default:
 			return null
 	}
+}
+
+const WAITING_PILL_CLASSES = 'bg-warning/15 text-warning'
+
+/** The pill a handoff shows: the strip's, except a session waiting on the person. */
+export function threadPill(
+	status: string | null | undefined,
+	awaiting = false,
+): { label: StripPill | 'WAITING'; className: string } | null {
+	const pill = statusToPill(status)
+	if (!pill) return null
+	if (statusToThreadGroup(status, awaiting) === 'waiting') {
+		return { label: 'WAITING', className: WAITING_PILL_CLASSES }
+	}
+	return { label: pill, className: STRIP_PILL_CLASSES[pill] }
 }
 
 /** One-line title for a handoff: the first line of the prompt, trimmed. */

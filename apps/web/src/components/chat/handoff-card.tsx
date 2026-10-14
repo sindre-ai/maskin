@@ -4,7 +4,7 @@ import { useDuration } from '@/hooks/use-duration'
 import type { SpawnedSession } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationMs } from '@/lib/format-duration'
-import { STRIP_PILL_CLASSES, handoffTitle, statusToPill } from '@/lib/handed-off-strip'
+import { handoffTitle, statusToPill, threadPill } from '@/lib/handed-off-strip'
 import { Hand } from 'lucide-react'
 
 interface HandoffCardProps {
@@ -27,7 +27,8 @@ export function HandoffCard({ session, onViewThread }: HandoffCardProps) {
 			: pill === 'WORKING'
 				? elapsedRunning
 				: null
-	if (!pill) return null
+	const display = threadPill(session.status, session.awaiting !== null)
+	if (!pill || !display) return null
 
 	return (
 		<div className="rounded-xl border border-border bg-card px-4 py-3">
@@ -61,10 +62,10 @@ export function HandoffCard({ session, onViewThread }: HandoffCardProps) {
 						<span
 							className={cn(
 								'rounded px-1.5 py-1 font-mono text-[10px] font-bold uppercase leading-none tracking-wider',
-								STRIP_PILL_CLASSES[pill],
+								display.className,
 							)}
 						>
-							{pill}
+							{display.label}
 						</span>
 						{elapsed ? (
 							<span className="text-[11px] text-muted-foreground">· {elapsed}</span>

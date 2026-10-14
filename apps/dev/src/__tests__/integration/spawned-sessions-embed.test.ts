@@ -66,6 +66,25 @@ describe('Spawned sessions embed (Integration)', () => {
 		expect(embed.get(messageId)?.map((s) => s.id)).toEqual([sub.id])
 	})
 
+	it('reports what a waiting sub-session is asking', async () => {
+		const sub = await insertSession(db, workspaceId, agentId, agentId, {
+			interactive: true,
+			conversationId: null,
+			spawnedByMessageId: messageId,
+			status: 'running',
+			config: { awaiting: { message_id: messageId, question: { session_id: 'x', questions: [] } } },
+		})
+		if (!sub) throw new Error('no sub-session')
+
+		const embed = await loadSpawnedSessionsByMessage(db, {
+			conversationId,
+			workspaceId,
+			messageIds: [messageId],
+			actorId: humanId,
+		})
+		expect(embed.get(messageId)?.[0]?.awaiting?.message_id).toBe(messageId)
+	})
+
 	it('returns nothing to an actor who is not in the conversation', async () => {
 		const stranger = await insertActor(db, { type: 'human' })
 		if (!stranger) throw new Error('no stranger')

@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
+import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Check } from 'lucide-react'
@@ -43,6 +44,11 @@ export function QuestionOptions({
 	// what goes back out in the answer payload; it is just not an identity.
 	const [picked, setPicked] = useState<Record<number, string[]>>({})
 	const sendMessage = useSendMessage(conversationId, workspaceId)
+	// A helper another agent started is not in this chat, so its answer goes to
+	// the session itself, not to the chat's agents.
+	const sendInput = useSendSessionInput(workspaceId)
+	const isPending = sendMessage.isPending || sendInput.isPending
+	const isError = sendMessage.isError || sendInput.isError
 
 	if (answered) return null
 
@@ -63,17 +69,24 @@ export function QuestionOptions({
 	const allAnswered = answers.length === question.questions.length
 
 	const submit = () => {
-		if (!allAnswered || sendMessage.isPending) return
+		if (!allAnswered || isPending) return
 		// The content is what the agent actually reads, so it repeats the question
 		// alongside the pick — the agent's next turn arrives without the chip UI's
 		// context, and "API token" alone would be ambiguous across two questions.
 		const content = question.questions
 			.map((q, i) => `**${q.header}** — ${q.question}\n${(picked[i] ?? []).join(', ')}`)
 			.join('\n\n')
-		sendMessage.mutate({
-			content,
-			metadata: { question_answer: { question_message_id: questionMessageId, answers } },
-		})
+		const questionAnswer = { question_message_id: questionMessageId, answers }
+		if (question.reply_to_session) {
+			sendInput.mutate({
+				id: question.session_id,
+				content,
+				question_answer: questionAnswer,
+				conversationId,
+			})
+			return
+		}
+		sendMessage.mutate({ content, metadata: { question_answer: questionAnswer } })
 	}
 
 	return (
@@ -119,20 +132,15 @@ export function QuestionOptions({
 				)
 			})}
 			<div className="flex items-center gap-2">
-				<Button
-					type="button"
-					size="sm"
-					onClick={submit}
-					disabled={!allAnswered || sendMessage.isPending}
-				>
-					{sendMessage.isPending ? 'Sending…' : 'Send answer'}
+				<Button type="button" size="sm" onClick={submit} disabled={!allAnswered || isPending}>
+					{isPending ? 'Sending…' : 'Send answer'}
 				</Button>
 				{/* Answering is optional — the agent is waiting on a turn, not blocked
 				    on this widget, so typing a reply instead has to stay obviously
 				    available rather than reading as a dead end. */}
 				<span className="text-[10.5px] text-muted-foreground">or just type your reply</span>
 			</div>
-			{sendMessage.isError ? (
+			{isError ? (
 				<p className="text-[10.5px] text-destructive">Couldn't send that. Try again.</p>
 			) : null}
 		</div>

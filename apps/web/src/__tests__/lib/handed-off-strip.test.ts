@@ -23,6 +23,7 @@ function session(overrides: Partial<SpawnedSession> = {}): SpawnedSession {
 		result: null,
 		currentActivity: null,
 		depends_on_session_ids: [],
+		awaiting: null,
 		...overrides,
 	}
 }
@@ -144,6 +145,18 @@ describe('statusToThreadGroup', () => {
 
 	it('returns null for statuses the strip does not render', () => {
 		expect(statusToThreadGroup('paused')).toBeNull()
+	})
+})
+
+describe('statusToThreadGroup awaiting', () => {
+	it('puts a live session that asked a question in the waiting group', () => {
+		expect(statusToThreadGroup('running', true)).toBe('waiting')
+		expect(statusToThreadGroup('pending', true)).toBe('waiting')
+	})
+
+	it('ignores awaiting once the session has ended', () => {
+		expect(statusToThreadGroup('completed', true)).toBe('done')
+		expect(statusToThreadGroup('failed', true)).toBe('failed')
 	})
 })
 

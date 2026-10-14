@@ -138,7 +138,8 @@ function ConversationThreadPage() {
 	// pane was last open. "Seen" is remembered per chat so a reload doesn't
 	// re-announce what the person already looked at.
 	const overviewSignature = useMemo(
-		() => `${threads.map((t) => `${t.id}:${t.status}`).join('|')}#${totalCount}`,
+		() =>
+			`${threads.map((t) => `${t.id}:${t.status}:${t.awaiting ? 'w' : ''}`).join('|')}#${totalCount}`,
 		[threads, totalCount],
 	)
 	const [seenSignature, setSeenSignature] = useState<string | null>(() =>

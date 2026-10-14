@@ -30,6 +30,7 @@ function session(overrides: Partial<SpawnedSession> = {}): SpawnedSession {
 		result: null,
 		currentActivity: null,
 		depends_on_session_ids: [],
+		awaiting: null,
 		...overrides,
 	}
 }

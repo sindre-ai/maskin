@@ -1961,6 +1961,8 @@ export interface MessageQuestionItem {
 export interface MessageQuestion {
 	session_id: string
 	questions: MessageQuestionItem[]
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2027,6 +2029,8 @@ export interface SpawnedSession {
 	result: unknown
 	currentActivity: string | null
 	depends_on_session_ids: string[]
+	/** What the session is waiting on the person for; null when it is not waiting. */
+	awaiting: { message_id: number; question: MessageQuestion } | null
 }
 
 /**
@@ -2131,6 +2135,7 @@ export interface SessionInputAttachment {
 export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface SessionLogResponse {

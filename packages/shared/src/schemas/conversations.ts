@@ -138,6 +138,11 @@ export const messageQuestionSchema = z.object({
 	/** The session whose turn asked. Ties the answer back to the right agent. */
 	session_id: z.string().uuid(),
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
+	/**
+	 * The asking session is a helper another agent started, not a participant of
+	 * this chat: the answer goes to that session's input, not to the chat's agents.
+	 */
+	reply_to_session: z.boolean().optional(),
 })
 
 /**

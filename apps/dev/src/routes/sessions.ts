@@ -33,7 +33,11 @@ import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
-import { canAnchorToMessage } from '../services/spawned-sessions'
+import {
+	canAnchorToMessage,
+	isConversationParticipant,
+	resolveAskConversationId,
+} from '../services/spawned-sessions'
 
 type Env = {
 	Variables: {
@@ -118,9 +122,21 @@ app.openapi(createSessionRoute, (async (c) => {
 	})
 	// notify_on_complete only means something with a link: with no sender to
 	// return to, the flag is dropped rather than stored.
+	// A helper started from inside a chat is interactive by default, so it can ask
+	// the person a question; it ends the moment it returns its result (see
+	// InteractiveTurnFinalizer). `ask_conversation_id` is where its questions go —
+	// kept in config rather than on `conversation_id`, so the helper is not a chat
+	// participant's session (no capacity exemption, no per-chat uniqueness).
+	const askConversationId =
+		link.linked && body.interactive !== false
+			? await resolveAskConversationId(db, link.spawnedBySessionId)
+			: null
 	const config = link.linked
 		? {
 				...baseConfig,
+				...(askConversationId
+					? { interactive: true, stop_on_result: true, ask_conversation_id: askConversationId }
+					: {}),
 				hop_depth: link.hopDepth,
 				...(body.notify_on_complete ? { notify_on_complete: true } : {}),
 			}
@@ -177,6 +193,13 @@ app.openapi(createSessionRoute, (async (c) => {
 	}
 	return c.json(created, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
+
+/** Where a helper session (started by another agent in a chat) asks its questions. */
+function helperAskConversationId(session: { conversationId: string | null; config: unknown }) {
+	if (session.conversationId) return null
+	const id = (session.config as { ask_conversation_id?: unknown } | null)?.ask_conversation_id
+	return typeof id === 'string' ? id : null
+}
 
 /**
  * Trim `actionPrompt` down to a scannable title for the lean-row shape.
@@ -829,8 +852,16 @@ app.openapi(inputSessionRoute, (async (c) => {
 	// The turn is written as the session's user, so only whoever started the
 	// session may add one. Checked before the state gates so a stranger learns
 	// nothing about whether it is running.
+	// A helper that asks its questions in a chat takes the answer from anyone in
+	// that chat, not only the agent that started it.
+	const askConversationId = helperAskConversationId(session)
 	if (session.createdBy !== actorId) {
-		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+		const inAskChat = askConversationId
+			? await isConversationParticipant(db, askConversationId, actorId)
+			: false
+		if (!inAskChat) {
+			return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+		}
 	}
 
 	if (!session.interactive) {
@@ -855,6 +886,32 @@ app.openapi(inputSessionRoute, (async (c) => {
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
 		return c.json(createApiError('BAD_REQUEST', message), 400)
+	}
+
+	// The answer to a helper's question: clear the wait, and put the person's
+	// reply in the chat so the question there reads as answered. Inserted
+	// directly rather than through POST /messages — that would wake the chat's
+	// own agents with an answer meant for someone else.
+	if (askConversationId && session.config && (session.config as { awaiting?: unknown }).awaiting) {
+		await db
+			.update(sessions)
+			.set({ config: sql`${sessions.config} - 'awaiting'` })
+			.where(eq(sessions.id, id))
+		if (body.question_answer) {
+			await insertConversationMessage(db, {
+				conversationId: askConversationId,
+				workspaceId,
+				actorId,
+				content: body.content,
+				metadata: { question_answer: body.question_answer },
+				sessionId: null,
+			}).catch((err) =>
+				logger.warn('Could not record the answer to a helper question in the chat', {
+					session_id: id,
+					error: String(err),
+				}),
+			)
+		}
 	}
 
 	return c.json({ ok: true as const })
@@ -930,7 +987,10 @@ app.openapi(askSessionRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
 	}
 
-	if (!session.interactive || !session.conversationId) {
+	// A chat session asks in its own conversation; a helper another agent started
+	// asks in the one it was started from.
+	const conversationId = session.conversationId ?? helperAskConversationId(session)
+	if (!session.interactive || !conversationId) {
 		return c.json(
 			createApiError(
 				'CONFLICT',
@@ -940,12 +1000,19 @@ app.openapi(askSessionRoute, (async (c) => {
 		)
 	}
 
+	const isHelper = !session.conversationId
 	const created = await insertConversationMessage(db, {
-		conversationId: session.conversationId,
+		conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
 		content: formatQuestionsAsMarkdown(questions),
-		metadata: { question: { session_id: session.id, questions } },
+		metadata: {
+			question: {
+				session_id: session.id,
+				questions,
+				...(isHelper ? { reply_to_session: true } : {}),
+			},
+		},
 		sessionId: session.id,
 	})
 
@@ -958,15 +1025,29 @@ app.openapi(askSessionRoute, (async (c) => {
 	if (!created) {
 		logger.error('Agent question insert returned no row', {
 			sessionId: session.id,
-			conversationId: session.conversationId,
+			conversationId,
 			questionCount: questions.length,
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Question could not be posted'), 500)
 	}
 
+	// A helper is now waiting on the person. The flag keeps the session alive
+	// through the turn that ends with this question (see InteractiveTurnFinalizer)
+	// and is what the Threads pane shows as "waiting on you".
+	if (isHelper) {
+		await db
+			.update(sessions)
+			.set({
+				config: sql`jsonb_set(coalesce(${sessions.config}, '{}'::jsonb), '{awaiting}', ${JSON.stringify(
+					{ message_id: created.id, question: { session_id: session.id, questions } },
+				)}::jsonb)`,
+			})
+			.where(eq(sessions.id, session.id))
+	}
+
 	logger.info('Posted agent question into conversation', {
 		sessionId: session.id,
-		conversationId: session.conversationId,
+		conversationId,
 		messageId: created.id,
 		questionCount: questions.length,
 	})

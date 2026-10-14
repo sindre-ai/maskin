@@ -615,6 +615,7 @@ export class SessionManager extends EventEmitter {
 			// still retries and still tells the human.
 			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
 			fallbackModel: readEmptyTurnFallbackModel(),
+			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
 		})
 	}
 
@@ -2176,7 +2177,13 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+		// A helper another agent started from a chat. It is interactive only so it
+		// can ask the person something, and it ends the moment it gives a result.
+		const helperPreamble =
+			sessionConfig.stop_on_result === true
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the AskUserQuestion tool and end your turn: the session stays open for their answer.\n\n'
+				: ''
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
 ${HUMAN_MESSAGE_STYLE}`
 
@@ -4265,6 +4272,102 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
+		)
+	}
+
+	/**
+	 * Ends a helper session (one an agent started from a chat, config.stop_on_result)
+	 * once it has returned its result. A helper runs interactively so it can ask
+	 * the person a question, but an interactive session never exits on its own;
+	 * without this it would sit idle, holding a container, until the timeout.
+	 *
+	 * Settled through settleSession like any other end, so the row reads
+	 * completed (or failed), `notify_on_complete` still sends the result back to
+	 * the agent that started it, and `wait: true` callers see it finish.
+	 */
+	async finishHelperSession(
+		sessionId: string,
+		outcome: { isError: boolean; text: string },
+	): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session || session.status !== 'running') return
+
+		const settled = await settleSession(
+			session.id,
+			outcome.isError
+				? {
+						kind: 'fail',
+						classification: 'unknown',
+						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
+						resultText: outcome.text,
+						// Same settle source the idle close uses: the remote stop endpoint
+						// validates it against a fixed list, and this is a close-out of an
+						// idle interactive session.
+						source: 'idle-watcher',
+					}
+				: {
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'idle-watcher',
+						resultText: outcome.text,
+					},
+			this.buildSettleDeps(),
+		)
+		if (settled.alreadySettled) return
+
+		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
+
+		if (!session.agentServerId && session.containerId) {
+			await this.containers.remove(session.containerId).catch((err) =>
+				logger.warn('Failed to remove helper container', {
+					sessionId: session.id,
+					containerId: session.containerId,
+					error: String(err),
+				}),
+			)
+		}
+
+		if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+			const now = new Date()
+			await this.db
+				.update(actors)
+				.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+				.where(eq(actors.id, session.actorId))
+				.catch((err) =>
+					logger.warn('Failed to sync agentState after helper finished', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		this.telemetry.recordSessionEnded({
+			sessionId: session.id,
+			endReason: outcome.isError ? 'failed' : 'completed',
+			durationMs: elapsedMs(session.startedAt, session.createdAt),
+			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+		})
+
+		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
+		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+		await this.insertSystemLog(session.id, 'Session completed — result returned').catch((err) =>
+			logger.warn('Failed to write helper close system log', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
+
+		await this.clearActiveSession(session.id)
+		await this.cleanupBrowserSidecar(session.id)
+		await this.cleanupSession(session.id)
+
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after helper finished', { error: String(err) }),
 		)
 	}
 
