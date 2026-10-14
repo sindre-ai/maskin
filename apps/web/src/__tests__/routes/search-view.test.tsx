@@ -488,7 +488,9 @@ describe('SearchView search_result_opened', () => {
 			},
 		}
 		loopsRef.current = {
-			data: [{ id: 'loop-1', name: 'Relay loop', content: null, entryCondition: null, status: 'on' }],
+			data: [
+				{ id: 'loop-1', name: 'Relay loop', content: null, entryCondition: null, status: 'on' },
+			],
 		}
 		actorsRef.current = { data: [{ id: 'a-1', type: 'agent', name: 'Relay', description: null }] }
 		triggersRef.current = {
