@@ -1,9 +1,9 @@
 import type { Database } from '@maskin/db'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
 	OpenRealtimeSocketFn,
 	RealtimeSocketHandlers,
 } from '../../services/voice-realtime-call'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/analytics/voice-events', () => ({
 	captureVoiceToolCall: vi.fn(),

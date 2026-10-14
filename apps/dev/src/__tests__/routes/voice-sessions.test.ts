@@ -84,10 +84,7 @@ describe('POST /api/voice-sessions', () => {
 	it('400s when the target actor exists but is not voice-enabled', async () => {
 		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		mockResults.selectQueue = [
-			[membershipRow()],
-			[agentRow({ metadata: null })],
-		]
+		mockResults.selectQueue = [[membershipRow()], [agentRow({ metadata: null })]]
 		const res = await app.request(
 			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
 		)
@@ -299,7 +296,11 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 
 	it('reports tools_available false when the server socket cannot attach', async () => {
 		enableFlagFor(HUMAN)
-		setCreateRealtimeCallFn(async () => ({ kind: 'ok', callId: 'rtc_abc', answerSdp: 'v=0 answer' }))
+		setCreateRealtimeCallFn(async () => ({
+			kind: 'ok',
+			callId: 'rtc_abc',
+			answerSdp: 'v=0 answer',
+		}))
 		setOpenRealtimeSocketFn((_url, _key, handlers) => {
 			queueMicrotask(() => handlers.onError(new Error('refused')))
 			return { send: vi.fn(), close: vi.fn() }

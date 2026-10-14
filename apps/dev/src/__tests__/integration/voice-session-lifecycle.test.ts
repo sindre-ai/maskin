@@ -340,7 +340,10 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 		const mint = async (agentId: string) => {
 			await db.update(actors).set({ apiKey: 'ank_voice_test' }).where(eq(actors.id, agentId))
 			const res = await post('/api/voice-sessions', { agent_actor_id: agentId })
-			return { res, id: ((await res.clone().json()) as { voice_session_id?: string }).voice_session_id }
+			return {
+				res,
+				id: ((await res.clone().json()) as { voice_session_id?: string }).voice_session_id,
+			}
 		}
 
 		it('409s a second concurrent mint for the same human and fires concurrent_active', async () => {
