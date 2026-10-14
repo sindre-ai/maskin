@@ -32,12 +32,16 @@ async function setup(metadata: Record<string, unknown>, status?: string) {
 	return { workspaceId: ws.id, contactId: contact.id }
 }
 
-const hangup = (s: { workspaceId: string; contactId: string }, callId = 'call-hook-1') => ({
+const hangup = (
+	s: { workspaceId: string; contactId: string },
+	callId = 'call-hook-1',
+	status = 'voice_declined',
+) => ({
 	db,
 	workspaceId: s.workspaceId,
 	contactId: s.contactId,
 	callId,
-	status: 'voice_declined',
+	status,
 	hangupCause: 'normal_clearing',
 	durationS: 40,
 	recordingUrl: null,
@@ -291,6 +295,37 @@ describe('post-call follow-up email hook', () => {
 				'voice.email.send_skipped',
 				expect.objectContaining({ reason: 'suppressed_by_deny_list' }),
 			)
+		})
+	})
+
+	describe('meeting owner', () => {
+		const asked = [{ tool_name: FOLLOWUP_REQUEST_TOOL }]
+		const sentText = () => JSON.parse(fetchMock.mock.calls[0][1].body as string).text as string
+		const meeting = (call_id: string) => ({
+			call_id,
+			meet_link: 'https://meet.google.com/abc-defg-hij',
+			owner_name: 'Sebastian',
+		})
+
+		it('names the person whose calendar was booked, for a meeting from this call', async () => {
+			const s = await setup({
+				email: 'pia@prospect.example',
+				voice_tool_trace: asked,
+				voice_meeting: meeting('call-hook-1'),
+			})
+			await runPostCallHooks(hangup(s, 'call-hook-1', 'voice_meeting_booked'))
+			expect(sentText()).toContain('dit møde med Sebastian er booket')
+		})
+
+		it('names nobody when voice_meeting is from an earlier call', async () => {
+			const s = await setup({
+				email: 'pia@prospect.example',
+				voice_tool_trace: asked,
+				voice_meeting: meeting('call-earlier'),
+			})
+			await runPostCallHooks(hangup(s, 'call-hook-1', 'voice_meeting_booked'))
+			expect(sentText()).toContain('dit møde er booket')
+			expect(sentText()).not.toContain('Sebastian')
 		})
 	})
 
