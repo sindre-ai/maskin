@@ -73,6 +73,7 @@ function fakeStore(
 			if (e.action === 'call_initiated') store.callInitiatedCount++
 		},
 		hasErasedMarker: async () => false,
+		hasUnsweptErasedNumber: async () => false,
 		stampMetadata: async (_ws, contactId, patch) => {
 			store.stamps.push({ contactId, patch })
 			const row = rows.get(contactId)

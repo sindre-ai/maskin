@@ -1,7 +1,9 @@
 import { events, imports, objects } from '@maskin/db/schema'
 import type { ImportMapping } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
+import { sweepErased } from '../../jobs/voice-retention-sweep'
 import { runDialerTick } from '../../lib/outreach/voice/dialer'
 import type { DialerConfig, DialerDeps } from '../../lib/outreach/voice/dialer'
 import { createDrizzleDialerStore } from '../../lib/outreach/voice/dialer-store'
@@ -14,7 +16,8 @@ import { db, getTestActorId } from './global-setup'
 
 // The dial-time half of the erasure suppression marker against real Postgres: the dialer refuses
 // a new contact whose number hashes to the marker of an erased contact, and the marker survives
-// an import merge onto the erased row. Writing the marker is covered in voice-recordings.test.ts.
+// an import merge onto the erased row, and the window before the sweep has reached an erased row.
+// Writing the marker is covered in voice-recordings.test.ts.
 
 // Thu 2026-10-01 11:00 CEST, inside the dial window.
 const NOW = new Date('2026-10-01T09:00:00Z')
@@ -66,6 +69,32 @@ function seedErased(workspaceId: string, number = NUMBER, title = 'Pia Prospect'
 		status: 'deleted_by_request',
 		metadata: { erased_at: '2026-09-30T03:41:00.000Z', erasure_marker: markerOf(number) },
 	})
+}
+
+/** An erasure request the daily sweep has not reached: still holds its number, no marker, no erased_at. */
+function seedErasedNotSwept(workspaceId: string, phone = NUMBER, title = 'Pia Prospect') {
+	return insertObject(db, workspaceId, getTestActorId(), {
+		type: 'contact',
+		title,
+		status: 'deleted_by_request',
+		metadata: { phone, email: 'pia@prospect.example' },
+	})
+}
+
+/**
+ * The real sweepErased against this Postgres. The seeded contact has no call, no blobs and no
+ * events with a call id, so the in-memory storage and Telnyx stand-ins are never asked for anything.
+ */
+function runSweep() {
+	const storage = {
+		list: async () => [],
+		delete: async () => {},
+	} as unknown as StorageProvider
+	const telnyx = () => ({
+		listRecordings: async () => [],
+		deleteRecording: async () => 'not_found' as const,
+	})
+	return sweepErased(db, storage, telnyx, KEY)
 }
 
 function deps(over: Partial<DialerDeps> = {}) {
@@ -171,6 +200,64 @@ describe('dialer refuses a contact that matches an erased contact', () => {
 			check: 'erased',
 			reason: expect.stringContaining('VOICE_ERASURE_MARKER_KEY is not set'),
 		})
+	})
+})
+
+describe('dialer refuses a contact that matches an erased contact the sweep has not reached', () => {
+	it('refuses the same number on an erased row that has no marker and no erased_at yet', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		// Written with spaces: the stored phone is compared the way the dialer normalises a number.
+		const erased = await seedErasedNotSwept(ws.id, '+45 20 12 34 56')
+		const fresh = await seedContact(ws.id, 'voice_queued', {}, 'Pia Prospect (new import)')
+		const other = await seedContact(ws.id, 'voice_queued', { phone: '+4520999999' })
+		const { d, createCall } = deps()
+
+		const result = await runDialerTick(ws.id, d)
+
+		const before = await rowOf(erased.id)
+		expect(before.metadata.erased_at).toBeUndefined()
+		expect(before.metadata.erasure_marker).toBeUndefined()
+		expect(result.refused_count).toBe(1)
+		expect(createCall).toHaveBeenCalledTimes(1)
+		expect((await rowOf(other.id)).status).toBe('voice_dialing')
+		const refused = await refusals(fresh.id)
+		expect(refused).toHaveLength(1)
+		expect(refused[0]?.data).toEqual({ check: 'erased', reason: 'matches erased contact' })
+		expect(JSON.stringify(refused[0])).not.toContain('20123456')
+		expect(JSON.stringify(refused[0])).not.toContain('20 12 34 56')
+		expect((await rowOf(fresh.id)).status).toBe('voice_queued')
+		expect(await refusals(other.id)).toHaveLength(0)
+	})
+
+	it('keeps refusing the same number through the marker once the sweep has run', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const erased = await seedErasedNotSwept(ws.id)
+		const early = await seedContact(ws.id, 'voice_queued', {}, 'Pia Prospect (first import)')
+		const { d, createCall } = deps()
+
+		await runDialerTick(ws.id, d)
+		expect(await refusals(early.id)).toHaveLength(1)
+
+		await runSweep()
+
+		// The number is gone from the erased row, so only the marker can be what refuses now.
+		const swept = await rowOf(erased.id)
+		expect(swept.status).toBe('deleted_by_request')
+		expect(swept.metadata.phone).toBeUndefined()
+		expect(swept.metadata.erased_at).toEqual(expect.any(String))
+		expect(swept.metadata.erasure_marker).toBe(markerOf(NUMBER))
+		expect(await createDrizzleDialerStore(db).hasUnsweptErasedNumber(ws.id, NUMBER)).toBe(false)
+
+		const late = await seedContact(ws.id, 'voice_queued', {}, 'Pia Prospect (second import)')
+		const result = await runDialerTick(ws.id, d)
+
+		expect(createCall).not.toHaveBeenCalled()
+		expect(result.refused_count).toBe(2)
+		const refused = await refusals(late.id)
+		expect(refused).toHaveLength(1)
+		expect(refused[0]?.data).toEqual({ check: 'erased', reason: 'matches erased contact' })
+		expect(JSON.stringify(refused[0])).not.toContain(markerOf(NUMBER))
+		expect((await rowOf(late.id)).status).toBe('voice_queued')
 	})
 })
 

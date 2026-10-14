@@ -211,6 +211,11 @@ export interface DncGateDeps {
 	erasure: ErasureKey
 	/** True when a deleted_by_request contact in the same workspace carries this marker. */
 	matchesErasedContact(marker: string): Promise<boolean>
+	/**
+	 * True when a deleted_by_request contact in the same workspace that the sweep has not reached
+	 * yet (no erased_at, so it still holds its number and has no marker) stores this +45 number.
+	 */
+	matchesUnsweptErasedContact(e164: string): Promise<boolean>
 }
 
 const ERASED_CONTACT_REASON = 'matches erased contact'
@@ -297,14 +302,19 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 	// overwrote. Own-row, no query.
 	if (isSet(m[ERASURE_MARKER_FIELD])) return refuse('erased', ERASED_CONTACT_REASON)
 	// (b) Its number hashes to the marker of a deleted_by_request contact in this workspace.
+	// (c) Sweep window: or it equals the stored number of a deleted_by_request contact the sweep
+	// has not reached yet, which has no marker. A failed Telnyx or blob delete keeps a row in that
+	// state until the next daily retry succeeds. After the sweep the same row is caught by (b).
 	if (!deps.erasure.ok) {
 		return refuse('erased', `erased-contact check cannot run: ${deps.erasure.reason}`)
 	}
-	const marker = erasureMarkerFor(m.phone, deps.erasure.key)
-	if (!marker) return refuse('phone', 'contact has no valid +45 number to dial')
+	const e164 = normalizeDanishNumber(m.phone)
+	const marker = e164 ? computeErasureMarker(e164, deps.erasure.key) : null
+	if (!e164 || !marker) return refuse('phone', 'contact has no valid +45 number to dial')
 	let matches: boolean
 	try {
-		matches = await deps.matchesErasedContact(marker)
+		matches =
+			(await deps.matchesErasedContact(marker)) || (await deps.matchesUnsweptErasedContact(e164))
 	} catch {
 		return refuse('erased', 'erased-contact check could not be completed')
 	}

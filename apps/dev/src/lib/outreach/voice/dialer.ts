@@ -88,6 +88,8 @@ export interface DialerStore {
 	recordEvent(event: DialerEvent): Promise<void>
 	/** Check 7: is there a deleted_by_request contact in the workspace carrying this marker? Reads one row at most. */
 	hasErasedMarker(workspaceId: string, marker: string): Promise<boolean>
+	/** Check 7(c): is a deleted_by_request contact the sweep has not reached yet (no erased_at) still storing this +45 number? */
+	hasUnsweptErasedNumber(workspaceId: string, e164: string): Promise<boolean>
 	/** Merges a patch into the contact's metadata. Does not touch status. */
 	stampMetadata(
 		workspaceId: string,
@@ -102,7 +104,7 @@ export interface DialerDeps {
 	store: DialerStore
 	telnyx: Pick<TelnyxClient, 'createCall'>
 	/** Gate inputs other than the clock, which the tick supplies. */
-	gate: Omit<DncGateDeps, 'now' | 'matchesErasedContact'>
+	gate: Omit<DncGateDeps, 'now' | 'matchesErasedContact' | 'matchesUnsweptErasedContact'>
 	config: DialerConfig
 	/** VOICE_OUTREACH_AUTOSEND resolved for this workspace. Off builds the queue and dials nothing. */
 	autosendEnabled: boolean
@@ -269,6 +271,7 @@ export async function runDialerTick(
 			...deps.gate,
 			now,
 			matchesErasedContact: (marker) => deps.store.hasErasedMarker(workspaceId, marker),
+			matchesUnsweptErasedContact: (e164) => deps.store.hasUnsweptErasedNumber(workspaceId, e164),
 		})
 		if (!verdict.pass) {
 			result.refused_count++

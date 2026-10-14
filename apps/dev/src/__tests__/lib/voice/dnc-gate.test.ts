@@ -36,6 +36,7 @@ function deps(overrides: Partial<DncGateDeps> = {}): DncGateDeps {
 		findActor: async () => ({ type: 'human' }),
 		erasure: ERASURE_KEY,
 		matchesErasedContact: async () => false,
+		matchesUnsweptErasedContact: async () => false,
 		...overrides,
 	}
 }
@@ -403,6 +404,60 @@ describe('runDncGate', () => {
 			)
 			expect(r).toMatchObject({ check: 'erased' })
 			expect(r.reason).not.toContain('db down')
+		})
+
+		describe('sweep window (7c): an erased contact the sweep has not reached', () => {
+			it('refuses a number that equals the stored number of an unswept erased contact', async () => {
+				const unswept = vi.fn(async (e164: string) => e164 === ERASED_NUMBER)
+				const c = clean({ phone: '0045 20123456' })
+				const before = structuredClone(c)
+
+				const r = await refusal(c, deps({ matchesUnsweptErasedContact: unswept }))
+
+				expect(r).toEqual({ pass: false, check: 'erased', reason: 'matches erased contact' })
+				expect(unswept).toHaveBeenCalledWith(ERASED_NUMBER)
+				expect(c).toEqual(before)
+			})
+
+			it('passes a different number, and never puts the number in a refusal', async () => {
+				const unswept = vi.fn(async (e164: string) => e164 === ERASED_NUMBER)
+				expect(
+					await runDncGate(
+						clean({ phone: '+4520123457' }),
+						deps({ matchesUnsweptErasedContact: unswept }),
+					),
+				).toEqual({ pass: true })
+				const r = await refusal(
+					clean({ phone: ERASED_NUMBER }),
+					deps({ matchesUnsweptErasedContact: unswept }),
+				)
+				expect(JSON.stringify(r)).not.toContain('20123456')
+			})
+
+			it('is not asked when the marker already matched', async () => {
+				const unswept = vi.fn(async () => true)
+				await refusal(
+					clean({ phone: ERASED_NUMBER }),
+					deps({
+						matchesErasedContact: lookup([erasedMarker()]),
+						matchesUnsweptErasedContact: unswept,
+					}),
+				)
+				expect(unswept).not.toHaveBeenCalled()
+			})
+
+			it('refuses when the lookup fails', async () => {
+				const r = await refusal(
+					clean(),
+					deps({
+						matchesUnsweptErasedContact: async () => {
+							throw new Error('db down')
+						},
+					}),
+				)
+				expect(r).toMatchObject({ check: 'erased' })
+				expect(r.reason).not.toContain('db down')
+			})
 		})
 
 		it('runs after the other checks, so an earlier refusal wins', async () => {

@@ -230,7 +230,12 @@ describe('voice dialer against real Postgres', () => {
 				const { d } = deps(ws.id)
 				const verdict = await runDncGate(
 					{ id: c?.id ?? '', status: 'voice_queued', metadata },
-					{ ...d.gate, now: NOW, matchesErasedContact: async () => false },
+					{
+						...d.gate,
+						now: NOW,
+						matchesErasedContact: async () => false,
+						matchesUnsweptErasedContact: async () => false,
+					},
 				)
 				expect(verdict.pass === false && verdict.check).not.toBe('time_of_day')
 				expect((await readIds(ws.id)).includes(c?.id ?? '')).toBe(verdict.pass)
