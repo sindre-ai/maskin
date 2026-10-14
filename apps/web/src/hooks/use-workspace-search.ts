@@ -97,20 +97,46 @@ export function titleCoverage(query: string, title: string): number {
 	return Math.min(matched / title.length, 1)
 }
 
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** True when `term` begins a word in `title` (so "b" matches "Anna Baker", not "Anna Eve"). */
+function startsAWord(term: string, title: string): boolean {
+	return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}`, 'u').test(title)
+}
+
 /**
- * Title matches first (largest share of the title matched first), content-only
- * matches after. Array.sort is stable, so the group order (and the server's
- * rank order) is kept among equals.
+ * How well a title matches, best first: the whole query typed at a word start
+ * ("anna b" → "Anna Baker") beats every term starting a word, which beats a
+ * term merely appearing somewhere, which beats a content-only match.
+ */
+function titleTier(query: string, title: string): number {
+	const lowerTitle = title.toLowerCase()
+	const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+	if (terms.length === 0) return 0
+	if (startsAWord(terms.join(' '), lowerTitle)) return 3
+	if (terms.every((term) => startsAWord(term, lowerTitle))) return 2
+	return titleMatches(query, title) ? 1 : 0
+}
+
+/**
+ * Best title matches first; within a tier the largest share of the title
+ * matched first, content-only matches last. Array.sort is stable, so the group
+ * order (and the server's rank order) is kept among equals.
  */
 export function rankTitleMatchesFirst(rows: SearchRow[], query: string): SearchRow[] {
-	const titleHits: SearchRow[] = []
-	const contentOnly: SearchRow[] = []
-	for (const row of rows) {
-		;(titleMatches(query, row.title) ? titleHits : contentOnly).push(row)
-	}
-	const coverage = new Map(titleHits.map((row) => [row, titleCoverage(query, row.title)]))
-	titleHits.sort((a, b) => (coverage.get(b) ?? 0) - (coverage.get(a) ?? 0))
-	return [...titleHits, ...contentOnly]
+	const scored = rows.map((row) => {
+		const tier = titleTier(query, row.title)
+		const phraseLength = query.trim().replace(/\s+/g, ' ').length
+		const coverage =
+			tier === 3
+				? Math.min(phraseLength / (row.title.length || 1), 1)
+				: titleCoverage(query, row.title)
+		return { row, tier, coverage }
+	})
+	scored.sort((a, b) => b.tier - a.tier || b.coverage - a.coverage)
+	return scored.map(({ row }) => row)
 }
 
 export function useWorkspaceSearch(
