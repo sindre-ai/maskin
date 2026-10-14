@@ -47,6 +47,8 @@ export const FALLBACK_CALENDAR_OWNER = { slug: 'sebk', name: 'Sebastian' } as co
 export interface ResolvedCalendar {
 	client: CalendarClient
 	ownerName: string
+	/** Why the contact's owner did not get their own calendar. Absent when sebk's own applies. */
+	fallbackReason?: string
 }
 
 /** The contact's owner slug, normalised the same way for the transfer target and the calendar. */
@@ -57,8 +59,9 @@ function ownerSlugOf(contact: Pick<Contact, 'metadata'>): string {
 
 /**
  * Resolves the calendar for a contact's owner. The workspace has one Google Calendar connection
- * (Sebastian's), so every owner resolves to it; an owner other than sebk logs one line saying the
- * fallback applied. The owner never fails a booking. Null when there is no usable connection.
+ * (Sebastian's), so every owner resolves to it, and an owner other than sebk comes back with a
+ * fallbackReason for the caller to log once. The owner never fails a booking. Null when there is no
+ * usable connection.
  */
 export async function calendarForOwner(
 	db: Database,
@@ -66,23 +69,20 @@ export async function calendarForOwner(
 	ownerSlug: string,
 	getToken: typeof getCalendarAccessToken = getCalendarAccessToken,
 ): Promise<ResolvedCalendar | null> {
-	if (ownerSlug !== FALLBACK_CALENDAR_OWNER.slug) {
-		logger.info('voice calendar owner fallback', {
-			workspaceId,
-			ownerSlug,
-			reason:
-				ownerSlug === ''
-					? 'owner_missing'
-					: ownerSlug === 'unassigned'
-						? 'owner_unassigned'
-						: 'owner_has_no_calendar',
-			resolvedTo: FALLBACK_CALENDAR_OWNER.slug,
-		})
-	}
 	const accessToken = await getToken(db, workspaceId)
-	return accessToken
-		? { client: createCalendarClient({ accessToken }), ownerName: FALLBACK_CALENDAR_OWNER.name }
-		: null
+	if (!accessToken) return null
+	const resolved: ResolvedCalendar = {
+		client: createCalendarClient({ accessToken }),
+		ownerName: FALLBACK_CALENDAR_OWNER.name,
+	}
+	if (ownerSlug === FALLBACK_CALENDAR_OWNER.slug) return resolved
+	const fallbackReason =
+		ownerSlug === ''
+			? 'owner_missing'
+			: ownerSlug === 'unassigned'
+				? 'owner_unassigned'
+				: 'owner_has_no_calendar'
+	return { ...resolved, fallbackReason }
 }
 
 export interface ToolRouterDeps {
@@ -213,6 +213,15 @@ async function bookMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 			ownerSlugOf(contact),
 		)
 		if (!calendar) return await calendarFailed('no_calendar_connection')
+		// Once per booking: confirm_meeting_slot always follows this call and resolves the same way.
+		if (calendar.fallbackReason) {
+			logger.info('voice calendar owner fallback', {
+				contactId: contact.id,
+				ownerSlug: ownerSlugOf(contact),
+				reason: calendar.fallbackReason,
+				resolvedTo: FALLBACK_CALENDAR_OWNER.slug,
+			})
+		}
 		const now = deps.now()
 		const range = slotSearchRange(now)
 		const busy = await calendar.client.freeBusy(range.from, range.to)

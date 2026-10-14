@@ -423,6 +423,36 @@ describe('Telnyx tool router: booking follows the contact owner', () => {
 		expect((await t.read()).voice_meeting).toMatchObject({ owner_name: 'Sebastian' })
 	})
 
+	it('logs one fallback line per booking for a non-sebk owner, none for sebk', async () => {
+		const info = vi.spyOn(logger, 'info')
+		const fallbackLines = () =>
+			info.mock.calls.filter(([m]) => m === 'voice calendar owner fallback')
+		const { client } = calendarStub()
+		const r = router({
+			calendarFor: async (_db, _ws, owner) => ({
+				...sebastian(client),
+				...(owner === 'sebk' ? {} : { fallbackReason: 'owner_has_no_calendar' }),
+			}),
+		})
+		const magnus = await setup({ owner: 'magnus' })
+		await magnus.call(r, 'book_meeting_slot', who)
+		const out = await magnus.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(out).toMatchObject({ meet_link: expect.any(String) })
+		expect(fallbackLines()).toHaveLength(1)
+		expect(fallbackLines()[0]?.[1]).toMatchObject({
+			contactId: magnus.contact.id,
+			ownerSlug: 'magnus',
+			reason: 'owner_has_no_calendar',
+			resolvedTo: 'sebk',
+		})
+
+		const sebk = await setup({ owner: 'sebk' })
+		await sebk.call(r, 'book_meeting_slot', who)
+		await sebk.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(fallbackLines()).toHaveLength(1)
+		info.mockRestore()
+	})
+
 	it('a contact with no owner at all asks for an empty slug and still books', async () => {
 		const t = await setup()
 		const rec = recordingCalendar()
@@ -437,26 +467,20 @@ describe('Telnyx tool router: booking follows the contact owner', () => {
 describe('calendarForOwner', () => {
 	const token = async () => 'tok'
 
-	it('resolves sebk to Sebastian without a fallback log line', async () => {
-		const info = vi.spyOn(logger, 'info')
+	it('resolves sebk to Sebastian with no fallback reason', async () => {
 		const res = await calendarForOwner(db, 'ws-1', 'sebk', token)
 		expect(res?.ownerName).toBe('Sebastian')
-		expect(info).not.toHaveBeenCalledWith('voice calendar owner fallback', expect.anything())
-		info.mockRestore()
+		expect(res?.fallbackReason).toBeUndefined()
 	})
 
 	it.each([
 		['magnus', 'owner_has_no_calendar'],
 		['unassigned', 'owner_unassigned'],
 		['', 'owner_missing'],
-	])('logs one fallback line for owner %j and resolves Sebastian', async (owner, reason) => {
-		const info = vi.spyOn(logger, 'info')
+	])('resolves owner %j to Sebastian with fallback reason %s', async (owner, reason) => {
 		const res = await calendarForOwner(db, 'ws-1', owner, token)
 		expect(res?.ownerName).toBe('Sebastian')
-		const fallbackLines = info.mock.calls.filter(([m]) => m === 'voice calendar owner fallback')
-		expect(fallbackLines).toHaveLength(1)
-		expect(fallbackLines[0]?.[1]).toMatchObject({ ownerSlug: owner, reason, resolvedTo: 'sebk' })
-		info.mockRestore()
+		expect(res?.fallbackReason).toBe(reason)
 	})
 
 	it('returns null, not an error, when the workspace has no calendar connection', async () => {
