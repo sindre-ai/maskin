@@ -1,3 +1,5 @@
+import type { ProviderConfig } from '../integrations/types'
+import { resolveToolAddedKind } from './connection-findings'
 import { sha256 } from './schema-hash'
 
 /** How long a removed tool stays a tombstone, so a tool that flaps back is not new. */
@@ -29,15 +31,19 @@ export type FindingKind =
 	| 'schema_changed'
 	| 'server_spec_changed'
 	| 'source_unreachable'
+	| 'needs_reconnect'
+	| 'available_not_attached'
 
 export interface Finding {
 	kind: FindingKind
 	source: string
 	tools: string[]
-	/** Only a tool_added finding with at least one holder is flagged. */
+	/** Only a tool_added or needs_reconnect finding with a holder, and available_not_attached, are flagged. */
 	flagged: boolean
-	/** Set on tool_added findings: sha256(workspace, source, kind, tool name, schema hash). */
+	/** Set on flagged findings: sha256(workspace, source, kind, tool name, schema hash). */
 	dedupeKey: string | null
+	/** Set on needs_reconnect findings: scope names the stored token lacks. Names only. */
+	missingScopes?: string[]
 }
 
 export interface DiffInput {
@@ -50,6 +56,15 @@ export interface DiffInput {
 	/** Failures in a row before this probe. */
 	priorFailures: number
 	now: Date
+	/**
+	 * What the source's stored token was granted, for oauth2 providers. When it
+	 * lacks a scope the provider config now requires, a new tool is recorded as
+	 * needs_reconnect instead of tool_added. Only scope strings, never a token.
+	 */
+	connection?: {
+		config: ProviderConfig | undefined
+		credentials: { scope?: unknown; userScope?: unknown }
+	}
 }
 
 export interface DiffCounts {
@@ -87,6 +102,8 @@ export function dedupeKeyFor(
  *   reports source_unreachable once, on the third failure in a row
  * - tool_added is flagged only when the source has a holder and the name is not
  *   a tombstone younger than 30 days
+ * - a tool_added on a held source whose stored token lacks a required scope is
+ *   a needs_reconnect finding instead: the tool is not usable until a reconnect
  * - tool_removed, schema_changed and server_spec_changed are recorded, never flagged
  */
 export function diffCapabilities(input: DiffInput): DiffResult {
@@ -177,13 +194,18 @@ export function diffCapabilities(input: DiffInput): DiffResult {
 	const specChanged = prev.spec_hash !== probe.specHash
 
 	const flagged = holders.length > 0
+	const { connection } = input
+	const resolution = connection ? resolveToolAddedKind({ ...connection, holders }) : null
+	const reconnect = resolution?.kind === 'needs_reconnect' ? resolution.missingScopes : null
+	const addedKind = reconnect ? 'needs_reconnect' : 'tool_added'
 	for (const name of added) {
 		findings.push({
-			kind: 'tool_added',
+			kind: addedKind,
 			source,
 			tools: [name],
 			flagged,
-			dedupeKey: dedupeKeyFor(workspaceId, source, 'tool_added', name, curr[name]),
+			dedupeKey: dedupeKeyFor(workspaceId, source, addedKind, name, curr[name]),
+			...(reconnect ? { missingScopes: reconnect } : {}),
 		})
 	}
 	if (gone.length > 0) {
@@ -229,5 +251,21 @@ export function diffCapabilities(input: DiffInput): DiffResult {
 			schema_changed: changed.length,
 		},
 		consecutiveFailures: 0,
+	}
+}
+
+/**
+ * The finding for an active, unattached integration. State, not a diff: it has
+ * no probe and no tool, so it is built here, beside dedupeKeyFor, to share the
+ * one key shape. Holders are not in the key, so a later move of holders to
+ * workspace grants cannot re-report it.
+ */
+export function availableNotAttachedFinding(workspaceId: string, source: string): Finding {
+	return {
+		kind: 'available_not_attached',
+		source,
+		tools: [],
+		flagged: true,
+		dedupeKey: dedupeKeyFor(workspaceId, source, 'available_not_attached', '', ''),
 	}
 }

@@ -3,10 +3,12 @@ import {
 	type CapabilitySnapshot,
 	type DiffInput,
 	type ProbeOutcome,
+	availableNotAttachedFinding,
 	dedupeKeyFor,
 	diffCapabilities,
 } from '../../../lib/capabilities/diff'
 import { hashServerSpec, hashToolSchema, sha256 } from '../../../lib/capabilities/schema-hash'
+import type { ProviderConfig } from '../../../lib/integrations/types'
 
 const WS = '11111111-1111-4111-8111-111111111111'
 const SOURCE = 'integration:slack:22222222-2222-4222-8222-222222222222'
@@ -260,5 +262,93 @@ describe('hashToolSchema', () => {
 
 	it('is a sha256 hex digest of the canonical schema', () => {
 		expect(hashToolSchema({ type: 'object' })).toBe(sha256('{"type":"object"}'))
+	})
+})
+
+describe('diffCapabilities: needs_reconnect', () => {
+	const config: ProviderConfig = {
+		name: 'slack',
+		displayName: 'Slack',
+		auth: {
+			type: 'oauth2',
+			config: {
+				authorizationUrl: 'https://example.com/auth',
+				tokenUrl: 'https://example.com/token',
+				scopes: ['chat:write', 'search:read'],
+				clientIdEnv: 'SLACK_CLIENT_ID',
+				clientSecretEnv: 'SLACK_CLIENT_SECRET',
+			},
+		},
+	}
+	const added = { prev: snapshot({ a: 'h1' }), probe: ok({ a: 'h1', b: 'h2' }) }
+
+	it('a new tool on a token missing a required scope is needs_reconnect, with scope names only', () => {
+		const result = run({
+			...added,
+			connection: { config, credentials: { scope: 'chat:write' } },
+		})
+		expect(result.findings).toEqual([
+			{
+				kind: 'needs_reconnect',
+				source: SOURCE,
+				tools: ['b'],
+				flagged: true,
+				dedupeKey: dedupeKeyFor(WS, SOURCE, 'needs_reconnect', 'b', 'h2'),
+				missingScopes: ['search:read'],
+			},
+		])
+		expect(result.counts.tools_added).toBe(1)
+	})
+
+	it('a token that has every scope keeps the finding as tool_added', () => {
+		const result = run({
+			...added,
+			connection: { config, credentials: { scope: 'chat:write search:read' } },
+		})
+		expect(result.findings.map((f) => f.kind)).toEqual(['tool_added'])
+		expect(result.findings[0]).not.toHaveProperty('missingScopes')
+	})
+
+	it('needs_reconnect on a source nobody holds is not flagged', () => {
+		const result = run({
+			...added,
+			holders: [],
+			connection: { config, credentials: { scope: 'chat:write' } },
+		})
+		expect(result.findings).toEqual([
+			{
+				kind: 'tool_added',
+				source: SOURCE,
+				tools: ['b'],
+				flagged: false,
+				dedupeKey: dedupeKeyFor(WS, SOURCE, 'tool_added', 'b', 'h2'),
+			},
+		])
+	})
+
+	it('a token with no stored scope string is unknown, not drift', () => {
+		const result = run({ ...added, connection: { config, credentials: {} } })
+		expect(result.findings.map((f) => f.kind)).toEqual(['tool_added'])
+	})
+
+	it('the dedupe key separates the two kinds for the same tool', () => {
+		expect(dedupeKeyFor(WS, SOURCE, 'needs_reconnect', 'b', 'h2')).not.toBe(
+			dedupeKeyFor(WS, SOURCE, 'tool_added', 'b', 'h2'),
+		)
+	})
+})
+
+describe('availableNotAttachedFinding', () => {
+	it('is flagged, names no tool and no agent, and keys on workspace, source and kind', () => {
+		const finding = availableNotAttachedFinding(WS, SOURCE)
+		expect(finding).toEqual({
+			kind: 'available_not_attached',
+			source: SOURCE,
+			tools: [],
+			flagged: true,
+			dedupeKey: dedupeKeyFor(WS, SOURCE, 'available_not_attached', '', ''),
+		})
+		expect(availableNotAttachedFinding(WS, SOURCE).dedupeKey).toBe(finding.dedupeKey)
+		expect(availableNotAttachedFinding(WS, `${SOURCE}x`).dedupeKey).not.toBe(finding.dedupeKey)
 	})
 })
