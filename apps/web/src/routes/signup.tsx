@@ -4,11 +4,17 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { safeInternalPath } from '@/lib/safe-redirect'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/signup')({
+	// Where to go after signing up, when a page sent the person here. Same value and check as /login.
+	validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+		const redirect = safeInternalPath(search.redirect)
+		return redirect ? { redirect } : {}
+	},
 	head: () => ({
 		meta: [
 			{ title: 'Sign up for Maskin — Open-source AI-native workspace' },
@@ -24,6 +30,7 @@ export const Route = createFileRoute('/signup')({
 
 function SignupPage() {
 	const { signup } = useAuth()
+	const { redirect } = Route.useSearch()
 	const [name, setName] = useState('')
 	const [organization, setOrganization] = useState('')
 	const [role, setRole] = useState('')
@@ -138,7 +145,8 @@ function SignupPage() {
 					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
 					.catch(() => console.error('[maskin] failed to emit signup_complete'))
 			}
-			window.location.assign('/')
+			// Full navigation, as login does, so the target's query string survives.
+			window.location.assign(redirect ?? '/')
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {
