@@ -261,6 +261,8 @@ struct MaskinComposer: View {
 				) {
 					MaskinHaptics.play(.light)
 					onSend()
+					// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
+					focused = false
 				}
 				.disabled(!model.canSend)
 				.opacity(model.canSend ? 1 : 0.35)
