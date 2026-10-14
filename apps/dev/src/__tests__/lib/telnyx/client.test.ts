@@ -117,7 +117,11 @@ describe('TelnyxClient.createCall', () => {
 		prospectGreeting: 'Hej Anna',
 		connectionId: 'app-1',
 		webhookUrl: 'https://maskin.test/api/integrations/telnyx/webhook',
-		clientState: { contact_id: 'c-1', workspace_id: 'w-1', dial_attempt_n: 2 },
+		clientState: {
+			contact_id: '11111111-1111-4111-8111-111111111111',
+			workspace_id: '22222222-2222-4222-8222-222222222222',
+			dial_attempt_n: 2,
+		},
 	}
 
 	async function sentBody() {
@@ -153,7 +157,8 @@ describe('TelnyxClient.createCall', () => {
 
 	it('keeps the idempotency key and premium answering machine detection', async () => {
 		const { init, body } = await sentBody()
-		expect((init.headers as Record<string, string>)['Idempotency-Key']).toBe('c-1:2')
+		const headers = init.headers as Record<string, string>
+		expect(headers['Idempotency-Key']).toBe('11111111-1111-4111-8111-111111111111:2')
 		expect(body.answering_machine_detection).toBe('premium')
 	})
 })
