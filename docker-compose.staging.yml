@@ -64,7 +64,10 @@ services:
       # what is named here.
       MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-true}
       MASKIN_OAUTH_ISSUER: ${MASKIN_OAUTH_ISSUER:-https://staging.maskin.sindre.ai}
-      # TODO(Developer): add the mcp-oauth-consent tester flag vars by name.
+      # Tester flag vars (see .claude/rules/feature-flags.md). Unregistered flag ids
+      # resolve to false. Leave actor ids empty until a staging user exists.
+      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-mcp-oauth-consent}
     depends_on:
       postgres:
         condition: service_healthy
