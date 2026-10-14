@@ -179,7 +179,7 @@ test.describe('Keychain chat capture: vault, relaunch, undo', () => {
 		const undoResponse = page.waitForResponse((r) =>
 			r.url().includes(`/api/integrations/${vaulted.integrationId}/undo`),
 		)
-		await page.getByRole('button', { name: 'Undo' }).click()
+		await page.getByRole('button', { name: 'Undo', exact: true }).click()
 		const undone = (await (await undoResponse).json()) as { status: string; sessionEnded: boolean }
 		expect(undone).toMatchObject({ status: 'undone', sessionEnded: true })
 
@@ -268,9 +268,10 @@ test.describe('Keychain scope editor: paste, assign, see scope', () => {
 				displayName: string | null
 				scopeGrants: Array<{ kind: string; actorId?: string }>
 			}>
-			expect(rows.find((r) => r.displayName === name)?.scopeGrants).toEqual([
-				{ kind: 'actor', actorId: agent.id },
-			])
+			// The pasting person keeps their own grant; the ticked agent is added.
+			const grants = rows.find((r) => r.displayName === name)?.scopeGrants
+			expect(grants).toHaveLength(2)
+			expect(grants).toContainEqual({ kind: 'actor', actorId: agent.id })
 			const overflow = await page.evaluate(
 				() => document.documentElement.scrollWidth > window.innerWidth,
 			)

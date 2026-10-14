@@ -182,9 +182,9 @@ describe('POST /api/integrations/chat-capture', () => {
 		const text = await res.text()
 		expect(text).toMatch(rule)
 		expect(text).not.toContain(CANARY)
-		expect(await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id))).toEqual(
-			[],
-		)
+		expect(
+			await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id)),
+		).toEqual([])
 		expect(captureMock).not.toHaveBeenCalled()
 	})
 

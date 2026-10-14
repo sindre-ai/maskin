@@ -542,8 +542,12 @@ describe('CredentialDetailPage: who can use this key', () => {
 		await user.click(screen.getByRole('button', { name: 'Edit access' }))
 		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
 		await user.click(screen.getByRole('button', { name: 'Save access' }))
+		// The pasting person's own grant stays; only the agent is added.
 		expect(mockUpdateScope).toHaveBeenCalledWith(
-			[{ kind: 'actor', actorId: 'agent-2' }],
+			[
+				{ kind: 'actor', actorId: 'actor-1' },
+				{ kind: 'actor', actorId: 'agent-2' },
+			],
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 	})

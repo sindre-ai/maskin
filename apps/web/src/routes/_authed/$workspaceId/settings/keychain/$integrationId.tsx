@@ -23,11 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import {
-	useCredentialAuditLog,
-	useIntegrations,
-	useUpdateKeyScope,
-} from '@/hooks/use-integrations'
+import { useCredentialAuditLog, useIntegrations, useUpdateKeyScope } from '@/hooks/use-integrations'
 import type { CredentialAuditEntry } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'

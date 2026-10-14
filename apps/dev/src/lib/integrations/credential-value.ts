@@ -37,7 +37,10 @@ export class CredentialValueError extends Error {
 export function checkCredentialValue(value: string): CredentialValueProblem | null {
 	if (value.length < 1 || value.length > CREDENTIAL_VALUE_MAX_LENGTH) return 'length'
 	if (/^\s|\s$/.test(value)) return 'edge_whitespace'
-	if (/[\u0000-\u001f\u007f]/.test(value)) return 'control_character'
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i)
+		if (code < 0x20 || code === 0x7f) return 'control_character'
+	}
 	if (/[^ -~]/.test(value)) return 'non_ascii'
 	if (value.includes('"')) return 'double_quote'
 	if (value.includes('\\')) return 'backslash'

@@ -184,7 +184,9 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 		const reads = await db
 			.select()
 			.from(credentialAccessLog)
-			.where(eq(credentialAccessLog.integrationId, off))
+			.where(
+				and(eq(credentialAccessLog.integrationId, off), eq(credentialAccessLog.action, 'read')),
+			)
 		expect(reads).toEqual([])
 	})
 
@@ -260,7 +262,9 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 	it('skips a name that has no usable characters, and a later key that takes a slug already used', async () => {
 		const s = await setup()
 		const first = fake('first')
-		await vaultKey(s, '🔑🔑', fake('emoji'), [{ kind: 'workspace' }])
+		// The name rule now refuses an emoji-only name at the door, so rename a stored row.
+		const emoji = await vaultKey(s, 'Emoji key', fake('emoji'), [{ kind: 'workspace' }])
+		await db.update(integrations).set({ displayName: '🔑🔑' }).where(eq(integrations.id, emoji))
 		await vaultKey(s, 'My key', first, [{ kind: 'workspace' }])
 		await vaultKey(s, 'my-KEY', fake('second'), [{ kind: 'workspace' }])
 
