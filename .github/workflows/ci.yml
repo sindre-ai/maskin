@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # bet/** so task PRs into a bet branch get the same checks as a PR into main.
+  # Without it they report nothing until the aggregate bet -> main PR.
   pull_request:
-    branches: [main]
+    branches: [main, 'bet/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
