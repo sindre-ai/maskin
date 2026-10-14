@@ -5,7 +5,7 @@ import { recordEvent } from '../../events/record-event'
 import { applyVoiceEvent, runAppliedEffects } from './apply'
 import { RETRY_STATUSES, dialAttemptOf } from './dialer'
 import type { DialerStore, QueueExclusion, QueuedContact } from './dialer'
-import { MAX_DIALS_PER_CONTACT, PROTECT_TAGS } from './dnc-gate'
+import { ERASURE_MARKER_FIELD, MAX_DIALS_PER_CONTACT, PROTECT_TAGS } from './dnc-gate'
 import { type EffectRunner, createDefaultEffectRunner } from './effects'
 
 const nextDialAt = sql`(${objects.metadata}->>'next_dial_at')::timestamptz`
@@ -185,6 +185,24 @@ export function createDrizzleDialerStore(
 
 		async recordEvent(event) {
 			await recordEvent(db, event)
+		},
+
+		// Served by objects_ws_type_status_idx (workspace, type, status); the marker compare is a
+		// filter on the few deleted_by_request rows. No new index or table.
+		async hasErasedMarker(workspaceId, marker) {
+			const [row] = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(
+					and(
+						eq(objects.workspaceId, workspaceId),
+						eq(objects.type, 'contact'),
+						eq(objects.status, 'deleted_by_request'),
+						sql`${objects.metadata}->>${ERASURE_MARKER_FIELD} = ${marker}`,
+					),
+				)
+				.limit(1)
+			return Boolean(row)
 		},
 
 		async stampMetadata(workspaceId, contactId, patch) {

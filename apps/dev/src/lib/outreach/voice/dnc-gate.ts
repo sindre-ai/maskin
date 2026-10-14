@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi'
+import { type ErasureKey, computeErasureMarker } from './erasure-key'
 import type { VoiceContact } from './state'
 import { DIAL_WINDOW_END_HOUR, DIAL_WINDOW_START_HOUR, copenhagenParts } from './workdays'
 
@@ -129,6 +130,7 @@ export type DncCheck =
 	| 'phone'
 	| 'time_of_day'
 	| 'max_dials'
+	| 'erased'
 
 export type DncResult =
 	| { pass: true }
@@ -184,6 +186,19 @@ export function normalizeDanishNumber(raw: unknown): string | null {
 	return /^\+45\d{8}$/.test(digits) ? digits : null
 }
 
+/**
+ * The one place the erasure marker field is named for reading. The retention sweep writes it
+ * (through this constant) and check 7 below reads it; no report, export, list builder, analytics
+ * event or agent tool does.
+ */
+export const ERASURE_MARKER_FIELD = 'erasure_marker'
+
+/** The marker for a dialled number, written the way the dialer normalises it. Null for a non-+45 number. */
+export function erasureMarkerFor(raw: unknown, key: Buffer): string | null {
+	const e164 = normalizeDanishNumber(raw)
+	return e164 ? computeErasureMarker(e164, key) : null
+}
+
 export interface ActorRef {
 	type: string
 }
@@ -192,7 +207,13 @@ export interface DncGateDeps {
 	now: Date
 	founders: FounderActors
 	findActor(actorId: string): Promise<ActorRef | null>
+	/** Parsed VOICE_ERASURE_MARKER_KEY. Not ok refuses every dial at check 7. */
+	erasure: ErasureKey
+	/** True when a deleted_by_request contact in the same workspace carries this marker. */
+	matchesErasedContact(marker: string): Promise<boolean>
 }
+
+const ERASED_CONTACT_REASON = 'matches erased contact'
 
 function refuse(check: DncCheck, reason: string): Extract<DncResult, { pass: false }> {
 	return { pass: false, check, reason }
@@ -206,7 +227,7 @@ export function inDialWindow(now: Date): boolean {
 }
 
 /**
- * The six ordered, fail-closed pre-dial checks, plus the skill-rule mirror
+ * The seven ordered, fail-closed pre-dial checks, plus the skill-rule mirror
  * (protected contact, role investor) which runs right after the status check
  * because it only reads fields. The first refusal wins.
  */
@@ -268,6 +289,26 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 			`contact already dialed ${dials} times (max ${MAX_DIALS_PER_CONTACT})`,
 		)
 	}
+
+	// 7. Erased contact. A new row for a person who asked to be erased carries the same number
+	// as the surviving erased row, which keeps only a keyed hash of it (see erasure-key.ts). The
+	// refusal reason is fixed text: neither the marker nor the number is ever put in it.
+	// (a) The row's own metadata carries a marker: it is an erased row whose status an import
+	// overwrote. Own-row, no query.
+	if (isSet(m[ERASURE_MARKER_FIELD])) return refuse('erased', ERASED_CONTACT_REASON)
+	// (b) Its number hashes to the marker of a deleted_by_request contact in this workspace.
+	if (!deps.erasure.ok) {
+		return refuse('erased', `erased-contact check cannot run: ${deps.erasure.reason}`)
+	}
+	const marker = erasureMarkerFor(m.phone, deps.erasure.key)
+	if (!marker) return refuse('phone', 'contact has no valid +45 number to dial')
+	let matches: boolean
+	try {
+		matches = await deps.matchesErasedContact(marker)
+	} catch {
+		return refuse('erased', 'erased-contact check could not be completed')
+	}
+	if (matches) return refuse('erased', ERASED_CONTACT_REASON)
 
 	return { pass: true }
 }
