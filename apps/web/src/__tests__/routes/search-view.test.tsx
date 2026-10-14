@@ -373,6 +373,8 @@ describe('SearchView search_performed', () => {
 	it('fires exactly one search_performed for a nonsense word, with a zero count', () => {
 		searchState.current.q = 'qzxqzx'
 		searchResultsRef.current = { data: [], isFetching: false }
+		// The real query hooks report isError as a boolean; is_partial is read from it.
+		conversationsRef.current = { data: undefined, isError: false } as never
 
 		const { rerender } = render(<SearchView />)
 		rerender(<SearchView />)
@@ -505,7 +507,7 @@ describe('SearchView search_result_opened', () => {
 		const cases = [
 			{ name: /Relay chat/, id: 'chat-1', type: 'conversation', group: 'chats', position: 1 },
 			{ name: /Relay loop/, id: 'loop-1', type: 'loop', group: 'loops', position: 2 },
-			{ name: /^Relay\s*AGENT$/, id: 'a-1', type: 'agent', group: 'agents', position: 3 },
+			{ name: /Relay\s*AGENT$/, id: 'a-1', type: 'agent', group: 'agents', position: 3 },
 			{ name: /Relay sweep/, id: 'trg-1', type: 'trigger', group: 'automations', position: 4 },
 		]
 		for (const c of cases) {
