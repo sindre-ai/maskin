@@ -29,6 +29,7 @@ import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
+import { runCapabilityDigest } from './capability-digest'
 
 const TICK_MS = 24 * 60 * 60 * 1000
 const BOOT_DELAY_MS = 60_000
@@ -56,13 +57,14 @@ export type WorkspaceScanResult =
 	| { status: 'skipped'; reason: 'flag_off' | 'no_chief_of_staff' | 'recent_scan' | 'lock_busy' }
 
 /**
- * Daily capability scan. A server job: no model, no session, no message. For
+ * Daily capability scan. A server job: no model, no session. For
  * each flagged workspace it asks every tool source what it can do, compares the
  * answer with the stored snapshot and writes the result as events. Shape of
  * MeetWatchRenewer: start, stop, interval tick, running re-entrancy guard.
  *
- * Shadow mode: nothing here talks to a person. Findings pile up as
- * capability_changed events and can be read with get_events.
+ * Shadow mode unless a person has the agent-proactive-1-1 flag: findings pile up
+ * as capability_changed events (readable with get_events) and the digest at the
+ * end of each workspace scan messages only recipients with that flag on.
  */
 export class CapabilityScanner {
 	private timer: NodeJS.Timeout | null = null
@@ -110,8 +112,10 @@ export class CapabilityScanner {
 				if (!isFlagEnabledForWorkspace(id, FLAGS.CAPABILITY_SCAN)) continue
 				try {
 					const result = await this.scanWorkspace(id, opts)
-					if (result.status === 'scanned') scanned++
-					else skipped++
+					if (result.status === 'scanned') {
+						scanned++
+						await this.digest(id)
+					} else skipped++
 				} catch (err) {
 					logger.error('Capability scan failed for workspace', {
 						workspaceId: id,
@@ -124,6 +128,22 @@ export class CapabilityScanner {
 			}
 		} finally {
 			this.running = false
+		}
+	}
+
+	/**
+	 * End of the tick for one workspace: tell people what the scan found. A failure
+	 * here is logged and never stops the tick; the findings stay pending and the
+	 * next daily tick retries.
+	 */
+	private async digest(workspaceId: string): Promise<void> {
+		try {
+			await runCapabilityDigest(this.db, workspaceId, { now: this.now })
+		} catch (err) {
+			logger.error('Capability digest failed for workspace', {
+				workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
 		}
 	}
 

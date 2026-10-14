@@ -36364,6 +36364,55 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery`.
+                        public struct deliveryPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/kind`.
+                            public var kind: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/version`.
+                            public var version: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/reason`.
+                            public var reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/dedupe_key`.
+                            public var dedupe_key: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/object_id`.
+                            public var object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/comment_event_id`.
+                            public var comment_event_id: Swift.Int?
+                            /// Creates a new `deliveryPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - kind:
+                            ///   - version:
+                            ///   - reason:
+                            ///   - dedupe_key:
+                            ///   - object_id:
+                            ///   - comment_event_id:
+                            public init(
+                                kind: Swift.String,
+                                version: Swift.Int? = nil,
+                                reason: Swift.String? = nil,
+                                dedupe_key: Swift.String? = nil,
+                                object_id: Swift.String? = nil,
+                                comment_event_id: Swift.Int? = nil
+                            ) {
+                                self.kind = kind
+                                self.version = version
+                                self.reason = reason
+                                self.dedupe_key = dedupe_key
+                                self.object_id = object_id
+                                self.comment_event_id = comment_event_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case kind
+                                case version
+                                case reason
+                                case dedupe_key
+                                case object_id
+                                case comment_event_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery`.
+                        public var delivery: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.deliveryPayload?
                         /// Creates a new `initial_message_metadataPayload`.
                         ///
                         /// - Parameters:
@@ -36375,6 +36424,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - delivery:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.attachmentsPayload? = nil,
                             mentions: [Swift.String]? = nil,
@@ -36383,7 +36433,8 @@ public enum Operations {
                             source: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.sourcePayload? = nil,
                             final_output: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload? = nil,
-                            question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil
+                            question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil,
+                            delivery: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.deliveryPayload? = nil
                         ) {
                             self.attachments = attachments
                             self.mentions = mentions
@@ -36393,6 +36444,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.delivery = delivery
                         }
                         public enum CodingKeys: String, CodingKey {
                             case attachments
@@ -36403,6 +36455,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case delivery
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata`.
@@ -39311,6 +39364,55 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery`.
+                        public struct deliveryPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/kind`.
+                            public var kind: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/version`.
+                            public var version: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/reason`.
+                            public var reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/dedupe_key`.
+                            public var dedupe_key: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/object_id`.
+                            public var object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/comment_event_id`.
+                            public var comment_event_id: Swift.Int?
+                            /// Creates a new `deliveryPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - kind:
+                            ///   - version:
+                            ///   - reason:
+                            ///   - dedupe_key:
+                            ///   - object_id:
+                            ///   - comment_event_id:
+                            public init(
+                                kind: Swift.String,
+                                version: Swift.Int? = nil,
+                                reason: Swift.String? = nil,
+                                dedupe_key: Swift.String? = nil,
+                                object_id: Swift.String? = nil,
+                                comment_event_id: Swift.Int? = nil
+                            ) {
+                                self.kind = kind
+                                self.version = version
+                                self.reason = reason
+                                self.dedupe_key = dedupe_key
+                                self.object_id = object_id
+                                self.comment_event_id = comment_event_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case kind
+                                case version
+                                case reason
+                                case dedupe_key
+                                case object_id
+                                case comment_event_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery`.
+                        public var delivery: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.deliveryPayload?
                         /// Creates a new `metadataPayload`.
                         ///
                         /// - Parameters:
@@ -39322,6 +39424,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - delivery:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.attachmentsPayload? = nil,
                             mentions: [Swift.String]? = nil,
@@ -39330,7 +39433,8 @@ public enum Operations {
                             source: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.sourcePayload? = nil,
                             final_output: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload? = nil,
-                            question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil
+                            question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil,
+                            delivery: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.deliveryPayload? = nil
                         ) {
                             self.attachments = attachments
                             self.mentions = mentions
@@ -39340,6 +39444,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.delivery = delivery
                         }
                         public enum CodingKeys: String, CodingKey {
                             case attachments
@@ -39350,6 +39455,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case delivery
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata`.
