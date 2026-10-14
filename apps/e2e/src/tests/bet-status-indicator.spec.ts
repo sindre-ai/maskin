@@ -53,8 +53,10 @@ test.describe('Bet status indicator', () => {
 		const task = await account.api.createObject(account.workspaceId, {
 			type: 'task',
 			title: 'Ship the widget',
-			status: 'in_progress',
+			status: 'todo',
 		})
+		// The API rejects tasks created at in_progress, so move it after creation.
+		await account.api.updateObject(task.id, account.workspaceId, { status: 'in_progress' })
 		await account.api.createRelationship(account.workspaceId, {
 			source_type: 'bet',
 			source_id: bet.id,

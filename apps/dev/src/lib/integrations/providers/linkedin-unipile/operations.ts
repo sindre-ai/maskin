@@ -956,6 +956,80 @@ function toPerson(raw: unknown): LinkedInPerson | null {
 	}
 }
 
+/** One job from a profile's experience section. */
+export type LinkedInPosition = {
+	company: string
+	title: string
+	/** ISO date: YYYY-MM-DD, or YYYY-MM / YYYY when LinkedIn only gave that much. */
+	start: string | null
+	/** Same format as start. Null while the role is current. */
+	end: string | null
+	/** True when LinkedIn gave no end date, i.e. the person still holds the role. */
+	current: boolean
+}
+
+/**
+ * get_profile result. The base fields are always present; `experience` only
+ * when the caller asked for it and LinkedIn answered. `experience_unavailable`
+ * is set instead when the section pull was throttled, rejected or came back
+ * without the section, so an empty `experience` array only ever means "no
+ * jobs listed".
+ */
+export type LinkedInProfile = LinkedInPerson & {
+	experience?: LinkedInPosition[]
+	experience_unavailable?: true
+}
+
+/** Unipile v2 `with_sections` value for the experience section. */
+const EXPERIENCE_SECTION = 'linkedin_experience'
+
+/**
+ * Unipile v2 answers experience dates as MM/DD/YYYY. Convert to ISO, keeping
+ * whatever precision LinkedIn gave (MM/YYYY and YYYY show up on older roles).
+ * Null when the value is not a date we recognise.
+ */
+function toIsoDate(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null
+	const value = raw.trim()
+	const full = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value)
+	if (full) return `${full[3]}-${full[1]}-${full[2]}`
+	const monthYear = /^(\d{2})\/(\d{4})$/.exec(value)
+	if (monthYear) return `${monthYear[2]}-${monthYear[1]}`
+	if (/^\d{4}$/.test(value)) return value
+	return null
+}
+
+/**
+ * Map `specifics.experience` of a v2 profile. Returns null when the section is
+ * not an array at all (the pull did not deliver it), so the caller can flag it
+ * as unavailable instead of reporting a person with no jobs.
+ */
+function toExperience(raw: unknown): LinkedInPosition[] | null {
+	const specifics = (raw as { specifics?: { experience?: unknown } } | null)?.specifics
+	const entries = specifics?.experience
+	if (!Array.isArray(entries)) return null
+	const positions: LinkedInPosition[] = []
+	for (const entry of entries) {
+		if (!entry || typeof entry !== 'object') continue
+		const e = entry as Record<string, unknown>
+		// v2 nests the company as an object with a name; tolerate a bare string.
+		const co = e.company
+		const coName = typeof co === 'object' && co !== null ? (co as { name?: unknown }).name : co
+		const company = typeof coName === 'string' ? coName : ''
+		const title = typeof e.job_title === 'string' ? e.job_title : ''
+		if (!company && !title) continue
+		const hasEnd = typeof e.ended_on === 'string' && e.ended_on.trim() !== ''
+		positions.push({
+			company,
+			title,
+			start: toIsoDate(e.started_on),
+			end: toIsoDate(e.ended_on),
+			current: !hasEnd,
+		})
+	}
+	return positions
+}
+
 function normalizePeople(
 	body: unknown,
 	what: string,
@@ -2277,18 +2351,44 @@ export async function getLinkedInPostEngagement(
 
 export async function getLinkedInProfile(
 	ctx: LinkedInOperationContext,
-	input: { identifier?: unknown },
-): Promise<LinkedInPerson> {
+	input: { identifier?: unknown; sections?: unknown },
+): Promise<LinkedInProfile> {
 	const identifier = typeof input.identifier === 'string' ? input.identifier.trim() : ''
 	if (!identifier) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', 'identifier is required')
 	}
+	const wantsExperience = parseProfileSections(input.sections)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.getProfile({ account_id: pre.credentials.account_id, identifier }),
-	)
+	const account_id = pre.credentials.account_id
+	const fetchProfile = (withSections: boolean) =>
+		callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.getProfile({
+				account_id,
+				identifier,
+				...(withSections ? { with_sections: [EXPERIENCE_SECTION] } : {}),
+			}),
+		)
+	let upstream: Awaited<ReturnType<typeof fetchProfile>>
+	let experienceFailed = false
+	if (wantsExperience) {
+		try {
+			upstream = await fetchProfile(true)
+		} catch (err) {
+			if (!isLinkedInIntegrationError(err)) throw err
+			// LinkedIn may throttle or reject a section pull. Fall back to the
+			// base profile so the call still answers; if the base fetch fails too
+			// that error is the real one and propagates.
+			logger.warn('linkedin-unipile get_profile: experience pull failed, falling back', {
+				code: err.code,
+			})
+			experienceFailed = true
+			upstream = await fetchProfile(false)
+		}
+	} else {
+		upstream = await fetchProfile(false)
+	}
 	const person = toPerson(upstream.body)
 	if (!person) {
 		throw new LinkedInIntegrationError(
@@ -2296,7 +2396,33 @@ export async function getLinkedInProfile(
 			'LinkedIn profile response had an unrecognised shape',
 		)
 	}
-	return person
+	if (!wantsExperience) return person
+	const experience = experienceFailed ? null : toExperience(upstream.body)
+	return experience ? { ...person, experience } : { ...person, experience_unavailable: true }
+}
+
+/**
+ * Validate the optional `sections` input. Absent or empty means off (the
+ * default, which costs nothing and leaves the response unchanged). Only
+ * "experience" is accepted for now; anything else is a clear input error rather
+ * than a silent no-op.
+ */
+function parseProfileSections(raw: unknown): boolean {
+	if (raw === undefined || raw === null) return false
+	if (!Array.isArray(raw)) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'sections must be an array; the only supported value is "experience"',
+		)
+	}
+	const unsupported = raw.filter((v) => v !== 'experience')
+	if (unsupported.length > 0) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`unsupported sections ${JSON.stringify(unsupported)}; the only supported value is "experience"`,
+		)
+	}
+	return raw.length > 0
 }
 
 /**
