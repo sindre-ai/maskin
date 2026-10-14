@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
@@ -57,6 +58,9 @@ function isUniqueViolation(err: unknown, constraintName: string): boolean {
 }
 
 async function requireWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
+	// A Claude connector token is pinned to one workspace for the whole request.
+	const pin = getOAuthPin()
+	if (pin && pin.workspaceId.toLowerCase() !== workspaceId.toLowerCase()) return null
 	const [member] = await db
 		.select()
 		.from(workspaceMembers)

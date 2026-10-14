@@ -1,6 +1,19 @@
+import { getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq, inArray } from 'drizzle-orm'
+
+/**
+ * A Claude connector token (mat_) is pinned to one workspace for the whole request (see
+ * getOAuthPin in @maskin/auth). Every helper in this file answers "no" for any other
+ * workspace, even when the person behind the token is a member of it, so a by-ID route that
+ * derives the workspace from the resource cannot reach across the pin. Callers that are not
+ * OAuth-pinned are unaffected.
+ */
+function isOutsideOAuthPin(workspaceId: string): boolean {
+	const pin = getOAuthPin()
+	return pin !== undefined && pin.workspaceId.toLowerCase() !== workspaceId.toLowerCase()
+}
 
 /**
  * Check if an actor is a member of a workspace.
@@ -16,6 +29,7 @@ export async function isWorkspaceMember(
 	actorId: string,
 	workspaceId: string,
 ): Promise<boolean> {
+	if (isOutsideOAuthPin(workspaceId)) return false
 	const [member] = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)
@@ -37,7 +51,7 @@ export async function actorsShareWorkspace(
 	db: Database,
 	callerId: string,
 	targetId: string,
-	workspaceId?: string,
+	workspaceId: string | undefined = getOAuthPin()?.workspaceId,
 ): Promise<boolean> {
 	if (callerId === targetId) return true
 	if (workspaceId) {
@@ -78,7 +92,7 @@ export async function isAdminOfSharedWorkspace(
 	db: Database,
 	callerId: string,
 	targetId: string,
-	workspaceId?: string,
+	workspaceId: string | undefined = getOAuthPin()?.workspaceId,
 ): Promise<boolean> {
 	const callerAdminWorkspaces = await db
 		.select({ workspaceId: workspaceMembers.workspaceId })
@@ -112,6 +126,7 @@ export async function isWorkspaceOwner(
 	actorId: string,
 	workspaceId: string,
 ): Promise<boolean> {
+	if (isOutsideOAuthPin(workspaceId)) return false
 	const [member] = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)
@@ -135,6 +150,7 @@ export async function isWorkspaceHumanAdminOrOwner(
 	actorId: string,
 	workspaceId: string,
 ): Promise<boolean> {
+	if (isOutsideOAuthPin(workspaceId)) return false
 	const [row] = await db
 		.select({ role: workspaceMembers.role, type: actors.type })
 		.from(workspaceMembers)
