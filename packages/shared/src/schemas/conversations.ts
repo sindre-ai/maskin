@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
-// Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
+// Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
 export const MESSAGE_MAX_LENGTH = 8000
 export const MAX_CONVERSATION_PARTICIPANTS = 50
 export const MESSAGE_MAX_ATTACHMENTS = 10

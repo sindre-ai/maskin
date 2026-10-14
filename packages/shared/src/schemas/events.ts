@@ -15,7 +15,7 @@ export const eventQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 
-export const COMMENT_MAX_LENGTH = 2000
+export const COMMENT_MAX_LENGTH = 50000
 export const COMMENT_MAX_ATTACHMENTS = 10
 
 export const createCommentSchema = z.object({
