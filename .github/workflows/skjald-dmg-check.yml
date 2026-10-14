@@ -1,0 +1,55 @@
+name: skjald-dmg-check
+
+on:
+  push:
+    branches: [infra/skjald-dmg-check]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download hosted DMG
+        run: |
+          curl -fsSL -o Skjald.dmg https://downloads.vaerksted.ai/Skjald-latest.dmg
+          ls -l Skjald.dmg
+          shasum -a 256 Skjald.dmg
+          sw_vers
+          uname -m
+
+      - name: DMG signature, ticket, Gatekeeper
+        run: |
+          echo "== codesign -dv (DMG)"; codesign -dv --verbose=4 Skjald.dmg 2>&1 | grep -E 'Identifier|Authority|TeamIdentifier|Timestamp|Format|flags' ; echo "exit=$?"
+          echo "== codesign --verify (DMG)"; codesign --verify --strict --verbose=2 Skjald.dmg; echo "exit=$?"
+          echo "== stapler validate (DMG)"; xcrun stapler validate Skjald.dmg; echo "exit=$?"
+          echo "== spctl open/primary-signature (DMG)"; spctl -a -t open --context context:primary-signature -vvv Skjald.dmg; echo "exit=$?"
+          exit 0
+
+      - name: App inside the DMG
+        run: |
+          hdiutil attach Skjald.dmg -nobrowse -readonly -mountpoint /tmp/skjald
+          ls /tmp/skjald
+          APP=$(ls -d /tmp/skjald/*.app | head -1)
+          echo "APP=$APP"
+          cp -R "$APP" /tmp/Skjald.app
+          hdiutil detach /tmp/skjald || true
+          APP=/tmp/Skjald.app
+          echo "== Info.plist"
+          for k in CFBundleShortVersionString CFBundleVersion LSMinimumSystemVersion CFBundleExecutable; do
+            printf '%s=' "$k"; /usr/libexec/PlistBuddy -c "Print :$k" "$APP/Contents/Info.plist" 2>&1
+          done
+          EXE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Contents/Info.plist")
+          echo "== archs"
+          for f in "$APP/Contents/MacOS/"*; do printf '%s: ' "$(basename "$f")"; lipo -archs "$f" 2>&1; done
+          echo "== codesign -dv (app)"; codesign -dv --verbose=4 "$APP" 2>&1 | grep -E 'Identifier|Authority|TeamIdentifier|Timestamp|flags|Notarization'
+          echo "== codesign --verify --deep --strict (app)"; codesign --verify --deep --strict --verbose=2 "$APP"; echo "exit=$?"
+          echo "== stapler validate (app)"; xcrun stapler validate "$APP"; echo "exit=$?"
+          echo "== spctl exec, no quarantine"; spctl -a -t exec -vvv "$APP"; echo "exit=$?"
+          echo "== spctl exec, with quarantine flag"
+          xattr -w com.apple.quarantine "0083;$(printf '%x' $(date +%s));Safari;" "$APP"
+          xattr -l "$APP" | head -3
+          spctl -a -t exec -vvv "$APP"; echo "exit=$?"
+          exit 0
