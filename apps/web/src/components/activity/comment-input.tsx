@@ -68,8 +68,9 @@ function randomDraftId(): string {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-// ~5 lines at text-base (line-height 24px) + py-1 (8px) + 2px border
-const MAX_INPUT_HEIGHT_PX = 130
+// The field grows with its content up to this share of the viewport, then
+// scrolls. Matches the maxHeight on the textarea below.
+const MAX_INPUT_HEIGHT_VH = 50
 
 // Show the live character counter once the draft reaches this fraction of the
 // limit. Keeps the UI quiet for the common short-comment case.
@@ -138,8 +139,9 @@ export function CommentInput({
 		const ta = inputRef.current
 		if (!ta) return
 		ta.style.height = 'auto'
-		const overflows = ta.scrollHeight > MAX_INPUT_HEIGHT_PX
-		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
+		const maxHeight = (window.innerHeight * MAX_INPUT_HEIGHT_VH) / 100
+		const overflows = ta.scrollHeight > maxHeight
+		ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`
 		ta.style.overflowY = overflows ? 'auto' : 'hidden'
 	}, [])
 
@@ -694,7 +696,7 @@ export function CommentInput({
 									wrap="soft"
 									aria-invalid={overLimit || undefined}
 									className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
-									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_VH}vh` }}
 								/>
 							</div>
 							{isBar && controlsRight}
