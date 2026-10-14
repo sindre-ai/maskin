@@ -84,11 +84,11 @@ export class KeychainUndoSweeperJob {
 			const swept = await this.db.transaction(async (tx) => {
 				const rows = (await tx.execute(sweepStatement)) as unknown as SweptRow[]
 				if (rows.length === 0) return rows
-				const byWorkspace = new Map<string, SweptRow[]>()
+				const byWorkspace = new Map<string, [SweptRow, ...SweptRow[]]>()
 				for (const row of rows) {
-					const list = byWorkspace.get(row.workspace_id) ?? []
-					list.push(row)
-					byWorkspace.set(row.workspace_id, list)
+					const list = byWorkspace.get(row.workspace_id)
+					if (list) list.push(row)
+					else byWorkspace.set(row.workspace_id, [row])
 				}
 				await recordEvents(
 					tx,

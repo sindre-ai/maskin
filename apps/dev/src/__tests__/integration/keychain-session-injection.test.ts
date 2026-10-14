@@ -266,7 +266,9 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 		const emoji = await vaultKey(s, 'Emoji key', fake('emoji'), [{ kind: 'workspace' }])
 		await db.update(integrations).set({ displayName: '🔑🔑' }).where(eq(integrations.id, emoji))
 		await vaultKey(s, 'My key', first, [{ kind: 'workspace' }])
-		await vaultKey(s, 'my-KEY', fake('second'), [{ kind: 'workspace' }])
+		// The slug check refuses a second 'my-KEY' at the door too, so rename a stored row.
+		const second = await vaultKey(s, 'Second key', fake('second'), [{ kind: 'workspace' }])
+		await db.update(integrations).set({ displayName: 'my-KEY' }).where(eq(integrations.id, second))
 
 		const env = await launchEnv(s.sessionA)
 		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([
