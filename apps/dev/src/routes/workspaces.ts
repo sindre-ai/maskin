@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictMembership } from '@maskin/auth'
+import { evictMembership, getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -237,6 +237,7 @@ const listWorkspacesRoute = createRoute({
 app.openapi(listWorkspacesRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
 
 	const results = await db
 		.select({
@@ -258,7 +259,13 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		})
 		.from(workspaceMembers)
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-		.where(eq(workspaceMembers.actorId, actorId))
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
 
 	// Report the *effective* entitlement, not the raw column — an enterprise
 	// billing owner is entitled on every workspace they own without a
