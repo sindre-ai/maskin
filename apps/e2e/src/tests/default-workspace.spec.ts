@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const SWITCH_NAME = 'Make this my default workspace'
@@ -45,6 +46,8 @@ test.describe('Default workspace — settings switch', () => {
 			})
 
 			test('choosing another workspace moves the default', async ({ page, account }) => {
+				// A trial actor may own a single workspace - this spec needs two.
+				await grantPlanHeadroom(account.apiKey, account.workspaceId)
 				const other = await account.api.createWorkspace(`Second ${Date.now()}`)
 
 				await openGeneralSettings(page, account.workspaceId)
