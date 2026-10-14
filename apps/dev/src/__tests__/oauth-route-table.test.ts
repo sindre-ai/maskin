@@ -87,6 +87,12 @@ describe('mat_ route allowlist vs the registered route table', () => {
 			'POST /api/integrations/:provider/connect',
 			'DELETE /api/integrations/:id',
 			'GET /api/integrations/:id/github-token',
+			// A connected Claude client must not approve its own access or manage connections.
+			'GET /api/oauth/authorize/preview',
+			'POST /api/oauth/authorize/approve',
+			'POST /api/oauth/authorize/deny',
+			'GET /api/oauth/grants',
+			'DELETE /api/oauth/grants/:id',
 		]
 		for (const key of refused) {
 			const [method, path] = key.split(' ')
