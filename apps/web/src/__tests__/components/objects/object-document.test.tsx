@@ -213,11 +213,7 @@ describe('ObjectDocumentView', () => {
 			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
 			const object = buildObjectResponse({ driver: null })
 			render(
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					members={[...members, systemMember]}
-				/>,
+				<ObjectDocumentView {...baseProps} object={object} members={[...members, systemMember]} />,
 			)
 
 			const triggers = screen.getAllByRole('combobox')
@@ -230,11 +226,7 @@ describe('ObjectDocumentView', () => {
 		it('still shows a system actor that is already the driver', () => {
 			const object = buildObjectResponse({ driver: 'actor-slack' })
 			render(
-				<ObjectDocumentView
-					{...baseProps}
-					object={object}
-					members={[...members, systemMember]}
-				/>,
+				<ObjectDocumentView {...baseProps} object={object} members={[...members, systemMember]} />,
 			)
 			expect(screen.getByText('Slack')).toBeInTheDocument()
 		})
