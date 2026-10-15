@@ -67,3 +67,27 @@ export function useRemoveWorkspaceMember(workspaceId: string) {
 		},
 	})
 }
+
+export function useWorkspaceDeletionPreview(workspaceId: string, enabled: boolean) {
+	return useQuery({
+		queryKey: queryKeys.workspaces.deletionPreview(workspaceId),
+		queryFn: () => api.workspaces.deletionPreview(workspaceId),
+		enabled,
+		// A stale "can delete" answer is worse than a refetch: the plan or ownership may have changed.
+		gcTime: 0,
+	})
+}
+
+export function useDeleteWorkspace(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (confirmName: string) => api.workspaces.delete(workspaceId, confirmName),
+		onSuccess: () => {
+			// Drop everything cached for the workspace that no longer exists, then the list so the
+			// index route re-resolves which workspace (or the picker) to land on.
+			queryClient.removeQueries({ queryKey: queryKeys.workspaces.detail(workspaceId) })
+			queryClient.removeQueries({ queryKey: queryKeys.workspaces.deletionPreview(workspaceId) })
+			queryClient.removeQueries({ queryKey: queryKeys.workspaces.all(), exact: true })
+		},
+	})
+}
