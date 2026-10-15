@@ -574,12 +574,6 @@ public enum NewConversationCopy {
 		return "\(recipientCount + 1) in this conversation, including you. Everyone sees the whole thread."
 	}
 
-	public static let starters = [
-		"Brief me on what changed today",
-		"What's blocked and who can unblock it?",
-		"Draft a follow-up to the latest customer thread",
-	]
-
 	/// Candidates for the To field, matched on name and role.
 	public static func matches(_ query: String, in actors: [ChatActor], excluding: Set<String>) -> [ChatActor] {
 		let q = query.trimmingCharacters(in: .whitespaces)

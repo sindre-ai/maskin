@@ -95,9 +95,7 @@ struct NewChatSheet: View {
 				.buttonStyle(.bordered)
 				.accessibilityLabel("Start live")
 			}
-			if composer.trimmedText.isEmpty {
-				StarterChips { composer.text = $0 }
-			} else if restoredDraft {
+			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
 					.foregroundStyle(MaskinColor.ink5)
@@ -364,34 +362,6 @@ struct NewConversationForm: View {
 			highlightedChip = last
 		}
 		return .handled
-	}
-}
-
-/// The three starter prompts above an empty message box; tapping one fills it.
-struct StarterChips: View {
-	let onPick: (String) -> Void
-
-	var body: some View {
-		FlowLayout(spacing: MaskinSpace.s4, alignment: .trailing) {
-			ForEach(NewConversationCopy.starters, id: \.self) { starter in
-				Button {
-					MaskinHaptics.play(.selection)
-					onPick(starter)
-				} label: {
-					Text(starter)
-						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
-						.foregroundStyle(MaskinColor.ink2)
-						.padding(.horizontal, MaskinSpace.s8 + 1)
-						.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s4)
-						.background(MaskinSurface.card, in: Capsule())
-						.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
-						.frame(minHeight: MaskinSpace.touchMin)
-						.contentShape(Capsule())
-				}
-				.buttonStyle(.maskinPressed(.shrink))
-			}
-		}
-		.frame(maxWidth: .infinity, alignment: .trailing)
 	}
 }
 
