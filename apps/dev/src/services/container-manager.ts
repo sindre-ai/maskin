@@ -182,11 +182,23 @@ export class ContainerManager {
 
 	private async openStdinStream(containerId: string): Promise<NodeJS.ReadWriteStream> {
 		const container = this.docker.getContainer(containerId)
-		return (await container.attach({
+		const stream = (await container.attach({
 			stream: true,
 			stdin: true,
 			hijack: true,
 		})) as NodeJS.ReadWriteStream
+		// dockerode also sends the attach options as a JSON request body
+		// (`{"stream":true,"stdin":true,"hijack":true}`), and the daemon sometimes
+		// reads that body as container stdin: about 1 attach in 10. Left alone it
+		// lands in front of the first line we write, the CLI fails with "Error
+		// parsing streaming input line ... SyntaxError" and exits, and a session
+		// whose only input was that line (a helper started with create_session)
+		// dies. One newline right after attaching ends any leaked bytes as a line of
+		// their own, which the CLI skips, and is a blank line it ignores otherwise.
+		// (Attaching without the body was tried: against a real daemon it never
+		// completes.)
+		stream.write('\n', () => {})
+		return stream
 	}
 
 	private trackStreamLifecycle(sessionId: string, handle: StdinHandle): void {
