@@ -1790,6 +1790,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				// Route lookup + guarded re-read inside the recovery transaction.
@@ -1798,7 +1799,11 @@ describe('Integrations Routes', () => {
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
-					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
 					.mockResolvedValueOnce(
 						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
 					)
@@ -1862,6 +1867,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				mockResults.select = [integration]
@@ -1990,6 +1996,91 @@ describe('Integrations Routes', () => {
 				fetchSpy.mockRestore()
 			})
 
+			it('returns 401 AUTH_REVOKED and writes nothing when the discovered install belongs to another account', async () => {
+				// The ?repo= hint is caller-supplied, so discovery can land on an
+				// install owned by someone else. Same outcome as an unknown repo:
+				// no token, no credentials rewrite, no audit event, no sibling writes.
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[integration], [integration]]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'other-org' } }), {
+							status: 200,
+						}),
+					)
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ token: 'ghs_foreign' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=other-org%2Fwidget`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(401)
+				const body = (await res.json()) as { error: { code: string } }
+				expect(body.error.code).toBe('AUTH_REVOKED')
+				expect(JSON.stringify(body)).not.toContain('ghs_foreign')
+				// Cached-id mint + discovery only; nothing minted against the foreign install.
+				expect(fetchSpy).toHaveBeenCalledTimes(2)
+				expect(fetchSpy).not.toHaveBeenCalledWith(
+					'https://api.github.com/app/installations/9999/access_tokens',
+					expect.anything(),
+				)
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+				fetchSpy.mockRestore()
+			})
+
+			it('returns 401 AUTH_REVOKED when the row has no owner_login to compare against', async () => {
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[integration], [integration]]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(401)
+				expect(fetchSpy).toHaveBeenCalledTimes(2)
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+				fetchSpy.mockRestore()
+			})
+
 			it('short-circuits the write when a concurrent recovery already rotated the installation id', async () => {
 				// Two parallel callers can both hit this route on the same
 				// cached id. The second one's guarded re-read must observe the
@@ -2003,6 +2094,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const alreadyRotatedIntegration = {
 					...staleIntegration,
@@ -2016,7 +2108,11 @@ describe('Integrations Routes', () => {
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
-					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
 					.mockResolvedValueOnce(
 						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
 					)
@@ -2045,6 +2141,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				mockResults.selectQueue = [[integration], [integration]]
@@ -2053,7 +2150,11 @@ describe('Integrations Routes', () => {
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
-					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
 					.mockResolvedValueOnce(
 						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
 					)
