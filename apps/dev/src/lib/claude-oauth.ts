@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
+import { Sentry } from './sentry'
 
 /**
  * Hard ceiling on every network call made while resolving Claude credentials
@@ -95,6 +96,85 @@ interface TokenResponse {
 }
 
 /**
+ * Thrown by `refreshClaudeToken` for every failure of the token endpoint call
+ * (non-2xx, timeout, network error). The message is exactly what the bare
+ * `Error` carried before: `classifierInputFromError` in claude-failover.ts
+ * parses the status out of it. The structured fields exist only so
+ * `reportClaudeRefreshFailure` can record a failure without parsing text.
+ *
+ * `errorType` is the token endpoint's OAuth error code (invalid_grant, ...) or
+ * `timeout` / `network` / `unknown`. It is always a short [a-z0-9_.-] string,
+ * never response text, so it is safe to store.
+ */
+export class ClaudeTokenRefreshError extends Error {
+	readonly status: number | null
+	readonly errorType: string
+	constructor(message: string, status: number | null, errorType: string, cause?: unknown) {
+		super(message, { cause })
+		this.status = status
+		this.errorType = errorType
+	}
+}
+
+const ERROR_TYPE_PATTERN = /^[a-z0-9_.-]{1,64}$/i
+
+/** OAuth error code from a token endpoint body: {error: "x"} or {error: {type: "x"}}. */
+function parseErrorType(body: string): string {
+	try {
+		const parsed = JSON.parse(body) as { error?: unknown } | null
+		const error = parsed?.error
+		const candidate = typeof error === 'string' ? error : (error as { type?: unknown } | null)?.type
+		if (typeof candidate === 'string' && ERROR_TYPE_PATTERN.test(candidate)) return candidate
+	} catch {
+		// Not JSON: nothing in it is safe to keep.
+	}
+	return 'unknown'
+}
+
+/** Which code path asked for the refresh. */
+export type ClaudeRefreshCaller = 'session_start' | 'failover_recovery' | 'keys_status'
+
+/**
+ * Leave a durable record of a failed token refresh as a Sentry event (logs are
+ * off in production, and the api's own stdout only survives about a minute).
+ *
+ * Only failures of the token endpoint call itself are recorded; anything else
+ * a caller's try block can throw (a DB write, say) is not a refresh failure
+ * and is ignored. Fields are an allowlist: ids, status, the OAuth error code,
+ * the caller and a timestamp. The error message is deliberately left out
+ * because it carries the endpoint's response body.
+ *
+ * Never throws and never changes what the caller does next.
+ */
+export function reportClaudeRefreshFailure(params: {
+	workspaceId: string
+	slot: string
+	caller: ClaudeRefreshCaller
+	error: unknown
+}): void {
+	const { workspaceId, slot, caller, error } = params
+	if (!(error instanceof ClaudeTokenRefreshError)) return
+	try {
+		const status = error.status === null ? 'none' : String(error.status)
+		Sentry.captureMessage('Claude OAuth token refresh failed', {
+			level: 'warning',
+			tags: { caller, slot, http_status: status, error_type: error.errorType },
+			extra: {
+				workspaceId,
+				slot,
+				caller,
+				httpStatus: error.status,
+				errorType: error.errorType,
+				failedAt: new Date().toISOString(),
+			},
+			fingerprint: ['claude-oauth-refresh-failed', caller, status, error.errorType],
+		})
+	} catch (sentryErr) {
+		console.error('[sentry] captureMessage failed', sentryErr)
+	}
+}
+
+/**
  * Refresh an expired access token using the refresh token.
  * Returns updated tokens (new access token, possibly new refresh token).
  */
@@ -105,16 +185,32 @@ export async function refreshClaudeToken(tokens: ClaudeOAuthTokens): Promise<Cla
 		refresh_token: tokens.refreshToken,
 	}
 
-	const res = await fetch(CLAUDE_TOKEN_URL, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body),
-		signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
-	})
+	let res: Response
+	try {
+		res = await fetch(CLAUDE_TOKEN_URL, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
+		})
+	} catch (err) {
+		const timedOut =
+			err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+		throw new ClaudeTokenRefreshError(
+			err instanceof Error ? err.message : String(err),
+			null,
+			timedOut ? 'timeout' : 'network',
+			err,
+		)
+	}
 
 	if (!res.ok) {
 		const text = await res.text()
-		throw new Error(`Token refresh failed (${res.status}): ${text}`)
+		throw new ClaudeTokenRefreshError(
+			`Token refresh failed (${res.status}): ${text}`,
+			res.status,
+			parseErrorType(text),
+		)
 	}
 
 	const data = (await res.json()) as TokenResponse
@@ -346,6 +442,7 @@ export async function getValidOAuthToken(
 	db: Database,
 	workspaceId: string,
 	bufferMs = 10 * 60 * 1000,
+	caller: ClaudeRefreshCaller = 'session_start',
 ): Promise<{ accessToken: string; tokens: ClaudeOAuthTokens } | null> {
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as Record<string, unknown>) ?? {}
@@ -353,13 +450,14 @@ export async function getValidOAuthToken(
 
 	if (!active) return null
 
-	const { tokens: fresh, refreshed } = await refreshSlotSingleFlight(
-		db,
-		workspaceId,
-		active.slot,
-		active.data,
-		bufferMs,
-	)
+	let result: Awaited<ReturnType<typeof refreshSlotSingleFlight>>
+	try {
+		result = await refreshSlotSingleFlight(db, workspaceId, active.slot, active.data, bufferMs)
+	} catch (error) {
+		reportClaudeRefreshFailure({ workspaceId, slot: active.slot, caller, error })
+		throw error
+	}
+	const { tokens: fresh, refreshed } = result
 	if (refreshed) logger.info('Refreshed Claude OAuth token', { workspaceId, slot: active.slot })
 
 	return { accessToken: fresh.accessToken, tokens: fresh }

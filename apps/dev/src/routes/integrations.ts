@@ -5,11 +5,15 @@ import type { Database } from '@maskin/db'
 import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
+import {
+	skjaldOutcomePayloadSchema,
+	skjaldTranscriptionCompletedPayloadSchema,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
+import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
@@ -45,6 +49,9 @@ import {
 import {
 	DomainAlreadyClaimedError,
 	DomainRegisterError,
+	type ResendDomainListPage,
+	adoptResendDomain,
+	findResendDomainByName,
 	registerResendDomain,
 } from '../lib/integrations/providers/resend/domain-register'
 import {
@@ -52,7 +59,10 @@ import {
 	resendEmailReceivedSchema,
 } from '../lib/integrations/providers/resend/schemas'
 import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
-import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
+import {
+	upsertSkjaldMeeting,
+	upsertSkjaldOutcomeMeeting,
+} from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -99,6 +109,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
@@ -911,6 +922,14 @@ app.openapi(connectRoute, (async (c) => {
 			integrationId,
 		})
 
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId,
+			actorId,
+			integrationId,
+			authType: 'api_key',
+		})
+
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
 	}
@@ -1025,7 +1044,7 @@ app.openapi(connectRoute, (async (c) => {
 
 			// Step 1 — verify the API key against Resend by listing domains.
 			// 401 → INVALID_API_KEY (Step 1 error state).
-			const verifyRes = await fetch('https://api.resend.com/domains', {
+			const verifyRes = await fetch('https://api.resend.com/domains?limit=100', {
 				method: 'GET',
 				headers: { Authorization: `Bearer ${resendApiKey}` },
 			})
@@ -1059,10 +1078,33 @@ app.openapi(connectRoute, (async (c) => {
 				)
 			}
 
-			// Step 2 — register the subdomain on the customer's Resend account.
+			// Step 2 — adopt the subdomain if it already exists in the customer's
+			// Resend account, otherwise register it. Every Resend call runs before
+			// the row insert, so a failure here never leaves a resend_domain_id.
+			const domainList = (await verifyRes.json().catch(() => ({}))) as ResendDomainListPage
 			let registration: Awaited<ReturnType<typeof registerResendDomain>>
 			try {
-				registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				const existingDomainId = await findResendDomainByName(
+					resendApiKey,
+					resendSubdomain,
+					domainList,
+				)
+				if (existingDomainId) {
+					const [claimedBy] = await db
+						.select({ id: integrations.id })
+						.from(integrations)
+						.where(
+							and(
+								eq(integrations.provider, 'resend'),
+								sql`${integrations.config}->'resend'->>'resend_domain_id' = ${existingDomainId}`,
+							),
+						)
+						.limit(1)
+					if (claimedBy) throw new DomainAlreadyClaimedError('domain_already_claimed')
+					registration = await adoptResendDomain(resendApiKey, existingDomainId)
+				} else {
+					registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				}
 			} catch (err) {
 				if (err instanceof DomainAlreadyClaimedError) {
 					return c.json(
@@ -1095,13 +1137,18 @@ app.openapi(connectRoute, (async (c) => {
 				throw err
 			}
 
+			// An adopted domain may already be verified; seed the real status so the
+			// poller does not leave it sitting at pending.
+			const resendVerificationStatus = mapTopStatus(
+				registration.verificationStatus as ResendDomainGetResponse['status'],
+			)
 			const resendConfig: IntegrationConfig = {
 				system_actor_id: systemActor.id,
 				...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
 				resend: {
 					receive_subdomain: resendSubdomain,
 					resend_domain_id: registration.resendDomainId,
-					verification_status: 'pending',
+					verification_status: resendVerificationStatus,
 					last_polled_at: null,
 					webhook_url: webhookUrl,
 					dns_records: registration.dnsRecords,
@@ -1149,7 +1196,7 @@ app.openapi(connectRoute, (async (c) => {
 				integration_id: resendRow.id,
 				webhook_url: webhookUrl,
 				dns_records: registration.dnsRecords,
-				verification_status: 'pending',
+				verification_status: resendVerificationStatus,
 			})
 		}
 
@@ -1661,6 +1708,10 @@ app.openapi(callbackRoute, (async (c) => {
 		)
 		.limit(1)
 
+	// Reconnecting onto a row that was already active is a refresh, not a new
+	// connect, so it must not count toward integration_connected.
+	const isNewConnect = existingSameInstall?.status !== 'active'
+
 	if (existingSameInstall) {
 		await db
 			.update(integrations)
@@ -1736,6 +1787,16 @@ app.openapi(callbackRoute, (async (c) => {
 			...(ownerLogin ? { owner_login: ownerLogin } : {}),
 		},
 	})
+
+	if (isNewConnect) {
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			integrationId,
+			authType: 'oauth',
+		})
+	}
 
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
@@ -2075,6 +2136,14 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 		}
 	}
 
+	void trackIntegrationConnected({
+		provider: existing.provider,
+		workspaceId: existing.workspaceId,
+		actorId,
+		integrationId: id,
+		authType: 'manual',
+	})
+
 	return c.json({ activated: true })
 }) as RouteHandler<typeof completeIntegrationRoute, Env>)
 
@@ -2213,7 +2282,10 @@ app.openapi(githubTokenRoute, (async (c) => {
 	if (recoveryRepo) {
 		try {
 			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
-			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
+			const result = await mintInstallationTokenWithRecovery(credentials, {
+				repo: recoveryRepo,
+				expectedOwnerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+			})
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
 				if (oldInstallationId) {
@@ -2950,24 +3022,46 @@ webhookApp.post('/skjald/:token', async (c) => {
 		}
 	}
 
-	if (eventType !== 'transcription.completed') {
+	// `transcription.completed` is the desktop app's event; `outcome.created` / `outcome.updated` are what the iOS
+	// app and the v2 destinations send (the written-up outcome, with the transcript only when the person allows it).
+	// Both end in the same `meeting` object, matched on Skjald's meeting id.
+	const isOutcomeEvent = eventType === 'outcome.created' || eventType === 'outcome.updated'
+	if (eventType !== 'transcription.completed' && !isOutcomeEvent) {
 		// Unknown/future event type — ack without processing so Skjald doesn't retry.
 		await releaseClaim()
 		return c.json({ ok: true, skipped: 'unhandled_event' })
 	}
 
-	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
-	if (!parsedPayload.success) {
+	let upsertMeeting: (() => Promise<{ objectId: string; action: 'created' | 'updated' }>) | null =
+		null
+	if (isOutcomeEvent) {
+		const parsed = skjaldOutcomePayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldOutcomeMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	} else {
+		const parsed = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	}
+	if (!upsertMeeting) {
 		await releaseClaim()
-		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
+		return c.json(createApiError('BAD_REQUEST', `Invalid ${eventType} payload`), 400)
 	}
 
 	try {
-		const result = await upsertSkjaldMeeting(db, {
-			workspaceId: integration.workspaceId,
-			systemActorId,
-			payload: parsedPayload.data,
-		})
+		const result = await upsertMeeting()
 
 		await commitWebhookDelivery(db, {
 			eventRows: [
@@ -3718,7 +3812,7 @@ function clearOAuthNonceCookie(c: Context<Env>, providerName: string): void {
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 // In production, use the configured origin to prevent X-Forwarded-Host injection
-function resolvePublicOrigin(
+export function resolvePublicOrigin(
 	requestUrl: string,
 	headers: Record<string, string | undefined>,
 ): string {

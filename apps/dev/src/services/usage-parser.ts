@@ -82,6 +82,88 @@ export async function readSessionStdoutChunks(db: Database, sessionId: string): 
 }
 
 /**
+ * Token-only fallback for a session whose stdout holds no `result` envelope —
+ * a non-interactive run killed at the wall-time ceiling never emits one, so the
+ * result-based parse above returns null even though the session did real work.
+ *
+ * Sums the `usage` block of each top-level `assistant` message, counting every
+ * message id once: stream-json emits one `assistant` line per content block and
+ * repeats the message's usage on each, so the last line seen for an id wins.
+ * Counting restarts after the last `result` envelope, because everything before
+ * it was already accumulated by an earlier pause or turn.
+ *
+ * Cost and duration stay null on purpose — the CLI only reports cost on
+ * `result`, and a token price guessed here would sit in the cost column with
+ * nothing marking it as a guess. Returns null when no assistant usage is found.
+ */
+export function parseAssistantUsageFromLogChunks(chunks: string[]): SessionUsage | null {
+	const byMessageId = new Map<string, Record<string, unknown>>()
+	for (const line of chunks.join('').split('\n')) {
+		const trimmed = line.trim()
+		if (!trimmed || trimmed[0] !== '{') continue
+		if (parseResultLine(trimmed)) {
+			byMessageId.clear()
+			continue
+		}
+		let obj: Record<string, unknown>
+		try {
+			obj = JSON.parse(trimmed)
+		} catch {
+			continue
+		}
+		if (!obj || obj.type !== 'assistant' || obj.parent_tool_use_id != null) continue
+		const message = obj.message as { id?: unknown; usage?: unknown } | undefined
+		if (typeof message?.id !== 'string' || !message.usage || typeof message.usage !== 'object') {
+			continue
+		}
+		byMessageId.set(message.id, message.usage as Record<string, unknown>)
+	}
+	if (byMessageId.size === 0) return null
+
+	const total = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }
+	for (const usage of byMessageId.values()) {
+		total.input += finiteOrNull(usage.input_tokens) ?? 0
+		total.output += finiteOrNull(usage.output_tokens) ?? 0
+		total.cacheCreation += finiteOrNull(usage.cache_creation_input_tokens) ?? 0
+		total.cacheRead += finiteOrNull(usage.cache_read_input_tokens) ?? 0
+	}
+	return {
+		totalCostUsd: null,
+		inputTokens: total.input,
+		outputTokens: total.output,
+		cacheCreationInputTokens: total.cacheCreation,
+		cacheReadInputTokens: total.cacheRead,
+		durationMs: null,
+	}
+}
+
+/**
+ * Runs `parseAssistantUsageFromLogChunks` over the session's stdout in
+ * `session_logs`. `extractSessionUsage` reads only the newest 50 rows, which
+ * cannot cover a session that ran for an hour, so this scans every row that
+ * carries an `assistant` or `result` line (capped at the newest
+ * `MAX_LIVE_RESULT_ROWS_FETCHED`).
+ */
+export async function sumAssistantUsage(
+	db: Database,
+	sessionId: string,
+): Promise<SessionUsage | null> {
+	const rows = await db
+		.select({ content: sessionLogs.content })
+		.from(sessionLogs)
+		.where(
+			and(
+				eq(sessionLogs.sessionId, sessionId),
+				eq(sessionLogs.stream, 'stdout'),
+				sql`(${sessionLogs.content} LIKE '%"type":"assistant"%' OR ${sessionLogs.content} LIKE '%"type":"result"%')`,
+			),
+		)
+		.orderBy(desc(sessionLogs.id))
+		.limit(MAX_LIVE_RESULT_ROWS_FETCHED)
+	return parseAssistantUsageFromLogChunks(rows.map((r) => r.content).reverse())
+}
+
+/**
  * Best-effort LIVE usage scan for a still-running session: sums *every*
  * `result` event seen so far, not just the last one — an interactive
  * session emits one `result` per turn, and a still-running session may
