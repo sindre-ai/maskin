@@ -314,6 +314,8 @@ type ApiCallOptions = {
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT'])
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /**
  * Derive a deterministic Idempotency-Key from the host session id + the call
  * shape. When the MCP server runs inside an agent container, `SESSION_ID` is
@@ -379,10 +381,7 @@ async function apiFetch(
 	// sent. Read-only calls carry the header too — cheap and harmless, and
 	// keeps the header contract uniform per request rather than per method.
 	const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
-	if (
-		sessionId &&
-		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
-	) {
+	if (sessionId && UUID_RE.test(sessionId)) {
 		headers['X-Maskin-Session-Id'] = sessionId
 	}
 	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
@@ -6361,6 +6360,37 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			// Inside a chat session the human connects through a card in the chat:
+			// an OAuth button, or an input for an API key. The credential never
+			// passes through the model, and no URL has to be pasted. A 409 means
+			// the session has no human on the other end (autonomous run, or not an
+			// agent session at all) — fall through to the URL flow below.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (sessionId && UUID_RE.test(sessionId)) {
+				try {
+					const card = (await apiCall(
+						config,
+						'POST',
+						`/api/sessions/${sessionId}/connect-card`,
+						{ provider: args.provider },
+						{ workspaceId: args.workspace_id },
+					)) as { posted: boolean; already_connected?: boolean }
+					const text = card.already_connected
+						? `${args.provider} is already connected in this workspace — nothing to do, carry on.`
+						: `A Connect card for ${args.provider} is now in the chat. The user completes the connection there (they sign in, or paste their own API key into the card). Do not ask the user for an API key and do not paste a link. End your turn now without a closing message; they will tell you when it is connected.`
+					return {
+						_meta: meta(
+							'connect_integration',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
+						content: [{ type: 'text' as const, text }],
+					}
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 409) throw err
+				}
+			}
+
 			const result = (await apiCall(
 				config,
 				'POST',
