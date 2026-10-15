@@ -106,7 +106,7 @@ private struct LoopsContainer: View {
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search flows")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
+		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
 		.shellToolbar(
 			environment: environment, title: "Flows",

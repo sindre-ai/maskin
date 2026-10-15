@@ -14,7 +14,7 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Display, Live, New, then the avatar, all inside ONE glass capsule (a single
+/// Order in the pill is Display, the avatar, then Live and New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
 /// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
@@ -30,6 +30,9 @@ public struct ShellActions {
 	public var live: Bool
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
+	/// Makes the filter button a plain toggle instead of a menu (For you: it shows or hides the
+	/// filter pills). Ignored when `display` is set.
+	public var displayToggle: (() -> Void)?
 	/// The Display menu's glyph: three lines (filter / sort) or sliders (display options).
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
@@ -38,8 +41,9 @@ public struct ShellActions {
 	public init(
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
-		displayActive: Bool = false
+		displayActive: Bool = false, displayToggle: (() -> Void)? = nil
 	) {
+		self.displayToggle = displayToggle
 		self.displaySymbol = displaySymbol
 		self.new = new
 		self.newLabel = newLabel
@@ -108,6 +112,27 @@ private struct ShellToolbarModifier: ViewModifier {
 								.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
 						}
 					}
+					if actions.display == nil, let toggle = actions.displayToggle {
+						Button(action: toggle) {
+							Label("Filter", systemImage: actions.displaySymbol)
+								.foregroundStyle(actions.displayActive ? MaskinColor.sigInk : MaskinColor.ink)
+								.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+								.background(
+									Circle().fill(actions.displayActive ? MaskinColor.sigTint : Color.clear))
+						}
+						.accessibilityLabel(actions.displayActive ? "Filter, shown" : "Filter")
+					}
+					if showsAvatar {
+						Button {
+							runtime?.showProfile = true
+						} label: {
+							ShellNavAvatar(name: environment.auth.session?.name ?? "")
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.contentShape(Circle())
+						}
+						.buttonStyle(.plain)
+						.accessibilityLabel("Account")
+					}
 					if actions.live {
 						Button {
 							liveMeeting.present(.dailyBriefing)
@@ -122,17 +147,6 @@ private struct ShellToolbarModifier: ViewModifier {
 							ShellInkCircle(symbol: "plus", label: actions.newLabel)
 						}
 						.buttonStyle(.plain)
-					}
-					if showsAvatar {
-						Button {
-							runtime?.showProfile = true
-						} label: {
-							ShellNavAvatar(name: environment.auth.session?.name ?? "")
-							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-							.contentShape(Circle())
-						}
-						.buttonStyle(.plain)
-						.accessibilityLabel("Account")
 					}
 				}
 			}
@@ -207,7 +221,10 @@ extension View {
 	func searchMinimized() -> some View {
 		#if os(iOS)
 			if #available(iOS 26, *) {
-				return AnyView(searchToolbarBehavior(.minimize))
+				// The collapsed magnifier sits at the very left of the top bar.
+				return AnyView(
+					searchToolbarBehavior(.minimize)
+						.toolbar { DefaultToolbarItem(kind: .search, placement: .topBarLeading) })
 			}
 		#endif
 		return AnyView(self)
