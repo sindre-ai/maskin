@@ -14,4 +14,7 @@ public enum MaskinMotion {
 	public static let spring = Animation.spring(response: 0.38, dampingFraction: 0.82)
 	/// Drawer / sheet-style slides.
 	public static let slide = Animation.easeInOut(duration: MaskinDuration.slide)
+	/// Press feedback: instant on touch-down (an ease-in-out curve starts slowly, so the control
+	/// looks like it ignored the finger), eased on release.
+	public static func release(isPressed: Bool) -> Animation? { isPressed ? nil : quick }
 }

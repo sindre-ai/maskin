@@ -13,6 +13,18 @@ public enum MaskinTypeface {
 
 	/// True when the family is installed or registered in this process.
 	public static func isAvailable(_ family: String) -> Bool {
+		if family == sansFamily { return sansAvailable }
+		if family == monoFamily { return monoAvailable }
+		return probe(family)
+	}
+
+	/// Resolved once per process. The families come from the bundle's `UIAppFonts`, which iOS
+	/// registers before any of our code runs, and `sans`/`mono` are called from view bodies
+	/// (hundreds of call sites), so a CoreText lookup per call showed up on the main thread.
+	private static let sansAvailable = probe(sansFamily)
+	private static let monoAvailable = probe(monoFamily)
+
+	private static func probe(_ family: String) -> Bool {
 		let font = CTFontCreateWithName(family as CFString, 12, nil)
 		return (CTFontCopyFamilyName(font) as String) == family
 	}
