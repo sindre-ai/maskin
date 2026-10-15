@@ -251,7 +251,7 @@ struct BriefViewer: View {
 			.id(card.id)
 		case .page(let output):
 			BriefPageSlide(
-				environment: environment, output: output, preload: preloaded[output.id],
+				environment: environment, output: output, preload: preloaded[output.id] ?? stories.preloadedFile(for: output.id),
 				loading: { loading in playback.setWaiting(loading) },
 				loaded: { html in
 					let slides = PresentationParser.parse(html: html)

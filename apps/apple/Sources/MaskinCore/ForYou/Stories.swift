@@ -181,6 +181,13 @@ public final class StoriesStore {
 	/// True once `load()` has finished once, so a screen that shares the store loads it only if
 	/// nobody has yet.
 	public private(set) var hasLoaded = false
+	/// The files already downloaded for the first few pages (their headlines needed them), so opening
+	/// the viewer on one doesn't fetch it again. Only the first few: a deck can be half a megabyte.
+	public private(set) var preloadedFiles: [String: FileDetail] = [:]
+	public static let preloadCount = 3
+	/// The last `load()` had a request fail (a flow, or a page file), so the row may be missing
+	/// stories or show a file name where a headline belongs. `loadCompletely()` retries on this.
+	public private(set) var isPartial = false
 
 	@ObservationIgnored private let loops: any LoopsAPI
 	@ObservationIgnored private let files: any FilesRemote
@@ -210,6 +217,8 @@ public final class StoriesStore {
 		cards.filter { !seenIDs.contains($0.id) } + cards.filter { seenIDs.contains($0.id) }
 	}
 
+	public func preloadedFile(for id: String) -> FileDetail? { preloadedFiles[id] }
+
 	/// The pages one loop produced, newest first (a loop's own page shows only its own cards).
 	public func cards(forLoop loopID: String) -> [StoryCard] { cards.filter { $0.loopID == loopID } }
 
@@ -223,7 +232,7 @@ public final class StoriesStore {
 	public func load() async {
 		async let spoken = loadBriefing()
 		async let pages = loadPages()
-		let (brief, found) = await (spoken, pages)
+		let (brief, (found, details, failures)) = await (spoken, pages)
 		var next: [StoryCard] = []
 		if let brief {
 			next.append(
@@ -234,8 +243,22 @@ public final class StoriesStore {
 		}
 		next += found
 		cards = next
+		preloadedFiles = details
+		isPartial = failures > 0
 		hasLoaded = true
 		seenIDs = Set(next.filter { seen.isSeen($0) }.map(\.id))
+	}
+
+	/// `load()` again, a couple of times with a growing pause, while it keeps coming back partial.
+	/// The first load fires a request per flow and per page at once, alongside the feed; one that
+	/// fails would otherwise leave the row short until the reader pulled down.
+	public func loadCompletely(attempts: Int = 3, pause: Duration = .seconds(2)) async {
+		for attempt in 1...max(attempts, 1) {
+			await load()
+			guard isPartial, attempt < attempts else { return }
+			try? await Task.sleep(for: pause * attempt)
+			if Task.isCancelled { return }
+		}
 	}
 
 	private func loadBriefing() async -> SpokenBrief? {
@@ -243,20 +266,24 @@ public final class StoriesStore {
 		return try? await briefing.spokenBrief()
 	}
 
-	private func loadPages() async -> [StoryCard] {
-		guard let all = try? await loops.loops() else { return [] }
+	private func loadPages() async -> (cards: [StoryCard], details: [String: FileDetail], failures: Int) {
+		guard let all = try? await loops.loops() else { return ([], [:], 1) }
 		let loops = loops
+		var failures = 0
 		let found: [(loop: String, id: String, output: LoopOutput)] = await withTaskGroup(
-			of: [(String, String, LoopOutput)].self
+			of: (outputs: [(String, String, LoopOutput)], failed: Bool).self
 		) { group in
 			for loop in all {
 				group.addTask {
 					let overview = try? await loops.overview(loopID: loop.id)
-					return (overview?.outputs ?? []).map { (loop.name ?? "Flow", loop.id, $0) }
+					return ((overview?.outputs ?? []).map { (loop.name ?? "Flow", loop.id, $0) }, overview == nil)
 				}
 			}
 			var result: [(String, String, LoopOutput)] = []
-			for await part in group { result += part }
+			for await part in group {
+				result += part.outputs
+				if part.failed { failures += 1 }
+			}
 			return result
 		}.map { (loop: $0.0, id: $0.1, output: $0.2) }
 		let loopOfOutput = Dictionary(
@@ -264,22 +291,29 @@ public final class StoriesStore {
 		let outputs = found.map { (loop: $0.loop, output: $0.output) }
 		let chosen = StoryDerivation.pages(from: outputs)
 		let files = files
-		return await withTaskGroup(of: (Int, StoryCard).self) { group in
+		let fetched = await withTaskGroup(of: (Int, StoryCard, FileDetail?).self) { group in
 			for (index, item) in chosen.enumerated() {
 				group.addTask {
-					let html = try? await files.file(id: item.output.id).text
+					let detail = try? await files.file(id: item.output.id)
 					return (
 						index,
 						StoryCard(
 							id: item.output.id, unit: item.loop,
-							headline: StoryDerivation.headline(html: html, fileName: item.output.name),
+							headline: StoryDerivation.headline(html: detail?.text, fileName: item.output.name),
 							updatedAt: item.output.updatedAt, content: .page(item.output),
-							loopID: loopOfOutput[item.output.id]))
+							loopID: loopOfOutput[item.output.id]),
+						detail)
 				}
 			}
-			var result: [(Int, StoryCard)] = []
+			var result: [(Int, StoryCard, FileDetail?)] = []
 			for await part in group { result.append(part) }
-			return result.sorted { $0.0 < $1.0 }.map(\.1)
+			return result.sorted { $0.0 < $1.0 }
 		}
+		var details: [String: FileDetail] = [:]
+		for (card, detail) in fetched.map({ ($0.1, $0.2) }).prefix(Self.preloadCount) {
+			if let detail { details[card.id] = detail }
+		}
+		failures += fetched.filter { $0.2 == nil }.count
+		return (fetched.map(\.1), details, failures)
 	}
 }
