@@ -90,8 +90,9 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 				url: `${input.toolsBaseUrl}/${tool.name}`,
 				method: 'POST',
 				body_parameters: tool.parameters,
-				// Supplied by the assistant configuration, never by the model.
-				preset_body_fields: { call_control_id: '{{telnyx_call_control_id}}' },
+				// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
+				// variable names that start with telnyx_; call_control_id is the system variable.
+				preset_body_fields: { call_control_id: '{{call_control_id}}' },
 			},
 		})),
 		tool_ids: [...(input.toolIds ?? [])],

@@ -17,20 +17,33 @@ const FOLLOWUP_LANGUAGE: VoiceFollowupLanguage = 'da'
 
 // Fixed copy keyed on the outcome status, no LLM: it may only state what the
 // status proves.
-const CALL_SUMMARY: Record<VoiceFollowupLanguage, { booked: string; other: string }> = {
+const CALL_SUMMARY: Record<
+	VoiceFollowupLanguage,
+	{ booked: (ownerName?: string) => string; other: string }
+> = {
 	da: {
-		booked: 'Tak for samtalen, dit møde er booket.',
+		booked: (owner) =>
+			owner
+				? `Tak for samtalen, dit møde med ${owner} er booket.`
+				: 'Tak for samtalen, dit møde er booket.',
 		other: 'Tak fordi du tog dig tid til at tale med os i dag.',
 	},
 	en: {
-		booked: 'Thanks for the call, your meeting is booked.',
+		booked: (owner) =>
+			owner
+				? `Thanks for the call, your meeting with ${owner} is booked.`
+				: 'Thanks for the call, your meeting is booked.',
 		other: 'Thanks for taking the time to talk with us today.',
 	},
 }
 
-function callSummaryFor(status: string, language: VoiceFollowupLanguage): string {
+function callSummaryFor(
+	status: string,
+	language: VoiceFollowupLanguage,
+	ownerName?: string,
+): string {
 	const copy = CALL_SUMMARY[language]
-	return status === 'voice_meeting_booked' ? copy.booked : copy.other
+	return status === 'voice_meeting_booked' ? copy.booked(ownerName) : copy.other
 }
 
 function str(v: unknown): string | null {
@@ -46,6 +59,16 @@ function meetLinkFor(metadata: Record<string, unknown>, callId: string): string 
 		| null
 		| undefined
 	return meeting?.call_id === callId ? (str(meeting.meet_link) ?? undefined) : undefined
+}
+
+// The person whose calendar the router booked, stamped on voice_meeting by the same resolution
+// that picked the calendar. Same call guard as the Meet link.
+function meetingOwnerFor(metadata: Record<string, unknown>, callId: string): string | undefined {
+	const meeting = metadata.voice_meeting as
+		| { call_id?: unknown; owner_name?: unknown }
+		| null
+		| undefined
+	return meeting?.call_id === callId ? (str(meeting.owner_name) ?? undefined) : undefined
 }
 
 async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
@@ -114,7 +137,11 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 		actorId: row.driver ?? row.createdBy,
 		to,
 		prospectName,
-		callSummary: callSummaryFor(ctx.status, FOLLOWUP_LANGUAGE),
+		callSummary: callSummaryFor(
+			ctx.status,
+			FOLLOWUP_LANGUAGE,
+			meetingOwnerFor(metadata, ctx.callId),
+		),
 		language: FOLLOWUP_LANGUAGE,
 		calendarLink: meetLinkFor(metadata, ctx.callId),
 	})
