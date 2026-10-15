@@ -272,7 +272,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 				.limit(query.limit)
 				.offset(query.offset)
 
-			return c.json(serializeArray(fenced) as z.infer<typeof sessionResponseSchema>[])
+			return c.json(fenced.map(serializeSession) as z.infer<typeof sessionResponseSchema>[])
 		}
 
 		const results = await db
