@@ -36,6 +36,23 @@ struct BriefSequenceTests {
 		#expect(sequence.pagesToPrefetch(after: 0, ahead: 0).isEmpty)
 	}
 
+	@Test("a cut headline becomes the whole first sentence and the body drops it")
+	func briefingText() {
+		let first = "Vaerksted has ten bets in flight, led by Fix the confirmed MCP bugs and add basic annotations (batch 1), which is active with zero of six tasks done."
+		let script = first + " Also moving: voice. Recently closed: articles."
+		let cut = String(first.prefix(139)) + "\u{2026}"
+		let text = BriefSequence.briefingText(headline: cut, script: script)
+		#expect(text.title == first)
+		#expect(text.body == "Also moving: voice. Recently closed: articles.")
+	}
+
+	@Test("a short headline that opens the script is not repeated, and one that doesn't is left alone")
+	func briefingTextOther() {
+		#expect(BriefSequence.briefingText(headline: "All quiet.", script: "All quiet. Nothing to do.") == ("All quiet.", "Nothing to do."))
+		#expect(BriefSequence.briefingText(headline: "All quiet.", script: "All quiet.") == ("All quiet.", ""))
+		#expect(BriefSequence.briefingText(headline: "Title", script: "Something else.") == ("Title", "Something else."))
+	}
+
 	@Test("a card missing from the row is still opened")
 	func missingOpening() {
 		let extra = card("x", loop: "X")

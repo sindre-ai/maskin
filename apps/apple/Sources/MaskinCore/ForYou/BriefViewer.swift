@@ -38,6 +38,19 @@ public struct BriefSequence: Equatable, Sendable {
 		}
 	}
 
+	/// The title and body of a briefing slide. The server's headline is the script's first sentence
+	/// cut to 140 characters (with "…"), and the script is the whole text, so showing both reads the
+	/// opening twice with the first copy chopped. When the headline is that opening, the title becomes
+	/// the whole first sentence and the body is what follows it.
+	public static func briefingText(headline: String, script: String) -> (title: String, body: String) {
+		let head = headline.trimmingCharacters(in: .whitespacesAndNewlines)
+		let text = script.trimmingCharacters(in: .whitespacesAndNewlines)
+		let stem = head.hasSuffix("\u{2026}") ? String(head.dropLast()) : head
+		guard !stem.isEmpty, text.hasPrefix(stem) else { return (headline, script) }
+		guard let gap = text.range(of: #"(?<=[.!?])\s+"#, options: .regularExpression) else { return (text, "") }
+		return (String(text[..<gap.lowerBound]), String(text[gap.upperBound...]))
+	}
+
 	/// The pages worth fetching while the reader is on `index`: the next `ahead` slides that are
 	/// pages (the briefing is text and needs nothing), so reaching one shows it at once.
 	public func pagesToPrefetch(after index: Int, ahead: Int = 2) -> [LoopOutput] {
