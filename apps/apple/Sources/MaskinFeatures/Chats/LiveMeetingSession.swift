@@ -87,6 +87,7 @@ final class LiveMeetingSession {
 					toggleMuted: { [weak self] in self?.remoteToggleMute() }))
 			routeName = audio.routeName
 		} catch {
+			SpeechReader.shared.usesExternalAudioSession = false
 			voice.begin(existing: chat.messages)
 			voice.fail("Couldn't open the audio session (\(error.localizedDescription)).")
 			return
