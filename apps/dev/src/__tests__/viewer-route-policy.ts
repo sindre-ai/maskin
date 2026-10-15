@@ -159,6 +159,11 @@ export const PENDING_ROUTES: PendingRoute[] = [
 	['POST', '/api/conversations/:id/participants', 'C'],
 	['DELETE', '/api/conversations/:id/participants/:actorId', 'C'],
 	['POST', '/api/notifications/:id/respond', 'C'],
+	// Voice v1 (bet/16bd0042-voice-v1): a call writes through the agent and saves a transcript.
+	['POST', '/api/actors/:id/voice-mode', 'C'],
+	['POST', '/api/voice-sessions', 'C'],
+	['POST', '/api/voice-sessions/:id/offer', 'C'],
+	['POST', '/api/voice-sessions/:id/hangup', 'C'],
 	// Group D: people and billing
 	['POST', '/api/workspaces', 'D'],
 	['POST', '/api/workspaces/:id/members', 'D'],
