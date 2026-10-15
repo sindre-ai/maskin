@@ -4,7 +4,11 @@ const { getModelPricingMock } = vi.hoisted(() => ({ getModelPricingMock: vi.fn()
 
 vi.mock('../../lib/openrouter-pricing', () => ({ getModelPricing: getModelPricingMock }))
 
-import { parseUsageFromLogChunks, resolveSessionCostUsd } from '../../services/usage-parser'
+import {
+	parseAssistantUsageFromLogChunks,
+	parseUsageFromLogChunks,
+	resolveSessionCostUsd,
+} from '../../services/usage-parser'
 import type { SessionUsage } from '../../services/usage-parser'
 
 const RESULT_SUCCESS = JSON.stringify({
@@ -100,6 +104,52 @@ describe('parseUsageFromLogChunks', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+const assistantLine = (id: string, usage: Record<string, number>) =>
+	JSON.stringify({ type: 'assistant', message: { id, usage } })
+
+describe('parseAssistantUsageFromLogChunks', () => {
+	it('sums assistant usage with cost and duration left null', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 10, output_tokens: 5 })}\n${assistantLine('msg_2', { input_tokens: 20, output_tokens: 7, cache_read_input_tokens: 100 })}\n`
+		expect(parseAssistantUsageFromLogChunks([chunk])).toEqual({
+			totalCostUsd: null,
+			inputTokens: 30,
+			outputTokens: 12,
+			cacheCreationInputTokens: 0,
+			cacheReadInputTokens: 100,
+			durationMs: null,
+		})
+	})
+
+	it('counts a message id once when its usage repeats across content-block lines', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 10, output_tokens: 2 })}\n${assistantLine('msg_1', { input_tokens: 10, output_tokens: 9 })}\n`
+		const result = parseAssistantUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(10)
+		expect(result?.outputTokens).toBe(9)
+	})
+
+	it('restarts counting after the last result envelope', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 500, output_tokens: 500 })}\n${RESULT_SUCCESS}\n${assistantLine('msg_2', { input_tokens: 3, output_tokens: 4 })}\n`
+		const result = parseAssistantUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(3)
+		expect(result?.outputTokens).toBe(4)
+	})
+
+	it('ignores sub-agent assistant lines and lines without a message id', () => {
+		const subAgent = JSON.stringify({
+			type: 'assistant',
+			parent_tool_use_id: 'toolu_1',
+			message: { id: 'msg_sub', usage: { input_tokens: 99, output_tokens: 99 } },
+		})
+		const noId = JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 1 } } })
+		expect(parseAssistantUsageFromLogChunks([`${subAgent}\n${noId}\n`])).toBeNull()
+	})
+
+	it('returns null when the log has no assistant usage', () => {
+		expect(parseAssistantUsageFromLogChunks([])).toBeNull()
+		expect(parseAssistantUsageFromLogChunks(['[INFO] starting...\n'])).toBeNull()
 	})
 })
 

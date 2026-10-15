@@ -545,6 +545,7 @@ function toCount(value: unknown) {
 const createObjectRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Create object',
 	request: {
@@ -1759,6 +1760,7 @@ app.openapi(getObjectRoute, async (c) => {
 const updateObjectRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Update object',
 	request: {
@@ -1837,14 +1839,6 @@ app.openapi(updateObjectRoute, async (c) => {
 		updatedAt: new Date(),
 	}
 
-	// Shallow-merge metadata: new fields are added/overwritten, existing fields are preserved
-	if (body.metadata && existing.metadata) {
-		updateData.metadata = {
-			...(existing.metadata as typeof body.metadata),
-			...body.metadata,
-		}
-	}
-
 	// All three writes (object update, status event, notification fan-out) run in
 	// one transaction so a fan-out failure cannot leave the bet updated but
 	// watchers un-notified.
@@ -1867,6 +1861,18 @@ app.openapi(updateObjectRoute, async (c) => {
 			.for('update')
 			.limit(1)
 		if (!current) return // object deleted concurrently; 404 handled below
+
+		// Shallow-merge metadata against the locked row, not the pre-transaction
+		// read: a writer that committed between that read and the lock would
+		// otherwise have its keys overwritten with stale values. New fields are
+		// added/overwritten, existing fields are preserved; with no stored
+		// metadata the body metadata is written as is.
+		if (body.metadata && current.metadata) {
+			updateData.metadata = {
+				...(current.metadata as typeof body.metadata),
+				...body.metadata,
+			}
+		}
 
 		const [row] = await tx.update(objects).set(updateData).where(eq(objects.id, id)).returning()
 		if (!row) return
@@ -1962,6 +1968,7 @@ app.openapi(updateObjectRoute, async (c) => {
 const verifyObjectRoute = createRoute({
 	method: 'post',
 	path: '/{id}/verification',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Stamp or unstamp verification on a Knowledge Author write',
 	request: {
@@ -2099,6 +2106,7 @@ app.openapi(verifyObjectRoute, async (c) => {
 const undoWriteRoute = createRoute({
 	method: 'post',
 	path: '/{id}/undo-write',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Undo a Knowledge Author write on a knowledge object',
 	request: {
@@ -2361,6 +2369,7 @@ async function fanOutBetTerminalNotifications(
 const deleteObjectRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Delete object',
 	request: {
@@ -2382,6 +2391,7 @@ const deleteObjectRoute = createRoute({
 const migrateObjectTypeRoute = createRoute({
 	method: 'post',
 	path: '/migrate-type',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Migrate or delete all objects of a given type in a workspace',
 	request: {
@@ -2551,6 +2561,7 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 const bulkUpdateObjectsRoute = createRoute({
 	method: 'post',
 	path: '/bulk-update',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Bulk update objects',
 	request: {

@@ -6134,6 +6134,13 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: { sessions: withUrls },
+				// If the token cap trims this page, the walk resumes after the last row that
+				// ships. list_sessions pages on `before` (updated_at), so the cursor is that value.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as { updated_at?: unknown; updatedAt?: unknown }
+					const updatedAt = row.updated_at ?? row.updatedAt
+					return typeof updatedAt === 'string' ? updatedAt : null
+				},
 			}
 		},
 	)
