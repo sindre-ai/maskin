@@ -18,6 +18,7 @@ struct BriefViewer: View {
 	@State private var fullPage: LoopOutput?
 	/// Cards parsed from each loaded page, by story card id; drives the PRESENTATION block.
 	@State private var presentations: [String: [PresentationSlide]] = [:]
+	@State private var presentationTotals: [String: Int] = [:]
 	@State private var playingPresentation: StoryCard?
 	@State private var dragY: CGFloat = 0
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -239,7 +240,10 @@ struct BriefViewer: View {
 				loading: { loading in playback.setWaiting(loading) },
 				loaded: { html in
 					let slides = PresentationParser.parse(html: html)
-					if slides.count >= 2 { presentations[card.id] = slides }
+					if slides.count >= 2 {
+						presentations[card.id] = slides
+						presentationTotals[card.id] = PresentationParser.totalCount(html: html)
+					}
 				})
 			.id(card.id)
 		}
@@ -249,7 +253,7 @@ struct BriefViewer: View {
 	private func actions(_ card: StoryCard) -> some View {
 		VStack(spacing: MaskinSpace.s5) {
 			if let slides = presentations[card.id] {
-				PresentationBlock(title: card.headline, slides: slides) {
+				PresentationBlock(title: card.headline, slides: slides, total: presentationTotals[card.id]) {
 					playback.hold()
 					playingPresentation = card
 				}
