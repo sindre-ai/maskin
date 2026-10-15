@@ -140,9 +140,21 @@ struct LiveActivityView: View {
 	/// The session's own one-line status, used until steps arrive.
 	var fallbackActivity: String?
 	var turn: ActivityTurn?
-	/// Where the elapsed timer starts when the turn doesn't say.
+	/// When the reader sent the message this card is waiting on, while a reply is owed.
+	var sentAt: Date?
+	/// The session's own start: the last resort for the elapsed timer (a chat session outlives its turns).
 	var startedAt: Date?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	/// The newest turn seen. A poll that momentarily has no running turn must not blank the card back
+	/// to "Still working…" and drag the timer to another start; the card is dropped (and this with
+	/// it) when the agent stops working.
+	@State private var heldTurn: ActivityTurn?
+	private var shownTurn: ActivityTurn? { turn ?? heldTurn }
+	private var since: Date? {
+		LiveActivityClock.since(
+			sentAt: sentAt, turnStartedAt: shownTurn?.startedAt, sessionStartedAt: startedAt)
+	}
 
 	/// Steps shown while live: the newest few, so the card doesn't grow without bound.
 	static let visibleSteps = 5
@@ -158,10 +170,10 @@ struct LiveActivityView: View {
 			header
 			TimelineView(.periodic(from: .now, by: 5)) { context in
 				line(LiveActivityLine.resolve(
-					turn: turn, fallbackActivity: fallbackActivity, startedAt: startedAt, now: context.date))
+					turn: shownTurn, fallbackActivity: fallbackActivity, startedAt: since, now: context.date))
 			}
 			.padding(.leading, Self.stepIndent)
-			if isOpen, let turn, !turn.steps.isEmpty {
+			if isOpen, let turn = shownTurn, !turn.steps.isEmpty {
 				let shown = Array(turn.steps.suffix(Self.visibleSteps))
 				ActivitySteps {
 					if turn.steps.count > shown.count {
@@ -180,12 +192,14 @@ struct LiveActivityView: View {
 		.padding(.horizontal, BubbleShape.horizontal)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(MaskinSurface.card, in: BubbleShape.agent)
-		.animation(MaskinMotion.quick, value: turn?.steps.map(\.id))
+		.animation(MaskinMotion.quick, value: shownTurn?.steps.map(\.id))
+		.onAppear { if let turn { heldTurn = turn } }
+		.onChange(of: turn) { _, new in if let new { heldTurn = new } }
 		.accessibilityElement(children: .contain)
 	}
 
-	private var turnKey: String { turn?.id ?? "none" }
-	private var canOpen: Bool { turn?.steps.isEmpty == false }
+	private var turnKey: String { shownTurn?.id ?? "none" }
+	private var canOpen: Bool { shownTurn?.steps.isEmpty == false }
 	private var isOpen: Bool { canOpen && openTurnID == turnKey }
 
 	/// One line: the newest step (or Starting… / Still working…), a chevron once there is a list to
@@ -216,7 +230,7 @@ struct LiveActivityView: View {
 
 	/// "is writing a reply" while the newest step is the agent's own words, else "is working on it".
 	private var verb: String {
-		let current = turn?.steps.last(where: \.isRunning) ?? turn?.currentStep
+		let current = shownTurn?.steps.last(where: \.isRunning) ?? shownTurn?.currentStep
 		return current?.kind == .text || current?.kind == .thinking ? "is writing a reply" : "is working on it"
 	}
 
@@ -227,7 +241,7 @@ struct LiveActivityView: View {
 				.lineLimit(1)
 			Text(verb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			Spacer(minLength: 0)
-			if let start = turn?.startedAt ?? startedAt { ElapsedLabel(since: start) }
+			if let start = since { ElapsedLabel(since: start) }
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel("\(agent.name) \(verb)")

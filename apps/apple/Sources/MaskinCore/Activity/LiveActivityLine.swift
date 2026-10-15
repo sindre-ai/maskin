@@ -1,5 +1,16 @@
 import Foundation
 
+/// Where "working for 12s" counts from. A chat session stays `running` between turns, so the
+/// session's own start is minutes or hours before the turn the reader is waiting on; it is only
+/// the last resort. The reader's own send is the best anchor (it exists the moment they tap send,
+/// before the backend has opened a turn, and it does not move when the turn briefly drops out of
+/// the poll), then the turn's own start.
+public enum LiveActivityClock {
+	public static func since(sentAt: Date?, turnStartedAt: Date?, sessionStartedAt: Date?) -> Date? {
+		sentAt ?? turnStartedAt ?? sessionStartedAt
+	}
+}
+
 /// What the one-line live row under "X is working on it" says. Pure, so the states are testable:
 /// a step label while steps flow, "Starting…" before the first, and "Still working…" once nothing
 /// new has happened for `stallAfter`, so a long silent tool call never reads as a frozen "working".
