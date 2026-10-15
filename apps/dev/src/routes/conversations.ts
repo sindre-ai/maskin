@@ -31,6 +31,7 @@ import {
 	idParamSchema,
 	messageResponseSchema,
 	messageWithSpawnedSessionsSchema,
+	spawnedSessionResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -38,7 +39,11 @@ import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
-import { loadSpawnedSessionsByMessage } from '../services/spawned-sessions'
+import {
+	anchorSpawnedSessionsToMessage,
+	loadPendingSpawnedSessions,
+	loadSpawnedSessionsByMessage,
+} from '../services/spawned-sessions'
 
 type Env = {
 	Variables: {
@@ -46,6 +51,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		maskinSessionId?: string
 	}
 }
 
@@ -714,6 +720,7 @@ const listMessagesRoute = createRoute({
 					schema: z.object({
 						messages: z.array(messageWithSpawnedSessionsSchema),
 						has_more: z.boolean(),
+						pending_handoffs: z.array(spawnedSessionResponseSchema).optional(),
 					}),
 				},
 			},
@@ -772,6 +779,15 @@ app.openapi(listMessagesRoute, (async (c) => {
 		actorId: callerId,
 	})
 
+	// Handoffs no message carries yet ride on the newest page only.
+	const pendingHandoffs = query.before_id
+		? undefined
+		: await loadPendingSpawnedSessions(db, {
+				conversationId: id,
+				workspaceId,
+				actorId: callerId,
+			})
+
 	return c.json({
 		messages: page.map(
 			(m) =>
@@ -781,6 +797,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
 		),
 		has_more: hasMore,
+		...(pendingHandoffs ? { pending_handoffs: pendingHandoffs } : {}),
 	})
 }) as RouteHandler<typeof listMessagesRoute, Env>)
 
@@ -862,6 +879,35 @@ app.openapi(postMessageRoute, (async (c) => {
 		sessionId,
 	})
 	if (!created) throw new Error('Failed to create message')
+
+	// An agent narrating a handoff mid-turn: hang the sub-sessions it has started
+	// since its last message under this one, so the card shows while they run.
+	// The spawner is the agent's own live session, taken from the body or, since
+	// the MCP post tool does not send it, the X-Maskin-Session-Id header.
+	if (callerType === 'agent') {
+		const claimed = sessionId ?? c.get('maskinSessionId')
+		if (claimed) {
+			const [own] = await db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.id, claimed),
+						eq(sessions.actorId, callerId),
+						eq(sessions.workspaceId, workspaceId),
+					),
+				)
+				.limit(1)
+			if (own) {
+				await anchorSpawnedSessionsToMessage(db, {
+					spawnerSessionId: own.id,
+					conversationId: id,
+					actorId: callerId,
+					messageId: created.id,
+				})
+			}
+		}
+	}
 
 	// @mentioning an agent who isn't yet an active participant should actually
 	// pull them into the conversation — otherwise evaluateAndRespond's

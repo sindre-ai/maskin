@@ -56,6 +56,11 @@ describe('viewer read-only route table', () => {
 		expect(audit.taggedAndOpen).toEqual([])
 	})
 
+	it('keeps a hand-gated route untagged and off the open and pending lists', () => {
+		expect(audit.taggedAndHandGated).toEqual([])
+		expect(audit.handGatedAndOpenOrPending).toEqual([])
+	})
+
 	it('keeps a route off both the open and the pending list', () => {
 		expect(audit.openAndPending).toEqual([])
 	})
@@ -77,7 +82,7 @@ describe('viewer read-only route table', () => {
 		const groups = Object.entries(audit.pendingByGroup).sort(([a], [b]) => a.localeCompare(b))
 		const total = groups.reduce((sum, [, n]) => sum + n, 0)
 		console.info(
-			`Write routes: ${audit.taggedCount} writer-gated, ${audit.openCount} open, ${total} pending (${groups
+			`Write routes: ${audit.taggedCount} writer-gated, ${audit.handGatedCount} hand-gated, ${audit.openCount} open, ${total} pending (${groups
 				.map(([g, n]) => `${g}: ${n}`)
 				.join(', ')})`,
 		)

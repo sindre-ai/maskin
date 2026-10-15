@@ -314,6 +314,8 @@ type ApiCallOptions = {
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT'])
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /**
  * Derive a deterministic Idempotency-Key from the host session id + the call
  * shape. When the MCP server runs inside an agent container, `SESSION_ID` is
@@ -379,10 +381,7 @@ async function apiFetch(
 	// sent. Read-only calls carry the header too — cheap and harmless, and
 	// keeps the header contract uniform per request rather than per method.
 	const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
-	if (
-		sessionId &&
-		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
-	) {
+	if (sessionId && UUID_RE.test(sessionId)) {
 		headers['X-Maskin-Session-Id'] = sessionId
 	}
 	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
@@ -1062,7 +1061,14 @@ async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
 ) {
-	const { workspace_id, wait: _wait, notify_on_complete, ...createBody } = args
+	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
+	// ignored, and it is never sent on this create call (registered below instead).
+	const {
+		workspace_id,
+		wait: _wait,
+		notify_on_complete: _ignored,
+		...createBody
+	} = args as typeof args & { notify_on_complete?: unknown }
 	const wsOpts = { workspaceId: workspace_id }
 
 	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
@@ -1132,7 +1138,7 @@ async function createSessionAndWait(
 	let notifyOnComplete:
 		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
 		| undefined
-	if (notify_on_complete && !settled) {
+	if (!settled) {
 		try {
 			const patched = (await apiCall(
 				config,
@@ -5984,8 +5990,11 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			if (args.wait) return createSessionAndWait(config, args)
 
-			// `wait` never goes to the create route.
-			const { workspace_id, wait, ...createBody } = args
+			// `wait` never goes to the create route. The result is always sent back to
+			// the caller, with no opt-out: not waiting means not holding the call open,
+			// not never finding out how it went.
+			const { workspace_id, wait, ...rest } = args
+			const createBody = { ...rest, notify_on_complete: true }
 
 			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
 				workspaceId: workspace_id,
@@ -6003,6 +6012,47 @@ export function createMcpServer(config: McpConfig) {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'ask_user_question',
+		{
+			description: tools.ask_user_question.description,
+			inputSchema: tools.ask_user_question.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string) => ({
+				_meta: meta('ask_user_question', config, undefined),
+				content: [{ type: 'text' as const, text }],
+			})
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId) {
+				return reply(
+					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
+				)
+			}
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+					questions: args.questions.map((q) => ({
+						question: q.question,
+						header: q.header,
+						multi_select: q.multi_select ?? false,
+						options: q.options,
+					})),
+				})
+			} catch (err) {
+				// 409 is the normal answer for a session with no chat to ask in.
+				console.error('ask_user_question: could not post the question', err)
+				return reply(
+					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			return reply(
+				'Your question has been posted and the person is being shown the options. Do not call this tool again and do not repeat the question in your own words. End your turn now, without a closing message; their answer will arrive as your next turn.',
+			)
 		},
 	)
 
@@ -6310,6 +6360,37 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			// Inside a chat session the human connects through a card in the chat:
+			// an OAuth button, or an input for an API key. The credential never
+			// passes through the model, and no URL has to be pasted. A 409 means
+			// the session has no human on the other end (autonomous run, or not an
+			// agent session at all) — fall through to the URL flow below.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (sessionId && UUID_RE.test(sessionId)) {
+				try {
+					const card = (await apiCall(
+						config,
+						'POST',
+						`/api/sessions/${sessionId}/connect-card`,
+						{ provider: args.provider },
+						{ workspaceId: args.workspace_id },
+					)) as { posted: boolean; already_connected?: boolean }
+					const text = card.already_connected
+						? `${args.provider} is already connected in this workspace — nothing to do, carry on.`
+						: `A Connect card for ${args.provider} is now in the chat. The user completes the connection there (they sign in, or paste their own API key into the card). Do not ask the user for an API key and do not paste a link. End your turn now without a closing message; they will tell you when it is connected.`
+					return {
+						_meta: meta(
+							'connect_integration',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
+						content: [{ type: 'text' as const, text }],
+					}
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 409) throw err
+				}
+			}
+
 			const result = (await apiCall(
 				config,
 				'POST',
