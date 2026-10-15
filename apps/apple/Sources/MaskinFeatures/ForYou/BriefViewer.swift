@@ -236,10 +236,13 @@ struct BriefViewer: View {
 	private func slide(_ card: StoryCard) -> some View {
 		switch card.content {
 		case .briefing(let headline, let script):
+			let text = BriefSequence.briefingText(headline: headline, script: script)
 			ScrollView {
 				VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-					Text(headline).maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
-					Text(script).maskinText(.body).foregroundStyle(MaskinColor.patina100)
+					Text(text.title).maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
+					if !text.body.isEmpty {
+						Text(text.body).maskinText(.body).foregroundStyle(MaskinColor.patina100)
+					}
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.padding(.vertical, MaskinSpace.s9)
@@ -385,7 +388,13 @@ private struct BriefPageSlide: View {
 						.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 						.padding(.vertical, MaskinSpace.s9)
 					} else {
+						// The preview is cut off where the actions begin; fade the edge so a half-drawn
+						// tile reads as "more below" and not as a rendering fault.
 						PresentedHTMLView(html: html, revision: store.contentRevision, isInteractive: false)
+							.mask(
+								LinearGradient(
+									stops: [.init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+									startPoint: .top, endPoint: .bottom))
 					}
 				} else {
 					Text(output.name).maskinText(.subhead).foregroundStyle(MaskinColor.patina100)
