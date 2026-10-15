@@ -23,6 +23,14 @@ import { logger } from '../logger'
  * URL removes a renamed entry and, equally important, leaves alone a
  * hand-written server that merely happens to share the name.
  *
+ * Providers that serve one endpoint per connected identity
+ * (`/api/integrations/<provider>/mcp/<instanceSlug>`, LinkedIn) need a narrower
+ * match. Several identities can be connected at once and the provider path is a
+ * prefix of every one of their URLs, so matching on it alone strips the
+ * still-live identities from every agent when only one is disconnected. Callers
+ * pass the disconnected identity's `instanceSlugs`, and only entries ending in
+ * `/mcp/<slug>` for those slugs are removed.
+ *
  * Reconnecting does NOT re-attach: the agent's tool list is the user's to
  * curate, and silently re-adding a server someone may have deliberately
  * removed would be the same overreach in the other direction.
@@ -35,16 +43,29 @@ function providerMcpPath(provider: string): string {
 
 type McpServerEntry = { url?: unknown } & Record<string, unknown>
 
-function entryTargetsProvider(entry: unknown, provider: string): boolean {
+function entryTargetsProvider(
+	entry: unknown,
+	provider: string,
+	instanceSlugs: string[] | undefined,
+): boolean {
 	if (!entry || typeof entry !== 'object') return false
 	const url = (entry as McpServerEntry).url
 	if (typeof url !== 'string') return false
-	return url.includes(providerMcpPath(provider))
+	if (!instanceSlugs) return url.includes(providerMcpPath(provider))
+	// Per-identity match: the path must end in exactly `/mcp/<slug>`, so one
+	// slug can never match another identity whose slug merely contains it.
+	const path = url.split('?')[0].replace(/\/+$/, '')
+	return instanceSlugs.some((slug) => path.endsWith(`${providerMcpPath(provider)}/${slug}`))
 }
 
 /**
  * Removes the provider's MCP entry from every agent in the workspace.
  * Returns the number of agents changed.
+ *
+ * Pass `instanceSlugs` for a per-identity provider to remove only the entries
+ * for those identities. An empty list removes nothing: with no known identity
+ * to match, leaving a stale entry is the safe miss, and stripping every
+ * identity's entry is not.
  *
  * Never throws: this runs after the disconnect has already committed, and a
  * failure to tidy an agent's config must not fail the disconnect the user
@@ -57,7 +78,15 @@ export async function detachProviderMcpServers(
 	provider: string,
 	/** The actor performing the disconnect — recorded on the audit event. */
 	actorId: string,
+	instanceSlugs?: string[],
 ): Promise<number> {
+	if (instanceSlugs && instanceSlugs.length === 0) {
+		logger.warn('Skipped MCP detach: no identity instance slugs known for the disconnected row', {
+			workspaceId,
+			provider,
+		})
+		return 0
+	}
 	try {
 		const rows = await db
 			.select({ id: actors.id, name: actors.name, tools: actors.tools })
@@ -74,7 +103,7 @@ export async function detachProviderMcpServers(
 			const kept: Record<string, unknown> = {}
 			const removed: string[] = []
 			for (const [key, entry] of Object.entries(servers as Record<string, unknown>)) {
-				if (entryTargetsProvider(entry, provider)) removed.push(key)
+				if (entryTargetsProvider(entry, provider, instanceSlugs)) removed.push(key)
 				else kept[key] = entry
 			}
 			if (removed.length === 0) continue
