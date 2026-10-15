@@ -8,6 +8,12 @@ export interface OAuthStatePayload {
 	nonce: string
 	/** Present only for generic-OAuth2 providers that use PKCE. */
 	codeVerifier?: string
+	/**
+	 * Workspace-relative path to land on after a successful connect (e.g. the chat
+	 * that showed the Connect card). Already sanitised by `sanitizeReturnPath`
+	 * when the state is minted, and sealed here, so the callback can trust it.
+	 */
+	returnTo?: string
 }
 
 /**

@@ -35,6 +35,7 @@ import {
 	isWorkspaceHumanAdminOrOwner,
 	isWorkspaceMember,
 	isWorkspaceOwner,
+	isWorkspaceWriter,
 } from '../lib/workspace-auth'
 import {
 	OwnershipCapExceededError,
@@ -377,6 +378,7 @@ function pickChangedAdminSettings(
 const updateWorkspaceRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Update workspace',
 	request: {
@@ -416,7 +418,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, id))) {
+	if (!(await isWorkspaceWriter(db, actorId, id))) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
@@ -626,6 +628,7 @@ async function cancelPaidPlanForByoTransition(
 const updateWorkspaceOnboardingRoute = createRoute({
 	method: 'patch',
 	path: '/admin/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Set onboarding_enabled (owner) / enterprise_granted (ops only)',
 	request: {
