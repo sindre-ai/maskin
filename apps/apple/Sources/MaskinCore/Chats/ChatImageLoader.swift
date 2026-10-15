@@ -36,13 +36,42 @@ public actor ChatImageLoader {
 	private let memory: ThumbnailMemory
 	private var inFlight: [String: Task<DecodedImage?, Never>] = [:]
 
-	public init(capacity: Int = 60, fetch: @escaping @Sendable (String) async throws -> Data) {
+	/// How many photos download and decode at once. A thread opens with every photo in view asking
+	/// together; ten full-size downloads and decodes at once starve the thread's own requests.
+	private let maxConcurrent: Int
+	private var running = 0
+	/// Photos waiting for a slot. Served newest request first: a thread is anchored at the bottom,
+	/// so the photo asked for last is the one on screen, and scrolling up asks for the next one.
+	private var waiters: [CheckedContinuation<Void, Never>] = []
+
+	public init(
+		capacity: Int = 60, maxConcurrent: Int = 4,
+		fetch: @escaping @Sendable (String) async throws -> Data
+	) {
 		self.fetch = fetch
 		self.memory = ThumbnailMemory(capacity: capacity)
+		self.maxConcurrent = max(maxConcurrent, 1)
 	}
 
 	public init(files: any FilesRemote, capacity: Int = 60) {
 		self.init(capacity: capacity) { id in try await files.file(id: id).data }
+	}
+
+	private func acquireSlot() async {
+		if running < maxConcurrent {
+			running += 1
+			return
+		}
+		// The slot is handed over by `releaseSlot`, so `running` stays counted for the waiter.
+		await withCheckedContinuation { waiters.append($0) }
+	}
+
+	private func releaseSlot() {
+		if let next = waiters.popLast() {
+			next.resume()
+		} else {
+			running -= 1
+		}
 	}
 
 	/// The thumbnail if it has already been loaded; never waits and never starts a fetch.
@@ -53,6 +82,8 @@ public actor ChatImageLoader {
 		if let running = inFlight[fileID] { return await running.value }
 		let fetch = fetch
 		let task = Task<DecodedImage?, Never> {
+			await self.acquireSlot()
+			defer { self.releaseSlot() }
 			guard let data = try? await fetch(fileID) else { return nil }
 			// Decode off the actor's executor: ImageIO work on a large photo is not instant.
 			return await Task.detached(priority: .userInitiated) {

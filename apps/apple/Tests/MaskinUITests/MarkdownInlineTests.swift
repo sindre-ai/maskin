@@ -12,6 +12,26 @@ import Testing
 		}
 	}
 
+	@Test func aRepeatedParseStillStylesWithTheCurrentFontAndLinkInfo() {
+		// The unstyled parse is cached by text; the styling must still follow the arguments of each call.
+		let md = "see [maskin://o/1](maskin://o/1) and **bold**"
+		let plain = MarkdownInline.attributed(md, base: .body)
+		let named = MarkdownInline.attributed(
+			md, base: .title,
+			linkInfo: { _ in MarkdownLinkInfo(symbol: "target", kindLabel: "Bet", title: "Launch video") })
+		let again = MarkdownInline.attributed(md, base: .body)
+		#expect(String(named.characters).contains("Launch video"))
+		#expect(!String(plain.characters).contains("Launch video"))
+		#expect(String(again.characters) == String(plain.characters))
+		#expect(plain == again)
+	}
+
+	@Test func malformedAndEmptyInputStayStable() {
+		#expect(String(MarkdownInline.attributed("", base: .body).characters) == "")
+		let odd = "**unterminated and [broken](link"
+		#expect(MarkdownInline.attributed(odd, base: .body) == MarkdownInline.attributed(odd, base: .body))
+	}
+
 	@Test func boldCarriesIntentAndExplicitFont() {
 		let r = runs("a **backoff** b")
 		let bold = r.first { $0.text == "backoff" }

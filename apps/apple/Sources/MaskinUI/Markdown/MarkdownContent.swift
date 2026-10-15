@@ -510,6 +510,36 @@ private extension MarkdownColumnAlignment {
 /// `inlinePresentationIntent`: SwiftUI does not reliably apply those intents on top of a
 /// custom (`Font.custom`) font, so `**bold**` rendered as regular weight.
 enum MarkdownInline {
+	/// The parsed (unstyled) inline markdown, remembered by source text. Styling depends on the font,
+	/// the colour scheme and link titles that resolve later, so only the parse, which depends on
+	/// nothing but the text, is cached. A thread re-renders every paragraph whenever anything in its
+	/// store changes, and Foundation's markdown parse is the expensive part of each.
+	private final class ParsedBox: @unchecked Sendable {
+		let value: AttributedString?
+		init(_ value: AttributedString?) { self.value = value }
+	}
+
+	nonisolated(unsafe) private static let parsed: NSCache<NSString, ParsedBox> = {
+		let cache = NSCache<NSString, ParsedBox>()
+		cache.countLimit = 600
+		return cache
+	}()
+
+	private static let cacheableUTF8Limit = 20_000
+
+	private static func parse(_ markdown: String) -> AttributedString? {
+		let parse = {
+			try? AttributedString(
+				markdown: markdown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+		}
+		guard markdown.utf8.count <= cacheableUTF8Limit else { return parse() }
+		let key = markdown as NSString
+		if let hit = parsed.object(forKey: key) { return hit.value }
+		let value = parse()
+		parsed.setObject(ParsedBox(value), forKey: key)
+		return value
+	}
+
 	/// - Parameter linkInfo: describes a URL that points inside the app (nil for an outside one), so
 	///   an internal link can be drawn as a chip carrying the thing's name.
 	static func attributed(
@@ -517,11 +547,7 @@ enum MarkdownInline {
 		onInverse: Bool = false
 	) -> AttributedString {
 		let linkColor = onInverse ? MaskinSurface.onInverse : MaskinColor.ink
-		guard
-			var attr = try? AttributedString(
-				markdown: markdown,
-				options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
-		else { return AttributedString(markdown) }
+		guard var attr = parse(markdown) else { return AttributedString(markdown) }
 		// Internal links whose visible text is just the address: shown by name instead.
 		var renames: [(range: Range<AttributedString.Index>, text: String)] = []
 		for run in attr.runs {
