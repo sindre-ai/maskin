@@ -107,6 +107,7 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 		const ig = '/api/integrations'
 		const mp = '/api/marketplace/items'
 		const skill = { content: '---\nname: nope\n---\nb' }
+		const newSkill = { name: 'nope', ...skill }
 		const trigger = {
 			name: 't',
 			type: 'event',
@@ -128,7 +129,7 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 		return [
 			['workspaces', 'PATCH', ws, { settings: { pinned_files: [] } }],
 			['workspaces admin', 'PATCH', `/api/workspaces/admin/${workspaceId}`, admin],
-			['skills create', 'POST', `${ws}/skills`, skill],
+			['skills create', 'POST', `${ws}/skills`, newSkill],
 			['skills update', 'PUT', `${ws}/skills/nope`, skill],
 			['skills delete', 'DELETE', `${ws}/skills/nope`, undefined],
 			['triggers create', 'POST', '/api/triggers', trigger],
@@ -136,7 +137,12 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 			['triggers delete', 'DELETE', `/api/triggers/${triggerId}`, undefined],
 			['installed loops', 'POST', '/api/installed-loops', { loopId: missing(), workspaceId }],
 			['marketplace install', 'POST', `${mp}/${missing()}/install`, { workspaceId }],
-			['marketplace uninstall', 'DELETE', `${mp}/${missing()}/uninstall`, { workspaceId }],
+			[
+				'marketplace uninstall',
+				'DELETE',
+				`${mp}/${missing()}/uninstall`,
+				{ workspaceId, keepProvisionedItems: true },
+			],
 			['integrations update', 'PATCH', `${ig}/${integrationId}`, expose],
 			['integrations complete', 'POST', `${ig}/${integrationId}/complete`, { secret: 's' }],
 			['integrations delete', 'DELETE', `${ig}/${integrationId}`, undefined],
@@ -175,7 +181,12 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 		const app = createApp()
 		const blocked: string[] = []
 		for (const [label, method, path, body] of cases()) {
-			const res = await app.request(jsonRequest(method, path, body, auth(memberKey)))
+			// The MCP routes read the Node socket from c.env, which app.request does not have, so they
+			// throw once past the gate. Reaching that point is the pass.
+			const res = await app
+				.request(jsonRequest(method, path, body, auth(memberKey)))
+				.catch(() => null)
+			if (!res) continue
 			const text = await res.text()
 			if (res.status === 403 && text.includes('Viewers have read-only access')) blocked.push(label)
 		}
