@@ -39,6 +39,30 @@ Chats are intentionally not here (`chat-final` owns them and follows this README
 4. On failure: keep the data, `freshness.revalidateFailed()`. Only an EMPTY store shows an error.
 5. `reset()` (workspace switch, sign-out) clears memory and `freshness`; the next load hydrates
    from the new bucket.
+6. A tab being revisited is not a workspace switch: do not `reset()` or refetch on every
+   appearance. Gate on `Freshness.isFresh(within:)` (`loadIfStale`, or `start()` skipping while its
+   event stream is still attached) so a revisit costs nothing, and keep the stream attached across
+   tab switches instead of stopping it on disappear.
+
+## Threading: writes are asynchronous
+
+`DiskCache.write` returns at once; the encode, the atomic file write and eviction run on a serial
+utility queue, so a store's `@MainActor` code never waits on the disk. The guarantees stay the same
+from a caller's side: a `read`, `remove` or `clear` of the same cache is ordered after earlier writes
+(a read of a key with a write still queued waits for it), and a value that is too large or fails to
+encode still reads back as a miss. What is NOT immediate is eviction and file visibility: use
+`flush()` (tests, code inspecting the files) to wait. Sign-out's static `clearAll()` drains queued
+writes first, so a late write cannot put a signed-out account's data back.
+
+Reads are synchronous and decode once (hydrating a store at `init` is the one remaining main-thread
+disk read; keep snapshots view-sized). A read counts as a use for LRU in memory, written back to the
+file at most once a minute; eviction tracks the total incrementally and only scans the directory when
+the bound is in danger, on first use, or hourly for expiry.
+
+The outbox is separate: its file is a durability guarantee, so it is written immediately, but the app's
+own runtimes write it off the main actor (`writesInBackground`), coalescing bursts. Extensions keep the
+synchronous write because their process may exit right after enqueue. Every outbox file deletion goes
+through `OutboxFileWriter.remove` for the same ordering reason.
 
 ## TTLs, bounds, invalidation
 
