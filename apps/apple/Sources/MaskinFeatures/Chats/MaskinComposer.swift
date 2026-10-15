@@ -127,6 +127,9 @@ struct MaskinComposer: View {
 			showsSend: config.showsSend)
 	}
 
+	/// While Stop is showing the mic stays beside it, so dictation is never blocked by a busy agent.
+	var showsMicBesideStop: Bool { lastSlot == .stop && config.showsMic && micAvailable }
+
 	private var micAvailable: Bool {
 		#if os(iOS)
 		return true
@@ -267,7 +270,7 @@ struct MaskinComposer: View {
 			case .stop:
 				HStack(spacing: 0) {
 					// Stop must not take dictation away: the mic stays beside it while an agent works.
-					if config.showsMic && micAvailable { micButton }
+					if showsMicBesideStop { micButton }
 					Button {
 						MaskinHaptics.play(.selection)
 						onStop?()
