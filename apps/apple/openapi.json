@@ -10163,6 +10163,7 @@
 		},
 		"/api/workspaces/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11030,6 +11031,7 @@
 		},
 		"/api/workspaces/admin/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -12635,6 +12637,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13214,6 +13217,7 @@
 				}
 			},
 			"put": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13577,6 +13581,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13741,6 +13746,7 @@
 		},
 		"/api/workspaces/{workspaceId}/skills/upload": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -16399,6 +16405,7 @@
 		},
 		"/api/triggers": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17092,6 +17099,7 @@
 		},
 		"/api/triggers/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17414,6 +17422,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -18215,6 +18224,7 @@
 		},
 		"/api/integrations/skjald/authorize": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -18582,6 +18592,7 @@
 		},
 		"/api/integrations/linkedin-unipile/connect": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19011,6 +19022,7 @@
 		},
 		"/api/integrations/github/link": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19374,6 +19386,7 @@
 		},
 		"/api/integrations/github/select-installation": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19615,6 +19628,7 @@
 		},
 		"/api/integrations/{provider}/connect": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19926,6 +19940,7 @@
 		},
 		"/api/integrations/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -20029,6 +20044,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -20217,6 +20233,7 @@
 		},
 		"/api/integrations/{id}/complete": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -21835,6 +21852,7 @@
 		},
 		"/api/marketplace/items/{id}/uninstall": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Marketplace"
 				],
@@ -22067,6 +22085,7 @@
 		},
 		"/api/marketplace/items/{id}/install": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Marketplace"
 				],
@@ -22424,6 +22443,7 @@
 		},
 		"/api/mini-apps/regen": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Mini-apps"
 				],
@@ -36000,6 +36020,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -36421,6 +36442,7 @@
 		},
 		"/api/installed-loops/{id}/fork": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -36824,6 +36846,7 @@
 		},
 		"/api/installed-loops/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -39641,6 +39664,7 @@
 		},
 		"/api/claude-oauth": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -39917,6 +39941,7 @@
 		},
 		"/api/claude-oauth/import": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40127,6 +40152,7 @@
 		},
 		"/api/claude-oauth/nickname": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40302,6 +40328,7 @@
 		},
 		"/api/claude-oauth/promote": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40472,6 +40499,7 @@
 		},
 		"/api/claude-oauth/swap": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
