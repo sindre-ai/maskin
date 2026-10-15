@@ -32,6 +32,9 @@ struct ChatThreadView: View {
 	@Environment(LiveCallCenter.self) private var liveCalls: LiveCallCenter?
 	/// How far the reader is from the newest message, in points (0 at the bottom).
 	@State private var distanceFromBottom: CGFloat = 0
+	/// Quick replies step aside while the reader scrolls up through the thread (they would sit over
+	/// the text being read). Tapping the field, reaching the bottom or a new message brings them back.
+	@State private var quickRepliesHidden = false
 	@State private var viewportHeight: CGFloat = 0
 	/// Messages that arrived while the reader was scrolled up; the jump button says how many.
 	@State private var unseenCount = 0
@@ -68,6 +71,9 @@ struct ChatThreadView: View {
 	private static let unreadOpenOffset: CGFloat = 150
 	private static let matchOffset: CGFloat = 170
 	private static let skeletonAfter: Duration = .milliseconds(300)
+	/// How long a thread stays hidden after it appears, while its rows measure and the scroll pins.
+	/// Held back too long it reads as a blank screen on open (it was 320ms).
+	private static let revealDelay = 120
 
 	private var isNearBottom: Bool { distanceFromBottom <= JumpToLatest.showAfterDistance }
 	private var flow: ChatFlowContext? { store.flowContext }
@@ -357,7 +363,7 @@ struct ChatThreadView: View {
 				.onAppear { if !followingOpen { loadEarlier(proxy) } }
 		}
 		// The heading and the typing hint make way for the call's own empty state.
-		if call == nil || !store.messages.isEmpty { topicHeading }
+		if (call == nil || !store.messages.isEmpty) && !repeatsNavTitle { topicHeading }
 		if let pinned = store.pinnedMessage {
 			PinnedMessageStrip(message: pinned, onOpen: { scroll(to: pinned.id, proxy: proxy) }, onUnpin: { store.unpin() })
 				.padding(.bottom, MaskinSpace.s9)
@@ -396,13 +402,18 @@ struct ChatThreadView: View {
 			}
 			.onChange(of: geometry.size.height) { _, height in viewportHeight = height }
 			.onUserScroll {
-				followingOpen = false
-				revealed = true
+				if followingOpen { followingOpen = false }
+				if !revealed { revealed = true }
 			}
 			.trackingDistanceFromBottom { distance in
 				distanceFromBottom = distance
-				if distance < MaskinSpace.touchMin { unseenCount = 0 }
+				if distance < MaskinSpace.touchMin {
+					unseenCount = 0
+					quickRepliesHidden = false
+				}
 			}
+			.onUserScrollUp { quickRepliesHidden = true }
+			.onChange(of: store.messages.last?.id) { _, _ in quickRepliesHidden = false }
 			.refreshable { await store.refresh() }
 			.scrollDismissesKeyboard(.interactively)
 			.onChange(of: store.messages.last?.id) { _, _ in
@@ -413,8 +424,32 @@ struct ChatThreadView: View {
 					newestIsMine: store.messages.last?.actorID == store.currentActorID)
 				{
 				case .jump: jumpToBottom(proxy)
-				case .follow: scrollToBottom(proxy)
+				case .follow:
+					let last = store.messages.last
+					// Next turn, once the lazy stack has measured the new row: scrolling in the same
+					// pass animates toward an estimated bottom that then moves, which reads as a jerk.
+					Task { @MainActor in
+						await Task.yield()
+						if let last, last.actorID != store.currentActorID, last.author == .agent {
+							// A reply is read from its first line: bring its top into view. A short one still
+							// ends at the bottom (the scroll view clamps), a long one doesn't start mid-way.
+							unseenCount = 0
+							withAnimation(MaskinMotion.standard) {
+								proxy.scrollTo(last.id, anchor: topAnchor(Self.matchOffset))
+							}
+						} else {
+							scrollToBottom(proxy)
+						}
+					}
 				case .countUnseen: unseenCount += 1
+				}
+			}
+			// The live activity card grows a line per step: keep it in view while the reader is at the bottom.
+			.onChange(of: liveStepCount) { _, _ in
+				guard isNearBottom, !followingOpen else { return }
+				Task { @MainActor in
+					await Task.yield()
+					scrollToBottom(proxy)
 				}
 			}
 			// The "speaking…" bubble appears at the bottom: keep it in view while you are following.
@@ -427,6 +462,10 @@ struct ChatThreadView: View {
 			}
 		}
 	}
+
+	/// A direct chat's heading is the nav bar's title again (and the "WITH …" link opens what the
+	/// tappable nav title already opens), so it is left out; a topic or flow title still shows.
+	private var repeatsNavTitle: Bool { (flow?.name ?? store.title) == navTitle }
 
 	/// The conversation's title as the 24pt heading at the top of the scrolling content.
 	private var topicHeading: some View {
@@ -495,7 +534,7 @@ struct ChatThreadView: View {
 					.padding(.bottom, MaskinSpace.s1)
 					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 			}
-			let replies = call == nil ? quickReplies : []
+			let replies = call == nil && !quickRepliesHidden ? quickReplies : []
 			if !replies.isEmpty {
 				QuickReplyChips(replies: replies) { reply in
 					if store.send(reply) == nil { composer.text = reply }
@@ -521,7 +560,7 @@ struct ChatThreadView: View {
 		.padding(.bottom, MaskinSpace.s3)
 		.frame(maxWidth: .infinity)
 		.animation(MaskinMotion.standard, value: isNearBottom)
-		.animation(MaskinMotion.quick, value: quickReplies)
+		.animation(MaskinMotion.quick, value: quickRepliesHidden ? [] : quickReplies)
 	}
 
 	/// The call running in this thread, if any.
@@ -551,7 +590,8 @@ struct ChatThreadView: View {
 						selfID: store.currentActorID, excluding: Set(composer.mentions.map(\.id)))
 				},
 				inConversation: Set(store.participants.map(\.id)),
-				roster: runtime?.mentionRoster()?.roster),
+				roster: runtime?.mentionRoster()?.roster,
+				onFocusChange: { focused in if focused { quickRepliesHidden = false } }),
 			busy: busy,
 			onStop: { Task { await store.stopLiveSessions() } },
 			onSend: send
@@ -640,7 +680,7 @@ struct ChatThreadView: View {
 			followingOpen = false
 			proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 			Task {
-				try? await Task.sleep(for: .milliseconds(320))
+				try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 				proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 				revealed = true
 			}
@@ -648,7 +688,7 @@ struct ChatThreadView: View {
 		}
 		jumpToBottom(proxy)
 		Task {
-			try? await Task.sleep(for: .milliseconds(320))
+			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 			revealed = true
 		}
@@ -662,6 +702,11 @@ struct ChatThreadView: View {
 			try? await Task.sleep(for: .milliseconds(200))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 		}
+	}
+
+	/// Live steps across running sessions: changes whenever the activity card gains a line.
+	private var liveStepCount: Int {
+		store.liveSessions().reduce(0) { $0 + (store.trace?.liveTurn(sessionID: $1.id)?.steps.count ?? 0) }
 	}
 
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -750,8 +795,8 @@ struct ThreadTranscript: View {
 		var id: String { agent.id }
 	}
 
-	/// The agents' live state under the newest message: a typing bubble (or the streaming reply)
-	/// for one composing an answer, the live activity card for one working, `Stopped` for one the
+	/// The agents' live state under the newest message: the live activity card (the one indicator,
+	/// whether the agent is thinking or running tools) or the streaming reply, `Stopped` for one the
 	/// user cut short, and a Resume banner for one that paused.
 	@ViewBuilder
 	private func activity(at date: Date) -> some View {
@@ -759,15 +804,10 @@ struct ThreadTranscript: View {
 		let sessions = store.liveSessions(at: date)
 		ForEach(live) { row in
 			Group {
-				switch row.presence {
-				case .typing, .replying:
-					if let draft = store.liveReplyDraft(for: row.agent.id) {
-						StreamingReplyBubble(agent: row.agent, text: draft)
-					} else {
-						TypingIndicator(agent: row.agent)
-					}
-				case .working:
-					let session = sessions.first { $0.actorID == row.agent.id }
+				let session = sessions.first { $0.actorID == row.agent.id }
+				if let draft = store.liveReplyDraft(for: row.agent.id) {
+					StreamingReplyBubble(agent: row.agent, text: draft)
+				} else {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
 						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) }, startedAt: session?.startedAt)
@@ -897,7 +937,12 @@ extension View {
 			return AnyView(
 				onScrollGeometryChange(for: CGFloat.self) { geometry in
 					// The visible rect is in content coordinates, so insets (the composer bar) can't skew it.
-					max(geometry.contentSize.height - geometry.visibleRect.maxY, 0)
+					// Bucketed: the action only fires when the bucket changes, not on every scroll frame.
+					// Writing the raw offset into @State re-rendered the whole thread each frame.
+					let distance = max(geometry.contentSize.height - geometry.visibleRect.maxY, 0)
+					if distance < MaskinSpace.touchMin { return 0 }
+					if distance <= JumpToLatest.showAfterDistance { return MaskinSpace.touchMin }
+					return JumpToLatest.showAfterDistance + 1
 				} action: { _, distance in
 					action(distance)
 				})
@@ -986,7 +1031,31 @@ struct ThreadSkeleton: View {
 	}
 }
 
+/// Fires when the reader drags or flings the thread towards older messages. Programmatic scrolls
+/// and keyboard inset changes move the offset too, so only motion during a user scroll phase counts.
+/// iOS 17 has no scroll phase and never fires.
+private struct UserScrollUpModifier: ViewModifier {
+	let action: () -> Void
+	@State private var userScrolling = false
+
+	func body(content: Content) -> some View {
+		if #available(iOS 18, macOS 15, *) {
+			content
+				.onScrollPhaseChange { _, phase in userScrolling = phase == .interacting || phase == .decelerating }
+				.onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { old, new in
+					if userScrolling, new < old - 1 { action() }
+				}
+		} else {
+			content
+		}
+	}
+}
+
 extension View {
+	fileprivate func onUserScrollUp(_ action: @escaping () -> Void) -> some View {
+		modifier(UserScrollUpModifier(action: action))
+	}
+
 	/// Runs `action` when the reader starts scrolling. Observes the scroll phase on iOS 18+ so no
 	/// gesture competes with the scroll view's own pan; earlier systems fall back to a passive drag.
 	@ViewBuilder

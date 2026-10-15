@@ -225,7 +225,6 @@ struct LiveActivityView: View {
 			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id, working: true)
 			Text(agent.name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 				.lineLimit(1)
-			EqualiserBars()
 			Text(verb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			Spacer(minLength: 0)
 			if let start = turn?.startedAt ?? startedAt { ElapsedLabel(since: start) }
