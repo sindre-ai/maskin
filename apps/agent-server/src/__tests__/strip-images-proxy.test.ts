@@ -12,7 +12,10 @@ const { PLACEHOLDER, stripImages, createProxyServer } = createRequire(import.met
 ) as {
 	PLACEHOLDER: string
 	stripImages: (payload: unknown) => { payload: Payload; count: number }
-	createProxyServer: (upstreamBaseUrl: string) => Server
+	createProxyServer: (
+		upstreamBaseUrl: string,
+		providerPrefs?: Record<string, unknown> | null,
+	) => Server
 }
 
 const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
