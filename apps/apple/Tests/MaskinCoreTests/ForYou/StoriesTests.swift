@@ -19,6 +19,28 @@ private struct StubFiles: FilesRemote {
 	{ annotations }
 }
 
+/// Fails the first download of one file, then behaves: the shape of a request lost in a burst.
+private actor FlakyFiles: FilesRemote {
+	let html: [String: String]
+	let flaky: String
+	private var failed = false
+	init(html: [String: String], flaky: String) {
+		self.html = html
+		self.flaky = flaky
+	}
+	func file(id: String) async throws -> FileDetail {
+		if id == flaky, !failed {
+			failed = true
+			throw FileError("lost")
+		}
+		guard let text = html[id] else { throw FileError("gone") }
+		return FileDetail(id: id, name: id, mimeType: "text/html", sizeBytes: text.count, data: Data(text.utf8))
+	}
+	func saveAnnotations(fileId: String, annotations: [FileAnnotation], idempotencyKey: String) async throws
+		-> [FileAnnotation]
+	{ annotations }
+}
+
 private struct StubBrief: SpokenBriefing {
 	var result: SpokenBrief?
 	func spokenBrief() async throws -> SpokenBrief {
@@ -100,6 +122,38 @@ struct StoriesStoreTests {
 		#expect(s.cards[1].unit == "Market & Competitors")
 		#expect(s.cards[1].headline == "Plan")
 		#expect(s.cards[2].headline == "Competitor scan")
+	}
+
+	@Test("the files downloaded for headlines are kept, so opening a page doesn't fetch it again")
+	func keepsDownloadedFiles() async {
+		let s = await store()
+		await s.load()
+		#expect(s.preloadedFile(for: "b")?.text == "<h1>Plan</h1>")
+		#expect(s.preloadedFile(for: "a")?.text == "<title>Competitor scan</title>")
+		#expect(s.preloadedFile(for: "missing") == nil)
+	}
+
+	@Test("a load that lost a request is partial, and loadCompletely retries until the row is whole")
+	func retriesAPartialLoad() async {
+		let api = FakeLoopsAPI([loopRow("l1", name: "Market")])
+		await api.setOverview(
+			LoopOverview(members: [], posts: [], outputs: [page("a", "scan.html", at: 100)], statusOrder: []))
+		let s = StoriesStore(
+			loops: api, files: FlakyFiles(html: ["a": "<title>Competitor scan</title>"], flaky: "a"),
+			briefing: nil, seen: SeenStories(defaults: defaults()))
+		await s.load()
+		#expect(s.isPartial)
+		#expect(s.cards.first?.headline == "scan")
+		await s.loadCompletely(pause: .zero)
+		#expect(!s.isPartial)
+		#expect(s.cards.first?.headline == "Competitor scan")
+	}
+
+	@Test("a clean load is not partial")
+	func cleanLoad() async {
+		let s = await store()
+		await s.load()
+		#expect(!s.isPartial)
 	}
 
 	@Test("a loop's own cards are the pages it produced, never the briefing or another loop's")
