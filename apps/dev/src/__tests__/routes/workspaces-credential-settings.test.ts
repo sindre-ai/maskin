@@ -77,7 +77,7 @@ describe('Workspace credential settings by caller', () => {
 	})
 
 	describe('PATCH /api/workspaces/:id responses and events', () => {
-		const MEMBER = [{ actorId: 'caller' }]
+		const MEMBER = [{ role: 'member' }]
 		const HUMAN_OWNER = [{ role: 'owner', type: 'human' }]
 		const PLAIN_MEMBER = [{ role: 'member', type: 'human' }]
 		const AGENT_ADMIN = [{ role: 'admin', type: 'agent' }]

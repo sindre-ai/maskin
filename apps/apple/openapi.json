@@ -10203,6 +10203,7 @@
 		},
 		"/api/workspaces/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11090,6 +11091,7 @@
 		},
 		"/api/workspaces/admin/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -12735,6 +12737,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13314,6 +13317,7 @@
 				}
 			},
 			"put": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13677,6 +13681,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13841,6 +13846,7 @@
 		},
 		"/api/workspaces/{workspaceId}/skills/upload": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -16499,6 +16505,7 @@
 		},
 		"/api/triggers": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17192,6 +17199,7 @@
 		},
 		"/api/triggers/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17514,6 +17522,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -18315,6 +18324,7 @@
 		},
 		"/api/integrations/skjald/authorize": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -18682,6 +18692,7 @@
 		},
 		"/api/integrations/linkedin-unipile/connect": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19111,6 +19122,7 @@
 		},
 		"/api/integrations/github/link": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19474,6 +19486,7 @@
 		},
 		"/api/integrations/github/select-installation": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19715,6 +19728,7 @@
 		},
 		"/api/integrations/{provider}/connect": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -20026,6 +20040,7 @@
 		},
 		"/api/integrations/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -20129,6 +20144,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -20317,6 +20333,7 @@
 		},
 		"/api/integrations/{id}/complete": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -21935,6 +21952,7 @@
 		},
 		"/api/marketplace/items/{id}/uninstall": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Marketplace"
 				],
@@ -22167,6 +22185,7 @@
 		},
 		"/api/marketplace/items/{id}/install": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Marketplace"
 				],
@@ -22524,6 +22543,7 @@
 		},
 		"/api/mini-apps/regen": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Mini-apps"
 				],
@@ -25706,6 +25726,9 @@
 														},
 														"minItems": 1,
 														"maxItems": 4
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -25754,6 +25777,28 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"integration_connect": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"session_id",
+													"provider"
+												]
+											},
+											"helper_return": {
+												"type": "string",
+												"format": "uuid"
 											}
 										}
 									}
@@ -27010,6 +27055,12 @@
 																"actionPrompt": {
 																	"type": "string"
 																},
+																"createdAt": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
 																"startedAt": {
 																	"type": [
 																		"string",
@@ -27047,6 +27098,21 @@
 																		"type": "string",
 																		"format": "uuid"
 																	}
+																},
+																"awaiting": {
+																	"type": [
+																		"object",
+																		"null"
+																	],
+																	"properties": {
+																		"message_id": {
+																			"type": "number"
+																		},
+																		"question": {}
+																	},
+																	"required": [
+																		"message_id"
+																	]
 																}
 															},
 															"required": [
@@ -27055,12 +27121,14 @@
 																"actorId",
 																"actorName",
 																"actionPrompt",
+																"createdAt",
 																"startedAt",
 																"completedAt",
 																"durationMs",
 																"result",
 																"currentActivity",
-																"depends_on_session_ids"
+																"depends_on_session_ids",
+																"awaiting"
 															]
 														}
 													}
@@ -27083,6 +27151,105 @@
 										},
 										"has_more": {
 											"type": "boolean"
+										},
+										"pending_handoffs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string"
+													},
+													"actorId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"actorName": {
+														"type": "string"
+													},
+													"actionPrompt": {
+														"type": "string"
+													},
+													"createdAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"startedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"completedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"durationMs": {
+														"type": [
+															"number",
+															"null"
+														]
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"additionalProperties": {}
+													},
+													"currentActivity": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"depends_on_session_ids": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"awaiting": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"message_id": {
+																"type": "number"
+															},
+															"question": {}
+														},
+														"required": [
+															"message_id"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"status",
+													"actorId",
+													"actorName",
+													"actionPrompt",
+													"createdAt",
+													"startedAt",
+													"completedAt",
+													"durationMs",
+													"result",
+													"currentActivity",
+													"depends_on_session_ids",
+													"awaiting"
+												]
+											}
 										}
 									},
 									"required": [
@@ -27436,6 +27603,9 @@
 														},
 														"minItems": 1,
 														"maxItems": 4
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -27484,6 +27654,28 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"integration_connect": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"session_id",
+													"provider"
+												]
+											},
+											"helper_return": {
+												"type": "string",
+												"format": "uuid"
 											}
 										}
 									},
@@ -28416,6 +28608,9 @@
 											"type": "string",
 											"format": "uuid"
 										}
+									},
+									"interactive": {
+										"type": "boolean"
 									},
 									"notify_on_complete": {
 										"type": "boolean"
@@ -30575,6 +30770,48 @@
 												"id"
 											]
 										}
+									},
+									"question_answer": {
+										"type": "object",
+										"properties": {
+											"question_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"answers": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"header": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 24
+														},
+														"selected": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 200
+															},
+															"minItems": 1,
+															"maxItems": 4
+														}
+													},
+													"required": [
+														"header",
+														"selected"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											}
+										},
+										"required": [
+											"question_message_id",
+											"answers"
+										]
 									}
 								},
 								"required": [
@@ -31127,6 +31364,365 @@
 					},
 					"500": {
 						"description": "Question could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/connect-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post an integration Connect card into the session chat",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"provider": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								},
+								"required": [
+									"provider"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted, or the provider is already connected and nothing was posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean"
+										},
+										"message_id": {
+											"type": "number"
+										},
+										"already_connected": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"posted"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Unknown provider",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -36100,6 +36696,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -36521,6 +37118,7 @@
 		},
 		"/api/installed-loops/{id}/fork": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -36924,6 +37522,7 @@
 		},
 		"/api/installed-loops/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -39741,6 +40340,7 @@
 		},
 		"/api/claude-oauth": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40017,6 +40617,7 @@
 		},
 		"/api/claude-oauth/import": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40227,6 +40828,7 @@
 		},
 		"/api/claude-oauth/nickname": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40402,6 +41004,7 @@
 		},
 		"/api/claude-oauth/promote": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40572,6 +41175,7 @@
 		},
 		"/api/claude-oauth/swap": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
