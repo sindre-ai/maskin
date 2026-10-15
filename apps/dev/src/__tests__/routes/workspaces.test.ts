@@ -126,7 +126,7 @@ describe('Workspaces Routes', () => {
 		// Each queue entry is one db.select() in route order: isWorkspaceMember,
 		// the workspace row, then (only when name / llm_keys / custom_llm actually
 		// change) isWorkspaceHumanAdminOrOwner.
-		const MEMBER = [{ actorId: 'caller' }]
+		const MEMBER = [{ actorId: 'caller', role: 'member' }]
 		const HUMAN_OWNER = [{ role: 'owner', type: 'human' }]
 		const HUMAN_ADMIN = [{ role: 'admin', type: 'human' }]
 		const PLAIN_MEMBER = [{ role: 'member', type: 'human' }]
