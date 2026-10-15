@@ -739,7 +739,7 @@ function PageControls({
 }) {
 	return (
 		<div
-			className="pointer-events-none absolute bottom-4 left-4 z-10 flex items-center gap-1 rounded-md border border-border bg-card p-1 shadow-md xl:hidden"
+			className="pointer-events-none absolute bottom-20 left-4 z-10 flex items-center gap-1 rounded-md border border-border bg-card p-1 shadow-md sm:bottom-4 xl:hidden"
 			data-testid="viewer-page-controls"
 		>
 			<div className="pointer-events-auto flex items-center gap-1">
