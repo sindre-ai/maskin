@@ -119,7 +119,7 @@ test.describe('Agent integration connect card', () => {
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 
 		await expect(page.getByText('9 event types available')).toBeVisible()
-		await page.getByRole('button', { name: 'Connect' }).click()
+		await page.getByRole('button', { name: 'Connect', exact: true }).click()
 
 		await expect.poll(() => bodies.length).toBe(1)
 		// This is what lands the user back in this same chat after the consent screen.
@@ -147,7 +147,7 @@ test.describe('Agent integration connect card', () => {
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 
-		await page.getByRole('button', { name: 'Connect' }).click()
+		await page.getByRole('button', { name: 'Connect', exact: true }).click()
 		const dialog = page.getByRole('dialog')
 		const input = dialog.getByLabel('API key')
 		await expect(input).toBeVisible()
@@ -198,7 +198,7 @@ test.describe('Agent integration connect card', () => {
 
 			// toBeVisible covers opacity and visibility, so a hover-only reveal —
 			// unusable on touch — fails here rather than shipping.
-			const connect = page.getByRole('button', { name: 'Connect' })
+			const connect = page.getByRole('button', { name: 'Connect', exact: true })
 			await expect(connect).toBeVisible()
 			const box = await connect.boundingBox()
 			expect(box?.height ?? 0).toBeGreaterThanOrEqual(28)
@@ -230,7 +230,7 @@ test.describe('Agent integration connect card', () => {
 
 		for (const colorScheme of ['light', 'dark'] as const) {
 			await page.emulateMedia({ colorScheme })
-			await expect(page.getByRole('button', { name: 'Connect' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible()
 		}
 	})
 })
