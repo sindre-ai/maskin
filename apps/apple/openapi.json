@@ -25626,6 +25626,9 @@
 														},
 														"minItems": 1,
 														"maxItems": 4
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -25674,6 +25677,10 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"helper_return": {
+												"type": "string",
+												"format": "uuid"
 											}
 										}
 									}
@@ -26930,6 +26937,12 @@
 																"actionPrompt": {
 																	"type": "string"
 																},
+																"createdAt": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
 																"startedAt": {
 																	"type": [
 																		"string",
@@ -26967,6 +26980,21 @@
 																		"type": "string",
 																		"format": "uuid"
 																	}
+																},
+																"awaiting": {
+																	"type": [
+																		"object",
+																		"null"
+																	],
+																	"properties": {
+																		"message_id": {
+																			"type": "number"
+																		},
+																		"question": {}
+																	},
+																	"required": [
+																		"message_id"
+																	]
 																}
 															},
 															"required": [
@@ -26975,12 +27003,14 @@
 																"actorId",
 																"actorName",
 																"actionPrompt",
+																"createdAt",
 																"startedAt",
 																"completedAt",
 																"durationMs",
 																"result",
 																"currentActivity",
-																"depends_on_session_ids"
+																"depends_on_session_ids",
+																"awaiting"
 															]
 														}
 													}
@@ -27003,6 +27033,105 @@
 										},
 										"has_more": {
 											"type": "boolean"
+										},
+										"pending_handoffs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string"
+													},
+													"actorId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"actorName": {
+														"type": "string"
+													},
+													"actionPrompt": {
+														"type": "string"
+													},
+													"createdAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"startedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"completedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"durationMs": {
+														"type": [
+															"number",
+															"null"
+														]
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"additionalProperties": {}
+													},
+													"currentActivity": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"depends_on_session_ids": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"awaiting": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"message_id": {
+																"type": "number"
+															},
+															"question": {}
+														},
+														"required": [
+															"message_id"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"status",
+													"actorId",
+													"actorName",
+													"actionPrompt",
+													"createdAt",
+													"startedAt",
+													"completedAt",
+													"durationMs",
+													"result",
+													"currentActivity",
+													"depends_on_session_ids",
+													"awaiting"
+												]
+											}
 										}
 									},
 									"required": [
@@ -27356,6 +27485,9 @@
 														},
 														"minItems": 1,
 														"maxItems": 4
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -27404,6 +27536,10 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"helper_return": {
+												"type": "string",
+												"format": "uuid"
 											}
 										}
 									},
@@ -28336,6 +28472,9 @@
 											"type": "string",
 											"format": "uuid"
 										}
+									},
+									"interactive": {
+										"type": "boolean"
 									},
 									"notify_on_complete": {
 										"type": "boolean"
@@ -30495,6 +30634,48 @@
 												"id"
 											]
 										}
+									},
+									"question_answer": {
+										"type": "object",
+										"properties": {
+											"question_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"answers": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"header": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 24
+														},
+														"selected": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 200
+															},
+															"minItems": 1,
+															"maxItems": 4
+														}
+													},
+													"required": [
+														"header",
+														"selected"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											}
+										},
+										"required": [
+											"question_message_id",
+											"answers"
+										]
 									}
 								},
 								"required": [

@@ -36445,21 +36445,27 @@ public enum Operations {
                             public typealias questionsPayload = [Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.questionsPayloadPayload]
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question/questions`.
                             public var questions: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.questionsPayload
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// Creates a new `questionPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
                             ///   - questions:
+                            ///   - reply_to_session:
                             public init(
                                 session_id: Swift.String,
-                                questions: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.questionsPayload
+                                questions: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.questionsPayload,
+                                reply_to_session: Swift.Bool? = nil
                             ) {
                                 self.session_id = session_id
                                 self.questions = questions
+                                self.reply_to_session = reply_to_session
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
                                 case questions
+                                case reply_to_session
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question`.
@@ -36514,6 +36520,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/helper_return`.
+                        public var helper_return: Swift.String?
                         /// Creates a new `initial_message_metadataPayload`.
                         ///
                         /// - Parameters:
@@ -36525,6 +36533,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - helper_return:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.attachmentsPayload? = nil,
                             mentions: [Swift.String]? = nil,
@@ -36533,7 +36542,8 @@ public enum Operations {
                             source: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.sourcePayload? = nil,
                             final_output: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload? = nil,
-                            question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil
+                            question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil,
+                            helper_return: Swift.String? = nil
                         ) {
                             self.attachments = attachments
                             self.mentions = mentions
@@ -36543,6 +36553,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.helper_return = helper_return
                         }
                         public enum CodingKeys: String, CodingKey {
                             case attachments
@@ -36553,6 +36564,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case helper_return
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata`.
@@ -38638,6 +38650,8 @@ public enum Operations {
                                 public var actorName: Swift.String
                                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/actionPrompt`.
                                 public var actionPrompt: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/createdAt`.
+                                public var createdAt: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/startedAt`.
                                 public var startedAt: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/completedAt`.
@@ -38668,6 +38682,31 @@ public enum Operations {
                                 public var currentActivity: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/depends_on_session_ids`.
                                 public var depends_on_session_ids: [Swift.String]
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/awaiting`.
+                                public struct awaitingPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/awaiting/message_id`.
+                                    public var message_id: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/awaiting/question`.
+                                    public var question: OpenAPIRuntime.OpenAPIValueContainer?
+                                    /// Creates a new `awaitingPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - message_id:
+                                    ///   - question:
+                                    public init(
+                                        message_id: Swift.Double,
+                                        question: OpenAPIRuntime.OpenAPIValueContainer? = nil
+                                    ) {
+                                        self.message_id = message_id
+                                        self.question = question
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case message_id
+                                        case question
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/awaiting`.
+                                public var awaiting: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload.awaitingPayload?
                                 /// Creates a new `spawned_sessionsPayloadPayload`.
                                 ///
                                 /// - Parameters:
@@ -38676,36 +38715,42 @@ public enum Operations {
                                 ///   - actorId:
                                 ///   - actorName:
                                 ///   - actionPrompt:
+                                ///   - createdAt:
                                 ///   - startedAt:
                                 ///   - completedAt:
                                 ///   - durationMs:
                                 ///   - result:
                                 ///   - currentActivity:
                                 ///   - depends_on_session_ids:
+                                ///   - awaiting:
                                 public init(
                                     id: Swift.String,
                                     status: Swift.String,
                                     actorId: Swift.String,
                                     actorName: Swift.String,
                                     actionPrompt: Swift.String,
+                                    createdAt: Swift.String? = nil,
                                     startedAt: Swift.String? = nil,
                                     completedAt: Swift.String? = nil,
                                     durationMs: Swift.Double? = nil,
                                     result: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload.resultPayload? = nil,
                                     currentActivity: Swift.String? = nil,
-                                    depends_on_session_ids: [Swift.String]
+                                    depends_on_session_ids: [Swift.String],
+                                    awaiting: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload.awaitingPayload? = nil
                                 ) {
                                     self.id = id
                                     self.status = status
                                     self.actorId = actorId
                                     self.actorName = actorName
                                     self.actionPrompt = actionPrompt
+                                    self.createdAt = createdAt
                                     self.startedAt = startedAt
                                     self.completedAt = completedAt
                                     self.durationMs = durationMs
                                     self.result = result
                                     self.currentActivity = currentActivity
                                     self.depends_on_session_ids = depends_on_session_ids
+                                    self.awaiting = awaiting
                                 }
                                 public enum CodingKeys: String, CodingKey {
                                     case id
@@ -38713,12 +38758,14 @@ public enum Operations {
                                     case actorId
                                     case actorName
                                     case actionPrompt
+                                    case createdAt
                                     case startedAt
                                     case completedAt
                                     case durationMs
                                     case result
                                     case currentActivity
                                     case depends_on_session_ids
+                                    case awaiting
                                 }
                             }
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessions`.
@@ -38788,21 +38835,159 @@ public enum Operations {
                         public var messages: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayload
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/has_more`.
                         public var has_more: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload`.
+                        public struct pending_handoffsPayloadPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/actorId`.
+                            public var actorId: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/actorName`.
+                            public var actorName: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/actionPrompt`.
+                            public var actionPrompt: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/createdAt`.
+                            public var createdAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/startedAt`.
+                            public var startedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/completedAt`.
+                            public var completedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/durationMs`.
+                            public var durationMs: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/result`.
+                            public struct resultPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                                /// Creates a new `resultPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/result`.
+                            public var result: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayloadPayload.resultPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/currentActivity`.
+                            public var currentActivity: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/depends_on_session_ids`.
+                            public var depends_on_session_ids: [Swift.String]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/awaiting`.
+                            public struct awaitingPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/awaiting/message_id`.
+                                public var message_id: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/awaiting/question`.
+                                public var question: OpenAPIRuntime.OpenAPIValueContainer?
+                                /// Creates a new `awaitingPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - message_id:
+                                ///   - question:
+                                public init(
+                                    message_id: Swift.Double,
+                                    question: OpenAPIRuntime.OpenAPIValueContainer? = nil
+                                ) {
+                                    self.message_id = message_id
+                                    self.question = question
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case message_id
+                                    case question
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffsPayload/awaiting`.
+                            public var awaiting: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayloadPayload.awaitingPayload?
+                            /// Creates a new `pending_handoffsPayloadPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - actorId:
+                            ///   - actorName:
+                            ///   - actionPrompt:
+                            ///   - createdAt:
+                            ///   - startedAt:
+                            ///   - completedAt:
+                            ///   - durationMs:
+                            ///   - result:
+                            ///   - currentActivity:
+                            ///   - depends_on_session_ids:
+                            ///   - awaiting:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                actorId: Swift.String,
+                                actorName: Swift.String,
+                                actionPrompt: Swift.String,
+                                createdAt: Swift.String? = nil,
+                                startedAt: Swift.String? = nil,
+                                completedAt: Swift.String? = nil,
+                                durationMs: Swift.Double? = nil,
+                                result: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayloadPayload.resultPayload? = nil,
+                                currentActivity: Swift.String? = nil,
+                                depends_on_session_ids: [Swift.String],
+                                awaiting: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayloadPayload.awaitingPayload? = nil
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.actorId = actorId
+                                self.actorName = actorName
+                                self.actionPrompt = actionPrompt
+                                self.createdAt = createdAt
+                                self.startedAt = startedAt
+                                self.completedAt = completedAt
+                                self.durationMs = durationMs
+                                self.result = result
+                                self.currentActivity = currentActivity
+                                self.depends_on_session_ids = depends_on_session_ids
+                                self.awaiting = awaiting
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case actorId
+                                case actorName
+                                case actionPrompt
+                                case createdAt
+                                case startedAt
+                                case completedAt
+                                case durationMs
+                                case result
+                                case currentActivity
+                                case depends_on_session_ids
+                                case awaiting
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffs`.
+                        public typealias pending_handoffsPayload = [Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/pending_handoffs`.
+                        public var pending_handoffs: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
                         ///   - messages:
                         ///   - has_more:
+                        ///   - pending_handoffs:
                         public init(
                             messages: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayload,
-                            has_more: Swift.Bool
+                            has_more: Swift.Bool,
+                            pending_handoffs: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.pending_handoffsPayload? = nil
                         ) {
                             self.messages = messages
                             self.has_more = has_more
+                            self.pending_handoffs = pending_handoffs
                         }
                         public enum CodingKeys: String, CodingKey {
                             case messages
                             case has_more
+                            case pending_handoffs
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/application\/json`.
@@ -39392,21 +39577,27 @@ public enum Operations {
                             public typealias questionsPayload = [Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.questionsPayloadPayload]
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question/questions`.
                             public var questions: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.questionsPayload
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// Creates a new `questionPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
                             ///   - questions:
+                            ///   - reply_to_session:
                             public init(
                                 session_id: Swift.String,
-                                questions: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.questionsPayload
+                                questions: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.questionsPayload,
+                                reply_to_session: Swift.Bool? = nil
                             ) {
                                 self.session_id = session_id
                                 self.questions = questions
+                                self.reply_to_session = reply_to_session
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
                                 case questions
+                                case reply_to_session
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question`.
@@ -39461,6 +39652,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/helper_return`.
+                        public var helper_return: Swift.String?
                         /// Creates a new `metadataPayload`.
                         ///
                         /// - Parameters:
@@ -39472,6 +39665,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - helper_return:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.attachmentsPayload? = nil,
                             mentions: [Swift.String]? = nil,
@@ -39480,7 +39674,8 @@ public enum Operations {
                             source: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.sourcePayload? = nil,
                             final_output: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload? = nil,
-                            question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil
+                            question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil,
+                            helper_return: Swift.String? = nil
                         ) {
                             self.attachments = attachments
                             self.mentions = mentions
@@ -39490,6 +39685,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.helper_return = helper_return
                         }
                         public enum CodingKeys: String, CodingKey {
                             case attachments
@@ -39500,6 +39696,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case helper_return
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata`.
@@ -41957,6 +42154,8 @@ public enum Operations {
                     public var spawned_by_message_id: Swift.Int?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/depends_on_session_ids`.
                     public var depends_on_session_ids: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/interactive`.
+                    public var interactive: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/notify_on_complete`.
                     public var notify_on_complete: Swift.Bool?
                     /// Creates a new `jsonPayload`.
@@ -41972,6 +42171,7 @@ public enum Operations {
                     ///   - initiated_from_object_id:
                     ///   - spawned_by_message_id:
                     ///   - depends_on_session_ids:
+                    ///   - interactive:
                     ///   - notify_on_complete:
                     public init(
                         actor_id: Swift.String,
@@ -41984,6 +42184,7 @@ public enum Operations {
                         initiated_from_object_id: Swift.String? = nil,
                         spawned_by_message_id: Swift.Int? = nil,
                         depends_on_session_ids: [Swift.String]? = nil,
+                        interactive: Swift.Bool? = nil,
                         notify_on_complete: Swift.Bool? = nil
                     ) {
                         self.actor_id = actor_id
@@ -41996,6 +42197,7 @@ public enum Operations {
                         self.initiated_from_object_id = initiated_from_object_id
                         self.spawned_by_message_id = spawned_by_message_id
                         self.depends_on_session_ids = depends_on_session_ids
+                        self.interactive = interactive
                         self.notify_on_complete = notify_on_complete
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -42009,6 +42211,7 @@ public enum Operations {
                         case initiated_from_object_id
                         case spawned_by_message_id
                         case depends_on_session_ids
+                        case interactive
                         case notify_on_complete
                     }
                 }
