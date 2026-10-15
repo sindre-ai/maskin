@@ -26,6 +26,16 @@ struct BriefSequenceTests {
 		#expect(sequence.startIndex == 3)
 	}
 
+	@Test("prefetch looks ahead at pages only, never past the end")
+	func prefetch() {
+		let cards = [card("brief", loop: nil), card("a1", loop: "A"), card("a2", loop: "A"), card("a3", loop: "A")]
+		let sequence = BriefSequence(slides: cards, startIndex: 0)
+		#expect(sequence.pagesToPrefetch(after: 0).map(\.id) == ["a1", "a2"])
+		#expect(sequence.pagesToPrefetch(after: 2).map(\.id) == ["a3"])
+		#expect(sequence.pagesToPrefetch(after: 3).isEmpty)
+		#expect(sequence.pagesToPrefetch(after: 0, ahead: 0).isEmpty)
+	}
+
 	@Test("a card missing from the row is still opened")
 	func missingOpening() {
 		let extra = card("x", loop: "X")
