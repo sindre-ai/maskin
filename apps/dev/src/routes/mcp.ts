@@ -5,6 +5,7 @@ import { createMcpServer } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
+import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
@@ -12,7 +13,6 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
-import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
 	type McpSessionSource,
 	argKeys,
