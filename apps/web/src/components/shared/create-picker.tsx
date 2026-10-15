@@ -29,12 +29,11 @@ import { useCreateConversation } from '@/hooks/use-conversations'
 import { useCreateObject } from '@/hooks/use-objects'
 import { useCreateTrigger } from '@/hooks/use-triggers'
 import { trackAgentCreated, trackObjectCreated, trackTriggerCreated } from '@/lib/analytics'
-import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { TYPE_LABELS, getTypeColor } from '@/lib/constants'
-import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
+import { deriveConversationTitle } from '@maskin/shared'
 import { LOOP_STATUSES, type LoopStatus } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -377,15 +376,12 @@ export function CreatePicker({
 				return
 			}
 			if (entityKind === 'agent') {
-				const created = await createActor.mutateAsync({ type: 'agent', name: trimmed })
-				try {
-					await api.workspaces.members.add(workspaceId, {
-						actor_id: created.id,
-						role: 'member',
-					})
-				} catch {
-					// Membership may already exist — the detail page also tries this.
-				}
+				// The server adds the agent to this workspace in the same request.
+				const created = await createActor.mutateAsync({
+					type: 'agent',
+					name: trimmed,
+					workspace_id: workspaceId,
+				})
 				trackAgentCreated({ entity_id: created.id, entity_type: 'agent' })
 				onOpenChange(false)
 				navigate({

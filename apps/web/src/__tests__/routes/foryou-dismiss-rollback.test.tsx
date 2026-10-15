@@ -239,6 +239,73 @@ describe('For You — dismiss rollback', () => {
 		])
 	})
 
+	// The reader's own reply becomes a new unread event on the object, so the
+	// unread feed's next refetch returns the card again — leaving them looking
+	// at a card they just answered. Hide it optimistically the same way the
+	// "Mark as read" button does.
+	it('hides the card when the reader types an answer', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+	})
+
+	// The hide is for the mention the reader answered, not for the thread: when
+	// the agent answers the reply, that newer mention must show up live.
+	it('shows the card again when the thread gets a newer mention after the reply', async () => {
+		const user = userEvent.setup()
+		const view = await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+
+		// A refetch that returns the same event id (the mark-read racing the
+		// refetch) must not bring the card back.
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<ForYouPage />
+			</QueryClientProvider>,
+		)
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+
+		// The agent answers: the same entity comes back with a higher event id.
+		testState.__items = [
+			{ ...buildItem('thread-1', 'Renewal terms need a read'), latest_event_id: 43 },
+		]
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<ForYouPage />
+			</QueryClientProvider>,
+		)
+
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+	})
+
+	// Symmetric to the bulk-dismiss rollback: if the mark-read fails after a
+	// typed reply, the card has to come back — otherwise it stays hidden
+	// forever behind an optimistic dismiss whose write never landed.
+	it('puts the card back when the mark-read after a typed reply fails', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		testState.__markReadFails = true
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+	})
+
 	it('still hides the card when the dismissal succeeds', async () => {
 		const user = userEvent.setup()
 		await renderFeed()

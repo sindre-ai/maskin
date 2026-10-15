@@ -11,6 +11,7 @@ import {
 	ResponsiveDialogHeader,
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
+import { useBillingUsage } from '@/hooks/use-billing'
 import { trackCreditsExhaustedErrorShown } from '@/lib/analytics'
 import {
 	closeInsufficientCreditsModal,
@@ -47,6 +48,10 @@ export function resolveTopupTarget(topupUrl: string): TopupTarget {
 export function InsufficientCreditsModal() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
+	// Top-up can be switched off server-side; the modal still blocks but offers no
+	// button that would go nowhere. Unknown (still loading) keeps the button.
+	const { data: usage } = useBillingUsage(workspaceId)
+	const topupAvailable = usage?.credit_topup_available !== false
 	const payload = useSyncExternalStore(
 		subscribeInsufficientCredits,
 		getInsufficientCreditsPayload,
@@ -112,7 +117,7 @@ export function InsufficientCreditsModal() {
 						<Button variant="outline" onClick={closeInsufficientCreditsModal}>
 							Close
 						</Button>
-						<Button onClick={handleTopUp}>Top up credits</Button>
+						{topupAvailable ? <Button onClick={handleTopUp}>Top up credits</Button> : null}
 					</ResponsiveDialogFooter>
 				</ResponsiveDialogContent>
 			) : null}

@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
-import { events, actors, workspaceMembers } from '@maskin/db/schema'
+import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { recordEvent } from '../events/record-event'
 import { logger } from '../logger'
 
 /**
@@ -86,7 +87,7 @@ export async function detachProviderMcpServers(
 			// Per the events-on-every-mutation rule: without this the agent's
 			// tool surface changes with no audit trail and no SSE invalidation,
 			// so an open agent page keeps rendering the detached server.
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId,
 				action: 'updated',

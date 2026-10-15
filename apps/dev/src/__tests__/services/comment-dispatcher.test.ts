@@ -2,10 +2,14 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
+	buildMentionPrompt,
+	isAgentMentionFreeComment,
 	normalizeMentionsList,
 	normalizeParentEventId,
+	threadReplyLines,
 } from '../../services/trigger-runner'
 import { buildActor, buildNotification } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
@@ -38,6 +42,7 @@ describe('CommentDispatcher', () => {
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
 		calls = ctx.calls
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		dispatcher = new CommentDispatcher(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
@@ -66,8 +71,12 @@ describe('CommentDispatcher', () => {
 		bridge.emit('event', event)
 		// Yield enough microtask ticks to drain every await inside
 		// handleEvent → dispatchMention → insertNotificationsWithEvents. Each
-		// mock resolves synchronously, so a small loop is plenty.
-		for (let i = 0; i < 20; i++) await Promise.resolve()
+		// mock resolves synchronously, so a small loop is plenty. Bumped to
+		// 40 with the initiated_from lookup added to dispatchMention /
+		// dispatchCommentFallback: each mention now has an extra `await`
+		// (`loadInitiatedFromObject`), so multi-mention fanouts were racing
+		// the assertion at the old 20-tick budget.
+		for (let i = 0; i < 40; i++) await Promise.resolve()
 	}
 
 	it('ignores events that are not commented-on-object', async () => {
@@ -203,7 +212,13 @@ describe('CommentDispatcher', () => {
 	it('dispatches to the driver with triggerSource and sourceCommentEventId when driver ≠ author (case 2)', async () => {
 		mockResults.selectQueue = [
 			// event data
-			[{ actorId: 'human-author', data: { content: 'hi', mentions: [] } }],
+			[
+				{
+					actorId: 'human-author',
+					actorType: 'human',
+					data: { content: 'hi', mentions: [] },
+				},
+			],
 			// driver lookup
 			[{ driver: 'driver-1' }],
 		]
@@ -219,6 +234,9 @@ describe('CommentDispatcher', () => {
 		expect(opts.triggerSource).toBe('comment_fallback')
 		expect(opts.sourceCommentEventId).toBe(42)
 		expect(opts.actionPrompt as string).not.toContain('has no driver')
+		// The triggering comment was top-level, so the new comment IS the
+		// thread — no reply-in-thread instruction belongs in the prompt.
+		expect(opts.actionPrompt as string).not.toContain('Thread parent event ID')
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -229,16 +247,49 @@ describe('CommentDispatcher', () => {
 		)
 	})
 
-	it('falls through to CoS (case 3) when driver = author', async () => {
+	it('tells a mentioned agent to reply inside the thread it was triggered by', async () => {
+		const agent = buildActor({ type: 'agent' })
+		const notification = buildNotification({ targetActorId: agent.id })
 		mockResults.selectQueue = [
-			// event data — author is 'human-author'
-			[{ actorId: 'human-author', data: { content: 'hi', mentions: [] } }],
-			// driver lookup — driver IS the author
-			[{ driver: 'human-author' }],
-			// CoS routing prompt: objects.title lookup
-			// workspace Chief of Staff lookup
-			COS_LOOKUP_ROWS,
-			[{ title: 'A bet' }],
+			// event row lookup — the triggering comment is a reply (parentEventId 7)
+			[
+				{
+					actorId: 'commenter-1',
+					data: { mentions: [agent.id], parentEventId: 7, content: 'reply' },
+				},
+			],
+			// parent-author lookup — a different actor, so dispatch is not suppressed
+			[{ actorId: 'parent-author-1' }],
+			// mentioned-actor lookup
+			[{ id: agent.id, type: agent.type }],
+		]
+		mockResults.insert = [notification]
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		]
+		expect(opts.actionPrompt as string).toContain('Thread parent event ID: 7')
+		expect(opts.actionPrompt as string).toContain('parent_event_id: 7')
+	})
+
+	it('tells a fallback-dispatched agent to reply inside the triggering thread', async () => {
+		mockResults.selectQueue = [
+			// event data — a reply (parentEventId 900), no mentions
+			[
+				{
+					actorId: 'human-author',
+					data: { content: 'reply', mentions: [], parentEventId: 900 },
+				},
+			],
+			// parent-author lookup
+			[{ actorId: 'parent-author-1' }],
+			// driver lookup
+			[{ driver: 'driver-1' }],
 		]
 
 		dispatcher.start()
@@ -249,16 +300,42 @@ describe('CommentDispatcher', () => {
 			string,
 			Record<string, unknown>,
 		]
-		expect(opts.actorId).toBe(COS_ACTOR_ID)
-		expect(opts.actionPrompt as string).toContain('has no driver')
-		// Every id the agent needs is labelled, not inlined in prose — a bare
-		// uuid in a sentence leaves it guessing which id it is.
-		expect(opts.actionPrompt as string).toContain('Object ID: a4f1c9d2-3b58-4e07-9c26-8f5d0a7b1e43')
-		expect(opts.actionPrompt as string).toContain('Object title: A bet')
-		expect(opts.actionPrompt as string).toContain('Commenter actor ID: human-author')
+		expect(opts.actorId).toBe('driver-1')
+		expect(opts.actionPrompt as string).toContain('Thread parent event ID: 900')
+		expect(opts.actionPrompt as string).toContain('parent_event_id: 900')
+	})
+
+	it('driver = author → noop_self_authored with no dispatch (case 0, guard-first)', async () => {
+		mockResults.selectQueue = [
+			// event data — author is 'human-author'
+			[{ actorId: 'human-author', data: { content: 'hi', mentions: [] } }],
+			// driver lookup — driver IS the author
+			[{ driver: 'human-author' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'human-author' }))
+
+		// Nobody to ping: the object's own driver wrote the comment. The case-0
+		// guard resolves before case 2 and case 3 are evaluated, so neither a
+		// driver session nor a CoS session is dispatched — and because it returns
+		// early, the CoS lookup and the title lookup never run, which is why the
+		// select queue above holds only two entries.
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+		const resolvedLog = logInfo.mock.calls.find(
+			(c) =>
+				c[0] === 'Comment responder resolved' &&
+				(c[1] as { case?: string })?.case === 'noop_self_authored',
+		)
+		expect(resolvedLog?.[1]).toMatchObject({
+			event_id: '42',
+			case: 'noop_self_authored',
+			resolved_actor_id: null,
+		})
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
-			expect.objectContaining({ case: 'case_3_cos_fallback', resolvedActorId: COS_ACTOR_ID }),
+			expect.objectContaining({ case: 'noop_self_authored', resolvedActorId: null }),
 		)
 	})
 
@@ -284,9 +361,107 @@ describe('CommentDispatcher', () => {
 		expect(opts.actorId).toBe(COS_ACTOR_ID)
 		expect(opts.triggerSource).toBe('comment_fallback')
 		expect(opts.sourceCommentEventId).toBe(42)
+		// This is the path the "no driver" sentence belongs to — the object
+		// genuinely has none, so the routing prompt may say so.
+		expect(opts.actionPrompt as string).toContain('has no driver')
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({ case: 'case_3_cos_fallback', resolvedActorId: COS_ACTOR_ID }),
+		)
+	})
+
+	it('agent comment with no mention on a driven object → no session, noop_suppressed', async () => {
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'agent-author',
+					actorType: 'agent',
+					data: { content: 'done, nothing needed', mentions: [] },
+				},
+			],
+			// A driver is present, but the ladder is never reached to look it up.
+			[{ driver: 'driver-1' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'agent-author' }))
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({
+				case: 'noop_suppressed',
+				resolvedActorId: null,
+				sourceCommentEventId: 42,
+			}),
+		)
+		const suppressedLog = logInfo.mock.calls.find(
+			(c) =>
+				c[0] === 'Comment responder resolved' &&
+				(c[1] as { case?: string })?.case === 'noop_suppressed',
+		)
+		expect(suppressedLog?.[1]).toMatchObject({ event_id: '42', resolved_actor_id: null })
+	})
+
+	it('agent comment with no mention on a driverless object → no session, noop_suppressed (no CoS wake)', async () => {
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'agent-author',
+					actorType: 'agent',
+					data: { content: 'fyi', mentions: [] },
+				},
+			],
+			[{ driver: null }],
+			COS_LOOKUP_ROWS,
+			[{ title: 'Orphan bet' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'agent-author' }))
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'noop_suppressed', resolvedActorId: null }),
+		)
+		expect(vi.mocked(trackCommentResponderResolved)).not.toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'case_3_cos_fallback' }),
+		)
+	})
+
+	it('agent comment WITH an @mention of an agent still starts that agent session', async () => {
+		const mentioned = buildActor({ type: 'agent' })
+		const notification = buildNotification({
+			targetActorId: mentioned.id,
+			sourceActorId: 'agent-author',
+			type: 'needs_input',
+		})
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'agent-author',
+					actorType: 'agent',
+					data: { content: 'over to you', mentions: [mentioned.id] },
+				},
+			],
+			[
+				{ id: mentioned.id, type: mentioned.type },
+				{ id: 'agent-author', type: 'agent' },
+			],
+		]
+		mockResults.insert = [notification]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'agent-author' }))
+
+		expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		const [, params] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		]
+		expect(params.actorId).toBe(mentioned.id)
+		expect(params.triggerSource).toBe('comment_fallback')
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'case_1_mention' }),
 		)
 	})
 
@@ -320,6 +495,14 @@ describe('CommentDispatcher', () => {
 		)
 		expect(dispatchedTo).not.toContain('driver-1')
 		expect(dispatchedTo).toContain(COS_ACTOR_ID)
+
+		// The object DOES have a driver — only its parent comment's author is
+		// that driver. The routing prompt must not claim otherwise, or CoS goes
+		// looking for an owner to assign when one already exists.
+		const cosCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls.find(
+			(c) => (c[1] as { actorId: string }).actorId === COS_ACTOR_ID,
+		)
+		expect((cosCall?.[1] as { actionPrompt: string }).actionPrompt).not.toContain('has no driver')
 	})
 
 	it('skips only the named actor when metadata.suppress_dispatch_actor_ids is set', async () => {
@@ -562,5 +745,50 @@ describe('normalizeParentEventId()', () => {
 		expect(normalizeParentEventId(undefined)).toBeNull()
 		expect(normalizeParentEventId(Number.NaN)).toBeNull()
 		expect(normalizeParentEventId(Number.POSITIVE_INFINITY)).toBeNull()
+	})
+})
+
+describe('threadReplyLines()', () => {
+	it('returns no lines when the triggering comment was top-level', () => {
+		expect(threadReplyLines(null)).toEqual([])
+	})
+
+	it('names the thread parent id and the argument that replies into it', () => {
+		const prompt = threadReplyLines(7).join('\n')
+		expect(prompt).toContain('Thread parent event ID: 7')
+		expect(prompt).toContain('parent_event_id: 7')
+	})
+
+	it('opens with a blank separator so call sites can spread it unconditionally', () => {
+		expect(threadReplyLines(7)[0]).toBe('')
+	})
+})
+
+describe('buildMentionPrompt()', () => {
+	const base = {
+		objectId: 'obj-1',
+		commenterActorId: 'actor-1',
+		content: 'hello',
+		notificationId: 'n-1',
+		parentEventId: null,
+	}
+
+	it('puts the sender line first when one is given', () => {
+		const prompt = buildMentionPrompt({ ...base, senderLine: 'Sent by Planner, another agent.' })
+		expect(prompt.startsWith('Sent by Planner, another agent.\n\nYou were @mentioned')).toBe(true)
+	})
+
+	it('leaves the prompt unchanged when no sender line is given', () => {
+		expect(buildMentionPrompt(base).startsWith('You were @mentioned')).toBe(true)
+	})
+})
+
+describe('isAgentMentionFreeComment()', () => {
+	it('is true only for an agent author with no mentions', () => {
+		expect(isAgentMentionFreeComment({ actorType: 'agent', mentionCount: 0 })).toBe(true)
+		expect(isAgentMentionFreeComment({ actorType: 'agent', mentionCount: 1 })).toBe(false)
+		expect(isAgentMentionFreeComment({ actorType: 'human', mentionCount: 0 })).toBe(false)
+		expect(isAgentMentionFreeComment({ actorType: null, mentionCount: 0 })).toBe(false)
+		expect(isAgentMentionFreeComment({ actorType: undefined, mentionCount: 0 })).toBe(false)
 	})
 })

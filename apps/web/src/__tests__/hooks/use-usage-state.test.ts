@@ -22,6 +22,7 @@ function build(overrides: Partial<BillingUsageResponse> = {}): BillingUsageRespo
 		stripe_subscription_id: null,
 		credit_balance_cents: 0,
 		sum_topups_last_30d_cents: 0,
+		credit_topup_available: true,
 		linkedin_identity_addon: null,
 		...overrides,
 	}

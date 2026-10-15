@@ -1,7 +1,8 @@
-import type { Database } from '@maskin/db'
-import { events, actors, subscriptions } from '@maskin/db/schema'
+import type { Database, Transaction } from '@maskin/db'
+import { type events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
+import { recordEventReturning } from './events/record-event'
 
 export interface PostCommentInput {
 	workspaceId: string
@@ -20,6 +21,14 @@ export interface PostCommentInput {
 	 */
 	decision?: CommentDecision
 	attention?: number
+	/**
+	 * The session the author was running when it posted, from X-Maskin-Session-Id.
+	 * A claim, not proof: CommentDispatcher checks it against the author before it
+	 * links a session started by an @mention. Stored under its own key (not in the
+	 * client-supplied metadata) so a request body cannot write it. Leave unset for
+	 * the helper-return comment, which must not wake a session that has a link.
+	 */
+	authorSessionId?: string
 }
 
 export interface PostCommentResult {
@@ -45,36 +54,29 @@ export interface PostCommentResult {
  * `PgNotifyBridge` after this transaction commits.
  */
 export async function postComment(
-	db: Database,
+	db: Database | Transaction,
 	input: PostCommentInput,
 ): Promise<PostCommentResult> {
 	const entityType = input.entityType ?? 'object'
 
 	return db.transaction(async (tx) => {
-		const results = await tx
-			.insert(events)
-			.values({
-				workspaceId: input.workspaceId,
-				actorId: input.actorId,
-				action: 'commented',
-				entityType,
-				entityId: input.entityId,
-				data: {
-					content: input.content,
-					mentions: input.mentions,
-					parentEventId: input.parentEventId,
-					attachmentFileIds: input.attachmentFileIds,
-					metadata: input.metadata,
-					decision: input.decision,
-					attention: input.attention,
-				},
-			})
-			.returning()
-
-		const comment = results[0]
-		if (!comment) {
-			throw new Error('Failed to create comment')
-		}
+		const comment = await recordEventReturning(tx, {
+			workspaceId: input.workspaceId,
+			actorId: input.actorId,
+			action: 'commented',
+			entityType,
+			entityId: input.entityId,
+			data: {
+				content: input.content,
+				mentions: input.mentions,
+				parentEventId: input.parentEventId,
+				attachmentFileIds: input.attachmentFileIds,
+				metadata: input.metadata,
+				decision: input.decision,
+				attention: input.attention,
+				...(input.authorSessionId ? { authorSessionId: input.authorSessionId } : {}),
+			},
+		})
 
 		// Mention ids come straight off the request body, so they can reference
 		// actors that never existed or were deleted since the client rendered the

@@ -146,6 +146,12 @@ export const relationshipResponseSchema = z.object({
 	targetId: z.string().uuid(),
 	targetTitle: z.string().nullable().optional(),
 	type: z.string(),
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// Currently the spawning `messageId` (as a string, since Postgres
+	// bigint round-trips to a JS number would silently lose precision
+	// past 2^53) on a `conversation → session` `spawned` edge — powers
+	// the object-detail Origin deep-link into a chat at the exact message.
+	metadata: jsonbField,
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 })
@@ -283,6 +289,13 @@ export const sessionResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 })
 
+// PATCH /sessions/:id answer when notify_on_complete was requested: what happened
+// to the return, not just that the flag was saved.
+export const sessionNotifyResponseSchema = sessionResponseSchema.extend({
+	notify_on_complete: z.enum(['registered', 'delivered', 'skipped']).optional(),
+	notify_skip_reason: z.string().optional(),
+})
+
 export const conversationParticipantResponseSchema = z.object({
 	actorId: z.string().uuid(),
 	actorName: z.string(),
@@ -340,6 +353,33 @@ export const messageResponseSchema = z.object({
 	editedAt: z.string().nullable(),
 })
 
+/**
+ * Sub-session delegation strip (bet/444b-handed-off-strip). Shape served on the
+ * `spawned_sessions` embed of `GET /conversations/:id/messages`. Casing matches
+ * the delegation strip contract: camelCase except `depends_on_session_ids`.
+ */
+export const spawnedSessionResponseSchema = z.object({
+	id: z.string().uuid(),
+	status: z.string(),
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actionPrompt: z.string(),
+	startedAt: z.string().nullable(),
+	completedAt: z.string().nullable(),
+	durationMs: z.number().nullable(),
+	result: jsonbField.nullable(),
+	currentActivity: z.string().nullable(),
+	depends_on_session_ids: z.array(z.string().uuid()),
+})
+
+/**
+ * List response only — the POST 201 path keeps `messageResponseSchema` so the
+ * two surfaces can evolve independently.
+ */
+export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
+	spawned_sessions: z.array(spawnedSessionResponseSchema),
+})
+
 export const sessionLogResponseSchema = z.object({
 	id: z.number(),
 	sessionId: z.string().uuid(),
@@ -357,6 +397,8 @@ export const importResponseSchema = z.object({
 	totalRows: z.number().nullable(),
 	processedRows: z.number(),
 	successCount: z.number(),
+	skippedCount: z.number(),
+	updatedCount: z.number(),
 	errorCount: z.number(),
 	mapping: jsonbField,
 	preview: jsonbField,

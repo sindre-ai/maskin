@@ -6,15 +6,20 @@ import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorResponse } from '../../factories'
 
-const createSessionMock = vi.fn()
+const createConversationMock = vi.fn()
+const navigateMock = vi.fn()
 const toastSuccess = vi.fn()
 
-vi.mock('@/hooks/use-sessions', () => ({
-	useCreateSession: () => ({ mutateAsync: createSessionMock }),
+vi.mock('@/hooks/use-conversations', () => ({
+	useCreateConversation: () => ({ mutateAsync: createConversationMock }),
 }))
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-test', workspace: { id: 'ws-test', settings: {} } }),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => navigateMock,
 }))
 
 vi.mock('sonner', () => ({
@@ -22,7 +27,7 @@ vi.mock('sonner', () => ({
 }))
 
 // Minimal stub — the chat Composer's own tests cover its internals. The extra
-// button dispatches an object into the selection so the one-shot prompt path is
+// button dispatches an object into the selection so the metadata path is
 // exercised the way it is on the For You composer.
 vi.mock('@/components/chat/chat', () => ({
 	Composer: ({ onSend, onDispatchSelection, placeholder, textareaLabel }: ComposerProps) => {
@@ -67,50 +72,70 @@ const agent = buildActorResponse({ id: 'agent-1', type: 'agent', name: 'Cass' })
 
 describe('AgentComposer', () => {
 	beforeEach(() => {
-		createSessionMock.mockReset()
-		createSessionMock.mockResolvedValue({ id: 'sess-1' })
+		createConversationMock.mockReset()
+		createConversationMock.mockResolvedValue({ id: 'conv-1' })
+		navigateMock.mockReset()
 		toastSuccess.mockReset()
 	})
 
 	it('addresses the agent by name and says what sending does (mockup 2506)', () => {
 		render(<AgentComposer agent={agent} />)
 		expect(screen.getByPlaceholderText('Message Cass…')).toBeInTheDocument()
-		expect(screen.getByText('Starts a new session')).toBeInTheDocument()
+		expect(screen.getByText('Starts a new chat')).toBeInTheDocument()
 	})
 
-	it('starts a new session with the typed prompt', async () => {
+	// The defect that promoted this task to P1: the send used to create a
+	// session directly, which left the agent's reply orphaned — no row in the
+	// Chats list, nothing for the user to open. The fix routes through
+	// createConversation so the exchange lands on the conversation surface.
+	it('starts a chat conversation with the agent as the sole participant', async () => {
 		render(<AgentComposer agent={agent} />)
 		await userEvent.type(screen.getByLabelText('Message Cass'), 'Sweep the backlog')
 		await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
 		await waitFor(() =>
-			expect(createSessionMock).toHaveBeenCalledWith({
-				actor_id: 'agent-1',
-				action_prompt: 'Sweep the backlog',
-			}),
+			expect(createConversationMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					participant_actor_ids: ['agent-1'],
+					initial_message: 'Sweep the backlog',
+					title: expect.stringContaining('Sweep the backlog'),
+				}),
+			),
 		)
 		await waitFor(() => expect(toastSuccess).toHaveBeenCalled())
+		expect(navigateMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId: 'ws-test', conversationId: 'conv-1' },
+			}),
+		)
 	})
 
-	it('folds attached context into the action prompt', async () => {
+	// Attached objects flow as first-class conversation metadata (matching the
+	// /chats/new entry point), not folded into the message body — the backend
+	// conversation-responder reads context_objects off the initial message.
+	it('attaches selection objects as initial-message metadata', async () => {
 		render(<AgentComposer agent={agent} />)
 		await userEvent.click(screen.getByRole('button', { name: 'Seed object' }))
 		await userEvent.type(screen.getByLabelText('Message Cass'), 'Look at this')
 		await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
-		await waitFor(() => expect(createSessionMock).toHaveBeenCalled())
-		const prompt = createSessionMock.mock.calls[0][0].action_prompt as string
-		expect(prompt).toContain('Look at this')
-		expect(prompt).toContain('Pricing bet')
+		await waitFor(() => expect(createConversationMock).toHaveBeenCalled())
+		const payload = createConversationMock.mock.calls[0][0]
+		expect(payload.initial_message).toBe('Look at this')
+		expect(payload.initial_message_metadata?.context_objects).toEqual([
+			{ id: 'obj-1', title: 'Pricing bet', type: 'bet' },
+		])
 	})
 
-	it('surfaces a failure inline instead of reporting a session that never started', async () => {
-		createSessionMock.mockRejectedValue(new Error('boom'))
+	it('surfaces a failure inline instead of reporting a chat that never started', async () => {
+		createConversationMock.mockRejectedValue(new Error('boom'))
 		render(<AgentComposer agent={agent} />)
 		await userEvent.type(screen.getByLabelText('Message Cass'), 'Try it')
 		await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
-		expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't start a session for Cass")
+		expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't start a chat with Cass")
 		expect(toastSuccess).not.toHaveBeenCalled()
+		expect(navigateMock).not.toHaveBeenCalled()
 	})
 })

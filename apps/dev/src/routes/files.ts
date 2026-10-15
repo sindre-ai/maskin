@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files } from '@maskin/db/schema'
+import { files } from '@maskin/db/schema'
 import {
 	createFileSchema,
 	fileDetailSchema,
@@ -13,23 +13,40 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		storageProvider: StorageProvider
+		/** Set by app-factory when the request carried a well-formed
+		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
+		 * file mutations to their originating session. */
+		maskinSessionId?: string
 	}
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUrl: string) {
+function buildResponse(
+	row: typeof files.$inferSelect,
+	bytes: Buffer,
+	frontendUrl: string,
+	warning?: string,
+) {
 	const encoding = isTextMimeType(row.mimeType) ? 'utf8' : 'base64'
 	return {
 		...serialize(row),
@@ -37,6 +54,7 @@ function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUr
 		encoding,
 		annotations: row.annotations ?? [],
 		url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
+		...(warning ? { warning } : {}),
 	}
 }
 
@@ -59,6 +77,7 @@ const listQuerySchema = z.object({
 const createFileRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Create a file',
 	request: {
@@ -86,6 +105,7 @@ app.openapi(createFileRoute, (async (c) => {
 	const storage = c.get('storageProvider')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	// Resolve the frontend URL up front. If FRONTEND_URL is missing in prod we
@@ -146,9 +166,11 @@ app.openapi(createFileRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
 	}
 
-	// Audit event — never include the file content (8KB NOTIFY cap).
+	// Audit event — never include the file content (8KB NOTIFY cap). Passes
+	// provenance context so the S2 writer hook can also upsert a
+	// `session → file` `produced_by` edge when the mutation came in via MCP.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -160,6 +182,7 @@ app.openapi(createFileRoute, (async (c) => {
 				mimeType: created.mimeType,
 				sizeBytes: created.sizeBytes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
 	} catch (err) {
 		logger.error('Failed to record file created audit event', {
@@ -169,7 +192,15 @@ app.openapi(createFileRoute, (async (c) => {
 		})
 	}
 
-	return c.json(buildResponse(created, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>, 201)
+	return c.json(
+		buildResponse(
+			created,
+			bytes,
+			frontendUrl,
+			htmlViewerWarning(created.mimeType, bytes.toString('utf8')),
+		) as z.infer<typeof fileDetailSchema>,
+		201,
+	)
 }) as RouteHandler<typeof createFileRoute, Env>)
 
 // -- GET / — List files -------------------------------------------------------
@@ -312,6 +343,7 @@ app.openapi(getFileRoute, (async (c) => {
 const updateFileRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Update file metadata or content',
 	request: {
@@ -350,7 +382,7 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	const [existing] = await db.select().from(files).where(eq(files.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 
@@ -410,7 +442,7 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: updated.workspaceId,
 			actorId,
 			action: 'updated',
@@ -422,6 +454,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				mimeType: updated.mimeType,
 				sizeBytes: updated.sizeBytes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
 	} catch (err) {
 		logger.error('Failed to record file updated audit event', {
@@ -445,7 +478,12 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	return c.json(
-		buildResponse(updated, responseBytes, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		buildResponse(
+			updated,
+			responseBytes,
+			frontendUrl,
+			newBytes ? htmlViewerWarning(updated.mimeType, newBytes.toString('utf8')) : undefined,
+		) as z.infer<typeof fileDetailSchema>,
 		200,
 	)
 }) as RouteHandler<typeof updateFileRoute, Env>)
@@ -455,6 +493,7 @@ app.openapi(updateFileRoute, (async (c) => {
 const deleteFileRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Delete a file',
 	request: { params: idParamSchema },
@@ -477,7 +516,7 @@ app.openapi(deleteFileRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(files).where(eq(files.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 
@@ -497,7 +536,7 @@ app.openapi(deleteFileRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
@@ -509,6 +548,7 @@ app.openapi(deleteFileRoute, (async (c) => {
 				mimeType: existing.mimeType,
 				sizeBytes: existing.sizeBytes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
 	} catch (err) {
 		logger.error('Failed to record file deleted audit event', {

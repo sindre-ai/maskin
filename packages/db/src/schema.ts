@@ -41,6 +41,15 @@ export const actors = pgTable('actors', {
 	// install-provisioned rows carry { installed_loop_id, source_item_id }
 	// so the T5 version-push cron can find them. See marketplaceLoops comment.
 	metadata: jsonb('metadata'),
+	// The workspace this human prefers to land in. Nullable: NULL means "no
+	// preference". Only ever set for the actor itself, and only to a workspace it
+	// is a member of (enforced in PATCH /api/actors/:id). A stale value (membership
+	// removed later) is harmless: readers match it against the actor's current
+	// memberships. SET NULL when the workspace itself is deleted.
+	// biome-ignore lint/suspicious/noExplicitAny: workspaces is declared below this table
+	defaultWorkspaceId: uuid('default_workspace_id').references((): any => workspaces.id, {
+		onDelete: 'set null',
+	}),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -91,6 +100,71 @@ export const workspaceMembers = pgTable(
 	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId] })],
 )
 
+// ── Workspace Invitations ──────────────────────────────────────────────────
+// Email-based invites into a workspace. The admin flow inserts a pending row
+// and dispatches an email carrying an opaque token; the invitee redeems the
+// token to attach (existing actor) or sign up + attach (new actor). Only the
+// SHA-256 of the token lives here — the raw string only ever appears in the
+// email URL and the accept-request path parameter. See bet
+// 6fe44b48-3939-4c29-80cf-533b4976601c for the shape.
+
+export const workspaceInvitations = pgTable(
+	'workspace_invitations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// Case-preserving on storage so the members list can render the email
+		// exactly as the admin typed it; case-insensitive uniqueness for the
+		// pending-per-workspace-per-email guard is enforced by the partial
+		// unique index on `lower(email)` below.
+		email: text('email').notNull(),
+		// 'member' | 'viewer'. Owner is deliberately excluded from the invite
+		// flow — ownership is transferred via POST /api/workspaces/:id/transfer-ownership.
+		role: text('role').notNull(),
+		// SHA-256 (hex) of the opaque token from the invite URL. Defense in
+		// depth against DB dumps and query-log leaks: a leaked hash cannot be
+		// redeemed. Never store the raw token.
+		tokenHash: text('token_hash').notNull(),
+		invitedByActorId: uuid('invited_by_actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'restrict' }),
+		// 'pending' | 'accepted' | 'revoked' | 'expired'
+		status: text('status').notNull().default('pending'),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+		acceptedByActorId: uuid('accepted_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		revokedByActorId: uuid('revoked_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		// Free-form audit context, e.g. { email_mismatch: true } when an
+		// invitee accepted from a signed-in actor whose email differs from
+		// the invite email.
+		metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Token lookup on POST /api/invites/:token/accept.
+		index('workspace_invitations_token_hash_idx').on(t.tokenHash),
+		// "Does this workspace already have a pending invite for ada@example.com?"
+		// Case-insensitive via a functional index on lower(email); scoped to
+		// pending so a revoked/expired row does not block a re-invite.
+		uniqueIndex('workspace_invitations_pending_ws_email_uniq')
+			.on(t.workspaceId, sql`lower(${t.email})`)
+			.where(sql`status = 'pending'`),
+		// Drives GET /api/invites?workspaceId=… (members-list pending row shape).
+		index('workspace_invitations_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+
+export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect
+export type NewWorkspaceInvitation = typeof workspaceInvitations.$inferInsert
+
 // ── Objects ─────────────────────────────────────────────────────────────────
 
 export const objects = pgTable(
@@ -118,6 +192,17 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Serves list_objects sort=updatedAt, which orders and seeks on the UTC
+		// millisecond-truncated value. Built CONCURRENTLY in migration 0088.
+		index('objects_ws_updated_at_ms_idx').on(
+			t.workspaceId,
+			sql`date_trunc('milliseconds', ${t.updatedAt} AT TIME ZONE 'UTC')`,
+		),
+		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
+		// in migration 0083.
+		index('objects_active_session_idx')
+			.on(t.activeSessionId)
+			.where(sql`${t.activeSessionId} IS NOT NULL`),
 	],
 )
 
@@ -132,6 +217,12 @@ export const relationships = pgTable(
 		targetType: text('target_type').notNull(),
 		targetId: uuid('target_id').notNull(),
 		type: text('type').notNull(),
+		// S2 · edge-level context the writer hook persists at CREATE time.
+		// Currently the spawning `messageId` on a `conversation → session`
+		// `spawned` edge (surfaces the deep-link into a chat at the exact
+		// message). Nullable and jsonb so future edge types can add their own
+		// shape without another migration. Added in migration 0074.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -139,9 +230,14 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// S2 · widened to admit `conversation` and `session` endpoint kinds so
+		// the writer hook can persist automatic provenance edges
+		// (conversation→session `spawned`, session→object|file `produced_by`).
+		// Applied live via migration 0074; hook itself gated on
+		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
 		check(
 			'relationships_source_target_type_kind',
-			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
 		),
 	],
 )
@@ -167,6 +263,10 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
+		index('events_ws_entity_commented_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} = 'commented'`),
 	],
 )
 
@@ -345,16 +445,80 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// The session whose create_session / @mention call started this
+		// one: the sender a finished helper reports back to. Only ever set after the
+		// claimed session was checked to belong to the authenticated caller. NULL =
+		// no known sender. NOT source_session_id, which means "restore that session's
+		// workspace snapshot". No FK on purpose: the pointer must survive a purge of
+		// the sender's row. Index in migration 0090.
+		spawnedBySessionId: uuid('spawned_by_session_id'),
+		// One-shot claim taken by services/helper-return.ts before it posts the
+		// outcome. NULL = not returned yet. Migration 0089.
+		helperReturnedAt: timestamp('helper_returned_at', { withTimezone: true }),
+		// Handed-off strip anchors: the assistant message that triggered this
+		// sub-agent spawn, and the sessions this one is blocked behind. Both
+		// nullable — pre-migration rows read NULL ("no strip"). Written from the
+		// create_session path when the caller supplies a message id / blockers.
+		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
+		// message must not delete the session, it just stops rendering a strip.
+		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'set null' },
+		),
+		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
 		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
-		inputTokens: integer('input_tokens'),
-		outputTokens: integer('output_tokens'),
-		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
-		cacheReadInputTokens: integer('cache_read_input_tokens'),
-		durationMs: integer('duration_ms'),
+		// OpenRouter model id that actually ran this session (e.g.
+		// `deepseek/deepseek-v4-flash`). Stamped at spawn on the maskin_plan
+		// route from `MASKIN_FALLBACK_MODEL`; null on every other route so
+		// `claude_oauth` and BYO paths keep pricing off Claude Code's own
+		// `total_cost_usd`. Load-bearing for the follow-on local cost resolver,
+		// which prices maskin_plan sessions from OpenRouter's pricing table
+		// keyed on this value.
+		modelName: text('model_name'),
+		// The object this session was started for — a bet, task, insight, or
+		// any first-class object. Threaded onto the `session_failed` event's
+		// `data.initiated_from` block so a failure card can link back to what
+		// the session was doing, and onto the PostHog `runtime_session_ended`
+		// event as `context_object_id` so Criterion 3 of the parent bet is
+		// measurable. The id column is nullable; NULL means
+		// "no originating object known" (direct API create, onboarding,
+		// notification response, cron trigger). FK uses ON DELETE SET NULL so
+		// deleting the object nulls the linkage rather than blocking the row.
+		// Partial index (WHERE NOT NULL) lives in migration 0078.
+		initiatedFromObjectId: uuid('initiated_from_object_id').references(
+			(): AnyPgColumn => objects.id,
+			{ onDelete: 'set null' },
+		),
+		// Deprecated: no longer written or read (the object's type is looked up
+		// from initiated_from_object_id). Kept so the column and this schema stay
+		// in step until a follow-up migration drops it.
+		initiatedFromObjectType: text('initiated_from_object_type'),
+		// bigint (mode 'number'): cumulative counters outgrow int4 on long-lived
+		// sessions (cache reads reached 2.1B). Drizzle maps them back to JS
+		// numbers, exact below 2^53. Widened in migration 0082.
+		inputTokens: bigint('input_tokens', { mode: 'number' }),
+		outputTokens: bigint('output_tokens', { mode: 'number' }),
+		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
+		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
+		durationMs: bigint('duration_ms', { mode: 'number' }),
 		currentActivity: text('current_activity'),
+		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
+		// `status` text because reaper + retry-scheduler need to tell
+		// waiting-on-machine apart from a genuine stall. Landed in migration
+		// 0076; readers/writers land in Commits 5, 6, 7.
+		sessionState: text('session_state')
+			.notNull()
+			.default('queued')
+			.$type<'queued' | 'waiting_for_machine' | 'starting' | 'running' | 'done'>(),
+		stateEnteredAt: timestamp('state_entered_at', { withTimezone: true }).notNull().defaultNow(),
+		retryAt: timestamp('retry_at', { withTimezone: true }),
+		retriedSessionId: uuid('retried_session_id').references((): AnyPgColumn => sessions.id),
+		retryOf: uuid('retry_of').references((): AnyPgColumn => sessions.id),
+		attemptNumber: integer('attempt_number').notNull().default(1),
+		driverHeartbeatAt: timestamp('driver_heartbeat_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -362,11 +526,30 @@ export const sessions = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
+		check(
+			'sessions_session_state_check',
+			sql`${t.sessionState} IN ('queued','waiting_for_machine','starting','running','done')`,
+		),
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
 		// Range-scan path for list_sessions(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// "Does this agent have another live session?" on every completion. Built
+		// CONCURRENTLY in migration 0087.
+		index('sessions_actor_status_idx').on(t.actorId, t.status),
+		// Helper → sender lookups. Built CONCURRENTLY in migration 0090.
+		index('sessions_spawned_by_session_id_idx')
+			.on(t.spawnedBySessionId)
+			.where(sql`${t.spawnedBySessionId} IS NOT NULL`),
+		// Reconciler self-heal window scan over a session's settled time. Built
+		// CONCURRENTLY in migration 0086.
+		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),
+		// Period usage sum behind GET /api/billing/usage; maskin_plan sessions only.
+		// Built CONCURRENTLY in migration 0085.
+		index('sessions_ws_plan_usage_idx')
+			.on(t.workspaceId, t.createdAt)
+			.where(sql`${t.config}->>'llm_route' = 'maskin_plan'`),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
@@ -394,6 +577,16 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// Reaper's live-session scan (Commit 6): only the states the reaper
+		// cares about, so the index carries a tiny slice of the table.
+		index('sessions_session_state_state_entered_at_idx')
+			.on(t.sessionState, t.stateEnteredAt)
+			.where(sql`${t.sessionState} IN ('starting','running','waiting_for_machine')`),
+		// Retry-scheduler's 30s tick (Commit 7): excludes rows already retried,
+		// so each retry_at is picked at most once.
+		index('sessions_retry_at_idx')
+			.on(t.retryAt)
+			.where(sql`${t.retryAt} IS NOT NULL AND ${t.retriedSessionId} IS NULL`),
 	],
 )
 
@@ -683,6 +876,9 @@ export const imports = pgTable(
 		processedRows: integer('processed_rows').notNull().default(0),
 		successCount: integer('success_count').notNull().default(0),
 		errorCount: integer('error_count').notNull().default(0),
+		// Rows that matched an existing object via the mapping's `matchOn` key
+		skippedCount: integer('skipped_count').notNull().default(0),
+		updatedCount: integer('updated_count').notNull().default(0),
 		mapping: jsonb('mapping'),
 		preview: jsonb('preview'),
 		errors: jsonb('errors'),
@@ -1443,7 +1639,116 @@ export const orphanThreadDetections = pgTable(
 )
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+
+// ── VAT / awaiting_vies ─────────────────────────────────────────────────────
+//
+// Rows written by the Stripe webhook (Task 2) when a Checkout Session
+// completes with a `tax_id.verification.status='pending'` — fulfilment is
+// HELD until Stripe fires `customer.tax_id.updated(verified)` and the row is
+// deleted, at which point credits/subscription land. Row lifecycle:
+//   • verified   → delete + fulfil
+//   • unverified → delete + refund (+ cancel subscription)
+//   • 24h timeout → delete + refund (+ cancel subscription)
+//
+// Architect fold-in: intentionally NO `status` column. Row existence IS the
+// held state and deletion IS the resolved state — adding a status column
+// would double-track a state already carried by row lifecycle and introduce
+// a "resolved but not deleted" failure mode.
+//
+// Researcher fold-in: `reminder_sent_at` is NOT a status column. It's a
+// one-way idempotency marker for the T+2h "still verifying" reminder email
+// (Task 3's sweep) that fires WHILE the row is still open. A row can be
+// reminder_sent_at IS NOT NULL and still open. Row deletion still means
+// resolved. Nullable rather than DEFAULT — the marker is genuinely absent
+// on a fresh row.
+export const awaitingVies = pgTable(
+	'awaiting_vies',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		// Stripe Checkout Session id — natural idempotency key for webhook
+		// replays of the same session.completed event.
+		sessionId: text('session_id').notNull().unique(),
+		// Stripe Customer id — Task 2 looks up rows by this on the tax_id.*
+		// event chain.
+		customerId: text('customer_id').notNull(),
+		// 'topup' | 'subscription' — controls the void path shape (refund on
+		// topup vs cancel-subscription + refund-first-invoice on subscription).
+		kind: text('kind').notNull(),
+		paymentIntentId: text('payment_intent_id'),
+		subscriptionId: text('subscription_id'),
+		currency: text('currency').notNull(),
+		amountTotal: integer('amount_total').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		reminderSentAt: timestamp('reminder_sent_at', { withTimezone: true }),
+		// FK to workspaces so a workspace deletion doesn't leave orphaned held
+		// rows behind — mirrors workspaceCreditLedger's shape.
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+	},
+	(t) => [
+		check('awaiting_vies_kind_check', sql`${t.kind} IN ('topup','subscription')`),
+		index('awaiting_vies_customer_idx').on(t.customerId),
+		index('awaiting_vies_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type AwaitingViesRow = typeof awaitingVies.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── File Comments ───────────────────────────────────────────────────────────
+// Threaded review comments pinned to positions on a file's rendered document.
+// Replaces the viewport-fraction `files.annotations` blob so pins can (a)
+// round-trip across resize / zoom and (b) group into batched review "rounds"
+// that write ONE rollup timeline event on the attaching object (see
+// routes/file-comments.ts) instead of one event per pin. Legacy pins on the
+// old blob are ported into rows on first read (see
+// lib/file-comments-migration.ts) with `selector='legacy'` as the idempotence
+// marker.
+
+export const fileComments = pgTable(
+	'file_comments',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fileId: uuid('file_id')
+			.notNull()
+			.references(() => files.id, { onDelete: 'cascade' }),
+		// Null when the file isn't paged (a single-page mockup / doc). Set to the
+		// 1-based page/slide index the pin was dropped on for a deck.
+		page: integer('page'),
+		// { x, y } floats in [0, 1] of the natural document dimensions — NOT
+		// viewport fractions. See spec §Coord math.
+		positionDoc: jsonb('position_doc').notNull().$type<{ x: number; y: number }>(),
+		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
+		// pin still round-trips. `'legacy'` is reserved as the migration marker.
+		selector: text('selector'),
+		authorId: uuid('author_id')
+			.notNull()
+			.references(() => actors.id),
+		body: text('body').notNull(),
+		// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
+		parentId: uuid('parent_id').references((): any => fileComments.id, { onDelete: 'cascade' }),
+		// Set on send; null while the comment is a draft. Every comment in a
+		// single sent round shares one uuid so the round endpoint's upsert makes
+		// retries idempotent.
+		roundId: uuid('round_id'),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Panel reads: "all comments on this file", ordered by page then time.
+		index('file_comments_file_page_created_at_idx').on(t.fileId, t.page, t.createdAt),
+		// Round-scoped re-hydration (?round=<id> deep-links from the rollup event).
+		index('file_comments_round_id_idx')
+			.on(t.roundId)
+			.where(sql`${t.roundId} IS NOT NULL`),
+	],
+)
+
+export type FileComment = typeof fileComments.$inferSelect
+export type NewFileComment = typeof fileComments.$inferInsert
 
 // ── Google Meet — create_space idempotency ─────────────────────────────────
 // Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
@@ -1484,3 +1789,136 @@ export const googleMeetSpaceIdempotency = pgTable(
 
 export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
 export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert
+
+// ── Trigger cooldowns (S1 of the trigger-engine fix bet) ────────────────────
+//
+// Persisted mirror of trigger-runner.ts's in-memory `triggerFailures` Map
+// (per-trigger exponential backoff) and `workspaceSuppressions` Map
+// (workspace-wide pause). Both existed only in memory before this migration,
+// so every server restart wiped them and freed cooling triggers to fire the
+// moment we deployed — bet #7 of the trigger-engine fix bet.
+//
+// Write path is unconditional (persist FIRST, then update the in-memory
+// cache) so rollback is safe. Read path (loadCooldowns / loadSuppressions at
+// boot) is gated per tech spec §7.1 so a workspace can opt out of the v2
+// deploy-safety net if it wants to.
+
+export const triggerCooldowns = pgTable(
+	'trigger_cooldowns',
+	{
+		triggerId: uuid('trigger_id')
+			.primaryKey()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		count: integer('count').notNull().default(0),
+		lastFailedAt: timestamp('last_failed_at', { withTimezone: true }).notNull(),
+		backoffUntil: timestamp('backoff_until', { withTimezone: true }).notNull(),
+		reason: text('reason'),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('trigger_cooldowns_backoff_until_idx').on(t.backoffUntil)],
+)
+
+export type TriggerCooldown = typeof triggerCooldowns.$inferSelect
+export type NewTriggerCooldown = typeof triggerCooldowns.$inferInsert
+
+export const workspaceSuppressions = pgTable(
+	'workspace_suppressions',
+	{
+		workspaceId: uuid('workspace_id')
+			.primaryKey()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		suppressedUntil: timestamp('suppressed_until', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		metadata: jsonb('metadata'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_suppressions_until_idx').on(t.suppressedUntil)],
+)
+
+export type WorkspaceSuppressionRow = typeof workspaceSuppressions.$inferSelect
+export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInsert
+
+// ── Trigger dispatches (S2 of the trigger-engine fix bet) ───────────────────
+//
+// Idempotency guard for the dispatch path. Every trigger fire INSERTs the
+// (trigger_id, event_id) pair with ON CONFLICT DO NOTHING before calling
+// sessionManager.createSession(). If two trigger-runner instances (blue+green
+// during a rolling deploy, or a future horizontal scale-out) race on the
+// same event, exactly one INSERT claims — the loser's returning() is empty
+// and the dispatch is skipped.
+//
+// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
+// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
+// double-fire window the table exists to prevent. The v1 code path simply
+// never writes to this table, so having it live pre-flag is safe.
+//
+// session_id is diagnostic only. If the UPDATE that stamps it after
+// createSession() fails, the row still guards against double-fire — its
+// presence is the guarantee.
+
+export const triggerDispatches = pgTable(
+	'trigger_dispatches',
+	{
+		triggerId: uuid('trigger_id')
+			.notNull()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		dispatchedAt: timestamp('dispatched_at', { withTimezone: true }).notNull().defaultNow(),
+		sessionId: uuid('session_id'),
+	},
+	(t) => [
+		primaryKey({ columns: [t.triggerId, t.eventId] }),
+		index('trigger_dispatches_dispatched_at_idx').on(t.dispatchedAt),
+	],
+)
+
+export type TriggerDispatch = typeof triggerDispatches.$inferSelect
+export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
+
+// ── Trigger event queue (S3 of the trigger-engine fix bet) ──────────────────
+//
+// Hold-and-replay store for events that used to be dropped: an event whose
+// trigger is in a backoff window, or whose workspace is suppressed, lands here
+// instead of vanishing, and replays when the window lifts (tech spec §4).
+//
+// trigger_id is nullable on purpose: a workspace-suppression drop is one row
+// per (workspace, event) at drop time and fans out to per-trigger dispatches
+// when the drain re-runs the matcher. event_snapshot carries the PgEvent so a
+// replay does not depend on anything else. replayed_at is set on drain; all
+// three indexes are partial on replayed_at IS NULL so they only ever cover
+// the pending backlog.
+//
+// The table ships unconditional (additive, nothing reads it with the flag
+// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+
+export const triggerEventQueue = pgTable(
+	'trigger_event_queue',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		eventSnapshot: jsonb('event_snapshot').notNull(),
+		enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
+		replayAfter: timestamp('replay_after', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		replayedAt: timestamp('replayed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('queue_pending_by_replay_after_idx')
+			.on(t.replayAfter)
+			.where(sql`${t.replayedAt} IS NULL`),
+		index('queue_pending_by_trigger_idx')
+			.on(t.triggerId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL AND ${t.triggerId} IS NOT NULL`),
+		index('queue_pending_by_workspace_idx')
+			.on(t.workspaceId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL`),
+	],
+)
+
+export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
+export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert

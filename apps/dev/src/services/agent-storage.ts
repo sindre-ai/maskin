@@ -7,7 +7,6 @@ import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { trackWorkspaceSkillLoaded } from '../lib/analytics/workspace-skill-events'
 import { logger } from '../lib/logger'
-import { appendToLedger } from './workspace-briefing'
 
 export const AGENT_STORAGE_PREFIX = 'agents'
 export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
@@ -38,6 +37,22 @@ export type PullWorkspaceSkillsResult = {
 	pulled: number
 	skipped: number
 	failures: { name: string; storageKey: string; error: string }[]
+}
+
+/**
+ * One entry of the dispatch-payload skill manifest — everything the agent-
+ * server host-side stager needs to reconstruct `<sessionDir>/skills/<name>/`
+ * without a DB. Bytes are NOT included; agent-server fetches each `storageKey`
+ * from S3 directly (`session-workspace.stageSessionSkills`).
+ *
+ * Folder skills expand into multiple `files` entries; single-file skills
+ * carry exactly one entry with `relativePath: 'SKILL.md'`. The manifest
+ * shape lets agent-server treat the two cases uniformly — no listing,
+ * no prefix-derivation, no per-provider quirks.
+ */
+export type WorkspaceSkillManifestEntry = {
+	name: string
+	files: { relativePath: string; storageKey: string }[]
 }
 
 export class AgentStorageManager {
@@ -100,16 +115,13 @@ export class AgentStorageManager {
 
 	/**
 	 * Push new/changed files back to S3 after a session completes.
-	 * Pushes the per-session learning file, any memory updates, and appends a
-	 * one-line entry to the workspace-scoped learnings ledger so future sessions
-	 * in this workspace can see what was tried.
+	 * Pushes the per-session learning file and any memory updates.
 	 */
 	async pushAgentFiles(
 		actorId: string,
 		workspaceId: string,
 		sessionId: string,
 		localDir: string,
-		opts?: { actionPrompt?: string },
 	): Promise<void> {
 		let pushed = 0
 
@@ -194,60 +206,7 @@ export class AgentStorageManager {
 			}
 		}
 
-		await this.appendWorkspaceLedger(workspaceId, sessionId, localDir, opts?.actionPrompt)
-
 		logger.info(`Pushed ${pushed} files to storage`, { actorId, workspaceId, sessionId })
-	}
-
-	/**
-	 * Append a one-line summary of this session to the workspace ledger so every
-	 * future session's briefing can surface what was tried across the whole
-	 * workspace. Prefers SESSION_LEARNING.md first line, falls back to the
-	 * action prompt. Silent on failure — ledger is best-effort.
-	 */
-	private async appendWorkspaceLedger(
-		workspaceId: string,
-		sessionId: string,
-		localDir: string,
-		actionPromptFallback?: string,
-	): Promise<void> {
-		let summary = ''
-		try {
-			const buf = await readFile(join(localDir, 'workspace', 'SESSION_LEARNING.md'))
-			const firstLine = buf
-				.toString('utf-8')
-				.split('\n')
-				.find((l) => l.trim().length > 0)
-			if (firstLine) summary = firstLine.trim()
-		} catch (err) {
-			if (!isFileNotFound(err)) {
-				logger.warn('Failed to read SESSION_LEARNING.md for ledger', {
-					workspaceId,
-					sessionId,
-					error: String(err),
-				})
-			}
-		}
-
-		if (!summary && actionPromptFallback) {
-			summary = actionPromptFallback.trim().split('\n')[0] ?? ''
-		}
-		if (!summary) summary = '(no learning recorded)'
-
-		const maxSummary = 200
-		if (summary.length > maxSummary) summary = `${summary.slice(0, maxSummary - 1)}…`
-
-		const timestamp = new Date().toISOString()
-		const line = `${timestamp} · session ${sessionId.slice(0, 8)} · ${summary}`
-		try {
-			await appendToLedger(this.storage, workspaceId, line)
-		} catch (err) {
-			logger.warn('Failed to append to workspace ledger', {
-				workspaceId,
-				sessionId,
-				error: String(err),
-			})
-		}
 	}
 
 	/**
@@ -325,6 +284,41 @@ export class AgentStorageManager {
 					eq(agentFiles.path, relativePath),
 				),
 			)
+	}
+
+	/**
+	 * Remove every S3 object stored for one agent (skills, learnings, memory).
+	 * The prefix ends in a slash so it can only match this workspace and this
+	 * actor id, never another actor whose id merely starts the same way.
+	 * Throws if the listing or any single delete fails, after trying every key,
+	 * so the caller never reports a delete as complete when objects remain.
+	 */
+	async deleteAllAgentFiles(actorId: string, workspaceId: string): Promise<void> {
+		const prefix = `agents/${workspaceId}/${actorId}/`
+		const keys = await this.storage.list(prefix)
+
+		const failures: { key: string; error: string }[] = []
+		for (const key of keys) {
+			try {
+				await this.storage.delete(key)
+			} catch (err) {
+				logger.error('Failed to delete agent file from storage', {
+					actorId,
+					workspaceId,
+					key,
+					error: String(err),
+				})
+				failures.push({ key, error: String(err) })
+			}
+		}
+
+		if (failures.length > 0) {
+			throw new Error(
+				`Failed to delete ${failures.length}/${keys.length} agent files for ${actorId}: ${failures
+					.map((f) => `${f.key}: ${f.error}`)
+					.join('; ')}`,
+			)
+		}
 	}
 
 	async putWorkspaceSkill(
@@ -566,6 +560,73 @@ export class AgentStorageManager {
 		})
 
 		return { pulled, skipped, failures }
+	}
+
+	/**
+	 * Resolve every workspace skill attached to `actorId` in `workspaceId` into
+	 * the payload manifest agent-server needs to stage `<sessionDir>/skills/`
+	 * host-side. Reads the exact same `agentSkills × workspaceSkills` join
+	 * `pullWorkspaceSkillsForAgent` reads — same `isValid=true` filter, same
+	 * per-workspace scoping — so a session dispatched to a remote agent-server
+	 * receives byte-for-byte the same skill set the dev-fallback path would
+	 * have staged locally, without duplicating the join predicate.
+	 *
+	 * For folder skills, expands to the full per-file listing via `listWorkspaceSkillFiles`.
+	 * For single-file skills, emits one `SKILL.md` entry keyed on `workspaceSkillKey`.
+	 *
+	 * Returns an empty array (never throws) when the agent has no attached skills —
+	 * an agent-server that receives an empty manifest simply skips staging.
+	 */
+	async resolveWorkspaceSkillManifest(
+		actorId: string,
+		workspaceId: string,
+	): Promise<WorkspaceSkillManifestEntry[]> {
+		const rows = await this.db
+			.select({
+				id: workspaceSkills.id,
+				name: workspaceSkills.name,
+				storageKey: workspaceSkills.storageKey,
+				isFolder: workspaceSkills.isFolder,
+			})
+			.from(agentSkills)
+			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
+			.where(
+				and(
+					eq(agentSkills.actorId, actorId),
+					eq(workspaceSkills.workspaceId, workspaceId),
+					eq(workspaceSkills.isValid, true),
+				),
+			)
+
+		if (rows.length === 0) return []
+
+		const manifest: WorkspaceSkillManifestEntry[] = []
+		for (const { id: skillId, name, storageKey, isFolder } of rows) {
+			if (isFolder) {
+				const entries = await this.listWorkspaceSkillFiles(workspaceId, skillId)
+				// A folder skill with zero files is a partial-write artefact — the
+				// same case `fetchFolderSkillFiles` treats as a per-skill failure.
+				// Skip it here so agent-server doesn't stage an empty `<name>/` dir
+				// that would masquerade as a working skill. Log so the operator
+				// can still see the anomaly rather than losing it entirely.
+				if (entries.length === 0) {
+					logger.warn('Folder skill has no files — omitting from dispatch manifest', {
+						actorId,
+						workspaceId,
+						skillId,
+						name,
+					})
+					continue
+				}
+				manifest.push({
+					name,
+					files: entries.map(({ relativePath, key }) => ({ relativePath, storageKey: key })),
+				})
+			} else {
+				manifest.push({ name, files: [{ relativePath: 'SKILL.md', storageKey }] })
+			}
+		}
+		return manifest
 	}
 
 	// Fetch every entry of a folder skill into memory (bundles are capped at

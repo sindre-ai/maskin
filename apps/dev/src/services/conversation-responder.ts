@@ -6,12 +6,14 @@ import {
 	messages,
 	workspaces,
 } from '@maskin/db/schema'
+import { HUMAN_MESSAGE_STYLE_SHORT } from '@maskin/shared'
 import { and, count, desc, eq, isNull, lte, ne, sql } from 'drizzle-orm'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -50,6 +52,10 @@ const RESPOND_DECISION_TOOL: LLMTool = {
  * first-ever reply and recovery after the previous session died (timeout,
  * crash, manual stop). Never throws; every failure mode degrades to "stay
  * silent" so a broken relevance check can't spam a conversation.
+ *
+ * Returns 'agent_cap' when the turn is dropped because the conversation already
+ * ends in 5 agent messages in a row, so a caller that cannot afford a silent
+ * drop can record it. Every other path returns nothing.
  */
 export async function evaluateAndRespond(ctx: {
 	db: Database
@@ -77,7 +83,7 @@ export async function evaluateAndRespond(ctx: {
 		 */
 		targetAgentId?: string
 	}
-}): Promise<void> {
+}): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
 
 	const [message] = await db
@@ -93,7 +99,7 @@ export async function evaluateAndRespond(ctx: {
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(eq(messages.id, messageId))
 		.limit(1)
-	if (!message) return
+	if (!message) return undefined
 
 	const candidates = await db
 		.select({
@@ -117,7 +123,7 @@ export async function evaluateAndRespond(ctx: {
 					: undefined,
 			),
 		)
-	if (candidates.length === 0) return
+	if (candidates.length === 0) return undefined
 
 	// A conversation with exactly two active participants total (the author
 	// + this one agent) is a direct 1:1 — the user has nobody else to expect
@@ -166,7 +172,7 @@ export async function evaluateAndRespond(ctx: {
 			conversationId,
 			consecutiveAgents,
 		})
-		return
+		return 'agent_cap'
 	}
 
 	const metadata = message.metadata as {
@@ -227,7 +233,7 @@ export async function evaluateAndRespond(ctx: {
 							newMessageContent: messageForPrompt.content,
 							isDirectConversation,
 						})
-			if (!shouldRespond) return
+			if (!shouldRespond) return undefined
 
 			const turnPayload = {
 				type: 'user' as const,
@@ -236,6 +242,7 @@ export async function evaluateAndRespond(ctx: {
 					content: buildConversationTurnPrompt({
 						authorName: message.authorName,
 						authorType: message.authorType,
+						authorActorId: message.actorId,
 						newMessageContent: messageForPrompt.content,
 						isDirectConversation,
 						wasMentioned,
@@ -267,12 +274,12 @@ export async function evaluateAndRespond(ctx: {
 					agent.id,
 				)
 				if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
-				return
+				return undefined
 			}
 			if (existing) {
 				try {
 					await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
-					return
+					return undefined
 				} catch (err) {
 					logger.warn(
 						'writeInput to existing interactive conversation session failed — spawning a fresh one',
@@ -310,6 +317,7 @@ export async function evaluateAndRespond(ctx: {
 			})
 		}),
 	)
+	return undefined
 }
 
 /**
@@ -349,8 +357,10 @@ async function spawnOrJoinConversationSession(params: {
 	} = params
 
 	try {
-		await sessionManager.createSession(workspaceId, {
+		await startSession({
+			workspaceId,
 			actorId: agentId,
+			callerKind: 'chat',
 			actionPrompt: buildConversationReplyPrompt({
 				conversationId,
 				conversationHistory,
@@ -365,6 +375,11 @@ async function spawnOrJoinConversationSession(params: {
 				conversation: { conversation_id: conversationId, message_id: messageId },
 			},
 			createdBy: message.actorId,
+			// Chat-only spawn: the conversation_id column on the session row
+			// already carries the linkage a UI needs. Explicit null/null per spec
+			// §3.3 (conversation responder branch).
+			initiatedFromObjectId: null,
+			await: 'first-response',
 		})
 		// The seed prompt above inlines recent history up to and including this
 		// message — any turn still buffered for this pair from a previous, dead
@@ -406,6 +421,7 @@ async function spawnOrJoinConversationSession(params: {
 			content: buildConversationTurnPrompt({
 				authorName: message.authorName,
 				authorType: message.authorType,
+				authorActorId: message.actorId,
 				newMessageContent: message.content,
 				isDirectConversation,
 				wasMentioned,
@@ -533,7 +549,7 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 	return false
 }
 
-async function checkRelevance(params: {
+export async function checkRelevance(params: {
 	agent: {
 		id: string
 		name: string
@@ -585,6 +601,7 @@ async function checkRelevance(params: {
 		const adapter = createLLMAdapter(credentials.provider, {
 			api_key: credentials.apiKey,
 			base_url: credentials.baseUrl,
+			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
 		})
 		const transcript = formatConversationTranscript(conversationHistory)
 		const response = await adapter.chat({
@@ -711,7 +728,7 @@ function buildConversationReplyPrompt(ctx: {
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
 		'',
-		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${describeReplyExpectation(ctx)}`,
+		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${HUMAN_MESSAGE_STYLE_SHORT} ${describeReplyExpectation(ctx)}`,
 		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
@@ -753,18 +770,24 @@ function describeReplyExpectation(ctx: {
  * reply reads as indistinguishable from the human's, and the model infers
  * "someone already answered" from mere proximity in the transcript — even
  * when that peer's message is itself a question waiting on the human.
+ *
+ * Carries the sender's stable actor ID alongside their display name so the
+ * receiving agent can attribute the message reliably — names collide, change,
+ * and don't distinguish a human from an agent. The fresh-session seed prompt
+ * (buildConversationReplyPrompt) already does this.
  */
 function buildConversationTurnPrompt(ctx: {
 	authorName: string
 	authorType: string
+	authorActorId: string
 	newMessageContent: string
 	isDirectConversation: boolean
 	wasMentioned: boolean
 }): string {
 	const speaker =
 		ctx.authorType === 'agent'
-			? `${ctx.authorName} (fellow agent, not the user — their reply doesn't mean the user's message has been handled)`
-			: ctx.authorName
+			? `${ctx.authorName} (fellow agent, not the user — their reply doesn't mean the user's message has been handled; actor ID: ${ctx.authorActorId})`
+			: `${ctx.authorName} (actor ID: ${ctx.authorActorId})`
 	const reminder = ctx.isDirectConversation
 		? " (it's just the two of you here — they're expecting a reply)"
 		: ctx.wasMentioned

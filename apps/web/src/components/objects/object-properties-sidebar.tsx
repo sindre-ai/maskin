@@ -48,8 +48,13 @@ export function ObjectPropertiesSidebar({
 	const { data: actors } = useActors(workspaceId)
 	const creatorName = actors?.find((a) => a.id === object.createdBy)?.name
 	const { data: pendingAsks } = useNotifications(workspaceId, { type: 'needs_input' })
+	const currentActorId = getStoredActor()?.id
+	// "Needs you" is a personalised signal, so only asks explicitly targeting
+	// the reader count — an ask addressed to an agent (e.g. an @mention pulling
+	// another agent into the loop) is still pending in the workspace but has
+	// nothing for the human to do on this object.
 	const needsYou = (pendingAsks ?? []).some(
-		(n) => n.objectId === object.id && n.status === 'pending',
+		(n) => n.objectId === object.id && n.status === 'pending' && n.targetActorId === currentActorId,
 	)
 
 	return (

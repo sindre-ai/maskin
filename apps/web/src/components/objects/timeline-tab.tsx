@@ -18,13 +18,14 @@ import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
-import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
+import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
-import { ArrowDown, ChevronDown } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ArrowDown, ChevronDown, File as FileIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -58,13 +59,25 @@ type TimelineEntry =
 			text: string
 			chipLabel: string
 			chipTone: ChipTone
+			/** The raw event action (`updated`, `created`, a `session_*`, `link`).
+			 *  Identifies "same event type" for the same-actor fold. */
+			eventType: string
 			isStatusChange: boolean
 			/** Edge rows read `<when> <verb> <object chip>` with a square node —
 			 *  the mockup's `tl.isRel` (1258–1272), not a sentence. */
 			isRelationship: boolean
 			newStatus: string | null
 			prevStatus: string | null
-			reference?: { verb: string; objectId: string; object?: ObjectResponse }
+			reference?: {
+				verb: string
+				objectId: string
+				object?: ObjectResponse
+				/** A file endpoint from the graph. Rendered as a file chip that
+				 *  links to the file viewer, matching the right-sidebar reading —
+				 *  files aren't objects, so ObjectReference (which useObjects the id)
+				 *  would 404 the file and render as "deleted object". */
+				file?: GraphFileSummary
+			}
 	  }
 
 /** `JUN 8 → 2H` — the span a fold covers, read off its first and last row. */
@@ -88,14 +101,33 @@ interface TimelineFold {
 
 type StreamRow = TimelineEntry | TimelineFold
 
-/** A run of this many consecutive low-signal rows collapses behind one pill. */
-const FOLD_MIN_RUN = 3
+/** A same-actor + same-event-type run this long collapses behind one pill. */
+const FOLD_MIN_RUN = 2
+
+/**
+ * Two event rows that read as the same actor doing the same thing. Repetition
+ * this tight — "Chief of Staff updated loop" back-to-back — is what the fold
+ * targets, and also what defines a run's boundary: a row that breaks this
+ * predicate ends the current run and starts a fresh one.
+ */
+function isSameActorSameType(a: TimelineEntry, b: TimelineEntry): boolean {
+	return (
+		a.kind === 'event' &&
+		b.kind === 'event' &&
+		a.actorId !== null &&
+		a.actorId === b.actorId &&
+		a.eventType === b.eventType
+	)
+}
 
 /**
  * Collapse consecutive runs of routine machine chatter — plain updates, session
  * rows, link rows — into a single fold. Comments and status changes are the
  * spine of the story and are never folded, so the unread divider's target and
- * every phase boundary stay reachable.
+ * every phase boundary stay reachable. A run is one same-actor + same-event-type
+ * stretch and folds at two rows; a row that changes actor or action ends the
+ * run, so the loop's `created` event never folds into a stretch of `updated`
+ * rows by the same actor.
  */
 function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 	const out: StreamRow[] = []
@@ -110,8 +142,11 @@ function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 		run = []
 	}
 	for (const entry of entries) {
-		if (entry.kind === 'event' && !entry.isStatusChange) run.push(entry)
-		else {
+		if (entry.kind === 'event' && !entry.isStatusChange) {
+			const head = run[0]
+			if (head && !isSameActorSameType(head, entry)) flush()
+			run.push(entry)
+		} else {
 			flush()
 			out.push(entry)
 		}
@@ -253,9 +288,15 @@ const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 export function TimelineTab({
 	object,
 	loopsV4PolishUnread,
+	additionalEvents,
 }: {
 	object: ObjectResponse
 	loopsV4PolishUnread?: LoopsV4PolishUnreadOptions
+	/** Extra events to merge into the stream — used by the loop detail page to
+	 * fold in agent-work events (session lifecycle, trigger fires) that don't
+	 * carry `entityId = object.id` and so aren't returned by the object graph.
+	 * Deduped against the graph events by event id. */
+	additionalEvents?: EventResponse[]
 }) {
 	const { workspaceId } = useWorkspace()
 	const {
@@ -264,7 +305,13 @@ export function TimelineTab({
 		isError: isGraphError,
 		error: graphError,
 	} = useObjectGraph(workspaceId, object.id)
-	const events = graph?.events
+	const events = useMemo(() => {
+		const base = graph?.events ?? []
+		if (!additionalEvents || additionalEvents.length === 0) return base
+		const seen = new Set(base.map((e) => e.id))
+		const extra = additionalEvents.filter((e) => !seen.has(e.id))
+		return extra.length === 0 ? base : [...base, ...extra]
+	}, [graph?.events, additionalEvents])
 	const relationships = graph?.relationships
 	const connectedObjects = graph?.connected_objects
 
@@ -281,11 +328,24 @@ export function TimelineTab({
 		return map
 	}, [connectedObjects])
 
+	// Files attached to this object (via `attached` relationships whose endpoint
+	// resolves to a file, or referenced from comment `attachmentFileIds`) come
+	// back on the graph payload as `files[]` — the same source of truth the
+	// Related tab and right sidebar read from. Indexed here so a relationship
+	// row whose endpoint is a file renders as the actual file instead of falling
+	// through to ObjectReference and reading back as "deleted object".
+	const filesById = useMemo(() => {
+		const map = new Map<string, GraphFileSummary>()
+		for (const f of graph?.files ?? []) map.set(f.id, f)
+		return map
+	}, [graph?.files])
+
 	// Replies are bucketed under their parent comment so threads stay intact
-	// inside the single stream.
+	// inside the single stream. Events arrive newest-first, but a thread reads
+	// top-down, so replies are bucketed oldest-first (parents stay newest-first).
 	const repliesByParent = useMemo(() => {
 		const replies = new Map<number, EventResponse[]>()
-		for (const event of events ?? []) {
+		for (const event of [...(events ?? [])].reverse()) {
 			if (event.action !== 'commented') continue
 			const parentId = event.data?.parentEventId as number | undefined
 			if (!parentId) continue
@@ -317,6 +377,7 @@ export function TimelineTab({
 				text: formatEventDescription(event, { actorsById }),
 				chipLabel: chip.label,
 				chipTone: chip.tone,
+				eventType: event.action,
 				isStatusChange: event.action === 'status_changed',
 				isRelationship: false,
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
@@ -331,6 +392,7 @@ export function TimelineTab({
 			const direction: 'outbound' | 'inbound' = rel.sourceId === object.id ? 'outbound' : 'inbound'
 			const linkedId = direction === 'outbound' ? rel.targetId : rel.sourceId
 			const linkedTitle = direction === 'outbound' ? rel.targetTitle : rel.sourceTitle
+			const file = filesById.get(linkedId)
 			rows.push({
 				kind: 'event',
 				key: `rel-${rel.id}`,
@@ -339,6 +401,7 @@ export function TimelineTab({
 				text: 'linked this',
 				chipLabel: 'Link',
 				chipTone: 'link',
+				eventType: 'link',
 				isStatusChange: false,
 				isRelationship: true,
 				newStatus: null,
@@ -346,24 +409,29 @@ export function TimelineTab({
 				reference: {
 					verb: relationshipVerb(rel.type, direction),
 					objectId: linkedId,
-					object:
-						objectsById.get(linkedId) ??
-						(linkedTitle
-							? ({
-									id: linkedId,
-									workspaceId,
-									type: direction === 'outbound' ? rel.targetType : rel.sourceType,
-									title: linkedTitle,
-									content: null,
-									status: 'unknown',
-									metadata: null,
-									driver: null,
-									activeSessionId: null,
-									createdBy: '',
-									createdAt: null,
-									updatedAt: null,
-								} satisfies ObjectResponse)
-							: undefined),
+					file,
+					// Skip the object branch for file endpoints — the graph returns
+					// files under `files[]`, not `connected_objects`, and ObjectReference
+					// would useObject(linkedId) and 404 → "deleted object".
+					object: file
+						? undefined
+						: (objectsById.get(linkedId) ??
+							(linkedTitle
+								? ({
+										id: linkedId,
+										workspaceId,
+										type: direction === 'outbound' ? rel.targetType : rel.sourceType,
+										title: linkedTitle,
+										content: null,
+										status: 'unknown',
+										metadata: null,
+										driver: null,
+										activeSessionId: null,
+										createdBy: '',
+										createdAt: null,
+										updatedAt: null,
+									} satisfies ObjectResponse)
+								: undefined)),
 				},
 			})
 		}
@@ -372,7 +440,7 @@ export function TimelineTab({
 		// the prototype's descending spine.
 		rows.sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''))
 		return rows
-	}, [events, relationships, actorsById, objectsById, object.id, workspaceId])
+	}, [events, relationships, actorsById, objectsById, filesById, object.id, workspaceId])
 
 	const counts = useMemo(() => {
 		let comments = 0
@@ -821,13 +889,17 @@ function EventRow({
 					/>
 				)}
 				<span className="shrink-0 text-[12.5px] text-muted-foreground">{entry.reference.verb}</span>
-				<ObjectReference
-					objectId={entry.reference.objectId}
-					workspaceId={workspaceId}
-					object={entry.reference.object}
-					variant="inline"
-					className="min-w-0 text-xs"
-				/>
+				{entry.reference.file ? (
+					<FileReferenceChip file={entry.reference.file} workspaceId={workspaceId} />
+				) : (
+					<ObjectReference
+						objectId={entry.reference.objectId}
+						workspaceId={workspaceId}
+						object={entry.reference.object}
+						variant="inline"
+						className="min-w-0 text-xs"
+					/>
+				)}
 			</div>
 		)
 	}
@@ -871,16 +943,47 @@ function EventRow({
 				{entry.reference && (
 					<span className="flex min-w-0 items-baseline gap-1.5">
 						<span className="shrink-0 text-xs text-muted-foreground">{entry.reference.verb}</span>
-						<ObjectReference
-							objectId={entry.reference.objectId}
-							workspaceId={workspaceId}
-							object={entry.reference.object}
-							variant="inline"
-							className="min-w-0 text-xs"
-						/>
+						{entry.reference.file ? (
+							<FileReferenceChip file={entry.reference.file} workspaceId={workspaceId} />
+						) : (
+							<ObjectReference
+								objectId={entry.reference.objectId}
+								workspaceId={workspaceId}
+								object={entry.reference.object}
+								variant="inline"
+								className="min-w-0 text-xs"
+							/>
+						)}
 					</span>
 				)}
 			</div>
 		</div>
+	)
+}
+
+/**
+ * Inline chip for a file endpoint on a relationship row. Renders the file's
+ * name + file icon and links to the file viewer — same reading as the right
+ * sidebar's file list. Falls back to the file id when the name is missing so
+ * the row never reads as unlabelled.
+ */
+function FileReferenceChip({
+	file,
+	workspaceId,
+}: {
+	file: GraphFileSummary
+	workspaceId: string
+}) {
+	return (
+		<Link
+			to="/$workspaceId/files/$fileId"
+			params={{ workspaceId, fileId: file.id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="inline-flex min-w-0 items-center gap-1.5 rounded px-1 -mx-1 py-0.5 text-xs text-foreground transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+		>
+			<FileIcon size={12} className="shrink-0 text-muted-foreground" aria-hidden />
+			<span className="truncate">{file.name || file.id}</span>
+		</Link>
 	)
 }

@@ -49,9 +49,10 @@ function mockGraph(
 	relationships: ReturnType<typeof buildRelationshipResponse>[] = [],
 	connectedObjects: ReturnType<typeof buildObjectResponse>[] = [],
 	object = buildObjectResponse({}),
+	files: Array<{ id: string; name: string; mimeType: string; sizeBytes: number; url: string }> = [],
 ) {
 	vi.mocked(useObjectGraph).mockReturnValue({
-		data: { object, relationships, connected_objects: connectedObjects, events },
+		data: { object, relationships, connected_objects: connectedObjects, events, files },
 	} as never)
 }
 
@@ -121,6 +122,47 @@ describe('TimelineTab', () => {
 		expect(within(third).queryByText('Link')).toBeNull()
 		expect(within(third).getByText('breaks into')).toBeInTheDocument()
 		expect(within(third).getAllByRole('link', { name: /Timeline tab/i })).not.toHaveLength(0)
+	})
+
+	// Regression: a file endpoint on an `attached` edge is NOT an object row —
+	// ObjectReference would useObject(fileId) and 404, rendering "deleted
+	// object" (the bug Magnus reported on the object timeline while the right
+	// sidebar still rendered the same file correctly). The row must resolve
+	// against graph.files and render the filename linked to the file viewer.
+	it('renders a file endpoint on an attached edge as the file, not "deleted object"', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-file',
+				sourceId: 'obj-1',
+				sourceType: 'bet',
+				targetId: 'file-1',
+				targetType: 'file',
+				targetTitle: 'design.pdf',
+				type: 'attached',
+				createdBy: 'actor-1',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+		const files = [
+			{
+				id: 'file-1',
+				name: 'design.pdf',
+				mimeType: 'application/pdf',
+				sizeBytes: 12345,
+				url: 'http://localhost:5173/ws/files/file-1',
+			},
+		]
+		mockGraph([], relationships, [], object, files)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const items = screen.getAllByRole('listitem')
+		expect(items).toHaveLength(1)
+		const row = items[0]
+		expect(within(row).getByText('attached')).toBeInTheDocument()
+		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
+		expect(within(row).queryByText(/deleted object/i)).toBeNull()
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and
@@ -231,6 +273,47 @@ describe('TimelineTab', () => {
 		expect(within(items[0]).getByText('proposed bet')).toBeInTheDocument()
 		expect(within(items[1]).getByText('active')).toBeInTheDocument()
 		expect(within(items[2]).getByText(/session/i)).toBeInTheDocument()
+	})
+
+	// Loop detail passes agent-work events (session lifecycle, trigger fires)
+	// via `additionalEvents` because those rows carry `entityId = session.id`
+	// (or trigger.id), not the loop id, so the object graph doesn't surface
+	// them. Without this, the loop's own row events alone leave the timeline
+	// effectively empty.
+	it('merges additionalEvents alongside graph events, deduping by id', () => {
+		const object = buildObjectResponse({ id: 'loop-1', type: 'bet' })
+		const graphEvent = buildEventResponse({
+			id: 1,
+			action: 'created',
+			entityType: 'bet',
+			entityId: 'loop-1',
+			actorId: 'actor-1',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		const extraEvent = buildEventResponse({
+			id: 2,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: 'trigger-1',
+			actorId: 'actor-2',
+			createdAt: '2026-01-02T00:00:00Z',
+		})
+		// A duplicate id must not double up.
+		const duplicateOfGraph = buildEventResponse({
+			id: 1,
+			action: 'created',
+			entityType: 'bet',
+			entityId: 'loop-1',
+			actorId: 'actor-1',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		mockGraph([graphEvent], [], [], object)
+
+		render(<TimelineTab object={object} additionalEvents={[extraEvent, duplicateOfGraph]} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
 
 	it('renders an empty state when there is nothing to show', () => {
@@ -462,7 +545,10 @@ describe('TimelineTab', () => {
 		expect(screen.getAllByRole('listitem')).not.toHaveLength(0)
 	})
 
-	it('leaves short runs unfolded', () => {
+	// Defect 3 (Loops v4 v1): a repeated same-actor, same-event-type pair —
+	// "Chief of Staff updated loop" back to back — folds at 2, below the
+	// general three-row threshold.
+	it('folds a repeated same-actor, same-type pair', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(
 			Array.from({ length: 2 }, (_, i) =>
@@ -482,8 +568,83 @@ describe('TimelineTab', () => {
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
+		const fold = screen.getByRole('button', { name: /2 agent updates/ })
+		expect(fold).toHaveAttribute('aria-expanded', 'false')
+	})
+
+	it('leaves a short run from different actors unfolded', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			Array.from({ length: 2 }, (_, i) =>
+				buildEventResponse({
+					id: 30 + i,
+					action: 'updated',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					actorId: `actor-${i + 1}`,
+					createdAt: `2026-02-0${i + 1}T00:00:00Z`,
+				}),
+			),
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
 		expect(screen.queryByRole('button', { name: /agent updates/ })).toBeNull()
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
+	})
+
+	// Defect 3 (Loops v4 v1) regression: the loop's `created` event must not
+	// fold into a run of consecutive `updated` events by the same actor. Only
+	// the same-actor + same-event-type stretch collapses.
+	it('does not fold a foreign event type into a run of same-actor updates', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'loop' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 53,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-04T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 52,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 51,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-02T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 50,
+					action: 'created',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-01T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const fold = screen.getByRole('button', { name: /agent updates/ })
+		expect(fold).toHaveTextContent('3 agent updates')
 	})
 	// D10: phase dividers only fire at lifecycle-phase boundaries. active is in
 	// BUILT and define is in SHAPING, so the define→active transition draws one

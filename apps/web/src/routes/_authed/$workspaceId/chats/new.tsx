@@ -3,6 +3,7 @@ import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
@@ -15,9 +16,8 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
-import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
+import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import {
@@ -80,6 +80,7 @@ interface Recipient {
  * flag ids in `apps/dev/src/lib/feature-flags.ts`.
  */
 function NewChatRoute() {
+	useDocumentTitle('New chat')
 	const search = Route.useSearch()
 	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
 	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
@@ -163,7 +164,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 			.filter((a) => a.type === 'agent')
 			.map((a) => ({ id: a.id, name: a.name, type: a.type, description: a.description }))
 		const people: Recipient[] = (members ?? [])
-			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent')
+			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent' && m.type !== 'system')
 			.map((m) => ({ id: m.actorId, name: m.name, type: m.type, description: m.role }))
 		const byId = new Map<string, Recipient>()
 		for (const r of [...agents, ...people]) if (!byId.has(r.id)) byId.set(r.id, r)
@@ -205,6 +206,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 				const t = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
 				for (const p of conv.participants) {
 					if (p.actorId === currentActor?.id) continue
+					if (p.actorType === 'system') continue
 					const existing = seen.get(p.actorId)
 					if (!existing || t > existing.ts) {
 						const enriched = candidates.find((c) => c.id === p.actorId)
@@ -464,8 +466,10 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 								aria-label={typedMode ? 'Add someone — person or agent' : 'Recent collaborators'}
 								className={cn(
 									'flex list-none flex-col gap-0.5 overflow-y-auto p-0',
-									// Desktop: single column, max 8 rows before scroll.
-									'max-h-[calc(8*40px)]',
+									// Mobile: cap at 4 rows so the composer stays visible on small
+									// phones (dvh alone can't help — the To row is shrink-0). md+
+									// gets the full 8-row list.
+									'max-h-[calc(4*40px)] md:max-h-[calc(8*40px)]',
 									// Tablet 641–1024px: 2-col when RECENT has >4 rows.
 									!typedMode && dropdownRows.length > 4
 										? 'md:grid md:max-h-[calc(4*40px)] md:grid-cols-2 lg:flex lg:max-h-[calc(8*40px)]'

@@ -57,6 +57,63 @@ describe('Files Routes', () => {
 			expect((eventInsert.data as Record<string, unknown>).content).toBeUndefined()
 		})
 
+		it('warns, naming the URL, when saved HTML loads an outside script', async () => {
+			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody({
+				name: 'proto.html',
+				mime_type: 'text/html',
+				content: '<html><head><script src="https://cdn.tailwindcss.com"></script></head></html>',
+			})
+			mockResults.insertQueue = [
+				[buildFile({ workspaceId, name: body.name, mimeType: 'text/html' })],
+				[{ id: 'evt-1' }],
+			]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(201)
+			const json = await res.json()
+			expect(json.warning).toContain('https://cdn.tailwindcss.com')
+			expect(json.warning).toContain('viewer-safe-html')
+		})
+
+		it('returns no warning when saved HTML is self-contained', async () => {
+			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody({
+				name: 'clean.html',
+				mime_type: 'text/html',
+				content:
+					'<html><head><style>body{margin:0}</style></head><body><a href="https://example.com">link</a></body></html>',
+			})
+			mockResults.insertQueue = [
+				[buildFile({ workspaceId, name: body.name, mimeType: 'text/html' })],
+				[{ id: 'evt-1' }],
+			]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(201)
+			expect((await res.json()).warning).toBeUndefined()
+		})
+
+		it('warns when saved HTML uses localStorage', async () => {
+			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody({
+				name: 'store.html',
+				mime_type: 'text/html',
+				content: '<script>localStorage.setItem("a", "b")</script>',
+			})
+			mockResults.insertQueue = [
+				[buildFile({ workspaceId, name: body.name, mimeType: 'text/html' })],
+				[{ id: 'evt-1' }],
+			]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(201)
+			expect((await res.json()).warning).toContain('localStorage')
+		})
+
 		it('mints absolute URLs from FRONTEND_URL', async () => {
 			vi.stubEnv('FRONTEND_URL', 'https://app.example.com')
 			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
@@ -278,6 +335,22 @@ describe('Files Routes', () => {
 			expect(storageProvider.put).toHaveBeenCalledTimes(1)
 			const putCall = vi.mocked(storageProvider.put).mock.calls[0]
 			expect(putCall?.[1]).toEqual(Buffer.from('# Updated', 'utf8'))
+		})
+
+		it('warns when updated HTML content loads an outside stylesheet', async () => {
+			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const file = buildFile({ workspaceId, mimeType: 'text/html' })
+			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })], [file]]
+			mockResults.updateQueue = [[file]]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, {
+					content: '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).warning).toContain('https://fonts.googleapis.com/css2?family=Inter')
 		})
 
 		it('persists annotations without re-uploading bytes', async () => {

@@ -1,13 +1,7 @@
 import type { Database } from '@maskin/db'
-import {
-	events,
-	actors,
-	objects,
-	slackUserLinks,
-	workspaceMembers,
-	workspaces,
-} from '@maskin/db/schema'
+import { actors, objects, slackUserLinks, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import type { WorkspaceSettings } from '../../../types'
 
@@ -287,7 +281,7 @@ export async function handleSlackInteractivePayload(
 			.set({ status: selectedValue, updatedAt: new Date() })
 			.where(eq(objects.id, object.id))
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: object.workspaceId,
 			actorId: link.actorId,
 			action: 'status_changed',
@@ -395,7 +389,7 @@ export async function handleSlackInteractivePayload(
 		.set({ driver: nextDriverId, updatedAt: new Date() })
 		.where(eq(objects.id, object.id))
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: object.workspaceId,
 		actorId: link.actorId,
 		action: 'updated',

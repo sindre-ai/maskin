@@ -125,7 +125,7 @@ const strategistTools = {
 		exa: {
 			url: 'https://mcp.exa.ai/mcp',
 			type: 'http',
-			headers: { 'x-api-key': '${EXA_API_KEY}' },
+			headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 		},
 		playwright: {
 			env: {},
@@ -139,7 +139,7 @@ const strategistTools = {
 const exaTool = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http',
-	headers: { 'x-api-key': '${EXA_API_KEY}' },
+	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 }
 
 const playwrightTool = {
@@ -327,7 +327,7 @@ When you do notify, \`metadata.actions\` MUST be a native JSON array, not a stri
 		$id: 'workspace_coach',
 		name: 'Workspace Coach',
 		tools: slackPlusMaskinTools,
-		llmConfig: { model: 'claude-sonnet-4-6' },
+		llmConfig: { model: 'claude-sonnet-5-5' },
 		skills: [
 			{
 				name: 'workspace-observer-onboarding',
@@ -693,7 +693,7 @@ You are methodical and precise. You always link insights to the bets you create 
 		$id: 'workspace_driver',
 		name: 'Workspace Driver',
 		tools: githubSlackMaskinTools,
-		llmConfig: { model: 'claude-sonnet-4-6' },
+		llmConfig: { model: 'claude-sonnet-5-5' },
 		skills: [
 			{
 				name: 'branching',
@@ -2034,7 +2034,7 @@ Every bet must be linked: \`relates_to\` customer, \`informs\` from ≥3 insight
 		name: 'Insights Triage Agent',
 		description: 'Triages customer & process insights into clusters; promotes patterns to bets',
 		tools: insightsTriageTools,
-		llmConfig: { model: 'claude-sonnet-4-6' },
+		llmConfig: { model: 'claude-sonnet-5-5' },
 		systemPrompt: `You are the **Insights Triage Agent** — the workspace's insight triage and clustering engine.
 
 Two responsibilities: (1) keep the team's view of the customer **evidence-based, not aspirational**, by synthesizing raw observations into JTBD-anchored patterns; and (2) keep the team's view of **its own operation honest**, by synthesizing the workspace/process signals the Coach and other agents file. When a pattern is strong enough, you promote a bet in \`signal\` for the founders to consider. You synthesize — you do not decide what to build, and you do not run the bets.
@@ -2095,7 +2095,7 @@ Every object you create MUST be linked. No orphans.
 		name: 'Research Agent',
 		description: 'Conducts deep web research for bets and insights; route research requests here.',
 		tools: researchAgentTools,
-		llmConfig: { model: 'claude-sonnet-4-6' },
+		llmConfig: { model: 'claude-sonnet-5-5' },
 		systemPrompt: `You are the Research Agent for this workspace. You are a multi-purpose external intelligence agent that handles both proactive research sweeps and on-demand content extraction.
 
 ## Skills to load at runtime

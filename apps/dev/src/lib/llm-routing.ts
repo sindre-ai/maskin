@@ -11,6 +11,7 @@ import {
 	isTransientCredentialError,
 	resolveClaudeCredentialsWithFailover,
 } from './claude-failover'
+import { isClaudePlatformRefreshEnabled, readClaudeLaunchBufferMs } from './claude-oauth'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterprise } from './enterprise'
 import { FLAGS, isFlagEnabled } from './feature-flags'
@@ -22,6 +23,16 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 	openai: 'gpt-4o-mini',
 	ollama: 'llama3',
 }
+
+/**
+ * Every session on the Claude-subscription route runs this model at this
+ * effort, whatever the agent's own `llm_config.model` says. Other routes (the
+ * Maskin-funded DeepSeek fallback, custom endpoints, API keys) never receive
+ * these — `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and
+ * turned into `--effort`.
+ */
+export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
+export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
@@ -59,6 +70,21 @@ export interface LlmRoutingResult {
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
 	oauthSlot?: OAuthSlotKind
+	/**
+	 * Access-token expiry (epoch ms) the container launched with. Set only when the
+	 * refresh token was withheld from it, so the settle path can tell a session
+	 * that outlived its token from a genuinely rejected credential.
+	 */
+	oauthExpiresAt?: number
+	/**
+	 * OpenRouter model id that will actually run this session. Populated on
+	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
+	 * stamp `sessions.model_name` at spawn; the follow-on local cost resolver
+	 * prices maskin_plan usage from OpenRouter's pricing table keyed on this
+	 * value. Undefined on every other route — Claude Code's own
+	 * `total_cost_usd` stays ground truth for `claude_oauth` and BYO paths.
+	 */
+	modelName?: string
 }
 
 export interface FallbackConfig {
@@ -66,12 +92,41 @@ export interface FallbackConfig {
 	baseUrl?: string
 	model?: string
 	smallModel?: string
+	/**
+	 * Lower-case substrings of model ids that cannot read images. Unset means
+	 * DEFAULT_TEXT_ONLY_MODEL_PATTERNS; an empty list turns image stripping off.
+	 */
+	textOnlyModels?: string[]
+	/**
+	 * Ask OpenRouter to route in-process chat calls to zero-data-retention
+	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
+	 */
+	zdr: boolean
 }
 
 export interface AgentLlmConfig {
 	provider?: string | null
 	apiKey?: string | null
 	model?: string | null
+}
+
+/**
+ * Model ids containing any of these (case-insensitive) get image blocks swapped
+ * for a text note by the strip-images proxy in the agent container. Hardcoded
+ * list, no capability table: a new text-only model is a code change.
+ * MASKIN_TEXT_ONLY_MODELS (comma separated) overrides it when set; empty or
+ * "none" is the kill switch that turns stripping off.
+ */
+export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
+
+function readTextOnlyModels(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_TEXT_ONLY_MODELS
+	if (raw === undefined) return DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim().toLowerCase())
+		.filter(Boolean)
 }
 
 /**
@@ -83,22 +138,32 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 	return {
 		apiKey: env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim() || undefined,
 		baseUrl: env.MASKIN_FALLBACK_BASE_URL?.trim() || 'https://openrouter.ai/api',
-		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4-flash',
+		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4.1-flash',
 		smallModel:
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
-			'deepseek/deepseek-v4-flash',
+			'deepseek/deepseek-v4.1-flash',
+		textOnlyModels: readTextOnlyModels(env),
+		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
 	}
 }
 
 /**
- * Legacy fallback rate used only when a maskin_plan session never reported
- * its own `total_cost_usd` (e.g. a runtime whose CLI stream never emitted a
- * `result` event). Real cost — which reflects whatever model actually ran —
- * is always preferred; this exists so a missing report doesn't silently read
- * as $0 of usage.
+ * Legacy blended token rate, in tokens per USD CENT, used only when a
+ * maskin_plan session's model can't be priced from OpenRouter's table (no
+ * model name recorded, an unpublished model, or the catalogue being
+ * unreachable). Real per-token cost is always preferred; this exists so a
+ * session whose model can't be resolved doesn't silently read as $0 of usage.
+ *
+ * Calibrated to the maskin_plan fallback model's scale rather than Anthropic's:
+ * `deepseek/deepseek-v4-flash` publishes $0.00000007/prompt token (≈142,857
+ * tokens/cent) and $0.00000014/completion token (≈71,428/cent). A conservative
+ * 200,000 tokens/cent for a prompt-heavy blend keeps the estimate from
+ * over-charging while staying the right order of magnitude — the previous
+ * 16,000/cent was an Anthropic-scale figure that over-billed maskin_plan
+ * sessions by roughly an order of magnitude.
  */
-export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
+export const LEGACY_TOKENS_PER_USD_CENT = 200_000
 
 /**
  * Rounds a cents amount up to a whole cent after clearing IEEE754 dust.
@@ -114,8 +179,8 @@ export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
  * Snapping to 6 decimal places first discards only that dust. Genuine
  * sub-cent usage still rounds up as intended: the sole producer of fractional
  * cents here is the token-rate fallback, whose smallest non-zero output is
- * `1 / FALLBACK_TOKENS_PER_USD_CENT` = 6.25e-5 cents — nearly two orders of
- * magnitude above the 1e-6 snapping threshold.
+ * `1 / LEGACY_TOKENS_PER_USD_CENT` = 5e-6 cents — above the 1e-6 snapping
+ * threshold, though by a narrower margin than the pre-rename rate.
  */
 export function ceilCents(cents: number): number {
 	return Math.ceil(Number(cents.toFixed(6)))
@@ -145,7 +210,11 @@ export async function getWorkspacePlanUsdCentsUsage(
 ): Promise<number> {
 	const conds = [
 		eq(sessions.workspaceId, workspaceId),
-		sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
+		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
+		// is a partial index on this exact predicate. A per-execution plan can match a
+		// bound value, but a generic (cached) plan can only prove a match against a
+		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
+		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
 	]
 	if (periodStartMs !== undefined) {
 		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
@@ -167,7 +236,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 			continue
 		}
 		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
-		totalCents += tokens / FALLBACK_TOKENS_PER_USD_CENT
+		totalCents += tokens / LEGACY_TOKENS_PER_USD_CENT
 	}
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
@@ -517,14 +586,21 @@ function buildMaskinPlanEnv(
 	if (enterprise) return null
 	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
-	return {
+	const model = fallback.model ?? 'deepseek/deepseek-v4.1-flash'
+	const env: Record<string, string> = {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
-		ANTHROPIC_SMALL_FAST_MODEL:
-			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
+		ANTHROPIC_MODEL: model,
+		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
 	}
+	// Decided on the main model only: the small-fast model can differ, and the
+	// proxy strips for the whole session either way.
+	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
+		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	return env
 }
 
 /**
@@ -550,10 +626,11 @@ function buildMaskinPlanEnv(
  * caller continues to handle OPENAI_API_KEY injection itself (also gated on
  * `enterprise` — see session-manager.ts).
  *
- * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
- * and #4 (the routes that don't already carry an explicit model of their
- * own). Routes #2 and #5 already source their model from workspace/operator
- * config and are left as-is.
+ * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
+ * (the routes that don't already carry an explicit model of their own). Route
+ * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
+ * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
+ * workspace/operator config and are left as-is.
  */
 /**
  * Is a Claude OAuth slot configured at all — i.e. does the slot that
@@ -634,12 +711,18 @@ export async function resolveLlmRoute(params: {
 		try {
 			/** Set by the resolver when a configured slot yields nothing usable. */
 			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
+			// On (only when the env is the literal "true"): the platform refreshes at
+			// launch with a session-sized buffer and the container never sees the
+			// refresh token. Off (default): today's behaviour exactly (10 minute
+			// buffer, refresh token in the env).
+			const platformRefresh = isClaudePlatformRefreshEnabled(params.env)
 			const oauthResult = await resolveClaudeCredentialsWithFailover({
 				db,
 				workspaceId,
 				actorId,
 				probe: claudeProbe,
 				env: params.env,
+				bufferMs: platformRefresh ? { launchMs: readClaudeLaunchBufferMs(params.env) } : undefined,
 				onUnusable: (info) => {
 					unusableRef.current = info
 				},
@@ -647,7 +730,9 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult) {
 				const envVars: Record<string, string> = {
 					CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
-					CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken,
+					...(platformRefresh
+						? {}
+						: { CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken }),
 					CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
 				}
 				if (oauthResult.tokens.scopes) {
@@ -656,10 +741,14 @@ export async function resolveLlmRoute(params: {
 				if (oauthResult.tokens.subscriptionType) {
 					envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 				}
-				if (agent.model) {
-					envVars.ANTHROPIC_MODEL = agent.model
+				envVars.ANTHROPIC_MODEL = CLAUDE_SUBSCRIPTION_MODEL
+				envVars.MASKIN_CLAUDE_EFFORT = CLAUDE_SUBSCRIPTION_EFFORT
+				return {
+					route: LLM_ROUTE_OAUTH,
+					envVars,
+					oauthSlot: oauthResult.slot,
+					...(platformRefresh ? { oauthExpiresAt: oauthResult.tokens.expiresAt } : {}),
 				}
-				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 			}
 
 			// `resolveClaudeCredentialsWithFailover` reports an unusable
@@ -745,7 +834,11 @@ export async function resolveLlmRoute(params: {
 		if (isFlagEnabled(actorId, FLAGS.MASKIN_CREDIT_UX)) {
 			await checkCreditBalanceRuntime({ db, workspaceId, wsSettings, enterprise })
 		}
-		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
+		return {
+			route: LLM_ROUTE_MASKIN_PLAN,
+			envVars: maskinPlanEnv,
+			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+		}
 	}
 
 	if (oauthFailure) {
@@ -932,6 +1025,13 @@ export interface ChatCredentials {
 	apiKey: string
 	baseUrl?: string
 	model: string
+	/**
+	 * OpenRouter provider preferences, sent as the request body's "provider"
+	 * object. Set only on the Maskin-funded fallback route: a customer's own
+	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
+	 * can reject unknown body fields with a 400.
+	 */
+	providerPrefs?: { zdr: true }
 }
 
 /**
@@ -1029,5 +1129,6 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
+		...(fallback.zdr && { providerPrefs: { zdr: true as const } }),
 	}
 }

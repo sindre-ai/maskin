@@ -8,6 +8,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // established accent-pairing rule), so it must be legible in both colour
 // schemes at every ship-gate viewport. Seeded straight through the
 // notifications API — status defaults to 'pending'.
+//
+// An ask belongs to the reader only when it targets them (target_actor_id ===
+// the signed-in actor), so every seeded ask below sets target_actor_id to the
+// reader's own actor id, and the final test pins the negative case: an ask
+// aimed at a different actor shows no pill for this reader.
 
 test.describe('List row — pending-ask line + pill (ship gate)', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -28,6 +33,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 				content: 'Approve this bet',
 				source_actor_id: source.id,
 				object_id: object.id,
+				target_actor_id: account.actorId,
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -62,6 +68,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 				content: 'Approve this bet',
 				source_actor_id: source.id,
 				object_id: object.id,
+				target_actor_id: account.actorId,
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -69,4 +76,33 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			await expect(page.getByText('Waiting on you')).toBeVisible()
 		})
 	}
+
+	// Regression guard for the reported bug: an ask that targets a different
+	// actor (or nobody) must not light up a personal "Waiting on you" signal for
+	// this reader — that is the "waiting on me with nothing to do" symptom.
+	test('an ask targeting another actor shows no "Waiting on you" for this reader', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize(SHIP_GATE_VIEWPORTS[0] ?? { width: 375, height: 812 })
+		const source = await createTestActor({ name: 'Asker Bot' })
+		const other = await createTestActor({ name: 'Someone Else' })
+		const object = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Not My Ask Bet',
+			status: 'signal',
+		})
+		await account.api.createNotification(account.workspaceId, {
+			type: 'needs_input',
+			title: 'Approve this bet',
+			content: 'Approve this bet',
+			source_actor_id: source.id,
+			object_id: object.id,
+			target_actor_id: other.id,
+		})
+
+		await page.goto(`/${account.workspaceId}/objects`)
+		await expect(page.getByText('Not My Ask Bet')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('Waiting on you')).toHaveCount(0)
+	})
 })

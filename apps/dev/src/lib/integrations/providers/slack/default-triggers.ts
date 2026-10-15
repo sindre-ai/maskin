@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
-import { events, actors, integrations, triggers, workspaceMembers } from '@maskin/db/schema'
+import { actors, integrations, triggers, workspaceMembers } from '@maskin/db/schema'
 import { and, eq, ne, sql } from 'drizzle-orm'
+import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import type { PostInstallContext, PreDisconnectContext } from '../../types'
 
@@ -104,7 +105,7 @@ export async function seedSlackDefaultTriggers(ctx: PostInstallContext): Promise
 				})
 				.returning({ id: triggers.id, name: triggers.name, type: triggers.type })
 			if (row) {
-				await db.insert(events).values({
+				await recordEvent(db, {
 					workspaceId: ctx.workspaceId,
 					actorId: systemActorId,
 					action: 'created',
@@ -182,7 +183,7 @@ export async function removeSlackDefaultTriggers(ctx: PreDisconnectContext): Pro
 
 		if (systemActorId) {
 			for (const row of removed) {
-				await db.insert(events).values({
+				await recordEvent(db, {
 					workspaceId: ctx.workspaceId,
 					actorId: systemActorId,
 					action: 'deleted',

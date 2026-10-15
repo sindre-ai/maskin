@@ -19,15 +19,18 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 	const a = await account.api.createObject(account.workspaceId, {
 		type: 'task',
 		title: 'Merge the trigger settings rewrite?',
-		status: 'in_review',
+		status: 'todo',
 		content: 'Needs a human click-through.',
 	})
 	const b = await account.api.createObject(account.workspaceId, {
 		type: 'task',
 		title: 'Finish the edit card, or cut it?',
-		status: 'in_review',
+		status: 'todo',
 		content: 'One failed check.',
 	})
+	// The API rejects tasks created at in_review, so move them after creation.
+	await account.api.updateObject(a.id, account.workspaceId, { status: 'in_review' })
+	await account.api.updateObject(b.id, account.workspaceId, { status: 'in_review' })
 	// The unread feed is mentions-only, so the agent has to @-mention the viewer.
 	const mention = async (entityId: string, content: string) => {
 		const res = await fetch('http://localhost:5173/api/events', {

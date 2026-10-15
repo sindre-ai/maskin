@@ -11,12 +11,17 @@ import { buildWorkspaceWithRole } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
 const navigateMock = vi.fn()
+const mockUseBillingUsage = vi.fn<(workspaceId: string) => { data: unknown }>()
 const trackCreditsExhaustedErrorShown = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return { ...mockTanStackRouter(), useNavigate: () => navigateMock }
 })
+
+vi.mock('@/hooks/use-billing', () => ({
+	useBillingUsage: (workspaceId: string) => mockUseBillingUsage(workspaceId),
+}))
 
 vi.mock('@/lib/analytics', () => ({
 	trackCreditsExhaustedErrorShown: (...args: unknown[]) => trackCreditsExhaustedErrorShown(...args),
@@ -73,6 +78,8 @@ describe('resolveTopupTarget', () => {
 describe('InsufficientCreditsModal', () => {
 	beforeEach(() => {
 		navigateMock.mockReset()
+		mockUseBillingUsage.mockReset()
+		mockUseBillingUsage.mockReturnValue({ data: undefined })
 		trackCreditsExhaustedErrorShown.mockReset()
 		_resetInsufficientCredits()
 		localStorage.setItem('ff:maskin-credit-ux', 'on')
@@ -92,6 +99,19 @@ describe('InsufficientCreditsModal', () => {
 		expect(screen.getByRole('button', { name: 'Top up credits' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
 		expect(dialog).toBeInTheDocument()
+	})
+
+	it('still blocks but drops the top-up button when top-up is unavailable', async () => {
+		mockUseBillingUsage.mockReturnValue({ data: { credit_topup_available: false } })
+		renderModal()
+		act(() => {
+			openInsufficientCreditsModal(PAYLOAD)
+		})
+
+		expect(await screen.findByRole('dialog')).toBeInTheDocument()
+		expect(screen.getByText('Out of credits')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Top up credits' })).not.toBeInTheDocument()
 	})
 
 	it('fires credits_exhausted_error_shown once with workspace_id and balance_cents', async () => {

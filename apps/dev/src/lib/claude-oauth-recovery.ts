@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { eq, sql } from 'drizzle-orm'
 import { trackClaudeSubscriptionRecovered } from './analytics/claude-failover-events'
 import {
@@ -13,6 +13,7 @@ import {
 	withSlotFailure,
 	writeFailoverState,
 } from './claude-oauth-slots'
+import { recordEvent } from './events/record-event'
 import { logger } from './logger'
 
 /**
@@ -71,7 +72,7 @@ export interface AttemptPrimaryRecoveryInput {
 	workspaceId: string
 	actorId: string
 	/** Probes the head of the chain — the slot recovery would switch back to. */
-	healthCheck: (head: OAuthSlotData) => Promise<RecoveryHealthCheckResult>
+	healthCheck: (head: OAuthSlotData, headSlot: OAuthSlotKind) => Promise<RecoveryHealthCheckResult>
 	now?: number
 	cooldownMs?: number
 }
@@ -139,7 +140,7 @@ export async function attemptPrimaryRecovery(
 		id: OAuthSlotKind
 		data: OAuthSlotData
 	}
-	const probe = await healthCheck(precheckHead.data)
+	const probe = await healthCheck(precheckHead.data, precheckHead.id)
 
 	type TxOutcome =
 		| {
@@ -206,7 +207,7 @@ export async function attemptPrimaryRecovery(
 				})
 				.where(eq(workspaces.id, workspaceId))
 
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: CLAUDE_SUBSCRIPTION_RECOVERED,

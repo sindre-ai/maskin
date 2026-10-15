@@ -1,4 +1,5 @@
 import { readFallbackConfig } from '../lib/llm-routing'
+import { LlmNoEligibleHostError } from '../lib/llm/adapter'
 import { logger } from '../lib/logger'
 
 // Shared helper for one-shot LLM calls made from backend services (e.g. the
@@ -73,6 +74,8 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 		temperature: input.temperature ?? 0.7,
 	}
 	if (input.jsonMode) body.response_format = { type: 'json_object' }
+	// Funded-key request: same zero-retention gate as resolveChatCredentials.
+	if (fallback.zdr) body.provider = { zdr: true }
 
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
@@ -87,6 +90,21 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 			})
 
 			if (!response.ok) {
+				// Same read as OpenAIAdapter: with provider preferences sent, a 404
+				// "no endpoints found" means no host passed the zdr filter.
+				if (fallback.zdr && response.status === 404) {
+					const errorBody = await response.text()
+					if (/no endpoints found/i.test(errorBody)) {
+						logger.error('chat_zdr_no_eligible_host', {
+							model,
+							status: response.status,
+							body: errorBody,
+						})
+						throw new LlmNoEligibleHostError(
+							`No OpenRouter host satisfies the provider preferences for ${model}. Unset MASKIN_FALLBACK_ZDR to stop sending them.`,
+						)
+					}
+				}
 				logger.warn('llm-call: LLM API error', { status: response.status, attempt })
 				if (attempt < MAX_ATTEMPTS && isRetryable('http_error', response.status)) {
 					await sleep(RETRY_DELAY_MS)
@@ -113,6 +131,11 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 			}
 			return { ok: true, content }
 		} catch (err) {
+			// Policy miss, not an outage: a retry cannot fix it. Callers still see
+			// the same http_error result they get for any other 4xx.
+			if (err instanceof LlmNoEligibleHostError) {
+				return { ok: false, reason: 'http_error', status: 404 }
+			}
 			logger.error('llm-call: request failed', {
 				err: err instanceof Error ? err.message : String(err),
 				attempt,

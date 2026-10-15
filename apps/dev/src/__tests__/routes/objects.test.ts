@@ -98,6 +98,124 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid object type')
 		})
+
+		describe('task initial status', () => {
+			beforeEach(() => {
+				capturePosthogEventMock.mockClear()
+				capturePosthogEventMock.mockResolvedValue(undefined)
+			})
+
+			it('rejects a task created at in_progress, naming todo and backlog, and emits one event', async () => {
+				const ws = buildWorkspace({ id: wsId })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({ status: 'in_progress', title: 'Secret title' }),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.message).toContain('todo')
+				expect(body.error.message).toContain('backlog')
+				const calls = capturePosthogEventMock.mock.calls.filter(
+					([name]) => name === 'task_created_invalid_initial_status',
+				)
+				expect(calls).toHaveLength(1)
+				expect(calls[0]).toEqual([
+					'task_created_invalid_initial_status',
+					'test-actor-id',
+					{ attempted_status: 'in_progress', actor_id: 'test-actor-id' },
+				])
+			})
+
+			it.each(['todo', 'backlog'])('accepts a task created at %s', async (status) => {
+				const base = buildWorkspace({ id: wsId })
+				const ws = {
+					...base,
+					settings: {
+						...base.settings,
+						statuses: { ...base.settings.statuses, task: ['backlog', 'todo', 'in_progress'] },
+					},
+				}
+				const obj = buildObject({ workspaceId: wsId, type: 'task', status })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody({ status }), {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(201)
+				expect(capturePosthogEventMock).not.toHaveBeenCalledWith(
+					'task_created_invalid_initial_status',
+					expect.anything(),
+					expect.anything(),
+				)
+			})
+
+			it('accepts a task created at a custom workspace status', async () => {
+				const base = buildWorkspace({ id: wsId })
+				const ws = {
+					...base,
+					settings: {
+						...base.settings,
+						statuses: { ...base.settings.statuses, task: ['todo', 'awaiting_legal'] },
+					},
+				}
+				const obj = buildObject({ workspaceId: wsId, type: 'task', status: 'awaiting_legal' })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody({ status: 'awaiting_legal' }), {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(201)
+			})
+
+			it('leaves non-task objects unchanged at any status', async () => {
+				const base = buildWorkspace({ id: wsId })
+				const ws = {
+					...base,
+					settings: {
+						...base.settings,
+						statuses: { ...base.settings.statuses, insight: ['new', 'in_progress'] },
+					},
+				}
+				const obj = buildObject({ workspaceId: wsId, type: 'insight', status: 'in_progress' })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({ type: 'insight', status: 'in_progress' }),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				expect(capturePosthogEventMock).not.toHaveBeenCalledWith(
+					'task_created_invalid_initial_status',
+					expect.anything(),
+					expect.anything(),
+				)
+			})
+		})
 	})
 
 	describe('GET /api/objects', () => {
@@ -646,9 +764,21 @@ describe('Objects Routes', () => {
 			// 3) files-membership lookup (endpoint resolves to the `files` table so
 			// it is bucketed as a file — skips connected_objects), 4) events,
 			// 5-8) the four parallel queries fired via Promise.all (isSubscribed,
-			// getUnreadCount, getSubscriberCount, getStarredObjectIds), 9) files
-			// summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
+			// getUnreadCount, getSubscriberCount, getStarredObjectIds), 9) file
+			// title hydration (Slice 1 — populates `titleById` so file endpoints
+			// on relationships get a hydrated name), 10) files summary.
+			mockResults.selectQueue = [
+				[obj],
+				[rel],
+				[{ id: file.id }],
+				[],
+				[],
+				[],
+				[],
+				[],
+				[{ id: file.id, name: file.name }],
+				[file],
+			]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -756,8 +886,20 @@ describe('Objects Routes', () => {
 			// 1) object, 2) relationships, 3) files-membership lookup returns the
 			// file (endpoint id resolves to `files.id`), so no connected_objects
 			// fetch, 4) events, 5-8) parallel queries (subscribed, unreadCount,
-			// subscriberCount, starredIds), 9) files summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
+			// subscriberCount, starredIds), 9) file-title hydration for
+			// `titleById` (Slice 1), 10) files summary.
+			mockResults.selectQueue = [
+				[obj],
+				[rel],
+				[{ id: file.id }],
+				[],
+				[],
+				[],
+				[],
+				[],
+				[{ id: file.id, name: file.name }],
+				[file],
+			]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),

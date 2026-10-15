@@ -246,9 +246,16 @@ too low — move it up rather than add another check. See
 `.claude/rules/feature-flags.md` for the full rule.
 
 
-Flags cover the **visual layer only**; never gate data fetching, API calls, or
-anything a flag-off user still depends on. Full guide (env vars, the test-only
-`ff:<flagId>` override, retirement checklist): `.claude/rules/feature-flags.md`.
+Flags gate **per-actor behaviour**, never shared state. A flag may gate any
+behaviour whose off-state is the already-shipped state — visual (a UI branch) or
+behavioural (an action the system takes for the flagging actor, read per
+driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+**never** make a data-layer, API, or migration change safe: those change shared
+state for everyone, and an actor-scoped flag read at runtime cannot isolate the
+un-flagged population, so such changes must be safe for all users on their own.
+If a design needs a breaking backend change, raise it rather than wrapping it in
+a flag. Full guide (env vars, the test-only `ff:<flagId>` override, retirement
+checklist): `.claude/rules/feature-flags.md`.
 
 ## Testing
 - **Framework**: Vitest + React Testing Library + jsdom

@@ -2,25 +2,35 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
 	SafeMetadata,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 } from '@maskin/shared'
 
 export type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -47,6 +57,10 @@ export class ApiError extends Error {
 	planCapContext?: PlanCapContext
 	/** Populated when `code === 'INSUFFICIENT_CREDITS'` — the prepaid-balance context the out-of-credits modal renders. */
 	insufficientCreditsContext?: InsufficientCreditsContext
+	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
+	retryAfterMs?: number
+	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
+	retryAfter?: number
 
 	constructor(
 		public status: number,
@@ -121,8 +135,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
 		let insufficientCreditsContext: InsufficientCreditsContext | undefined
+		let retryAfterMs: number | undefined
 
-		if (typeof data.error === 'object' && data.error?.code) {
+		if (typeof data.code === 'string' && typeof data.message === 'string') {
+			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
+			message = data.message
+			code = data.code
+			if (typeof data.retryAfterMs === 'number') retryAfterMs = data.retryAfterMs
+		} else if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
 			code = data.error.code
@@ -160,6 +180,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		err.code = code
 		err.planCapContext = planCapContext
 		err.insufficientCreditsContext = insufficientCreditsContext
+		err.retryAfterMs = retryAfterMs
+		const retryAfter = Number(res.headers.get('Retry-After'))
+		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
@@ -301,6 +324,29 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+	},
+
+	// Email invites. `preview` and `accept` are mounted outside the membership
+	// middleware (the invitee isn't a member yet), so neither passes a
+	// workspaceId: sending X-Workspace-Id on accept would trigger a membership
+	// check on an actor who isn't a member.
+	invites: {
+		create: (data: CreateInviteInput) =>
+			request<CreateInviteResponse>('/invites', { method: 'POST', body: data }),
+		list: (workspaceId: string) =>
+			request<PendingInviteListItem[]>(`/invites?workspaceId=${encodeURIComponent(workspaceId)}`),
+		resend: (id: string) =>
+			request<{ status: 'pending'; invite: InviteSummary }>(`/invites/${id}/resend`, {
+				method: 'POST',
+			}),
+		revoke: (id: string) => request<{ revoked: true }>(`/invites/${id}`, { method: 'DELETE' }),
+		preview: (token: string) =>
+			request<InvitePreview>(`/invites/preview?token=${encodeURIComponent(token)}`),
+		accept: (token: string, body?: AcceptInviteSignupInput) =>
+			request<AcceptInviteResponse>(`/invites/${encodeURIComponent(token)}/accept`, {
+				method: 'POST',
+				body: body ?? {},
+			}),
 	},
 
 	landingEvents: {
@@ -454,17 +500,47 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
-				`/integrations/${provider}/connect`,
-				{
-					method: 'POST',
-					body,
-					workspaceId,
-					// The response carries the Set-Cookie that binds this browser to the
-					// OAuth `state`; without `include` it is dropped and the callback 400s.
-					credentials: 'include',
-				},
+		connect: (
+			workspaceId: string,
+			provider: string,
+			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+		) =>
+			request<{
+				install_url?: string
+				webhook_url?: string
+				integration_id?: string
+				// Populated by Resend's two-call handshake (Task 2) — the domain-status
+				// records the customer must add to their DNS plus the initial pending
+				// verification state.
+				dns_records?: ResendDnsRecord[]
+				verification_status?: 'pending' | 'verified' | 'failed'
+			}>(`/integrations/${provider}/connect`, {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The response carries the Set-Cookie that binds this browser to the
+				// OAuth `state`; without `include` it is dropped and the callback 400s.
+				credentials: 'include',
+			}),
+		/** "Connect with Maskin" from the Skjald app: approve it for this workspace and get the redirect that carries the one-time code back. */
+		skjaldAuthorize: (
+			workspaceId: string,
+			body: {
+				state: string
+				redirect_uri: string
+				code_challenge: string
+				code_challenge_method: 'S256'
+			},
+		) =>
+			request<{ redirect_url: string; workspace_name: string }>('/integrations/skjald/authorize', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		resendDnsPrecheck: (workspaceId: string, domain: string) =>
+			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
+				'/integrations/resend/dns-precheck',
+				{ method: 'POST', body: { domain }, workspaceId },
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
 			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
@@ -587,6 +663,26 @@ export const api = {
 		history: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
+		},
+		/**
+		 * Up to `maxEvents` history rows, fetched in pages of the server's maximum
+		 * page size. The endpoint rejects `limit` above 100 with a 400, so asking for
+		 * 500 in one call (as the chat's Produced pane did) never returned anything.
+		 */
+		historyUpTo: async (workspaceId: string, params: Record<string, string>, maxEvents: number) => {
+			const pageSize = 100
+			const all: EventResponse[] = []
+			for (let offset = 0; all.length < maxEvents; offset += pageSize) {
+				const qs = new URLSearchParams({
+					...params,
+					limit: String(Math.min(pageSize, maxEvents - all.length)),
+					offset: String(offset),
+				})
+				const page = await request<EventResponse[]>(`/events/history?${qs}`, { workspaceId })
+				all.push(...page)
+				if (page.length < pageSize) break
+			}
+			return all
 		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
 			request<EventResponse>('/events', {
@@ -997,6 +1093,36 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+
+	fileComments: {
+		list: (workspaceId: string, fileId: string, params?: { roundId?: string }) => {
+			const qs = params?.roundId ? `?roundId=${encodeURIComponent(params.roundId)}` : ''
+			return request<FileCommentDto[]>(`/files/${fileId}/comments${qs}`, { workspaceId })
+		},
+		create: (workspaceId: string, fileId: string, data: CreateFileCommentInput) =>
+			request<FileCommentDto>(`/files/${fileId}/comments`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (
+			workspaceId: string,
+			fileId: string,
+			commentId: string,
+			data: UpdateFileCommentInput,
+		) =>
+			request<FileCommentDto>(`/files/${fileId}/comments/${commentId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		sendRound: (workspaceId: string, fileId: string, data: SendRoundInput) =>
+			request<SendRoundResponse>(`/files/${fileId}/comments/rounds`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+	},
 }
 
 /**
@@ -1098,6 +1224,9 @@ export interface BillingUsageResponse {
 	// low-balance banner's 20%-of-recent-burn threshold rule — see
 	// `apps/web/src/components/billing/low-balance-banner.tsx`.
 	sum_topups_last_30d_cents: number
+	// False when the credit top-up Price isn't configured on the server; the
+	// "Buy usage credits" entry points are hidden in that case.
+	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
 	// `linkedin-addon-visible` flag is off OR the workspace has no connected
@@ -1323,6 +1452,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {
@@ -1334,6 +1466,8 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	/** Your own default workspace; null clears it. */
+	default_workspace_id?: string | null
 }
 
 export interface RunAgentInput {
@@ -1357,12 +1491,58 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	role: string
 	/** People in the workspace, including the caller — the workspace menu's sub-line. */
 	memberCount: number
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault: boolean
 }
 
 export interface UpdateWorkspaceInput {
 	name?: string
 	settings?: Record<string, unknown>
 }
+
+export interface InviteSummary {
+	id: string
+	email: string
+	role: string
+	expiresAt: string
+}
+
+export interface PendingInviteListItem extends InviteSummary {
+	invitedByActorId: string
+	invitedByName: string
+	createdAt: string
+}
+
+export interface CreateInviteInput {
+	workspaceId: string
+	email: string
+	role: 'member' | 'viewer'
+}
+
+export type CreateInviteResponse =
+	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
+	| { status: 'pending'; invite: InviteSummary }
+
+export interface InvitePreview {
+	status: 'pending'
+	workspaceId: string
+	workspaceName: string
+	inviterName: string
+	inviteEmail: string
+	expiresAt: string
+}
+
+export interface AcceptInviteSignupInput {
+	email: string
+	password: string
+	name?: string
+}
+
+// New-signup accepts return the new actor (carrying its api_key); authenticated
+// accepts return only the ids.
+export type AcceptInviteResponse =
+	| { actor: ActorWithKey; workspaceId: string }
+	| { workspaceId: string; actorId: string }
 
 export interface MemberResponse {
 	actorId: string
@@ -1381,6 +1561,11 @@ export interface RelationshipResponse {
 	targetId: string
 	targetTitle?: string | null
 	type: string
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// A `conversation → session` `spawned` edge carries `{ messageId }` so
+	// the Origin block can build a deep-link into the chat at the exact
+	// spawning message.
+	metadata?: Record<string, unknown> | null
 	createdBy: string
 	createdAt: string | null
 }
@@ -1390,6 +1575,24 @@ export interface ObjectGraphResponse {
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+	/** Files this object references — attached via a relationship endpoint
+	 *  OR referenced from a comment's `data.attachmentFileIds`. The FE builds
+	 *  its `fileMap` off this so file endpoints render as first-class rows in
+	 *  the Related tab without a follow-up round-trip. Optional for
+	 *  back-compat with older test fixtures; the server always emits it. */
+	files?: GraphFileSummary[]
+}
+
+/** Compact file summary carried on `ObjectGraphResponse.files`. Not the same
+ *  shape as `FileListItem`/`FileDetail` — this omits storageKey/description
+ *  and adds the pre-minted viewer `url`. Matches the backend's
+ *  `fileSummarySchema`. */
+export interface GraphFileSummary {
+	id: string
+	name: string
+	mimeType: string
+	sizeBytes: number
+	url: string
 }
 
 export interface KnowledgeReferencesResponse {
@@ -1420,6 +1623,22 @@ export interface UpdateTriggerInput {
 	action_prompt?: string
 	target_actor_id?: string
 	enabled?: boolean
+}
+
+/** One DNS record the customer must add to verify the sending / receiving
+ *  half of a Resend domain. Priority is only populated for MX. Status flips
+ *  from `pending` → `verified` (or `failed`) as the domain-verifier job (Task
+ *  5) polls Resend's per-record domain-status API. Mirrored into
+ *  `config.resend.dns_records` on the integration row by the connect handler,
+ *  which is what the resume affordance rehydrates from. */
+export interface ResendDnsRecord {
+	record: 'SPF' | 'DKIM' | 'MX'
+	type: string
+	name: string
+	value: string
+	priority?: number
+	status: 'pending' | 'verified' | 'failed'
+	ttl?: number
 }
 
 export interface IntegrationResponse {
@@ -1650,7 +1869,7 @@ export interface UpdateFileInput {
 export interface ConversationParticipantResponse {
 	actorId: string
 	actorName: string
-	actorType: 'human' | 'agent'
+	actorType: 'human' | 'agent' | 'system'
 	joinedAt: string | null
 	addedBy: string | null
 }
@@ -1804,6 +2023,45 @@ export interface MessageResponse {
 	sessionId: string | null
 	createdAt: string | null
 	editedAt: string | null
+	/**
+	 * Sub-agent sessions spawned from this assistant message (bet/444b-handed-off-strip).
+	 * Present on list_conversation_messages responses; empty for non-agent messages
+	 * and for callers that are not participants of the conversation.
+	 */
+	spawned_sessions?: SpawnedSession[]
+}
+
+/**
+ * One entry on the message-level `spawned_sessions` embed served by
+ * `GET /conversations/:id/messages`. Casing matches the delegation-strip
+ * contract: camelCase except `depends_on_session_ids`.
+ */
+export interface SpawnedSession {
+	id: string
+	status: string
+	actorId: string
+	actorName: string
+	actionPrompt: string
+	startedAt: string | null
+	completedAt: string | null
+	durationMs: number | null
+	result: unknown
+	currentActivity: string | null
+	depends_on_session_ids: string[]
+}
+
+/**
+ * Payload of the `session.state_changed` SSE frame. Emitted alongside every
+ * generic session event for a sub-session the caller can see. `snake_case`
+ * matches the backend serialization; camelCase would break the parser.
+ */
+export interface SessionStateChangedPayload {
+	session_id: string
+	status: string
+	duration_ms: number | null
+	depends_on_session_ids: string[]
+	result: unknown
+	current_activity: string | null
 }
 
 export interface EditMessageInput {
@@ -1877,6 +2135,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {
@@ -1961,6 +2221,10 @@ export interface ImportResponse {
 	totalRows: number | null
 	processedRows: number
 	successCount: number
+	/** Rows that matched an existing object and were left alone */
+	skippedCount: number
+	/** Rows that matched an existing object and were merged into it */
+	updatedCount: number
 	errorCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
@@ -1998,6 +2262,8 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	/** `title` or `metadata.<field>` — rows matching an existing object on this field aren't re-created */
+	matchOn?: string
 }
 
 export interface RelationshipMappingInput {
@@ -2010,6 +2276,8 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+	/** What happens to a row that matches an existing object. Absent means `skip`. */
+	onMatch?: 'skip' | 'update'
 }
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'

@@ -30,6 +30,7 @@ import {
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
+import { ApiError } from '@/lib/api'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
@@ -423,7 +424,7 @@ export function AgentDocumentView({
 									value={modelDraft}
 									onChange={(e) => !isManaged && setModelDraft(e.target.value)}
 									onBlur={isManaged ? undefined : handleModelBlur}
-									placeholder="e.g. claude-opus-4-7"
+									placeholder="e.g. claude-sonnet-5-5"
 									readOnly={isManaged}
 								/>
 							</div>
@@ -837,9 +838,19 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	const handleUpdateLlmConfig = useCallback(
 		(llm_config: Record<string, unknown>) => {
-			updateActor.mutate({ id: agent.id, data: { llm_config } })
+			updateActor.mutate(
+				{ id: agent.id, data: { llm_config } },
+				{
+					onError: (err) =>
+						toast.error(
+							err instanceof ApiError && err.status === 403
+								? err.message
+								: `Couldn't save model settings for ${agent.name}`,
+						),
+				},
+			)
 		},
-		[agent.id, updateActor],
+		[agent.id, agent.name, updateActor],
 	)
 
 	const handleUpdateTools = useCallback(

@@ -81,7 +81,7 @@ export type PreflightFailureClass =
 	| '403-permission'
 	| 'anon-rate-limit'
 	| 'write-scope-denied'
-	| 'network-error'
+	| 'upstream-error'
 	| 'user-lookup-failed'
 
 export interface PreflightIdentity {
@@ -115,15 +115,49 @@ export interface PreflightVerdict {
 export interface PreflightOptions {
 	fetchImpl?: typeof fetch
 	writeProbeRepo?: string
+	/** Waits between attempts when GitHub answers 5xx or the request throws. One
+	 *  entry per retry, so the default makes 3 attempts. Tests pass `[0, 0]`. */
+	retryDelaysMs?: number[]
 }
 
 const BODY_SNIPPET_MAX = 200
+
+/** 3 attempts, 0.5s then 1.5s apart: at most 2s of added launch delay. */
+const DEFAULT_RETRY_DELAYS_MS = [500, 1500]
+
+/** `upstream-error` is GitHub (or the network) failing, not the identity. The
+ *  verdict is still reported (log + Slack) but the identity stays in the session. */
+const KEEP_IDENTITY_FAILURE_CLASSES: ReadonlySet<PreflightFailureClass> = new Set([
+	'upstream-error',
+])
+
+/** Wraps fetch so a 5xx response or a thrown error is retried after each delay.
+ *  The last outcome is returned (or rethrown) once retries run out; any other
+ *  status comes back on the first attempt. */
+function withUpstreamRetry(fetchImpl: typeof fetch, delaysMs: number[]): typeof fetch {
+	return (async (input, init) => {
+		for (let attempt = 0; ; attempt++) {
+			const delay = delaysMs[attempt]
+			try {
+				const res = await fetchImpl(input, init)
+				if (res.status < 500 || delay === undefined) return res
+				await res.body?.cancel().catch(() => {})
+			} catch (err) {
+				if (delay === undefined) throw err
+			}
+			if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
+		}
+	}) as typeof fetch
+}
 
 export async function runGitHubPreflight(
 	identities: PreflightIdentity[],
 	opts: PreflightOptions = {},
 ): Promise<PreflightVerdict[]> {
-	const fetchImpl = opts.fetchImpl ?? fetch
+	const fetchImpl = withUpstreamRetry(
+		opts.fetchImpl ?? fetch,
+		opts.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS,
+	)
 	const probeRepo = opts.writeProbeRepo ?? GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO
 	return Promise.all(identities.map((id) => probeOne(id, fetchImpl, probeRepo)))
 }
@@ -161,7 +195,7 @@ async function probeOne(
 			return {
 				name: id.name,
 				healthy: false,
-				failureClass: 'network-error',
+				failureClass: 'upstream-error',
 				statusSnippet: scrubToken(String(err), token),
 				installationId: id.installationId,
 			}
@@ -218,7 +252,7 @@ async function resolveAnyAccessibleRepo(
 			verdict: {
 				name,
 				healthy: false,
-				failureClass: 'network-error',
+				failureClass: 'upstream-error',
 				statusSnippet: scrubToken(String(err), token),
 				installationId,
 			},
@@ -289,7 +323,7 @@ async function probeWriteScope(
 		return {
 			name,
 			healthy: false,
-			failureClass: 'network-error',
+			failureClass: 'upstream-error',
 			statusSnippet: scrubToken(String(err), token),
 			installationId,
 		}
@@ -359,6 +393,18 @@ async function classifyHttpFailure(
 			healthy: false,
 			failureClass: '403-permission',
 			statusSnippet: `HTTP 403 ${path}: ${scrubbed}`,
+			installationId,
+		}
+	}
+	if (status >= 500) {
+		// GitHub itself is failing (retries already ran out), which says nothing
+		// about this identity. Keep the request id so GitHub can trace the call.
+		const requestId = res.headers.get('x-github-request-id')
+		return {
+			name,
+			healthy: false,
+			failureClass: 'upstream-error',
+			statusSnippet: `HTTP ${status} ${path}: ${scrubbed}${requestId ? ` (x-github-request-id: ${requestId})` : ''}`,
 			installationId,
 		}
 	}
@@ -499,7 +545,8 @@ function extractGithubTokenFromEntry(
 }
 
 /**
- * Remove failed identities from an MCP server map. Returns a new object so
+ * Remove failed identities from an MCP server map. `upstream-error` verdicts
+ * are inconclusive, so those identities stay. Returns a new object so
  * the caller can decide whether to re-stringify it (e.g. for AGENT_MCP_JSON
  * vs MCP_SERVERS_JSON). Never mutates the input.
  */
@@ -508,7 +555,13 @@ export function stripFailedIdentities<T extends Record<string, unknown> | undefi
 	verdicts: PreflightVerdict[],
 ): T {
 	if (!mcpMap) return mcpMap
-	const failed = new Set(verdicts.filter((v) => !v.healthy).map((v) => v.name))
+	const failed = new Set(
+		verdicts
+			.filter(
+				(v) => !v.healthy && !(v.failureClass && KEEP_IDENTITY_FAILURE_CLASSES.has(v.failureClass)),
+			)
+			.map((v) => v.name),
+	)
 	if (failed.size === 0) return mcpMap
 	const out: Record<string, unknown> = {}
 	for (const [k, v] of Object.entries(mcpMap)) {

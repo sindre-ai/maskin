@@ -114,7 +114,7 @@ const unreadItemSchema = z.object({
 			created_at: z.string(),
 			// The whole comment. For You is where the reader decides, so the card
 			// must not send them elsewhere to finish reading the ask; the body is
-			// bounded by createCommentSchema's 2000-character cap.
+			// bounded by createCommentSchema's COMMENT_MAX_LENGTH cap.
 			content: z.string(),
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The
@@ -456,6 +456,9 @@ app.openapi(listUnreadRoute, (async (c) => {
 				eq(events.workspaceId, subscriptions.workspaceId),
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
+				// Implied by both branches below; stated outright so the planner can use
+				// the comments-only partial index events_ws_entity_commented_idx.
+				eq(events.action, 'commented'),
 				readOrRecentPredicate,
 				// Two surfaces land in the unread feed, both scoped to comments only
 				// (status-change/terminal-bet/commitment-attention signals were

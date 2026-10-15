@@ -31,6 +31,7 @@ import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
 	InsufficientCreditsError,
+	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
@@ -55,11 +56,17 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_BASE_URL',
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
+	'MASKIN_FALLBACK_ZDR',
+	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
 	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
+	// These tests are about route priority, not refresh behaviour: keep the
+	// platform refresh off so a fixture token never triggers a real refresh call.
+	// The flag-on contract is in claude-launch-refresh.test.ts.
+	process.env.MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED = 'false'
 })
 
 afterEach(() => {
@@ -163,10 +170,10 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
-			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-4-6' },
+			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_AGENT)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
@@ -230,7 +237,7 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: settings,
-			agent: { model: 'claude-sonnet-4-6' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
@@ -282,7 +289,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBeUndefined()
 	})
 
-	it('3b. agent-level model preference is forwarded on the OAuth route', async () => {
+	it('3b. the OAuth route always uses Sonnet 5.5 at high effort, ignoring the agent model', async () => {
 		const expiresAt = Date.now() + 60 * 60 * 1000
 		const db = dbWithFallbackUsage(
 			[],
@@ -300,10 +307,11 @@ describe('resolveLlmRoute priority order', () => {
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
 			enterprise: true,
-			agent: { model: 'claude-sonnet-4-6' },
+			agent: { model: 'some-other-model' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+		expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('high')
 	})
 
 	it('4. workspace api_key when OAuth absent', async () => {
@@ -324,10 +332,10 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: settings,
-			agent: { model: 'claude-opus-4-7' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-opus-4-7')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('falls through OAuth errors to next route', async () => {
@@ -392,8 +400,55 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
+				// The high-effort setting is for the Claude-subscription route only.
+				expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBeUndefined()
+				// modelName carries through to `sessions.model_name` — the local
+				// cost resolver keys OpenRouter's pricing table on it.
+				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
 			},
 		)
+
+		describe('image stripping for text-only models', () => {
+			async function resolveEnv(model: string) {
+				process.env.MASKIN_FALLBACK_MODEL = model
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('asks the container to strip images for a text-only model', async () => {
+				const env = await resolveEnv('deepseek/deepseek-v4-flash-0731')
+				expect(env?.MASKIN_STRIP_IMAGES).toBe('1')
+			})
+
+			it('leaves a vision model alone so it receives images unchanged', async () => {
+				const env = await resolveEnv('anthropic/claude-sonnet-4.5')
+				expect(env?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+
+			it.each(['', 'none', ' NONE '])(
+				'MASKIN_TEXT_ONLY_MODELS=%j turns stripping off',
+				async (value) => {
+					process.env.MASKIN_TEXT_ONLY_MODELS = value
+					const env = await resolveEnv('deepseek/deepseek-v4-flash')
+					expect(env?.MASKIN_STRIP_IMAGES).toBeUndefined()
+				},
+			)
+
+			it('MASKIN_TEXT_ONLY_MODELS replaces the default list when set', async () => {
+				process.env.MASKIN_TEXT_ONLY_MODELS = 'foo, Bar'
+				expect((await resolveEnv('acme/BAR-1'))?.MASKIN_STRIP_IMAGES).toBe('1')
+				const deepseek = await resolveEnv('deepseek/deepseek-v4-flash')
+				expect(deepseek?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+		})
 
 		it('maskin_plan is only used when no BYO credentials are present', async () => {
 			const settings = emptySettings()
@@ -547,7 +602,9 @@ describe('getWorkspacePlanUsdCentsUsage', () => {
 		const db = dbWithSessionUsage([
 			{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 },
 			{ totalCostUsd: '0.50', inputTokens: 0, outputTokens: 0 },
-			// No reported cost — falls back to 16,000 tokens/cent: 16,000 -> 1 cent.
+			// No reported cost — falls back to LEGACY_TOKENS_PER_USD_CENT
+			// (200,000 tokens/cent): 16,000 tokens -> 0.08 cents, which rounds up
+			// to the whole cent on the aggregate below.
 			{ totalCostUsd: null, inputTokens: 16_000, outputTokens: 0 },
 		])
 		expect(await getWorkspacePlanUsdCentsUsage(db, 'ws-1', 0)).toBe(151)
@@ -929,9 +986,9 @@ describe('ceilCents', () => {
 
 	it('still rounds genuine sub-cent usage up to a whole cent', () => {
 		// The token-rate fallback is the only producer of fractional cents; its
-		// smallest non-zero output (1 / FALLBACK_TOKENS_PER_USD_CENT = 6.25e-5)
+		// smallest non-zero output (1 / LEGACY_TOKENS_PER_USD_CENT = 5e-6)
 		// must not be snapped away to zero.
-		expect(ceilCents(1 / 16_000)).toBe(1)
+		expect(ceilCents(1 / LEGACY_TOKENS_PER_USD_CENT)).toBe(1)
 		expect(ceilCents(1004.5)).toBe(1005)
 	})
 })
@@ -1400,5 +1457,87 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+})
+
+describe('MASKIN_FALLBACK_ZDR gate', () => {
+	it.each([
+		['true', true],
+		['1', true],
+		[' TRUE ', true],
+		['false', false],
+		['0', false],
+		['', false],
+	])('readFallbackConfig reads %j as zdr=%s', (value, expected) => {
+		expect(readFallbackConfig({ MASKIN_FALLBACK_ZDR: value }).zdr).toBe(expected)
+	})
+
+	it('defaults zdr to off when the env var is unset', () => {
+		expect(readFallbackConfig({}).zdr).toBe(false)
+	})
+
+	const funded = () =>
+		resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+
+	it('flag off: the funded route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		expect(funded()).not.toHaveProperty('providerPrefs')
+	})
+
+	it('flag on: the funded route asks for zdr', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		expect(funded()?.providerPrefs).toEqual({ zdr: true })
+	})
+
+	it('flag on: an agent key route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: 'openai', apiKey: 'sk-agent', model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-agent')
+		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+
+	it('flag on: a workspace custom_llm route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				billing: { plan: 'pro' },
+				custom_llm: {
+					enabled: true,
+					base_url: 'https://llm.example.com/v1',
+					api_key: 'sk-custom',
+					model: 'm',
+				},
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.baseUrl).toBe('https://llm.example.com/v1')
+		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+
+	it('flag on: a workspace Anthropic key route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				billing: { plan: 'pro' },
+				llm_keys: { anthropic: 'sk-ant-workspace' },
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.provider).toBe('anthropic')
+		expect(creds).not.toHaveProperty('providerPrefs')
 	})
 })
