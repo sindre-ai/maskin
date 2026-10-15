@@ -97,8 +97,8 @@ describe('Workspace credential settings by caller', () => {
 		it('lets a member spread a GET response back: 200, and the stored keys are not touched', async () => {
 			const ws = buildSecretWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			// GET: the list row, then the member count. PATCH: membership, the row, the admin lookup.
-			mockResults.selectQueue = [[{ ...ws, role: 'member' }], [], MEMBER, [ws], PLAIN_MEMBER]
+			// GET: the list row, the member counts, the default workspace. PATCH: membership, the row, the admin lookup.
+			mockResults.selectQueue = [[{ ...ws, role: 'member' }], [], [], MEMBER, [ws], PLAIN_MEMBER]
 			mockResults.update = [ws]
 
 			const [listed] = await (await app.request(jsonGet('/api/workspaces'))).json()
