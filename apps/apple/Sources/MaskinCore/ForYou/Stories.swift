@@ -124,9 +124,7 @@ public enum StoryDerivation {
 		else { return nil }
 		var inner = String(html[range])
 		inner = inner.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-		for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
-			inner = inner.replacingOccurrences(of: entity, with: char)
-		}
+		inner = HTMLEntities.decode(inner)
 		let collapsed = inner.split(whereSeparator: \.isWhitespace).joined(separator: " ")
 		return collapsed.isEmpty ? nil : collapsed
 	}
