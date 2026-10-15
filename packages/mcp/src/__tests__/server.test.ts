@@ -2298,10 +2298,20 @@ describe('tool handlers', () => {
 			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
 		})
 
-		it('flag off: not in the body, so the create route sees what it saw before', async () => {
+		it('always on, so a caller that does not wait still hears back', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
-			expect(postedBody(vi.mocked(fetch))).not.toHaveProperty('notify_on_complete')
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
+		})
+
+		it('cannot be switched off: a caller passing false still hears back', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				notify_on_complete: false,
+			})
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
 		})
 	})
 
@@ -2414,6 +2424,21 @@ describe('tool handlers', () => {
 			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
 		})
 
+		it('unset and the wait times out: still asks for the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n0')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+			await resultPromise
+
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
 		it('flag on and the helper finishes inside the wait: no PATCH, the caller has the result inline', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -2523,7 +2548,7 @@ describe('tool handlers', () => {
 			expect(parsed.logs_error).toEqual(expect.any(String))
 		})
 
-		it('flag off and the wait times out: no PATCH, as before', async () => {
+		it('passing false does not stop the return being registered when the wait times out', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')
 
@@ -2531,12 +2556,12 @@ describe('tool handlers', () => {
 				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
+				notify_on_complete: false,
 			})
 			await vi.advanceTimersByTimeAsync(3_800_000)
+			await resultPromise
 
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('notify_on_complete')
-			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
 		})
 
 		it('a failed PATCH does not fail the call; it says the return was not registered', async () => {
@@ -6435,5 +6460,35 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', '')
 		build({})
 		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBeUndefined()
+	})
+
+	// post_conversation_message stamps the same id into the request body, for
+	// messages.session_id (cost and token drill-down).
+	async function postMessageBody(): Promise<Record<string, unknown>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'hello',
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		return JSON.parse((call?.[1] as RequestInit).body as string)
+	}
+
+	it('post_conversation_message stamps config.maskinSessionId, ahead of the host SESSION_ID', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await postMessageBody()).session_id).toBe(callerSession)
+	})
+
+	it('post_conversation_message falls back to SESSION_ID on stdio', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({})
+		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 })

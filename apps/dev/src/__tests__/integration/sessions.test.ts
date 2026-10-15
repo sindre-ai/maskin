@@ -544,6 +544,43 @@ describe('Sessions Integration', () => {
 				expect(seen[0]).toBe(longLived.id)
 			})
 
+			it('verbose and lean return the same ids in the same order, and a verbose before-walk visits every row once', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				// created_at runs the opposite way to updated_at, so a created_at sort on
+				// the verbose path would order these differently from the lean path.
+				const seeded: string[] = []
+				for (let i = 0; i < 7; i++) {
+					const s = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+						createdAt: new Date(`2026-06-02T${String(10 + i).padStart(2, '0')}:00:00.000Z`),
+						updatedAt: new Date(`2026-06-02T${String(20 - i).padStart(2, '0')}:00:00.000Z`),
+					})
+					seeded.push(s.id)
+				}
+
+				const idsOf = async (qs: string) => {
+					const res = await app.request(jsonGet(`/api/sessions?${qs}`, headers))
+					expect(res.status).toBe(200)
+					return ((await res.json()) as Array<{ id: string }>).map((r) => r.id)
+				}
+				const lean = await idsOf('limit=50')
+				const verbose = await idsOf('limit=50&verbose=true')
+				expect(verbose).toEqual(lean)
+				expect(verbose).toEqual(seeded)
+
+				const seen: string[] = []
+				let cursor: string | undefined
+				for (let page = 0; page < 5; page++) {
+					const qs = `limit=3&verbose=true${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`
+					const res = await app.request(jsonGet(`/api/sessions?${qs}`, headers))
+					const rows = (await res.json()) as Array<{ id: string; updatedAt: string }>
+					if (rows.length === 0) break
+					seen.push(...rows.map((r) => r.id))
+					cursor = rows[rows.length - 1].updatedAt
+				}
+				expect(seen).toEqual(seeded)
+			})
+
 			it('cap on limit is 200; requests over 200 are rejected', async () => {
 				const app = createSessionApp()
 				const headers = { 'x-workspace-id': workspaceId }

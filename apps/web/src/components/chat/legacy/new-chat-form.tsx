@@ -142,7 +142,7 @@ export function LegacyNewChatForm({ search }: { search: LegacyNewChatSearch }) {
 			.filter((a) => a.type === 'agent')
 			.map((a) => ({ id: a.id, name: a.name, type: a.type, description: a.description }))
 		const people: Recipient[] = (members ?? [])
-			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent')
+			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent' && m.type !== 'system')
 			.map((m) => ({ id: m.actorId, name: m.name, type: m.type, description: m.role }))
 		const byId = new Map<string, Recipient>()
 		for (const r of [...agents, ...people]) if (!byId.has(r.id)) byId.set(r.id, r)

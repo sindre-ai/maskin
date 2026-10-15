@@ -76,6 +76,7 @@ const ALL_TOOL_NAMES = [
 	'stop_session',
 	'pause_session',
 	'resume_session',
+	'ask_user_question',
 	'create_notification',
 	'list_notifications',
 	'get_notification',
@@ -655,10 +656,8 @@ describe('create_session schema', () => {
 		}
 	})
 
-	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
-		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
-		expect(schema.parse(base).notify_on_complete).toBeUndefined()
-		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
+	it('has no notify_on_complete parameter: the return is always sent, with no opt-out', () => {
+		expect(schema.shape).not.toHaveProperty('notify_on_complete')
 	})
 
 	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {

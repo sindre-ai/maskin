@@ -39,6 +39,7 @@ import {
 } from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 /**
  * LinkedIn (LinkedIn-backed) integration routes — the whole provider surface,
  * rebuilt against LinkedIn Hosted Auth v2.
@@ -93,6 +94,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 	}
 }
 
@@ -212,6 +215,7 @@ async function resolveCallbackState(
 const connectRoute = createRoute({
 	method: 'post',
 	path: '/connect',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Start LinkedIn Hosted Auth Wizard connect flow',
 	request: {
@@ -240,6 +244,7 @@ app.openapi(connectRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Where to land after the wizard: the chat that showed the Connect card, when
 	// there was one. Kept in the sealed pending blob alongside the nonce, so it is
@@ -791,6 +796,7 @@ app.get('/identities', async (c) => {
 // ── POST /api/integrations/linkedin-unipile/send-message ─────────────
 
 app.post('/send-message', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -812,6 +818,7 @@ app.post('/send-message', async (c) => {
 // ── POST /api/integrations/linkedin-unipile/reply ────────────────────
 
 app.post('/reply', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -877,6 +884,7 @@ async function readJsonBody<T = Record<string, unknown>>(
 }
 
 app.post('/publish-post', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -892,6 +900,7 @@ app.post('/publish-post', async (c) => {
 })
 
 app.post('/comment-on-post', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -909,6 +918,7 @@ app.post('/comment-on-post', async (c) => {
 })
 
 app.post('/reply-to-comment', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)

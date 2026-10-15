@@ -1061,7 +1061,14 @@ async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
 ) {
-	const { workspace_id, wait: _wait, notify_on_complete, ...createBody } = args
+	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
+	// ignored, and it is never sent on this create call (registered below instead).
+	const {
+		workspace_id,
+		wait: _wait,
+		notify_on_complete: _ignored,
+		...createBody
+	} = args as typeof args & { notify_on_complete?: unknown }
 	const wsOpts = { workspaceId: workspace_id }
 
 	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
@@ -1131,7 +1138,7 @@ async function createSessionAndWait(
 	let notifyOnComplete:
 		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
 		| undefined
-	if (notify_on_complete && !settled) {
+	if (!settled) {
 		try {
 			const patched = (await apiCall(
 				config,
@@ -4947,14 +4954,16 @@ export function createMcpServer(config: McpConfig) {
 			// SESSION_ID is injected by session-manager into every agent
 			// container's env — stamping it here lets the conversations route
 			// attribute this message back to the session that produced it
-			// (messages.session_id), for cost/token drill-down. Undefined
+			// (messages.session_id), for cost/token drill-down. Over HTTP the
+			// server runs inside apps/dev, so that env is the host process's;
+			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: process.env.SESSION_ID },
+				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
 				{ workspaceId: workspace_id },
 			)
 			return {
@@ -5981,8 +5990,11 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			if (args.wait) return createSessionAndWait(config, args)
 
-			// `wait` never goes to the create route.
-			const { workspace_id, wait, ...createBody } = args
+			// `wait` never goes to the create route. The result is always sent back to
+			// the caller, with no opt-out: not waiting means not holding the call open,
+			// not never finding out how it went.
+			const { workspace_id, wait, ...rest } = args
+			const createBody = { ...rest, notify_on_complete: true }
 
 			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
 				workspaceId: workspace_id,
@@ -6000,6 +6012,47 @@ export function createMcpServer(config: McpConfig) {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'ask_user_question',
+		{
+			description: tools.ask_user_question.description,
+			inputSchema: tools.ask_user_question.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string) => ({
+				_meta: meta('ask_user_question', config, undefined),
+				content: [{ type: 'text' as const, text }],
+			})
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId) {
+				return reply(
+					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
+				)
+			}
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+					questions: args.questions.map((q) => ({
+						question: q.question,
+						header: q.header,
+						multi_select: q.multi_select ?? false,
+						options: q.options,
+					})),
+				})
+			} catch (err) {
+				// 409 is the normal answer for a session with no chat to ask in.
+				console.error('ask_user_question: could not post the question', err)
+				return reply(
+					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			return reply(
+				'Your question has been posted and the person is being shown the options. Do not call this tool again and do not repeat the question in your own words. End your turn now, without a closing message; their answer will arrive as your next turn.',
+			)
 		},
 	)
 
@@ -6048,6 +6101,13 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: { sessions: withUrls },
+				// If the token cap trims this page, the walk resumes after the last row that
+				// ships. list_sessions pages on `before` (updated_at), so the cursor is that value.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as { updated_at?: unknown; updatedAt?: unknown }
+					const updatedAt = row.updated_at ?? row.updatedAt
+					return typeof updatedAt === 'string' ? updatedAt : null
+				},
 			}
 		},
 	)
