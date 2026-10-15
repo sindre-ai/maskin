@@ -24,10 +24,13 @@ export type GithubErrorCause =
 	| 'anon-rate-limit'
 	| '403-permission'
 	| '404-not-found'
+	| '429-rate-limited'
+	| '5xx-server-error'
 	| '401-unauth'
 	| 'schema-validation'
 	| 'mergeable-blocked'
 	| 'token-expired-mid-session'
+	| 'unknown'
 
 export interface HeaderLookup {
 	get(name: string): string | null
@@ -94,6 +97,10 @@ const RATE_LIMIT_REMAINING_HEADER = 'x-ratelimit-remaining'
  *   7. `403-permission` — any other 403
  *   8. `404-not-found` — any other 404 (the call reached GitHub and the
  *      resource, or the token's view of it, does not exist)
+ *   9. `429-rate-limited` — any other 429 (not the anon rate-limit shape)
+ *  10. `5xx-server-error` — any 500 to 599
+ *  11. `unknown` — no status and no body hint matched, or a status no rule
+ *      above covers; `schema-validation` is never the fallback
  */
 export function classifyGithubError(
 	failure: GithubFailureInput,
@@ -123,14 +130,15 @@ function pickPrimary(failure: GithubFailureInput, ctx: ClassificationContext): G
 	if (status === 401) return '401-unauth'
 	if (status === 403) return '403-permission'
 	if (status === 404) return '404-not-found'
+	if (status === 429) return '429-rate-limited'
+	if (status !== undefined && status >= 500 && status <= 599) return '5xx-server-error'
 	// Fall back to a 401-unauth reading when the failure lacks a status but
 	// carries an auth-shaped body — better than dropping the tag entirely.
 	if (/Bad credentials|401|Requires authentication/i.test(bodyText)) return '401-unauth'
-	// Everything else that reaches this point is an untypeable failure; tag
-	// it as `401-unauth` only when body-hints agree, otherwise return
-	// `schema-validation` as the least-wrong "we don't know" bucket. In
-	// practice callers should always pass a status.
-	return 'schema-validation'
+	// Everything else that reaches this point is an untypeable failure (no
+	// status, or a status no rule covers). `unknown` keeps it out of
+	// `schema-validation`, which means validation actually failed.
+	return 'unknown'
 }
 
 function pickSecondary(

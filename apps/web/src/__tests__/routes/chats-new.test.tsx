@@ -30,8 +30,9 @@ vi.mock('@/hooks/use-actors', () => ({
 	useDefaultChatAgent: () => ({ id: 'cos-1', name: 'Chief of Staff' }),
 }))
 
+const mockMembers = vi.fn()
 vi.mock('@/hooks/use-workspaces', () => ({
-	useWorkspaceMembers: () => ({ data: [] }),
+	useWorkspaceMembers: () => ({ data: mockMembers() }),
 }))
 
 const mockReferencedObjects = vi.fn()
@@ -115,7 +116,11 @@ function conversationsPage(
 	convs: Array<{
 		id: string
 		lastMessageAt: string | null
-		participants: Array<{ actorId: string; actorName: string; actorType: 'human' | 'agent' }>
+		participants: Array<{
+			actorId: string
+			actorName: string
+			actorType: 'human' | 'agent' | 'system'
+		}>
 	}>,
 ) {
 	return {
@@ -148,6 +153,7 @@ describe('New chat', () => {
 		vi.clearAllMocks()
 		mockSearch.mockReturnValue({})
 		mockActors.mockReturnValue([CHIEF, FORGE, SENTINEL])
+		mockMembers.mockReturnValue([])
 		mockReferencedObjects.mockReturnValue(undefined)
 		mockConversationsInfinite.mockReturnValue(undefined)
 		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
@@ -199,6 +205,32 @@ describe('New chat', () => {
 		render(<NewChatPage />)
 		expect(screen.getByText('RECENT')).toBeInTheDocument()
 		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
+	})
+
+	it('never offers integration system members as recipients, typed or in RECENT', async () => {
+		mockMembers.mockReturnValue([
+			{ actorId: 'slack-1', name: 'Slack', type: 'system', role: 'member' },
+			{ actorId: 'sam-1', name: 'Sam Slack', type: 'human', role: 'member' },
+		])
+		mockConversationsInfinite.mockReturnValue(
+			conversationsPage([
+				{
+					id: 'c-1',
+					lastMessageAt: '2026-09-01T10:00:00.000Z',
+					participants: [
+						{ actorId: 'slack-1', actorName: 'Slack', actorType: 'system' },
+						{ actorId: 'forge-1', actorName: 'Forge', actorType: 'agent' },
+					],
+				},
+			]),
+		)
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
+		await user.type(screen.getByLabelText('Add recipients'), 'sl')
+		expect(screen.getByRole('option', { name: /Sam Slack/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
 	})
 
 	it('omits the RECENT section entirely when the derivation returns zero candidates', () => {

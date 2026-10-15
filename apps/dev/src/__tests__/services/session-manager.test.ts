@@ -1,4 +1,4 @@
-﻿import { vi } from 'vitest'
+﻿import { type MockInstance, vi } from 'vitest'
 
 // Mock external dependencies
 vi.mock('node:fs/promises', () => ({
@@ -882,6 +882,88 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — agent identity preamble', () => {
+		it('prepends the Maskin identity preamble to SYSTEM_PROMPT so the CLI provider is never named', async () => {
+			const session = buildSession({ status: 'pending', containerId: null })
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			expect(systemPrompt).toContain('You are a Maskin agent')
+			expect(systemPrompt.indexOf('You are a Maskin agent')).toBe(0)
+			// The agent's own persona still follows the preamble.
+			expect(systemPrompt).toContain('You are Workspace Coach.')
+		})
+
+		it('keeps the identity preamble ahead of the conversation preamble', async () => {
+			const session = buildSession({
+				status: 'pending',
+				containerId: null,
+				config: { conversation: true },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			const identityAt = systemPrompt.indexOf('You are a Maskin agent')
+			const conversationAt = systemPrompt.indexOf(
+				'You are in a live, interactive chat conversation',
+			)
+			expect(identityAt).toBe(0)
+			expect(conversationAt).toBeGreaterThan(identityAt)
+		})
+	})
+
 	describe('startSession() — LLM model routing (llmConfig.model)', () => {
 		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the workspace api_key route', async () => {
 			const session = buildSession({
@@ -1693,6 +1775,120 @@ describe('SessionManager', () => {
 
 			expect(mockContainerManager.stop.mock.calls.length).toBe(stopCallsAfterFirst)
 			expect(mockContainerManager.remove.mock.calls.length).toBe(removeCallsAfterFirst)
+		})
+	})
+
+	describe('MCP health report — per-session record and cap timer', () => {
+		type Internals = {
+			emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void>
+			clearActiveSession(sessionId: string): Promise<void>
+			mcpHealth: Map<string, { timer?: NodeJS.Timeout; resolved: boolean }>
+		}
+
+		const initChunk = (servers: Array<{ name: string; status: string }>) =>
+			`${JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })}\n`
+		const toolUseChunk = (toolName: string) =>
+			`${JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id: 'toolu_1', name: toolName, input: {} }] },
+			})}\n`
+
+		let internals: Internals
+		let logSpy: MockInstance<(sessionId: string, content: string) => Promise<void>>
+
+		beforeEach(() => {
+			internals = manager as unknown as Internals
+			logSpy = vi.spyOn(manager, 'insertSystemLog').mockResolvedValue(undefined)
+		})
+
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('clears the cap timer on teardown and emits nothing afterwards', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-teardown'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+			expect(internals.mcpHealth.get(sessionId)?.timer).toBeDefined()
+			expect(vi.getTimerCount()).toBe(1)
+
+			await internals.clearActiveSession(sessionId)
+			expect(internals.mcpHealth.has(sessionId)).toBe(false)
+			expect(vi.getTimerCount()).toBe(0)
+
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('labels a server slow-unknown exactly once when nothing resolves it by the cap', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-cap'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			await vi.advanceTimersByTimeAsync(119_000)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[1]?.[1]).toContain('did not finish starting')
+			expect(logSpy.mock.calls[1]?.[1]).toContain('not a confirmed failure')
+
+			// A chunk after the cap neither re-opens the record nor emits again.
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, toolUseChunk('mcp__playwright__x'))
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('emits the correction exactly once when a pending server shows tool use', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-correction'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				toolUseChunk('mcp__playwright__browser_navigate'),
+			)
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				toolUseChunk('mcp__playwright__browser_click'),
+			)
+			// A replayed init line cannot flip it back to pending.
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[0]?.[1]).toContain('still starting')
+			expect(logSpy.mock.calls[1]?.[1]).toContain('connected after starting')
+			// Settled: the cap timer is gone and never fires a third line.
+			expect(vi.getTimerCount()).toBe(0)
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('keeps the straddle buffer after emitting so a split line later in the window still parses', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-straddle'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			const line = toolUseChunk('mcp__playwright__browser_navigate')
+			const cut = Math.floor(line.length / 2)
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, line.slice(0, cut))
+			expect(logSpy).toHaveBeenCalledTimes(1)
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, line.slice(cut))
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[1]?.[1]).toContain('connected after starting')
 		})
 	})
 
@@ -3897,7 +4093,7 @@ describe('SessionManager', () => {
 					stream: 'stdout',
 					content: `${initLine([
 						{ name: 'maskin', status: 'connected' },
-						{ name: 'playwright', status: 'pending' },
+						{ name: 'playwright', status: 'failed' },
 					])}
 `,
 				},
@@ -3905,7 +4101,7 @@ describe('SessionManager', () => {
 
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 			expect(warnings[0].content).not.toContain('maskin')
 		})
 
@@ -3918,7 +4114,7 @@ describe('SessionManager', () => {
 			const sessionId = randomUUID()
 			const line = `${initLine([
 				{ name: 'maskin', status: 'connected' },
-				{ name: 'playwright', status: 'pending' },
+				{ name: 'playwright', status: 'failed' },
 			])}
 `
 			const cut = Math.floor(line.length / 2)
@@ -3934,7 +4130,7 @@ describe('SessionManager', () => {
 			await emit(sessionId, line.slice(cut))
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 		})
 
 		// The stream re-attaches with `tail: 'all'` on resume and with a ~1s
@@ -3942,7 +4138,7 @@ describe('SessionManager', () => {
 		// The warning should read once per session, not once per reconnect.
 		it('warns only once when the init line is replayed', async () => {
 			const sessionId = randomUUID()
-			const chunk = `${initLine([{ name: 'playwright', status: 'pending' }])}
+			const chunk = `${initLine([{ name: 'playwright', status: 'failed' }])}
 `
 			const emit = (
 				manager as unknown as {
@@ -4343,6 +4539,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4369,6 +4566,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4396,6 +4594,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -4446,6 +4645,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4621,6 +4821,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -4731,6 +4932,7 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[], // sumAssistantUsage fallback
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
 					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
@@ -4877,6 +5079,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
@@ -4965,6 +5168,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 			]
 			mockResults.insertQueue = [

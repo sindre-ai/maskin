@@ -142,6 +142,7 @@ export function buildWorkspaceWithRole(
 		billingOwnerId: 'actor-1',
 		role: 'admin',
 		memberCount: 3,
+		isDefault: false,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
