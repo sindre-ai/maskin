@@ -9311,8 +9311,6 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/llm_config`.
                     public var llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload?
-                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/default_workspace_id`.
-                    public var default_workspace_id: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -9324,7 +9322,6 @@ public enum Operations {
                     ///   - memory:
                     ///   - llm_provider:
                     ///   - llm_config:
-                    ///   - default_workspace_id:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -9333,8 +9330,7 @@ public enum Operations {
                         tools: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.toolsPayload? = nil,
                         memory: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.memoryPayload? = nil,
                         llm_provider: Swift.String? = nil,
-                        llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
-                        default_workspace_id: Swift.String? = nil
+                        llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -9344,7 +9340,6 @@ public enum Operations {
                         self.memory = memory
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
-                        self.default_workspace_id = default_workspace_id
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -9355,7 +9350,6 @@ public enum Operations {
                         case memory
                         case llm_provider
                         case llm_config
-                        case default_workspace_id
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -10470,144 +10464,6 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
-                            response: self
-                        )
-                    }
-                }
-            }
-            public struct InternalServerError: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content`.
-                @frozen public enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json`.
-                    public struct jsonPayload: Codable, Hashable, Sendable {
-                        /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error`.
-                        public struct errorPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/code`.
-                            public var code: Swift.String
-                            /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/message`.
-                            public var message: Swift.String
-                            /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/detailsPayload`.
-                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
-                                /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/detailsPayload/field`.
-                                public var field: Swift.String
-                                /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/detailsPayload/message`.
-                                public var message: Swift.String
-                                /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/detailsPayload/expected`.
-                                public var expected: Swift.String?
-                                /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/detailsPayload/received`.
-                                public var received: Swift.String?
-                                /// Creates a new `detailsPayloadPayload`.
-                                ///
-                                /// - Parameters:
-                                ///   - field:
-                                ///   - message:
-                                ///   - expected:
-                                ///   - received:
-                                public init(
-                                    field: Swift.String,
-                                    message: Swift.String,
-                                    expected: Swift.String? = nil,
-                                    received: Swift.String? = nil
-                                ) {
-                                    self.field = field
-                                    self.message = message
-                                    self.expected = expected
-                                    self.received = received
-                                }
-                                public enum CodingKeys: String, CodingKey {
-                                    case field
-                                    case message
-                                    case expected
-                                    case received
-                                }
-                            }
-                            /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/details`.
-                            public typealias detailsPayload = [Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload.errorPayload.detailsPayloadPayload]
-                            /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/details`.
-                            public var details: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload.errorPayload.detailsPayload?
-                            /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error/suggestion`.
-                            public var suggestion: Swift.String?
-                            /// Creates a new `errorPayload`.
-                            ///
-                            /// - Parameters:
-                            ///   - code:
-                            ///   - message:
-                            ///   - details:
-                            ///   - suggestion:
-                            public init(
-                                code: Swift.String,
-                                message: Swift.String,
-                                details: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload.errorPayload.detailsPayload? = nil,
-                                suggestion: Swift.String? = nil
-                            ) {
-                                self.code = code
-                                self.message = message
-                                self.details = details
-                                self.suggestion = suggestion
-                            }
-                            public enum CodingKeys: String, CodingKey {
-                                case code
-                                case message
-                                case details
-                                case suggestion
-                            }
-                        }
-                        /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/json/error`.
-                        public var error: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload.errorPayload
-                        /// Creates a new `jsonPayload`.
-                        ///
-                        /// - Parameters:
-                        ///   - error:
-                        public init(error: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload.errorPayload) {
-                            self.error = error
-                        }
-                        public enum CodingKeys: String, CodingKey {
-                            case error
-                        }
-                    }
-                    /// - Remark: Generated from `#/paths/api/actors/{id}/DELETE/responses/500/content/application\/json`.
-                    case json(Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload)
-                    /// The associated value of the enum case if `self` is `.json`.
-                    ///
-                    /// - Throws: An error if `self` is not `.json`.
-                    /// - SeeAlso: `.json`.
-                    public var json: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body.jsonPayload {
-                        get throws {
-                            switch self {
-                            case let .json(body):
-                                return body
-                            }
-                        }
-                    }
-                }
-                /// Received HTTP response body
-                public var body: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body
-                /// Creates a new `InternalServerError`.
-                ///
-                /// - Parameters:
-                ///   - body: Received HTTP response body
-                public init(body: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError.Body) {
-                    self.body = body
-                }
-            }
-            /// Agent files could not be removed from storage; the agent was not deleted
-            ///
-            /// - Remark: Generated from `#/paths//api/actors/{id}/delete/responses/500`.
-            ///
-            /// HTTP response code: `500 internalServerError`.
-            case internalServerError(Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError)
-            /// The associated value of the enum case if `self` is `.internalServerError`.
-            ///
-            /// - Throws: An error if `self` is not `.internalServerError`.
-            /// - SeeAlso: `.internalServerError`.
-            public var internalServerError: Operations.delete_sol_api_sol_actors_sol__lcub_id_rcub_.Output.InternalServerError {
-                get throws {
-                    switch self {
-                    case let .internalServerError(response):
-                        return response
-                    default:
-                        try throwUnexpectedResponseStatus(
-                            expectedStatus: "internalServerError",
                             response: self
                         )
                     }
@@ -15180,37 +15036,6 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/settings`.
                         public var settings: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.settingsPayload?
-                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured`.
-                        public struct llm_configuredPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured/anthropic`.
-                            public var anthropic: Swift.Bool
-                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured/openai`.
-                            public var openai: Swift.Bool
-                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured/custom_llm`.
-                            public var custom_llm: Swift.Bool
-                            /// Creates a new `llm_configuredPayload`.
-                            ///
-                            /// - Parameters:
-                            ///   - anthropic:
-                            ///   - openai:
-                            ///   - custom_llm:
-                            public init(
-                                anthropic: Swift.Bool,
-                                openai: Swift.Bool,
-                                custom_llm: Swift.Bool
-                            ) {
-                                self.anthropic = anthropic
-                                self.openai = openai
-                                self.custom_llm = custom_llm
-                            }
-                            public enum CodingKeys: String, CodingKey {
-                                case anthropic
-                                case openai
-                                case custom_llm
-                            }
-                        }
-                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured`.
-                        public var llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/enterprise`.
@@ -15227,15 +15052,12 @@ public enum Operations {
                         public var role: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/memberCount`.
                         public var memberCount: Swift.Int
-                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isDefault`.
-                        public var isDefault: Swift.Bool
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
                         ///   - id:
                         ///   - name:
                         ///   - settings:
-                        ///   - llm_configured:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -15244,12 +15066,10 @@ public enum Operations {
                         ///   - updatedAt:
                         ///   - role:
                         ///   - memberCount:
-                        ///   - isDefault:
                         public init(
                             id: Swift.String,
                             name: Swift.String,
                             settings: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.settingsPayload? = nil,
-                            llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -15257,13 +15077,11 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             role: Swift.String,
-                            memberCount: Swift.Int,
-                            isDefault: Swift.Bool
+                            memberCount: Swift.Int
                         ) {
                             self.id = id
                             self.name = name
                             self.settings = settings
-                            self.llm_configured = llm_configured
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -15272,13 +15090,11 @@ public enum Operations {
                             self.updatedAt = updatedAt
                             self.role = role
                             self.memberCount = memberCount
-                            self.isDefault = isDefault
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
                             case name
                             case settings
-                            case llm_configured
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -15287,7 +15103,6 @@ public enum Operations {
                             case updatedAt
                             case role
                             case memberCount
-                            case isDefault
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/json`.
@@ -16641,37 +16456,6 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/settings`.
                         public var settings: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.settingsPayload?
-                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured`.
-                        public struct llm_configuredPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured/anthropic`.
-                            public var anthropic: Swift.Bool
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured/openai`.
-                            public var openai: Swift.Bool
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured/custom_llm`.
-                            public var custom_llm: Swift.Bool
-                            /// Creates a new `llm_configuredPayload`.
-                            ///
-                            /// - Parameters:
-                            ///   - anthropic:
-                            ///   - openai:
-                            ///   - custom_llm:
-                            public init(
-                                anthropic: Swift.Bool,
-                                openai: Swift.Bool,
-                                custom_llm: Swift.Bool
-                            ) {
-                                self.anthropic = anthropic
-                                self.openai = openai
-                                self.custom_llm = custom_llm
-                            }
-                            public enum CodingKeys: String, CodingKey {
-                                case anthropic
-                                case openai
-                                case custom_llm
-                            }
-                        }
-                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured`.
-                        public var llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/enterprise`.
@@ -16690,7 +16474,6 @@ public enum Operations {
                         ///   - id:
                         ///   - name:
                         ///   - settings:
-                        ///   - llm_configured:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -16701,7 +16484,6 @@ public enum Operations {
                             id: Swift.String,
                             name: Swift.String,
                             settings: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.settingsPayload? = nil,
-                            llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -16712,7 +16494,6 @@ public enum Operations {
                             self.id = id
                             self.name = name
                             self.settings = settings
-                            self.llm_configured = llm_configured
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -16724,7 +16505,6 @@ public enum Operations {
                             case id
                             case name
                             case settings
-                            case llm_configured
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -18512,37 +18292,6 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/settings`.
                         public var settings: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.settingsPayload?
-                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured`.
-                        public struct llm_configuredPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured/anthropic`.
-                            public var anthropic: Swift.Bool
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured/openai`.
-                            public var openai: Swift.Bool
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured/custom_llm`.
-                            public var custom_llm: Swift.Bool
-                            /// Creates a new `llm_configuredPayload`.
-                            ///
-                            /// - Parameters:
-                            ///   - anthropic:
-                            ///   - openai:
-                            ///   - custom_llm:
-                            public init(
-                                anthropic: Swift.Bool,
-                                openai: Swift.Bool,
-                                custom_llm: Swift.Bool
-                            ) {
-                                self.anthropic = anthropic
-                                self.openai = openai
-                                self.custom_llm = custom_llm
-                            }
-                            public enum CodingKeys: String, CodingKey {
-                                case anthropic
-                                case openai
-                                case custom_llm
-                            }
-                        }
-                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured`.
-                        public var llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/enterprise`.
@@ -18561,7 +18310,6 @@ public enum Operations {
                         ///   - id:
                         ///   - name:
                         ///   - settings:
-                        ///   - llm_configured:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -18572,7 +18320,6 @@ public enum Operations {
                             id: Swift.String,
                             name: Swift.String,
                             settings: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.settingsPayload? = nil,
-                            llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -18583,7 +18330,6 @@ public enum Operations {
                             self.id = id
                             self.name = name
                             self.settings = settings
-                            self.llm_configured = llm_configured
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -18595,7 +18341,6 @@ public enum Operations {
                             case id
                             case name
                             case settings
-                            case llm_configured
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -54666,8 +54411,6 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/annotations`.
                         public var annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload?
-                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/warning`.
-                        public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -54685,7 +54428,6 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
-                        ///   - warning:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -54700,8 +54442,7 @@ public enum Operations {
                             content: Swift.String,
                             encoding: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
-                            annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload? = nil,
-                            warning: Swift.String? = nil
+                            annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -54717,7 +54458,6 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
-                            self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -54734,7 +54474,6 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
-                            case warning
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/application\/json`.
@@ -55283,8 +55022,6 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/annotations`.
                         public var annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
-                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/warning`.
-                        public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -55302,7 +55039,6 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
-                        ///   - warning:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -55317,8 +55053,7 @@ public enum Operations {
                             content: Swift.String,
                             encoding: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
-                            annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
-                            warning: Swift.String? = nil
+                            annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -55334,7 +55069,6 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
-                            self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -55351,7 +55085,6 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
-                            case warning
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/application\/json`.
@@ -55930,8 +55663,6 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/annotations`.
                         public var annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
-                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/warning`.
-                        public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -55949,7 +55680,6 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
-                        ///   - warning:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -55964,8 +55694,7 @@ public enum Operations {
                             content: Swift.String,
                             encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
-                            annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
-                            warning: Swift.String? = nil
+                            annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -55981,7 +55710,6 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
-                            self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -55998,7 +55726,6 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
-                            case warning
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/application\/json`.
