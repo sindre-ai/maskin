@@ -153,6 +153,7 @@ import {
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
+	sumAssistantUsage,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
@@ -993,6 +994,17 @@ export class SessionManager extends EventEmitter {
 		// pre-stage a temp dir locally — we only own the queue handoff.
 		if (this.dispatchQueue) {
 			try {
+				// Mark the row as waiting on a machine before it is enqueued. The row
+				// otherwise keeps its default session_state='queued', which the
+				// reaper's queued-rescue reads as a dead driver after 2 min: it
+				// re-fires _driveToRunning, startSession throws on the 'starting'
+				// status, and boot-stall fails the row as startup_stalled 5 min later
+				// while it is still legitimately waiting for a slot. Written before
+				// enqueue so it cannot overwrite the dispatcher's 'running'.
+				await this.db
+					.update(sessions)
+					.set({ sessionState: 'waiting_for_machine', stateEnteredAt: new Date() })
+					.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'starting')))
 				await this.dispatchQueue.enqueue(sessionId)
 				logger.info(`Session enqueued for remote dispatch: ${sessionId}`, {
 					workspaceId: session.workspaceId,
@@ -2142,6 +2154,21 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// The CLI under the session (Claude Code, Codex, …) injects its own
+		// identity text into the model's context, and an agent's own persona
+		// prompt never contradicts it — so an agent asked what it runs on
+		// answers with the underlying model/vendor instead of Maskin, which is
+		// the branding leak this fixes. We cannot remove the CLI's text, only
+		// out-instruct it; prepending to SYSTEM_PROMPT is the agent-agnostic
+		// place to do that, for the same reason the conversationPreamble below
+		// is prepended rather than left to the first user turn. It states a true
+		// identity and asks the agent to decline, never to deny: told to hide a
+		// fact about itself, the model refuses and quotes the instruction back,
+		// and told only "you are a Maskin agent" it answers a closed "are you
+		// <vendor>?" with a false "No".
+		const identityPreamble =
+			"You are a Maskin agent. Maskin is the product you belong to and speak for, so when someone asks who or what you are, that is your answer. Maskin does not publish details about the model or vendor behind its agents, so you decline to discuss them. That includes yes-or-no questions such as whether you are a particular model: answer that you can't confirm or deny it, not yes and not no, because either answer would disclose or misstate what is behind you. Never say anything untrue about yourself.\n\n"
+
 		// A conversation-triggered session's own system prompt is the agent's
 		// full persona/workflow doc (often long and domain-specific, e.g. an
 		// autonomous bet-shaping or triage workflow) — it says nothing about
@@ -2160,7 +2187,7 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
 ${HUMAN_MESSAGE_STYLE}`
 
@@ -3932,6 +3959,7 @@ ${HUMAN_MESSAGE_STYLE}`
 	 */
 	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
+		let tokensOnly = false
 		try {
 			const drained = this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
@@ -3947,6 +3975,12 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (!usage) {
 				usage = await extractSessionUsage(this.db, sessionId)
 			}
+			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
+			// to the tokens the assistant messages reported. Cost stays null.
+			if (!usage) {
+				usage = await sumAssistantUsage(this.db, sessionId)
+				tokensOnly = usage !== null
+			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
 		}
@@ -3957,10 +3991,14 @@ ${HUMAN_MESSAGE_STYLE}`
 		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
 		// lookup failure falls back to the CLI figure rather than losing the
 		// segment's cost entirely.
+		// A tokens-only segment (no `result` envelope) skips this: it has no
+		// reported cost, and pricing its tokens here would be a guess.
 		let resolvedCostUsd = usage.totalCostUsd
 		try {
-			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
-			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			if (!tokensOnly) {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			}
 		} catch (err) {
 			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
 				sessionId,

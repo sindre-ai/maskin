@@ -882,6 +882,88 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — agent identity preamble', () => {
+		it('prepends the Maskin identity preamble to SYSTEM_PROMPT so the CLI provider is never named', async () => {
+			const session = buildSession({ status: 'pending', containerId: null })
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			expect(systemPrompt).toContain('You are a Maskin agent')
+			expect(systemPrompt.indexOf('You are a Maskin agent')).toBe(0)
+			// The agent's own persona still follows the preamble.
+			expect(systemPrompt).toContain('You are Workspace Coach.')
+		})
+
+		it('keeps the identity preamble ahead of the conversation preamble', async () => {
+			const session = buildSession({
+				status: 'pending',
+				containerId: null,
+				config: { conversation: true },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			const identityAt = systemPrompt.indexOf('You are a Maskin agent')
+			const conversationAt = systemPrompt.indexOf(
+				'You are in a live, interactive chat conversation',
+			)
+			expect(identityAt).toBe(0)
+			expect(conversationAt).toBeGreaterThan(identityAt)
+		})
+	})
+
 	describe('startSession() — LLM model routing (llmConfig.model)', () => {
 		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the workspace api_key route', async () => {
 			const session = buildSession({
@@ -4457,6 +4539,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4483,6 +4566,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4510,6 +4594,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -4560,6 +4645,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4735,6 +4821,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -4845,6 +4932,7 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[], // sumAssistantUsage fallback
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
 					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
@@ -4991,6 +5079,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
@@ -5079,6 +5168,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 			]
 			mockResults.insertQueue = [
