@@ -113,11 +113,19 @@ export async function runExportPass(db: Database): Promise<void> {
 		firstPersonSkipped: result.skipped.length,
 	})
 
+	// Every tool carries the shared secret as its Authorization header, so an assistant built without
+	// it would lose that header on the live one. Leave the assistant alone instead.
+	if (!runtime.toolWebhookSecret) {
+		logger.warn('Telnyx assistant not synced: TELNYX_TOOL_WEBHOOK_SECRET is not set')
+		return
+	}
+
 	const base = (process.env.MASKIN_PUBLIC_URL ?? '').trim().replace(/\/+$/, '')
 	const assistant = await ensureAssistant(telnyx, {
 		assistantId: runtime.assistantId,
 		payload: buildAssistantPayload({
 			locale: DISCLOSURE_LOCALE,
+			toolWebhookSecret: runtime.toolWebhookSecret,
 			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 			toolIds: [result.retrievalToolId],
 		}),
