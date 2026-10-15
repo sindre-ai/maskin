@@ -244,7 +244,9 @@ app.openapi(listSessionsRoute, (async (c) => {
 			.where(and(...conditions))
 			.limit(query.limit)
 			.offset(query.offset)
-			.orderBy(desc(sessions.createdAt))
+			// Same order as the lean path: the `before` cursor filters on updated_at, so a
+			// created_at sort skips or repeats rows when a caller walks pages with it.
+			.orderBy(desc(sessions.updatedAt), desc(sessions.id))
 
 		return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
 	}
