@@ -123,7 +123,19 @@ export function getMaxResponseTokens(
 	return Math.floor(parsed)
 }
 
+/**
+ * Symbol-keyed (so it never serializes) hook a list tool attaches to its
+ * response when a cursor walk must resume right after the last row that ships.
+ * `rewriteNextCursor` can only rewrite a cursor the tool already emitted — it
+ * cannot start one on a final page, and it reads `createdAt` even when the walk
+ * is keyed on `updatedAt` — so the tool, which knows the walk's snapshot, order
+ * and sort column, builds the cursor itself from the last shipped row.
+ */
+export const RESUME_CURSOR = Symbol('resumeCursor')
+export type ResumeCursorFn = (lastShippedRow: unknown) => string | null
+
 interface MutableMcpResponse {
+	[RESUME_CURSOR]?: ResumeCursorFn
 	content?: unknown
 	structuredContent?: Record<string, unknown>
 	_meta?: Record<string, unknown>
@@ -248,16 +260,20 @@ function buildCappedResponse(
 	// unless the cursor is redirected to resume right after the last row the
 	// client actually has (the last kept row, or the last fetch_handle-backed
 	// row, whichever is later), so a follow-up list call picks up the gap.
-	const cappedStructured = rewriteNextCursor(
-		{ ...structured, [rowsField]: keptRows },
-		keptRows,
-		fetchHandle.omittedRows,
-		fetchHandle.tool ? cappedIds.length : 0,
+	const cappedStructured = syncReturnedCount(
+		rewriteNextCursor(
+			{ ...structured, [rowsField]: keptRows },
+			keptRows,
+			fetchHandle.omittedRows,
+			fetchHandle.tool ? cappedIds.length : 0,
+		),
+		keptRows.length,
 	)
+	const resumedStructured = resumeAfterKept(rsp, cappedStructured, keptRows)
 	return {
 		...rsp,
-		content: capContentToStructured(rsp.content, cappedStructured),
-		structuredContent: cappedStructured,
+		content: capContentToStructured(rsp.content, resumedStructured),
+		structuredContent: resumedStructured,
 		_meta: meta,
 	}
 }
@@ -319,6 +335,40 @@ function rewriteNextCursor(
 		k: { sortValue, id },
 	})
 	return writeCursor(structured, rewritten)
+}
+
+function resumeAfterKept(
+	rsp: MutableMcpResponse,
+	structured: Record<string, unknown>,
+	keptRows: unknown[],
+): Record<string, unknown> {
+	const resume = rsp[RESUME_CURSOR] as ResumeCursorFn | undefined
+	const last = keptRows[keptRows.length - 1]
+	if (typeof resume !== 'function' || last === undefined) return structured
+	const cursor = resume(last)
+	if (!cursor) return structured
+	const out: Record<string, unknown> = { ...structured, next_cursor: cursor }
+	const page = structured.page
+	if (page && typeof page === 'object') out.page = { ...page, next_cursor: cursor }
+	const heroCard = structured.heroCard as { page?: Record<string, unknown> } | undefined
+	if (heroCard?.page) out.heroCard = { ...heroCard, page: { ...heroCard.page, hasMore: true } }
+	return out
+}
+
+/**
+ * Keep `page.returned` equal to the rows that actually ship. The tool wrote it
+ * from the pre-trim page, so after a trim it would count rows the caller never
+ * received. The omitted rows stay reachable through `_meta.fetch_handle` and the
+ * cursor.
+ */
+function syncReturnedCount(
+	structured: Record<string, unknown>,
+	keptCount: number,
+): Record<string, unknown> {
+	const page = structured.page
+	if (!page || typeof page !== 'object') return structured
+	if (typeof (page as Record<string, unknown>).returned !== 'number') return structured
+	return { ...structured, page: { ...(page as Record<string, unknown>), returned: keptCount } }
 }
 
 function readCursor(structured: Record<string, unknown>): string | undefined {

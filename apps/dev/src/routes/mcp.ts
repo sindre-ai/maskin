@@ -46,8 +46,7 @@ interface JsonRpcMessage {
 
 app.post('/', async (c) => {
 	const url = new URL(c.req.url, 'http://localhost')
-	const apiKey =
-		c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? ''
+	const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
 	// Resolved before the server is built so it can be threaded into telemetry:
 	// the in-process MCP server would otherwise stamp its events with the app
@@ -91,6 +90,10 @@ app.post('/', async (c) => {
 				? session.source
 				: ('process' as const),
 		triggeringEventId,
+		// Forward the caller's session id so create_session can link
+		// the helper to its sender. Only a uuid-shaped header counts, and it is
+		// still just a claim: POST /api/sessions checks it belongs to the caller.
+		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({

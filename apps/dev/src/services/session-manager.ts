@@ -1,4 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,8 +23,10 @@ import {
 } from '@maskin/db/schema'
 import {
 	AGENT_PUSH_DIRECTORIES,
+	HUMAN_MESSAGE_STYLE,
 	type SessionResult,
 	type SessionResultFailureReason,
+	buildSetModelRequest,
 	githubOwnerLoginToEnvKey,
 	splitLines,
 } from '@maskin/shared'
@@ -50,9 +53,12 @@ import {
 	trackAgentSessionStartedWithPrompt,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackSessionAiGeneration } from '../lib/analytics/ai-generation-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
+	SESSION_OAUTH_EXPIRES_AT_KEY,
+	isAuthErrorAtAccessTokenExpiry,
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
@@ -60,6 +66,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
 import { frontendBaseUrl } from '../lib/file-urls'
@@ -103,7 +110,15 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
+import {
+	type McpServerHealthMap,
+	applyMcpEnvelope,
+	applyMcpToolUse,
+	expireMcpPending,
+	hasPendingMcpServers,
+	parseMcpInit,
+	registerMcpInit,
+} from '../lib/mcp-health'
 import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
@@ -113,7 +128,9 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { returnToSender } from './helper-return'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
+import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import {
@@ -138,7 +155,7 @@ import {
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
-import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
+import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
 /**
  * Today's runtime is Docker on the same host as `apps/dev`. The bet introduces
@@ -158,6 +175,22 @@ const NO_CONTAINER_ASSIGNED_MESSAGE =
  * that never emits a newline. Matches InteractiveTurnFinalizer's cap.
  */
 const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
+
+/**
+ * How long a server that was still pending at init is watched for signs of
+ * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
+ */
+const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** Per-session MCP health record: what has been said about each server. */
+interface McpHealthSession {
+	servers: McpServerHealthMap
+	capAt: number
+	/** Cap timer; absent when nothing was pending at init. */
+	timer?: NodeJS.Timeout
+	/** True once nothing non-terminal remains. Set before the final emit. */
+	resolved: boolean
+}
 
 /**
  * Mirrors the allowlist regex enforced on the API side by
@@ -227,6 +260,11 @@ export interface CreateSessionParams {
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
 	/**
+	 * The authenticated session that started this one; persisted to
+	 * sessions.spawned_by_session_id. Not a snapshot source (that is sourceSessionId).
+	 */
+	spawnedBySessionId?: string
+	/**
 	 * Handed-off strip anchors. `spawnedByMessageId` is the assistant message id
 	 * that triggered this sub-agent spawn; `dependsOnSessionIds` names the
 	 * sessions this one is blocked behind. Both optional — a spawn without them
@@ -250,15 +288,13 @@ export interface CreateSessionParams {
 	/**
 	 * The object this session was started for (bet, task, insight, or any
 	 * first-class object). Required-optional shape: every call site MUST pass
-	 * both `initiatedFromObjectId` and `initiatedFromObjectType`, either as
-	 * real values or as explicit `null`. tsc catches a missed site; NULL is
-	 * still an acceptable value (direct API creates, onboarding, cron
+	 * `initiatedFromObjectId`, either as a real value or as explicit `null`.
+	 * tsc catches a missed site; NULL is still an acceptable value (direct API creates, onboarding, cron
 	 * triggers, conversation-only spawns). Read back at session_failed emit
 	 * time and at every terminal PostHog `runtime_session_ended` emit; see
 	 * spec §3.3 / §3.5 of the sessions-inspectable bet.
 	 */
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }
 
 /**
@@ -358,21 +394,33 @@ export function resolveActorSecretEnv(
  * gate: whether a failing session has anywhere left to fall over to is
  * decided by its slot's position in the chain (see
  * `maybeRetryClaudeOAuthOnNextSlot`), not by its presence.
+ *
+ * `nextOauthExpiresAt` is the access-token expiry of a launch whose container
+ * got no refresh token. It is stamped when given and cleared when not, so a
+ * retry that inherits the previous config never carries a stale expiry onto a
+ * launch that can refresh itself.
  */
 export function mergeLaunchRouteConfig(
 	existingConfig: Record<string, unknown>,
 	routeTaken: LlmRoute,
 	nextOauthSlot: string | undefined,
+	nextOauthExpiresAt?: number,
 ): Record<string, unknown> | null {
 	const needsUpdate =
 		existingConfig.llm_route !== routeTaken ||
-		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot)
+		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot) ||
+		existingConfig[SESSION_OAUTH_EXPIRES_AT_KEY] !== nextOauthExpiresAt
 	if (!needsUpdate) return null
 
 	const updatedConfig: Record<string, unknown> = {
 		...existingConfig,
 		llm_route: routeTaken,
 		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+	}
+	if (nextOauthExpiresAt === undefined) {
+		delete updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY]
+	} else {
+		updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY] = nextOauthExpiresAt
 	}
 	if (nextOauthSlot === 'primary') {
 		updatedConfig.claude_oauth_runtime_failover_retry_of = undefined
@@ -519,12 +567,13 @@ export class SessionManager extends EventEmitter {
 	private readonly mcpHealthBuffers = new Map<string, string>()
 
 	/**
-	 * Sessions that have already had their MCP health reported. The init line
-	 * is replayed whenever the log stream re-attaches (`tail: 'all'` on resume,
-	 * `sinceUnixSec` overlap after a transient drop), and the warning should
-	 * read once per session, not once per reconnect.
+	 * Per-session MCP health record. The init line is replayed whenever the log
+	 * stream re-attaches (`tail: 'all'` on resume, `sinceUnixSec` overlap after
+	 * a transient drop), so the record is also what keeps the warning at once
+	 * per server, and what stops a replay from downgrading a server that has
+	 * since connected. Deleted only in clearActiveSession.
 	 */
-	private readonly mcpHealthReported = new Set<string>()
+	private readonly mcpHealth = new Map<string, McpHealthSession>()
 
 	constructor(
 		private db: Database,
@@ -560,6 +609,11 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// An empty completion that survives the retries is tried once on
+			// another model. Both are optional: with no env var set the finalizer
+			// still retries and still tells the human.
+			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
+			fallbackModel: readEmptyTurnFallbackModel(),
 		})
 	}
 
@@ -701,8 +755,8 @@ export class SessionManager extends EventEmitter {
 				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
+				spawnedBySessionId: params.spawnedBySessionId ?? null,
 				initiatedFromObjectId: params.initiatedFromObjectId,
-				initiatedFromObjectType: params.initiatedFromObjectType,
 				spawnedByMessageId: params.spawnedByMessageId ?? null,
 				dependsOnSessionIds: params.dependsOnSessionIds ?? null,
 			})
@@ -981,7 +1035,6 @@ export class SessionManager extends EventEmitter {
 					durationMs: elapsedMs(null, session.createdAt),
 					agentServerUrl: LOCAL_RUNTIME_BUCKET,
 					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
 				})
 				throw err
 			}
@@ -1006,7 +1059,6 @@ export class SessionManager extends EventEmitter {
 				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Restore workspace from a prior session if requested. Overwrites
 			// the staged agent files with the prior session's full /agent/ snapshot,
@@ -1184,7 +1236,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: session.initiatedFromObjectId,
-				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1276,6 +1327,34 @@ export class SessionManager extends EventEmitter {
 				data: log.content,
 			} satisfies SessionLogEvent)
 		}
+	}
+
+	/**
+	 * Switch a live interactive session's CLI onto another model for its next
+	 * turns, keeping the conversation so far. Routes like writeInput (remote
+	 * agent-server or local container), but nothing is persisted to session_logs:
+	 * it is a control message, not a turn, and the transcript has no use for it.
+	 */
+	async setSessionModel(sessionId: string, model: string): Promise<void> {
+		const [session] = await this.db
+			.select({ agentServerId: sessions.agentServerId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
+		if (session?.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (!serverRow) {
+				throw new Error(`Agent server ${session.agentServerId} not found`)
+			}
+			await new AgentServerClient({ server: serverRow }).setModel(sessionId, model)
+			return
+		}
+		await this.containers.write(sessionId, buildSetModelRequest(model, randomUUID()))
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
@@ -1669,7 +1748,6 @@ export class SessionManager extends EventEmitter {
 				// carries the enrichment, so the telemetry payload is the only
 				// place Criterion 3 can see the context on this branch.
 				initiatedFromObjectId: sessions.initiatedFromObjectId,
-				initiatedFromObjectType: sessions.initiatedFromObjectType,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -1713,7 +1791,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: existing.initiatedFromObjectId,
-				contextObjectType: existing.initiatedFromObjectType,
 			})
 		}
 
@@ -1788,7 +1865,6 @@ export class SessionManager extends EventEmitter {
 				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
-			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -1859,7 +1935,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: session.initiatedFromObjectId,
-				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1994,6 +2069,32 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "Your goal this run" block for a non-interactive launch. Built on the
+	 * first launch and saved on `sessions.config.run_goal` (a jsonb merge, so
+	 * other keys such as `llm_route` are untouched) so the later independent
+	 * check can see what the agent was shown. Launch runs again on resume: the
+	 * saved text is reused, never rebuilt or overwritten. A failure here only
+	 * costs the block, never the launch.
+	 */
+	private async resolveRunGoalBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.run_goal === 'string') return config.run_goal
+		try {
+			const block = await buildRunGoalBlock(this.db, session, frontendBaseUrl())
+			await saveRunGoal(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = { ...config, run_goal: block }
+			return block
+		} catch (err) {
+			logger.warn('Failed to build run goal block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
 	 * Build the launch spec for a session — env vars (including integration
 	 * credentials), image, and resource limits. The shape mirrors
 	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
@@ -2041,6 +2142,21 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// The CLI under the session (Claude Code, Codex, …) injects its own
+		// identity text into the model's context, and an agent's own persona
+		// prompt never contradicts it — so an agent asked what it runs on
+		// answers with the underlying model/vendor instead of Maskin, which is
+		// the branding leak this fixes. We cannot remove the CLI's text, only
+		// out-instruct it; prepending to SYSTEM_PROMPT is the agent-agnostic
+		// place to do that, for the same reason the conversationPreamble below
+		// is prepended rather than left to the first user turn. It states a true
+		// identity and asks the agent to decline, never to deny: told to hide a
+		// fact about itself, the model refuses and quotes the instruction back,
+		// and told only "you are a Maskin agent" it answers a closed "are you
+		// <vendor>?" with a false "No".
+		const identityPreamble =
+			"You are a Maskin agent. Maskin is the product you belong to and speak for, so when someone asks who or what you are, that is your answer. Maskin does not publish details about the model or vendor behind its agents, so you decline to discuss them. That includes yes-or-no questions such as whether you are a particular model: answer that you can't confirm or deny it, not yes and not no, because either answer would disclose or misstate what is behind you. Never say anything untrue about yourself.\n\n"
+
 		// A conversation-triggered session's own system prompt is the agent's
 		// full persona/workflow doc (often long and domain-specific, e.g. an
 		// autonomous bet-shaping or triage workflow) — it says nothing about
@@ -2059,7 +2175,9 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+
+${HUMAN_MESSAGE_STYLE}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2151,17 +2269,24 @@ export class SessionManager extends EventEmitter {
 		// the stdin-driven stream-json branch instead.
 		// session.actionPrompt is the user's original prompt and is never written back
 		// wrapped — safe to re-prepend on every launch, including resume.
+		// frontendBaseUrl falls back to the dev value outside production; it
+		// only throws on a missing FRONTEND_URL in prod, which is the same
+		// failure mode as fileViewerUrl and is intentional.
+		const startupBlock = buildWorkspaceStartupBlock({
+			workspaceId: session.workspaceId,
+			frontendUrl: frontendBaseUrl(),
+			interactive: session.interactive,
+		})
 		if (session.interactive) {
 			envVars.INTERACTIVE = '1'
+			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
+			// through the system prompt instead.
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
 		} else {
-			// frontendBaseUrl falls back to the dev value outside production; it
-			// only throws on a missing FRONTEND_URL in prod, which is the same
-			// failure mode as fileViewerUrl and is intentional.
-			const startupBlock = buildWorkspaceStartupBlock({
-				workspaceId: session.workspaceId,
-				frontendUrl: frontendBaseUrl(),
-			})
-			envVars.ACTION_PROMPT = `${startupBlock}${session.actionPrompt}`
+			const goalBlock = await this.resolveRunGoalBlock(session)
+			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
+			const senderLine = typeof sentBy === 'string' ? await loadSenderLine(this.db, sentBy) : ''
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:
@@ -2180,6 +2305,7 @@ export class SessionManager extends EventEmitter {
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
+		let oauthExpiresAtTaken: number | undefined
 		let routeModelName: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
@@ -2197,6 +2323,7 @@ export class SessionManager extends EventEmitter {
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
+				oauthExpiresAtTaken = resolved.oauthExpiresAt
 				routeModelName = resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
@@ -2267,7 +2394,12 @@ export class SessionManager extends EventEmitter {
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
-			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
+			const updatedConfig = mergeLaunchRouteConfig(
+				existingConfig,
+				routeTaken,
+				nextOauthSlot,
+				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
+			)
 			const modelNameToPersist =
 				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
 				routeModelName &&
@@ -2497,17 +2629,11 @@ export class SessionManager extends EventEmitter {
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
-		// MASKIN_GITHUB_MCP is the kill-switch between the deprecated npx server and
-		// the official binary. Anything but "official" resolves to legacy.
-		const githubMcpSpec =
-			process.env.MASKIN_GITHUB_MCP === 'official'
-				? GITHUB_MCP_SERVER_SPEC
-				: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
 		for (const { ownerLogin, token } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
-				command: githubMcpSpec.command,
-				args: githubMcpSpec.args,
+				command: GITHUB_MCP_SERVER_SPEC.command,
+				args: GITHUB_MCP_SERVER_SPEC.args,
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
@@ -3266,6 +3392,15 @@ export class SessionManager extends EventEmitter {
 		const failedSlot = config.llm_oauth_slot
 		if (typeof failedSlot !== 'string') return null
 
+		if (isAuthErrorAtAccessTokenExpiry(config, reason)) {
+			logger.info('Session ended at access-token expiry, leaving the Claude slot as it is', {
+				sessionId,
+				slot: failedSlot,
+				reason,
+			})
+			return null
+		}
+
 		const failover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
 			workspaceId: session.workspaceId,
@@ -3314,6 +3449,18 @@ export class SessionManager extends EventEmitter {
 		// a workspace can hold more than two.
 		const failedSlot = config.llm_oauth_slot
 		if (typeof failedSlot !== 'string') return
+
+		// A session whose container got no refresh token ends at its access
+		// token's expiry with an auth error. The slot is healthy, so it is not
+		// stamped auth_failed and the workspace stays on it.
+		if (isAuthErrorAtAccessTokenExpiry(config, reason)) {
+			logger.info('Session ended at access-token expiry, leaving the Claude slot as it is', {
+				sessionId: session.id,
+				slot: failedSlot,
+				reason,
+			})
+			return
+		}
 
 		// One retry per failing session, however long the chain is: the retry
 		// itself fails over again from its own slot if it has to.
@@ -3384,7 +3531,6 @@ export class SessionManager extends EventEmitter {
 			// session that fails over onto a fresh id would drop out of the
 			// numerator.
 			initiatedFromObjectId: session.initiatedFromObjectId,
-			initiatedFromObjectType: session.initiatedFromObjectType,
 			await: 'none',
 		})
 	}
@@ -3415,9 +3561,7 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir, {
-						actionPrompt: session.actionPrompt,
-					})
+					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir)
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
@@ -3555,6 +3699,11 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Tell the session that started this one how it ended (no-op for an
+		// unlinked session). This path writes the terminal status itself and never
+		// goes through settleSession, so it has to call the return on its own.
+		void returnToSender(this.db, sessionId, { sessionManager: this })
+
 		// G1: emit `agent_session_completed` dev-side with the workspace-skill
 		// provisioning counts recorded at session start (+ any staging report).
 		// See `trackAgentSessionCompletedWithSkills` for why this rides alongside
@@ -3563,6 +3712,11 @@ export class SessionManager extends EventEmitter {
 		if (status === 'completed' || status === 'failed' || status === 'timeout') {
 			void this.emitCompletedWithSkills(session, status)
 		}
+		void this.emitAiGenerationAfterCompletion(
+			session,
+			this.stopRequested.has(sessionId) ? 'user_stopped' : status,
+			usage,
+		)
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
@@ -3639,7 +3793,6 @@ export class SessionManager extends EventEmitter {
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
-			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Clear active session link on object
@@ -4082,7 +4235,6 @@ export class SessionManager extends EventEmitter {
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
-			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
@@ -4266,7 +4418,7 @@ export class SessionManager extends EventEmitter {
 				// settleSession's stopSandbox callback only stops, doesn't remove.
 				const containerIdToRemove =
 					!session.agentServerId && session.containerId ? session.containerId : null
-				await settleSession(
+				const settled = await settleSession(
 					session.id,
 					{
 						kind: 'timeout',
@@ -4301,14 +4453,17 @@ export class SessionManager extends EventEmitter {
 						)
 				}
 
-				this.telemetry.recordSessionEnded({
-					sessionId: session.id,
-					endReason: 'irrecoverable',
-					durationMs: elapsedMs(session.startedAt, session.createdAt),
-					agentServerUrl: LOCAL_RUNTIME_BUCKET,
-					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
-				})
+				// Only the pass that wins the terminal transition reports the end; a
+				// row another writer already settled must not re-emit.
+				if (!settled.alreadySettled) {
+					this.telemetry.recordSessionEnded({
+						sessionId: session.id,
+						endReason: 'irrecoverable',
+						durationMs: elapsedMs(session.startedAt, session.createdAt),
+						agentServerUrl: LOCAL_RUNTIME_BUCKET,
+						contextObjectId: session.initiatedFromObjectId,
+					})
+				}
 
 				// Prefix must stay 'Session timed out' — the SSE /logs/stream endpoint
 				// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
@@ -4707,7 +4862,7 @@ export class SessionManager extends EventEmitter {
 				// skipped-none-live), so a stall that never made a sandbox is a
 				// no-op. Live rows never get here: step 6b heals status='running'
 				// rows first and the select above excludes them.
-				await settleSession(
+				const settled = await settleSession(
 					session.id,
 					{
 						kind: 'fail',
@@ -4727,14 +4882,16 @@ export class SessionManager extends EventEmitter {
 					}),
 				)
 
-				this.telemetry.recordSessionEnded({
-					sessionId: session.id,
-					endReason: 'failed',
-					durationMs: elapsedMs(session.startedAt, session.createdAt),
-					agentServerUrl: LOCAL_RUNTIME_BUCKET,
-					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
-				})
+				// Same rule as the timeout step: emit only when this pass settled the row.
+				if (!settled.alreadySettled) {
+					this.telemetry.recordSessionEnded({
+						sessionId: session.id,
+						endReason: 'failed',
+						durationMs: elapsedMs(session.startedAt, session.createdAt),
+						agentServerUrl: LOCAL_RUNTIME_BUCKET,
+						contextObjectId: session.initiatedFromObjectId,
+					})
+				}
 
 				await this.cleanupBrowserSidecar(session.id).catch(() => {})
 				await this.clearActiveSession(session.id)
@@ -4929,6 +5086,49 @@ export class SessionManager extends EventEmitter {
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.
 			logger.warn('Failed to emit dev-side agent_session_completed', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+	}
+
+	/**
+	 * `$ai_generation` for the local completion path. `session` is the row as it
+	 * was read before this completion wrote anything, and `usage` is the segment
+	 * `accumulateSessionUsage` just added on top of it, so the cumulative totals
+	 * are rebuilt here rather than re-reading the row (an extra select per
+	 * completion). Best-effort, like every other analytics emit on this path.
+	 */
+	private async emitAiGenerationAfterCompletion(
+		session: typeof sessions.$inferSelect,
+		outcome: 'completed' | 'failed' | 'user_stopped',
+		usage: SessionUsage | null,
+	): Promise<void> {
+		try {
+			const config = (session.config as Record<string, unknown>) ?? {}
+			const route = typeof config.llm_route === 'string' ? config.llm_route : ''
+			const segmentCostUsd = usage
+				? await resolveSessionCostUsd({ route, modelName: session.modelName, usage })
+				: null
+			await trackSessionAiGeneration({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				outcome,
+				config,
+				modelName: session.modelName,
+				inputTokens: (session.inputTokens ?? 0) + (usage?.inputTokens ?? 0),
+				outputTokens: (session.outputTokens ?? 0) + (usage?.outputTokens ?? 0),
+				cacheReadTokens: (session.cacheReadInputTokens ?? 0) + (usage?.cacheReadInputTokens ?? 0),
+				cacheCreationTokens:
+					(session.cacheCreationInputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0),
+				costUsd: Number(session.totalCostUsd ?? 0) + (segmentCostUsd ?? 0),
+				activeMs: (session.durationMs ?? 0) + (usage?.durationMs ?? 0),
+				startedAt: session.startedAt,
+				completedAt: new Date(),
+			})
+		} catch (err) {
+			logger.warn('Failed to emit $ai_generation after local completion', {
 				sessionId: session.id,
 				error: String(err),
 			})
@@ -5162,29 +5362,6 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
-	/**
-	 * Generate the workspace briefing and write it to `/agent/workspace/WORKSPACE.md`
-	 * (inside the container) by writing to the mounted tempDir before launch.
-	 * Briefing failures never block session start — the agent can still fall back
-	 * to direct MCP queries.
-	 */
-	private async writeWorkspaceBriefing(
-		workspaceId: string,
-		tempDir: string,
-		sessionId: string,
-	): Promise<void> {
-		try {
-			const briefing = await renderWorkspaceBriefing(this.db, this.storage, workspaceId)
-			await writeFile(join(tempDir, 'workspace', 'WORKSPACE.md'), briefing)
-		} catch (err) {
-			logger.warn('Failed to write workspace briefing', {
-				sessionId,
-				workspaceId,
-				error: String(err),
-			})
-		}
-	}
-
 	private async cleanupSession(sessionId: string): Promise<void> {
 		const sessionData = this.activeSessions.get(sessionId)
 		if (sessionData) {
@@ -5268,16 +5445,29 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Surface MCP servers that never connected, from the runtime's own `init`
-	 * envelope. A server stuck at "pending"/"failed" contributes no tools, and
-	 * nothing else in the pipeline notices — the agent simply finds the
-	 * capability missing and tells the user it was never wired, while the
-	 * service behind it looks healthy everywhere else. Emitting a `system` log
-	 * makes it visible to both the user and the agent. Errors are swallowed: a
-	 * health-check hiccup must not drop the original log write.
+	 * Surface MCP servers that are not up, from the runtime's own `init`
+	 * envelope. A server stuck at "failed" contributes no tools, and nothing
+	 * else in the pipeline notices — the agent simply finds the capability
+	 * missing and tells the user it was never wired, while the service behind it
+	 * looks healthy everywhere else. Emitting a `system` log makes it visible
+	 * to both the user and the agent.
+	 *
+	 * A server that is only "pending" at init is not a failure: it is reported
+	 * as still starting, then re-sampled event by event on this same stream
+	 * (MCP tool use proves it is up) until it settles or the cap timer fires.
+	 * Corrections are a second log line; system logs are append-only. Errors are
+	 * swallowed: a health-check hiccup must not drop the original log write.
 	 */
 	private async emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void> {
-		if (chunk.length === 0 || this.mcpHealthReported.has(sessionId)) return
+		if (chunk.length === 0) return
+
+		const existing = this.mcpHealth.get(sessionId)
+		if (existing?.resolved) return
+		// Checked before any parse work so a chunk after the cap cannot re-open it.
+		if (existing && Date.now() >= existing.capAt) {
+			await this.expireMcpHealth(sessionId, existing)
+			return
+		}
 
 		let lines: string[]
 		try {
@@ -5286,9 +5476,7 @@ export class SessionManager extends EventEmitter {
 			lines = split.lines
 			const { remainder } = split
 			if (remainder.length > MAX_BUFFERED_MCP_HEALTH_BYTES) {
-				// A stream that never emits a newline must not eat memory. The
-				// init line comes first in a session, so a remainder this large
-				// means we are long past it and nothing is left to detect.
+				// A stream that never emits a newline must not eat memory.
 				this.mcpHealthBuffers.delete(sessionId)
 			} else if (remainder) {
 				this.mcpHealthBuffers.set(sessionId, remainder)
@@ -5306,19 +5494,66 @@ export class SessionManager extends EventEmitter {
 		for (const line of lines) {
 			if (line.length === 0) continue
 			try {
-				const unhealthy = detectUnhealthyMcpServers(line)
-				if (!unhealthy) continue
-				this.mcpHealthReported.add(sessionId)
-				this.mcpHealthBuffers.delete(sessionId)
-				logger.warn('MCP servers did not connect for session', { sessionId, servers: unhealthy })
-				await this.insertSystemLog(sessionId, formatUnhealthyMcpWarning(unhealthy))
-				return
+				await this.processMcpHealthLine(sessionId, line)
 			} catch (err) {
 				logger.warn('mcp health check failed for a line', {
 					sessionId,
 					error: err instanceof Error ? err.message : String(err),
 				})
 			}
+		}
+	}
+
+	private async processMcpHealthLine(sessionId: string, line: string): Promise<void> {
+		let entry = this.mcpHealth.get(sessionId)
+		if (entry?.resolved) return
+
+		const init = parseMcpInit(line)
+		let messages: string[]
+		if (init && !entry) {
+			const servers: McpServerHealthMap = new Map()
+			messages = registerMcpInit(servers, init)
+			if (servers.size === 0) return
+			entry = { servers, capAt: Date.now() + MCP_HEALTH_RESAMPLE_CAP_MS, resolved: false }
+			this.mcpHealth.set(sessionId, entry)
+			logger.warn('MCP servers not connected at init', { sessionId, count: servers.size })
+			if (hasPendingMcpServers(servers)) {
+				const armed = entry
+				armed.timer = setTimeout(() => {
+					void this.expireMcpHealth(sessionId, armed)
+				}, MCP_HEALTH_RESAMPLE_CAP_MS)
+				armed.timer.unref()
+			}
+		} else if (!entry) {
+			return
+		} else {
+			messages = init ? applyMcpEnvelope(entry.servers, init) : applyMcpToolUse(entry.servers, line)
+		}
+
+		// Settle before awaiting any emit, so a concurrent chunk or the cap timer
+		// cannot double-emit.
+		if (!hasPendingMcpServers(entry.servers)) {
+			entry.resolved = true
+			clearTimeout(entry.timer)
+		}
+		for (const message of messages) await this.insertSystemLog(sessionId, message)
+	}
+
+	/** The cap fired (timer or chunk): still-pending servers become slow-unknown. */
+	private async expireMcpHealth(sessionId: string, entry: McpHealthSession): Promise<void> {
+		// The timer can outlive the session; the record is gone after teardown.
+		if (entry.resolved || this.mcpHealth.get(sessionId) !== entry) return
+		entry.resolved = true
+		clearTimeout(entry.timer)
+		try {
+			for (const message of expireMcpPending(entry.servers)) {
+				await this.insertSystemLog(sessionId, message)
+			}
+		} catch (err) {
+			logger.warn('mcp health cap emit failed', {
+				sessionId,
+				error: err instanceof Error ? err.message : String(err),
+			})
 		}
 	}
 
@@ -5688,6 +5923,11 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Tell the session that started this one how it ended. Skipped for
+		// stopSession()'s provisional write: its exit code is not known yet, and the
+		// genuine report that follows is the one that returns, with the right wording.
+		if (!stoppedByUser) void returnToSender(this.db, sessionId, { sessionManager: this })
+
 		// G1: mirror the terminal `agent_session_completed` emission from the
 		// local-Docker path (handleCompletion). This runs on every remote
 		// session's terminal transition — the production path for every
@@ -5695,6 +5935,29 @@ export class SessionManager extends EventEmitter {
 		// at start (and updated by `recordSkillStagingResult`) reach PostHog
 		// on both the started and completed events. Best-effort.
 		void this.emitCompletedWithSkills(updated, status)
+
+		// `$ai_generation` for the finished session. Skipped for stopSession()'s
+		// provisional write: its usage is not known yet and the genuine report
+		// that overwrites it is the one that carries the totals, so emitting on
+		// both would count one session twice. `updated` is the row as persisted.
+		if (!stoppedByUser) {
+			void trackSessionAiGeneration({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
+				outcome: status,
+				config: updated.config as Record<string, unknown> | null,
+				modelName: updated.modelName,
+				inputTokens: updated.inputTokens,
+				outputTokens: updated.outputTokens,
+				cacheReadTokens: updated.cacheReadInputTokens,
+				cacheCreationTokens: updated.cacheCreationInputTokens,
+				costUsd: updated.totalCostUsd,
+				activeMs: updated.durationMs,
+				startedAt: updated.startedAt,
+				completedAt: updated.completedAt ?? new Date(),
+			})
+		}
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({
@@ -5752,7 +6015,6 @@ export class SessionManager extends EventEmitter {
 				durationMs: elapsedMs(updated.startedAt, updated.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 				contextObjectId: updated.initiatedFromObjectId,
-				contextObjectType: updated.initiatedFromObjectType,
 			})
 		} catch (err) {
 			logger.warn('Failed to record runtime_session_ended for remote session', {
@@ -5845,7 +6107,8 @@ export class SessionManager extends EventEmitter {
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.turnFinalizer.forgetSession(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
-		this.mcpHealthReported.delete(sessionId)
+		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
+		this.mcpHealth.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })

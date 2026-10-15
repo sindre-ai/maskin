@@ -110,7 +110,7 @@ describe('auth cache revocation — real Postgres', () => {
 
 		const rotated = await app.request(
 			jsonRequest('POST', `/api/actors/${victimId}/api-keys`, undefined, {
-				Authorization: `Bearer ${TEST_API_KEY}`,
+				Authorization: `Bearer ${victimKey}`,
 			}),
 		)
 		expect(rotated.status).toBe(200)
@@ -118,6 +118,21 @@ describe('auth cache revocation — real Postgres', () => {
 
 		expect((await whoami(app, victimKey)).status).toBe(401)
 		expect((await whoami(app, newKey)).status).toBe(200)
+	})
+
+	it('refuses to rotate a different actor key and leaves that key working', async () => {
+		const app = createApp()
+		expect((await whoami(app, victimKey)).status).toBe(200)
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/actors/${victimId}/api-keys`, undefined, {
+				Authorization: `Bearer ${TEST_API_KEY}`,
+			}),
+		)
+
+		expect(res.status).toBe(403)
+		expect(((await res.json()) as { api_key?: string }).api_key).toBeUndefined()
+		expect((await whoami(app, victimKey)).status).toBe(200)
 	})
 
 	it('rejects a deleted actor immediately once evicted', async () => {

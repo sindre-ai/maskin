@@ -51,7 +51,6 @@ import {
 	ilike,
 	inArray,
 	lt,
-	lte,
 	ne,
 	or,
 	sql,
@@ -80,8 +79,14 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceHumanAdminOrOwner,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 import type { SessionManager } from '../services/session-manager'
 import {
 	getStarredObjectIds,
@@ -100,6 +105,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		sessionManager: SessionManager
 		/** Set by app-factory when the request carried a well-formed
@@ -145,9 +152,38 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
  * `createdAt` (or any non-unique sort key) can re-appear across pages.
  */
 function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
-	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
+	const resolved = resolveSortColumn(query.sort) ?? objects.createdAt
+	const sortExpr =
+		resolved === objects.createdAt || resolved === objects.updatedAt
+			? truncateToMs(resolved)
+			: resolved
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Postgres stores timestamps to the microsecond, but the cursor round-trips
+ * through a JS Date (milliseconds). A bulk insert stamps every row with one
+ * microsecond-precision `created_at`, so seeking past the truncated value
+ * skips those tied rows under desc and replays them under asc. Ordering and
+ * seeking on the millisecond-truncated value keeps the sort key and the cursor
+ * on the same grid; `id` breaks the tie inside a millisecond.
+ */
+function truncateToMs(column: Column): SQL {
+	// updatedAt is converted to UTC first so the expression is IMMUTABLE and
+	// matches objects_ws_updated_at_ms_idx (migration 0088). The ORDER BY, the
+	// snapshot filter and the seek must all go through this one function, and
+	// bind their value through `seekBound`, or the planner cannot use the index.
+	if (column === objects.updatedAt) {
+		return sql`date_trunc('milliseconds', ${column} AT TIME ZONE 'UTC')`
+	}
+	return sql`date_trunc('milliseconds', ${column})`
+}
+
+/** A cursor / snapshot timestamp, typed the same way `truncateToMs` types its column. */
+function seekBound(column: Column, iso: string): SQL {
+	if (column === objects.updatedAt) return sql`(${iso}::timestamptz AT TIME ZONE 'UTC')`
+	return sql`${iso}::timestamptz`
 }
 
 /**
@@ -254,20 +290,24 @@ function buildCursorConditions(
 	includeKeyset = true,
 ): SQL[] {
 	const conditions: SQL[] = []
-	const seekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const rawSeekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const seekColumn = truncateToMs(rawSeekColumn)
 	if (query.snapshot_at) {
-		conditions.push(lte(seekColumn, new Date(query.snapshot_at)))
+		const snapshot = seekBound(rawSeekColumn, new Date(query.snapshot_at).toISOString())
+		conditions.push(sql`${seekColumn} <= ${snapshot}`)
 	}
 	if (includeKeyset && isCursorSeekActive(query)) {
-		const lastCa = new Date(query.cursor_created_at as string)
+		const lastCa = seekBound(
+			rawSeekColumn,
+			new Date(query.cursor_created_at as string).toISOString(),
+		)
 		const lastId = query.cursor_id as string
-		if (query.order === 'asc') {
-			const seek = or(gt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		} else {
-			const seek = or(lt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		}
+		const past = query.order === 'asc' ? sql`>` : sql`<`
+		const seek = or(
+			sql`${seekColumn} ${past} ${lastCa}`,
+			and(sql`${seekColumn} = ${lastCa}`, gt(objects.id, lastId)),
+		)
+		if (seek) conditions.push(seek)
 	}
 	return conditions
 }
@@ -365,8 +405,32 @@ export function tokenizeSearchQuery(q: string): string[] {
 	return tokens
 }
 
+// Per-token rank weight for a title hit; a content hit is worth 1. A title
+// match therefore outranks any content-only match for realistic queries
+// (fewer than 1000 tokens), while more matched tokens still rank higher.
+const TITLE_HIT_WEIGHT = 1000
+
+// A title hit also earns up to this many points for the share of the title the
+// token covers, so "hans" ranks "Hans" (100%) above "Hans Solutions" (~29%).
+// Kept below TITLE_HIT_WEIGHT so coverage never outranks an extra matched token.
+const TITLE_COVERAGE_SCALE = 100
+
+// A title that contains the whole typed phrase starting at a word boundary
+// ("anna b" → "Anna Baker") earns this on top of the token hits. Needed
+// because the tokenizer drops terms under 3 chars, so "b" would otherwise not
+// influence the order at all. Between one and two token hits, so it beats the
+// coverage bonus but never an extra matched token.
+const TITLE_PHRASE_PREFIX_BONUS = 500
+
 function tokenIlikePattern(token: string): string {
 	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+function phraseWordPrefixPatterns(q: string): [string, string] | null {
+	const phrase = q.trim().toLowerCase().replace(/\s+/g, ' ')
+	if (!phrase) return null
+	const escaped = phrase.replace(/[%_\\]/g, '\\$&')
+	return [`${escaped}%`, `% ${escaped}%`]
 }
 
 export function buildObjectListConditions(
@@ -409,7 +473,14 @@ export function buildObjectListConditions(
 				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 				if (match) perTokenMatches.push(match)
 				perTokenHits.push(
-					sql`(case when ${objects.title} ilike ${pattern} or ${objects.content} ilike ${pattern} then 1 else 0 end)`,
+					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(${objects.title}), 1)) else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
+				)
+			}
+			const phrasePatterns = phraseWordPrefixPatterns(query.q)
+			if (phrasePatterns) {
+				const [atStart, atWord] = phrasePatterns
+				perTokenHits.push(
+					sql`(case when (${objects.title} ilike ${atStart} or ${objects.title} ilike ${atWord}) then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end)`,
 				)
 			}
 			const combined = or(...perTokenMatches)
@@ -435,9 +506,10 @@ export function buildObjectListConditions(
 }
 
 /**
- * Ordering when a tokenized `q` produced a rank expression: token-hit count
- * DESC, then title ASC (T1's deterministic tie-break), then id ASC to keep
- * pagination stable across ties.
+ * Ordering when a tokenized `q` produced a rank expression: rank DESC (title
+ * hits, weighted by how much of the title the query covers), then title ASC
+ * (T1's deterministic tie-break), then id ASC to keep pagination stable across
+ * ties.
  */
 export function tokenRankOrderBy(rankExpr: SQL): SQL[] {
 	return [desc(rankExpr), asc(objects.title), asc(objects.id)]
@@ -473,6 +545,7 @@ function toCount(value: unknown) {
 const createObjectRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Create object',
 	request: {
@@ -516,6 +589,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Fetch workspace to validate status
 	const [workspace] = await db
@@ -556,6 +630,14 @@ app.openapi(createObjectRoute, async (c) => {
 			400,
 		)
 	}
+
+	const taskStatusError = checkTaskInitialStatus({
+		type: body.type,
+		status: body.status,
+		actorId,
+		field: 'status',
+	})
+	if (taskStatusError) return c.json(taskStatusError, 400)
 
 	if (body.type === 'knowledge') {
 		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
@@ -744,13 +826,29 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(useKeyset ? 0 : query.offset)
-		.orderBy(...orderBy)
+	// X-Total-Count is the real match count under the walk's snapshot — the filters
+	// and the `snapshot_at` freeze, but not the keyset seek, so it stays constant
+	// across every page of one walk.
+	const [results, [totalRow]] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(useKeyset ? 0 : query.offset)
+			.orderBy(...orderBy),
+		db
+			.select({ value: count() })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					...filterConditions,
+					...buildCursorConditions(query, false),
+				),
+			),
+	])
+	c.header('X-Total-Count', String(totalRow?.value ?? 0))
 
 	// D2 · Working-ring predicate. Hydrate the active session's status as a
 	// scalar the client reads with `=== 'running'` — mirrors the read_state
@@ -1098,7 +1196,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		connectedObjects = await db
 			.select()
 			.from(objects)
-			.where(inArray(objects.id, [...connectedIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...connectedIds])))
 	}
 
 	// Fetch recent activity + comments for this object. Events use the object's
@@ -1189,7 +1287,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		else if (rel.targetType === 'session') provenanceSessionIds.add(rel.targetId)
 	}
 	if (provenanceConversationIds.size > 0 || provenanceSessionIds.size > 0) {
-		const provenanceTitles = await resolveEndpointTitles(db, {
+		const provenanceTitles = await resolveEndpointTitles(db, workspaceId, {
 			conversationIds: [...provenanceConversationIds],
 			sessionIds: [...provenanceSessionIds],
 		})
@@ -1662,6 +1760,7 @@ app.openapi(getObjectRoute, async (c) => {
 const updateObjectRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Update object',
 	request: {
@@ -1699,7 +1798,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -1865,6 +1964,7 @@ app.openapi(updateObjectRoute, async (c) => {
 const verifyObjectRoute = createRoute({
 	method: 'post',
 	path: '/{id}/verification',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Stamp or unstamp verification on a Knowledge Author write',
 	request: {
@@ -2002,6 +2102,7 @@ app.openapi(verifyObjectRoute, async (c) => {
 const undoWriteRoute = createRoute({
 	method: 'post',
 	path: '/{id}/undo-write',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Undo a Knowledge Author write on a knowledge object',
 	request: {
@@ -2050,7 +2151,7 @@ app.openapi(undoWriteRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -2264,6 +2365,7 @@ async function fanOutBetTerminalNotifications(
 const deleteObjectRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Delete object',
 	request: {
@@ -2285,6 +2387,7 @@ const deleteObjectRoute = createRoute({
 const migrateObjectTypeRoute = createRoute({
 	method: 'post',
 	path: '/migrate-type',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Migrate or delete all objects of a given type in a workspace',
 	request: {
@@ -2318,6 +2421,7 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const [workspace] = await db
 		.select()
@@ -2453,6 +2557,7 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 const bulkUpdateObjectsRoute = createRoute({
 	method: 'post',
 	path: '/bulk-update',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Bulk update objects',
 	request: {
@@ -2481,6 +2586,7 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { ids, patch } = c.req.valid('json')
 
 	// Dedup so duplicates in the request don't double-write or double-report.
@@ -2611,7 +2717,7 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 

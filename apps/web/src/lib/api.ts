@@ -505,6 +505,21 @@ export const api = {
 				// OAuth `state`; without `include` it is dropped and the callback 400s.
 				credentials: 'include',
 			}),
+		/** "Connect with Maskin" from the Skjald app: approve it for this workspace and get the redirect that carries the one-time code back. */
+		skjaldAuthorize: (
+			workspaceId: string,
+			body: {
+				state: string
+				redirect_uri: string
+				code_challenge: string
+				code_challenge_method: 'S256'
+			},
+		) =>
+			request<{ redirect_url: string; workspace_name: string }>('/integrations/skjald/authorize', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 		resendDnsPrecheck: (workspaceId: string, domain: string) =>
 			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
 				'/integrations/resend/dns-precheck',
@@ -1188,6 +1203,9 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// False when the credit top-up Price isn't configured on the server; the
+	// "Buy usage credits" entry points are hidden in that case.
+	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
 	// `linkedin-addon-visible` flag is off OR the workspace has no connected
@@ -1413,6 +1431,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {
@@ -1424,6 +1445,8 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	/** Your own default workspace; null clears it. */
+	default_workspace_id?: string | null
 }
 
 export interface RunAgentInput {
@@ -1447,6 +1470,8 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	role: string
 	/** People in the workspace, including the caller — the workspace menu's sub-line. */
 	memberCount: number
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault: boolean
 }
 
 export interface UpdateWorkspaceInput {
@@ -1823,7 +1848,7 @@ export interface UpdateFileInput {
 export interface ConversationParticipantResponse {
 	actorId: string
 	actorName: string
-	actorType: 'human' | 'agent'
+	actorType: 'human' | 'agent' | 'system'
 	joinedAt: string | null
 	addedBy: string | null
 }
@@ -2089,6 +2114,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {

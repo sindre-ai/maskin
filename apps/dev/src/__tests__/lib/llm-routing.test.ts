@@ -45,11 +45,16 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
 	'MASKIN_FALLBACK_ZDR',
+	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
 	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
+	// These tests are about route priority, not refresh behaviour: keep the
+	// platform refresh off so a fixture token never triggers a real refresh call.
+	// The flag-on contract is in claude-launch-refresh.test.ts.
+	process.env.MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED = 'false'
 })
 
 afterEach(() => {
@@ -390,6 +395,48 @@ describe('resolveLlmRoute priority order', () => {
 				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
 			},
 		)
+
+		describe('image stripping for text-only models', () => {
+			async function resolveEnv(model: string) {
+				process.env.MASKIN_FALLBACK_MODEL = model
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('asks the container to strip images for a text-only model', async () => {
+				const env = await resolveEnv('deepseek/deepseek-v4-flash-0731')
+				expect(env?.MASKIN_STRIP_IMAGES).toBe('1')
+			})
+
+			it('leaves a vision model alone so it receives images unchanged', async () => {
+				const env = await resolveEnv('anthropic/claude-sonnet-4.5')
+				expect(env?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+
+			it.each(['', 'none', ' NONE '])(
+				'MASKIN_TEXT_ONLY_MODELS=%j turns stripping off',
+				async (value) => {
+					process.env.MASKIN_TEXT_ONLY_MODELS = value
+					const env = await resolveEnv('deepseek/deepseek-v4-flash')
+					expect(env?.MASKIN_STRIP_IMAGES).toBeUndefined()
+				},
+			)
+
+			it('MASKIN_TEXT_ONLY_MODELS replaces the default list when set', async () => {
+				process.env.MASKIN_TEXT_ONLY_MODELS = 'foo, Bar'
+				expect((await resolveEnv('acme/BAR-1'))?.MASKIN_STRIP_IMAGES).toBe('1')
+				const deepseek = await resolveEnv('deepseek/deepseek-v4-flash')
+				expect(deepseek?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+		})
 
 		it('maskin_plan is only used when no BYO credentials are present', async () => {
 			const settings = emptySettings()

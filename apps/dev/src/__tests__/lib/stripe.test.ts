@@ -23,8 +23,6 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
-	MASKIN_PRO_HARD_CAP_USD_CENTS: '4900',
-	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 
 beforeEach(() => {
@@ -49,21 +47,36 @@ describe('readStripeEnv', () => {
 		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_TEAM/)
 	})
 
-	it('throws when STRIPE_PRICE_CREDITS_CUSTOM is missing', () => {
+	it('does not throw when STRIPE_PRICE_CREDITS_CUSTOM is missing — priceCreditsCustom is null', () => {
 		const { STRIPE_PRICE_CREDITS_CUSTOM: _omit, ...missing } = VALID_ENV
-		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_CREDITS_CUSTOM/)
+		const env = readStripeEnv(missing)
+		expect(env.priceCreditsCustom).toBeNull()
+		expect(env.pricePro).toBe('price_pro')
 	})
 
-	it('throws when a cap is non-numeric', () => {
-		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_PRO_HARD_CAP_USD_CENTS: 'abc' })).toThrow(
-			/positive integer string/,
-		)
+	it('treats an empty STRIPE_PRICE_CREDITS_CUSTOM as unset', () => {
+		expect(
+			readStripeEnv({ ...VALID_ENV, STRIPE_PRICE_CREDITS_CUSTOM: '' }).priceCreditsCustom,
+		).toBe(null)
 	})
 
-	it('throws when a cap is zero or negative', () => {
-		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_TEAM_HARD_CAP_USD_CENTS: '0' })).toThrow(
-			/positive integer string/,
-		)
+	it('does not require the Pro or Team cap env vars', () => {
+		expect(() => readStripeEnv(VALID_ENV)).not.toThrow()
+	})
+
+	it('ignores the Pro and Team cap env vars: the caps come from code', () => {
+		// Regression: a stale prod MASKIN_PRO_HARD_CAP_USD_CENTS of 2000 pinned
+		// paying Pro workspaces at $20 of their $49.
+		for (const stale of ['2000', 'abc', '0']) {
+			const env = readStripeEnv({
+				...VALID_ENV,
+				MASKIN_PRO_HARD_CAP_USD_CENTS: stale,
+				MASKIN_TEAM_HARD_CAP_USD_CENTS: stale,
+			})
+			expect(env.proHardCapUsdCents).toBe(4_900)
+			expect(env.teamHardCapUsdCents).toBe(20_000)
+			expect(hardCapForPlan('pro', env)).toBe(4_900)
+		}
 	})
 })
 
@@ -282,6 +295,30 @@ describe('createCreditCheckoutSession', () => {
 		expect(params.automatic_tax).toEqual({ enabled: true })
 		expect(params.tax_id_collection).toEqual({ enabled: true, required: 'never' })
 		expect(params.invoice_creation).toEqual({ enabled: true })
+	})
+
+	it('throws without calling Stripe when the top-up price env is unset', async () => {
+		const create = vi.fn()
+		const pricesRetrieve = vi.fn()
+		const stripe = {
+			checkout: { sessions: { create } },
+			prices: { retrieve: pricesRetrieve },
+		} as unknown as Stripe
+		const { STRIPE_PRICE_CREDITS_CUSTOM: _omit, ...missing } = VALID_ENV
+		await expect(
+			createCreditCheckoutSession(
+				stripe,
+				{
+					workspaceId: 'ws-1',
+					amountUsdCents: 2_500,
+					successUrl: 'https://app.test/success',
+					cancelUrl: 'https://app.test/cancel',
+				},
+				readStripeEnv(missing),
+			),
+		).rejects.toThrow(/STRIPE_PRICE_CREDITS_CUSTOM/)
+		expect(pricesRetrieve).not.toHaveBeenCalled()
+		expect(create).not.toHaveBeenCalled()
 	})
 })
 

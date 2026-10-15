@@ -24,7 +24,7 @@ Hono.js API Server (apps/dev, port 3000)
 - **Frontend:** Vite + React 19 + TanStack Router + TanStack Query + Tailwind CSS 4
 - **Real-time:** PostgreSQL LISTEN/NOTIFY -> SSE bridge (no Redis, no WebSocket server)
 - **Validation:** Zod schemas as single source of truth (runtime validation + TypeScript types + OpenAPI spec)
-- **Auth:** API keys with SHA-256 hashing, `ank_` prefix. Bearer token in Authorization header. Agents and humans authenticate identically.
+- **Auth:** API keys with `ank_` prefix, stored as issued (hashing is planned). Bearer token in Authorization header. Agents and humans authenticate identically.
 - **Lint/Format:** Biome (replaces ESLint + Prettier)
 - **Testing:** Vitest with mock DB context (no real database needed)
 

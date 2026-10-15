@@ -41,7 +41,7 @@ import { useState } from 'react'
 // packages/db/src/schema.ts). Anything not listed here renders as one row and
 // silently drops extra installs, so adding a provider to this set is what makes
 // its second install visible at all.
-const MULTI_INSTALL_PROVIDERS = new Set(['github', 'linkedin-unipile'])
+const MULTI_INSTALL_PROVIDERS = new Set(['github', 'linkedin-unipile', 'skjald'])
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
@@ -101,11 +101,7 @@ function IntegrationsPage() {
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
 	const [apiKey, setApiKey] = useState('')
-	const [manualConnect, setManualConnect] = useState<{
-		provider: ProviderInfo
-		webhookUrl: string
-		integrationId: string
-	} | null>(null)
+	const [skjaldDialogOpen, setSkjaldDialogOpen] = useState(false)
 	// Slice 2 resend dialog state. `open` alone opens fresh at Step 1; `prefill`
 	// (populated by the Resume affordance) opens straight into Step 3 with the
 	// row's config.resend rehydrated.
@@ -162,6 +158,9 @@ function IntegrationsPage() {
 									workspaceId={workspaceId}
 									linkableCount={provider.name === 'github' ? linkableCount : 0}
 									onRequestLink={() => setLinkGithubOpen(true)}
+									onRequestSkjaldConnect={
+										provider.name === 'skjald' ? () => setSkjaldDialogOpen(true) : undefined
+									}
 								/>
 							)
 						}
@@ -175,8 +174,8 @@ function IntegrationsPage() {
 									setApiKeyProvider(provider)
 									setApiKey('')
 								}}
-								onManualConnected={(webhookUrl, integrationId) =>
-									setManualConnect({ provider, webhookUrl, integrationId })
+								onRequestSkjaldConnect={
+									provider.name === 'skjald' ? () => setSkjaldDialogOpen(true) : undefined
 								}
 								onRequestResendConnect={
 									provider.name === 'resend'
@@ -208,8 +207,8 @@ function IntegrationsPage() {
 			/>
 			<SkjaldConnectDialog
 				workspaceId={workspaceId}
-				state={manualConnect}
-				onClose={() => setManualConnect(null)}
+				open={skjaldDialogOpen}
+				onClose={() => setSkjaldDialogOpen(false)}
 			/>
 			<LinkGithubDialog
 				workspaceId={workspaceId}
@@ -315,7 +314,7 @@ function ProviderRow({
 	integration,
 	workspaceId,
 	onRequestApiKey,
-	onManualConnected,
+	onRequestSkjaldConnect,
 	onRequestResendConnect,
 	linkableCount,
 	onRequestLink,
@@ -324,7 +323,9 @@ function ProviderRow({
 	integration?: IntegrationResponse
 	workspaceId: string
 	onRequestApiKey: () => void
-	onManualConnected: (webhookUrl: string, integrationId: string) => void
+	/** Skjald connects from the Skjald app, so Connect opens a dialog that says where to
+	 *  tap rather than calling /connect. Undefined for every other provider. */
+	onRequestSkjaldConnect?: () => void
 	/** Resend needs its own multi-step dialog — bypass the manual-branch /connect
 	 *  round-trip and hand off to the caller's ResendConnectDialog state.
 	 *  Undefined for every other provider. */
@@ -345,17 +346,8 @@ function ProviderRow({
 			onRequestResendConnect()
 			return
 		}
-		if (provider.authType === 'manual') {
-			connect.mutate(
-				{ provider: provider.name },
-				{
-					onSuccess: (data) => {
-						if (data.webhook_url && data.integration_id) {
-							onManualConnected(data.webhook_url, data.integration_id)
-						}
-					},
-				},
-			)
+		if (provider.name === 'skjald' && onRequestSkjaldConnect) {
+			onRequestSkjaldConnect()
 			return
 		}
 		connect.mutate({ provider: provider.name })
@@ -481,12 +473,15 @@ function GroupedProviderRow({
 	workspaceId,
 	linkableCount,
 	onRequestLink,
+	onRequestSkjaldConnect,
 }: {
 	provider: ProviderInfo
 	installations: IntegrationResponse[]
 	workspaceId: string
 	linkableCount: number
 	onRequestLink: () => void
+	/** Skjald connects from its own app, so "Add another" opens the how-to dialog instead of /connect. */
+	onRequestSkjaldConnect?: () => void
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -572,7 +567,11 @@ function GroupedProviderRow({
 								variant="outline"
 								size="sm"
 								className="w-full md:flex-1"
-								onClick={() => connect.mutate({ provider: provider.name })}
+								onClick={() =>
+									onRequestSkjaldConnect
+										? onRequestSkjaldConnect()
+										: connect.mutate({ provider: provider.name })
+								}
 								disabled={connect.isPending}
 							>
 								<Plus className="h-3.5 w-3.5 mr-1" />
@@ -658,6 +657,16 @@ function ApiKeyDialog({
 	)
 }
 
+// Skjald connects from the Skjald app: its "Connect with Maskin" opens the page that picks a
+// workspace (routes/connect.skjald.tsx) and hands the app its webhook URL and secret. Maskin cannot
+// start that flow itself (the app holds the PKCE verifier), so the dialog says where to tap. The
+// URL-and-secret steps stay behind "Set up manually" for anything that is not the app.
+const SKJALD_APP_STEPS = [
+	'Open Skjald and go to Settings → Send to.',
+	'Tap Connect with Maskin.',
+	'Sign in if asked, pick this workspace and press Connect. There is nothing to copy or paste.',
+]
+
 const SKJALD_SETUP_STEPS = [
 	'In Skjald, go to Settings → Webhooks → Add Webhook and paste the URL below.',
 	'Subscribe to the transcription.completed event.',
@@ -667,38 +676,54 @@ const SKJALD_SETUP_STEPS = [
 
 function SkjaldConnectDialog({
 	workspaceId,
-	state,
+	open,
 	onClose,
 }: {
 	workspaceId: string
-	state: { provider: ProviderInfo; webhookUrl: string; integrationId: string } | null
+	open: boolean
 	onClose: () => void
 }) {
+	const connect = useConnectIntegration(workspaceId)
 	const complete = useCompleteIntegration(workspaceId)
-	const [step, setStep] = useState<1 | 2>(1)
+	const [step, setStep] = useState<'app' | 1 | 2>('app')
+	const [manual, setManual] = useState<{ webhookUrl: string; integrationId: string } | null>(null)
 	const [secret, setSecret] = useState('')
 	const [copied, setCopied] = useState(false)
 
-	const open = !!state
-
 	const handleClose = () => {
 		onClose()
-		setStep(1)
+		setStep('app')
+		setManual(null)
 		setSecret('')
 		setCopied(false)
 	}
 
+	// The manual path is the only one that creates a row up front, so it is only started on request.
+	const handleManual = () => {
+		connect.mutate(
+			{ provider: 'skjald' },
+			{
+				onSuccess: (data) => {
+					if (data.webhook_url && data.integration_id) {
+						setManual({ webhookUrl: data.webhook_url, integrationId: data.integration_id })
+						setStep(1)
+					}
+				},
+			},
+		)
+	}
+
 	const handleCopy = () => {
-		if (!state) return
-		navigator.clipboard.writeText(state.webhookUrl)
+		if (!manual) return
+		navigator.clipboard.writeText(manual.webhookUrl)
 		setCopied(true)
 		setTimeout(() => setCopied(false), 2000)
 	}
 
 	const handleComplete = () => {
-		if (!state) return
+		if (!manual) return
 		complete.mutate(
-			{ id: state.integrationId, secret },
+			{ id: manual.integrationId, secret },
 			{
 				onSuccess: handleClose,
 			},
@@ -709,20 +734,36 @@ function SkjaldConnectDialog({
 		<Dialog open={open} onOpenChange={(next) => !next && handleClose()}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Connect {state?.provider.displayName}</DialogTitle>
+					<DialogTitle>Connect Skjald</DialogTitle>
 					<DialogDescription>
-						{step === 1
-							? 'Set up a webhook in Skjald pointing at this URL.'
-							: 'Paste the secret Skjald generated to finish connecting.'}
+						{step === 'app'
+							? 'Skjald connects from its own app.'
+							: step === 1
+								? 'Set up a webhook in Skjald pointing at this URL.'
+								: 'Paste the secret Skjald generated to finish connecting.'}
 					</DialogDescription>
 				</DialogHeader>
-				{step === 1 ? (
+				{step === 'app' ? (
+					<div className="space-y-3">
+						<ol className="list-decimal list-inside space-y-1.5 text-sm text-muted-foreground">
+							{SKJALD_APP_STEPS.map((instruction) => (
+								<li key={instruction}>{instruction}</li>
+							))}
+						</ol>
+						<div className="flex justify-end gap-2">
+							<Button variant="ghost" onClick={handleManual} disabled={connect.isPending}>
+								Set up manually
+							</Button>
+							<Button onClick={handleClose}>Done</Button>
+						</div>
+					</div>
+				) : step === 1 ? (
 					<div className="space-y-3">
 						<div className="space-y-2">
 							<Label>Webhook URL</Label>
 							<div className="flex gap-2">
 								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
-									{state?.webhookUrl}
+									{manual?.webhookUrl}
 								</div>
 								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
 									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}

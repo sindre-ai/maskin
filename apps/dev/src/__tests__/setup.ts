@@ -199,12 +199,14 @@ export function withTestEnv(
 	db: Database,
 	actorId = 'test-actor-id',
 	actorType = 'human',
+	agentStorage?: AgentStorageManager,
 ) {
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		if (agentStorage) c.set('agentStorage', agentStorage)
 		await next()
 	})
 }
@@ -218,10 +220,11 @@ export function createTestApp(
 	basePath = '/',
 	actorId = 'test-actor-id',
 	actorType = 'human',
+	agentStorage?: AgentStorageManager,
 ) {
 	const app = new CreateOpenAPIHono<Env>()
 	const { db, mockResults, calls } = createTestContext()
-	withTestEnv(app, db, actorId, actorType)
+	withTestEnv(app, db, actorId, actorType, agentStorage)
 	app.route(basePath, routeModule)
 	return { app, db, mockResults, calls }
 }
@@ -258,6 +261,7 @@ export function createMockAgentStorage(overrides?: Record<string, unknown>) {
 		getFile: vi.fn().mockResolvedValue(Buffer.from('')),
 		uploadFile: vi.fn().mockResolvedValue('key'),
 		deleteFile: vi.fn().mockResolvedValue(undefined),
+		deleteAllAgentFiles: vi.fn().mockResolvedValue(undefined),
 		listFiles: vi.fn().mockResolvedValue([]),
 		pullAgentFiles: vi.fn().mockResolvedValue(undefined),
 		pushAgentFiles: vi.fn().mockResolvedValue(undefined),

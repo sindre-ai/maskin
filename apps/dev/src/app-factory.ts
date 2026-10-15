@@ -43,6 +43,7 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
+import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
@@ -287,6 +288,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/invites/preview' && method === 'GET') return next()
 		if (method === 'POST' && /^\/api\/invites\/[^/]+\/accept$/.test(path)) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// The Skjald app trades its one-time connect code here. It has no API key, so the code and its PKCE
+		// verifier are the credential (routes/integrations-skjald-connect.ts).
+		if (path === '/api/integrations/skjald/exchange' && method === 'POST') return next()
 		// R11-C · linkedin-unipile fan-out webhook. Unipile POSTs the
 		// `account.reconnect` event from outside our network, so it cannot
 		// carry a Maskin API key — authenticated by Unipile v2's per-endpoint
@@ -380,6 +384,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// URL for linkedin-unipile and fail.
 	// The /mcp subtree is registered BEFORE the provider's own routes so the
 	// more specific prefix wins the trie — same ordering as Slack's below.
+	// Skjald's one-click connect has its own two routes under /skjald; mounted before the generic catch-all.
+	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
