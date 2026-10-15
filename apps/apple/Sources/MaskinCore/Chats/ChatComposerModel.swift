@@ -439,7 +439,7 @@ public enum DictationText {
 
 /// What the composer's last slot shows. One rule, shared by every variant, so the swap is the
 /// same everywhere: nothing to send → mic; text or an attachment → send; an agent working while
-/// the field is empty → stop.
+/// the field is empty → stop (the composer keeps the mic beside it so dictation is never blocked).
 public enum ComposerLastSlot: Equatable, Sendable {
 	case mic, send, stop, none
 

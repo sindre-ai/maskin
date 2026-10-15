@@ -246,14 +246,7 @@ struct MaskinComposer: View {
 		ZStack {
 			switch lastSlot {
 			case .mic:
-				ComposerCircleButton(
-					symbol: "mic", fill: MaskinSurface.fill, foreground: MaskinColor.ink3, label: "Dictate",
-					weight: .regular
-				) {
-					MaskinHaptics.play(.selection)
-					startDictation()
-				}
-				.transition(.opacity)
+				micButton
 			case .send:
 				ComposerCircleButton(
 					symbol: "arrow.up", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Send",
@@ -272,25 +265,40 @@ struct MaskinComposer: View {
 				#endif
 				.transition(.opacity)
 			case .stop:
-				Button {
-					MaskinHaptics.play(.selection)
-					onStop?()
-				} label: {
-					RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-						.fill(MaskinSurface.onInverse)
-						.frame(width: MaskinSpace.s7, height: MaskinSpace.s7)
-						.frame(width: Self.control, height: Self.control)
-						.background(MaskinSurface.inverse, in: Circle())
-						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-						.contentShape(Circle())
+				HStack(spacing: 0) {
+					// Stop must not take dictation away: the mic stays beside it while an agent works.
+					if config.showsMic && micAvailable { micButton }
+					Button {
+						MaskinHaptics.play(.selection)
+						onStop?()
+					} label: {
+						RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+							.fill(MaskinSurface.onInverse)
+							.frame(width: MaskinSpace.s7, height: MaskinSpace.s7)
+							.frame(width: Self.control, height: Self.control)
+							.background(MaskinSurface.inverse, in: Circle())
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.contentShape(Circle())
+					}
+					.buttonStyle(.maskinPressed(.shrink))
+					.accessibilityLabel("Stop")
+					.transition(.opacity)
 				}
-				.buttonStyle(.maskinPressed(.shrink))
-				.accessibilityLabel("Stop")
-				.transition(.opacity)
 			case .none:
 				EmptyView()
 			}
 		}
+	}
+
+	private var micButton: some View {
+		ComposerCircleButton(
+			symbol: "mic", fill: MaskinSurface.fill, foreground: MaskinColor.ink3, label: "Dictate",
+			weight: .regular
+		) {
+			MaskinHaptics.play(.selection)
+			startDictation()
+		}
+		.transition(.opacity)
 	}
 
 	// MARK: Attach
