@@ -233,9 +233,7 @@ describe('detachProviderMcpServers with instance slugs', () => {
 			},
 		})
 
-		expect(await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, [slug])).toBe(
-			1,
-		)
+		expect(await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, [slug])).toBe(1)
 		expect((await toolsOf(agent.id)).mcpServers).toEqual({})
 	})
 
