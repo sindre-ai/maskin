@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+	DEFAULT_PROSPECT_GREETING,
 	DISCLOSURE_PATTERNS,
 	DISCLOSURE_TEMPLATES,
 	SYSTEM_PROMPT,
@@ -122,5 +123,23 @@ describe('ensureAssistant', () => {
 		expect(res.action).toBe('unchanged')
 		expect(current.updateAssistant).not.toHaveBeenCalled()
 		expect(current.createAssistant).not.toHaveBeenCalled()
+	})
+})
+
+describe('prospect greeting variable', () => {
+	const payload = buildAssistantPayload(input) as {
+		dynamic_variables: Record<string, string>
+	}
+
+	it('stores a plain Hej as the default so an unset value never plays as raw text', () => {
+		expect(payload.dynamic_variables).toEqual({ prospect_greeting: DEFAULT_PROSPECT_GREETING })
+		expect(DEFAULT_PROSPECT_GREETING).toBe('Hej')
+	})
+
+	it('has every opener start from the greeting variable and name no other variable', () => {
+		for (const text of Object.values(DISCLOSURE_TEMPLATES)) {
+			expect(text.startsWith('{{prospect_greeting}},')).toBe(true)
+			expect(text.match(/\{\{[^}]+\}\}/g)).toEqual(['{{prospect_greeting}}'])
+		}
 	})
 })

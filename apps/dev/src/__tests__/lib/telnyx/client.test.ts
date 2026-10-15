@@ -108,3 +108,57 @@ describe('TelnyxClient.deleteRecording', () => {
 		expect(fetchImpl).toHaveBeenCalledTimes(3)
 	})
 })
+
+describe('TelnyxClient.createCall', () => {
+	const input = {
+		to: '+4520123456',
+		from: '+4570000000',
+		assistantId: 'assistant-1',
+		prospectGreeting: 'Hej Anna',
+		connectionId: 'app-1',
+		webhookUrl: 'https://maskin.test/api/integrations/telnyx/webhook',
+		clientState: {
+			contact_id: '11111111-1111-4111-8111-111111111111',
+			workspace_id: '22222222-2222-4222-8222-222222222222',
+			dial_attempt_n: 2,
+		},
+	}
+
+	async function sentBody() {
+		const { client, fetchImpl } = clientWith({
+			data: { call_control_id: 'call-1', call_session_id: 'sess-1' },
+		})
+		await client.createCall(input)
+		const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+		return { url, init, body: JSON.parse(String(init.body)) as Record<string, unknown> }
+	}
+
+	it('attaches the assistant as an object with the greeting as a dynamic variable', async () => {
+		const { url, body } = await sentBody()
+		expect(url).toBe('https://telnyx.test/v2/calls')
+		expect(body.assistant).toEqual({
+			id: 'assistant-1',
+			dynamic_variables: { prospect_greeting: 'Hej Anna' },
+		})
+	})
+
+	it('never sends a top-level assistant_id, which the Dial API does not list', async () => {
+		const { body } = await sentBody()
+		expect(body).not.toHaveProperty('assistant_id')
+	})
+
+	it('never sends a dynamic variable name that starts with telnyx_', async () => {
+		const { body } = await sentBody()
+		const names = Object.keys(
+			(body.assistant as { dynamic_variables: Record<string, string> }).dynamic_variables,
+		)
+		expect(names.filter((n) => n.startsWith('telnyx_'))).toEqual([])
+	})
+
+	it('keeps the idempotency key and premium answering machine detection', async () => {
+		const { init, body } = await sentBody()
+		const headers = init.headers as Record<string, string>
+		expect(headers['Idempotency-Key']).toBe('11111111-1111-4111-8111-111111111111:2')
+		expect(body.answering_machine_detection).toBe('premium')
+	})
+})

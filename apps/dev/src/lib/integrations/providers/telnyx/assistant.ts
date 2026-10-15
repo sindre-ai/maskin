@@ -14,9 +14,12 @@ export type DisclosureLocale = 'en' | 'da'
  * product and positioning human on the bet; this is the template from the spec.
  */
 export const DISCLOSURE_TEMPLATES: Record<DisclosureLocale, string> = {
-	en: 'Hi {{prospect_first_name}}, this is an AI assistant calling on behalf of Maskin, do you have a moment?',
-	da: 'Hej {{prospect_first_name}}, det her er en AI-assistent, der ringer på vegne af Maskin, har du et øjeblik?',
+	en: '{{prospect_greeting}}, this is an AI assistant calling on behalf of Maskin, do you have a moment?',
+	da: '{{prospect_greeting}}, det her er en AI-assistent, der ringer på vegne af Maskin, har du et øjeblik?',
 }
+
+/** The greeting for a contact with no first name. Danish like the opener, see DISCLOSURE_LOCALE. */
+export const DEFAULT_PROSPECT_GREETING = 'Hej'
 
 /** What the call.hangup assertion looks for in the first thing the agent said (spec 7a, step 4). */
 export const DISCLOSURE_PATTERNS: readonly RegExp[] = [/AI[- ]?assist/i, /AI[- ]?assistent/i]
@@ -77,7 +80,8 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 		name: ASSISTANT_NAME,
 		model: ASSISTANT_MODEL,
 		instructions: SYSTEM_PROMPT,
-		dynamic_variables: { prospect_first_name: '' },
+		// The dialer sends the real greeting per call; the default stops an unset value playing as raw text.
+		dynamic_variables: { prospect_greeting: DEFAULT_PROSPECT_GREETING },
 		tools: TOOL_DECLARATIONS.map((tool) => ({
 			type: 'webhook',
 			webhook: {
