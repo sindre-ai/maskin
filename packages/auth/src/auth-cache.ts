@@ -93,7 +93,8 @@ export class TtlPromiseCache<T> {
 
 export interface AuthCaches {
 	apiKeys: TtlPromiseCache<{ actorId: string; type: string } | null>
-	memberships: TtlPromiseCache<boolean>
+	// Role of the actor in the workspace, or null for a non-member.
+	memberships: TtlPromiseCache<string | null>
 }
 
 // Every live cache, so eviction reaches whichever middleware instance holds the
