@@ -46,13 +46,10 @@ export const registerLiveActivityTokenSchema = z
 		/** The `id` returned by POST /api/devices — the token's APNs environment comes from that row. */
 		device_id: z.string().uuid(),
 		token: liveActivityTokenSchema,
-		/** Required for `update`, forbidden for `push_to_start`. */
-		session_id: z.string().uuid().optional(),
+		/** Legacy per-session field: accepted and ignored. The workspace comes from `X-Workspace-Id`. */
+		session_id: z.string().uuid().nullish(),
 	})
 	.superRefine((v, ctx) => {
-		if (v.kind === 'update' && !v.session_id) {
-			ctx.addIssue({ code: 'custom', path: ['session_id'], message: 'session_id is required' })
-		}
 		if (v.kind === 'push_to_start' && v.session_id) {
 			ctx.addIssue({ code: 'custom', path: ['session_id'], message: 'session_id not allowed' })
 		}
@@ -62,20 +59,31 @@ export const liveActivityTokenResponseSchema = z.object({
 	id: z.string().uuid(),
 	kind: liveActivityTokenKindSchema,
 	device_id: z.string().uuid(),
-	session_id: z.string().uuid().nullable(),
+	workspace_id: z.string().uuid().nullable(),
 	updated_at: z.string(),
 })
 
-/** The ActivityKit `ContentState` pushed for a running turn. Keep it small. */
-export const liveActivityContentStateSchema = z.object({
+/** One row of the "Agents working" card: the Swift `WorkingAgent` Codable contract. */
+export const liveActivityWorkingAgentSchema = z.object({
+	id: z.string(),
 	sessionId: z.string(),
-	agentName: z.string(),
-	step: z.string(),
+	name: z.string(),
+	doing: z.string(),
 	/** Seconds since 2001-01-01T00:00:00Z (Swift's default `Date` Codable encoding). */
 	startedAt: z.number(),
-	status: z.enum(['running', 'needsYou', 'done', 'failed']),
-	/** Conversation title; optional so older clients and pushes keep decoding. */
+	expectedFinishAt: z.number().optional(),
+	touchesCustomersOrProduction: z.boolean(),
+	objectId: z.string().optional(),
+	conversationId: z.string().optional(),
+	/** Conversation title. */
 	topic: z.string().optional(),
+})
+
+/** The ActivityKit `ContentState` of the aggregate activity (`AgentsActivityState`). */
+export const liveActivityContentStateSchema = z.object({
+	count: z.number().int(),
+	finishingSoon: z.number().int(),
+	agents: z.array(liveActivityWorkingAgentSchema),
 })
 
 export type RegisterLiveActivityTokenInput = z.infer<typeof registerLiveActivityTokenSchema>
