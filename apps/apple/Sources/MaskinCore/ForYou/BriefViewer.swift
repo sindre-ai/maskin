@@ -38,6 +38,15 @@ public struct BriefSequence: Equatable, Sendable {
 		}
 	}
 
+	/// The pages worth fetching while the reader is on `index`: the next `ahead` slides that are
+	/// pages (the briefing is text and needs nothing), so reaching one shows it at once.
+	public func pagesToPrefetch(after index: Int, ahead: Int = 2) -> [LoopOutput] {
+		guard index >= -1, ahead > 0 else { return [] }
+		return slides.dropFirst(index + 1).prefix(ahead).compactMap { card in
+			if case .page(let output) = card.content { output } else { nil }
+		}
+	}
+
 	/// What "Tell me more" sends the Chief of Staff: the agent reads only the text, so it names the slide.
 	public static func tellMeMore(about card: StoryCard) -> String {
 		switch card.content {

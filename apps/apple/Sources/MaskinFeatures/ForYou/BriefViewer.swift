@@ -19,6 +19,8 @@ struct BriefViewer: View {
 	/// Cards parsed from each loaded page, by story card id; drives the PRESENTATION block.
 	@State private var presentations: [String: [PresentationSlide]] = [:]
 	@State private var presentationTotals: [String: Int] = [:]
+	/// Pages fetched ahead of the reader, by file id, so the next slide opens without a spinner.
+	@State private var preloaded: [String: FileDetail] = [:]
 	@State private var playingPresentation: StoryCard?
 	@State private var dragY: CGFloat = 0
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,6 +77,7 @@ struct BriefViewer: View {
 		.accessibilityElement(children: .contain)
 		.accessibilityAction(.escape, close)
 		.task(id: autoAdvances) { await runClock() }
+		.task(id: playback.index) { await prefetchNext() }
 		.onChange(of: playback.index, initial: true) { _, _ in
 			guard let card else { return }
 			stories.markSeen(card)
@@ -113,6 +116,15 @@ struct BriefViewer: View {
 			let elapsed = last.duration(to: now)
 			last = now
 			playback.tick(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
+		}
+	}
+
+	/// Fetches the next pages in the background. A failure is ignored: that slide just loads when reached.
+	private func prefetchNext() async {
+		let remote = APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)
+		for output in sequence.pagesToPrefetch(after: playback.index) where preloaded[output.id] == nil {
+			guard let file = try? await remote.file(id: output.id), !Task.isCancelled else { return }
+			preloaded[output.id] = file
 		}
 	}
 
@@ -236,7 +248,7 @@ struct BriefViewer: View {
 			.id(card.id)
 		case .page(let output):
 			BriefPageSlide(
-				environment: environment, output: output,
+				environment: environment, output: output, preload: preloaded[output.id],
 				loading: { loading in playback.setWaiting(loading) },
 				loaded: { html in
 					let slides = PresentationParser.parse(html: html)
@@ -335,7 +347,7 @@ private struct BriefPageSlide: View {
 	@State private var store: FileStore
 
 	init(
-		environment: AppEnvironment, output: LoopOutput, loading: @escaping (Bool) -> Void,
+		environment: AppEnvironment, output: LoopOutput, preload: FileDetail?, loading: @escaping (Bool) -> Void,
 		loaded: @escaping (String) -> Void
 	) {
 		self.output = output
@@ -345,7 +357,8 @@ private struct BriefPageSlide: View {
 			initialValue: FileStore(
 				fileId: output.id,
 				remote: APIFilesRemote(
-					client: environment.client, credentials: environment.auth.credentialsProvider)))
+					client: environment.client, credentials: environment.auth.credentialsProvider),
+				preload: preload))
 	}
 
 	var body: some View {
@@ -382,8 +395,11 @@ private struct BriefPageSlide: View {
 		}
 		.clipShape(shape)
 		.task {
-			loading(true)
-			await store.load()
+			// A page fetched ahead is already here: no spinner, no pause, no second request.
+			if store.phase != .loaded {
+				loading(true)
+				await store.load()
+			}
 			if let file = store.file, file.kind == .html { loaded(store.text ?? file.text ?? "") }
 			loading(false)
 		}
