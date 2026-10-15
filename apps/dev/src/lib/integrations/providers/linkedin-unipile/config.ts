@@ -52,5 +52,29 @@ export const config: ProviderConfig = {
 		autoInject: false,
 	},
 
+	// Event definitions only. No `mapping` key and no `webhook` key: a webhook
+	// key would opt the provider into the generic /api/webhooks/:provider route,
+	// and Unipile deliveries are handled by the dedicated route in
+	// routes/integrations-linkedin-unipile.ts using event-map.ts.
+	events: {
+		definitions: [
+			{
+				entityType: 'linkedin.message',
+				actions: ['received', 'received_cold', 'received_unresolved'],
+				label: 'LinkedIn message',
+			},
+			{
+				entityType: 'linkedin.connection',
+				actions: ['accepted', 'new'],
+				label: 'LinkedIn connection',
+			},
+			{
+				entityType: 'linkedin.account',
+				actions: ['status_changed'],
+				label: 'LinkedIn account status',
+			},
+		],
+	},
+
 	externalIdDisplay: 'installation',
 }
