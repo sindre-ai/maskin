@@ -136,6 +136,47 @@ describe('Interactive turn finalizer — spawn-anchor backfill (Integration)', (
 		expect(await readSpawnAnchor(subB.id)).toBe(assistantMessage.id)
 	})
 
+	it('anchors a sub-agent that only carries spawned_by_session_id (REST create_session)', async () => {
+		const primary = await insertSession(db, workspaceId, agentId, humanId, {
+			interactive: true,
+			conversationId,
+			status: 'running',
+		})
+		if (!primary) throw new Error('no primary')
+
+		await feed(
+			primary.id,
+			`${userTurnLine(1)}
+`,
+		)
+
+		// REST create_session sets spawned_by_session_id from the header and
+		// leaves source_session_id null unless the agent passes it.
+		const sub = await insertSession(db, workspaceId, agentId, humanId, {
+			interactive: false,
+			sourceSessionId: null,
+			spawnedBySessionId: primary.id,
+			spawnedByMessageId: null,
+			conversationId: null,
+			status: 'running',
+		})
+		if (!sub) throw new Error('failed to spawn sub-agent')
+
+		await feed(
+			primary.id,
+			`${resultLine()}
+`,
+		)
+
+		const [assistantMessage] = await db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(eq(messages.conversationId, conversationId))
+			.orderBy(messages.id)
+		if (!assistantMessage) throw new Error('no assistant message posted')
+		expect(await readSpawnAnchor(sub.id)).toBe(assistantMessage.id)
+	})
+
 	it('leaves top-level (non-spawned) sessions with spawned_by_message_id = NULL', async () => {
 		const primary = await insertSession(db, workspaceId, agentId, humanId, {
 			interactive: true,

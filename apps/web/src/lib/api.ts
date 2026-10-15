@@ -1848,7 +1848,7 @@ export interface UpdateFileInput {
 export interface ConversationParticipantResponse {
 	actorId: string
 	actorName: string
-	actorType: 'human' | 'agent'
+	actorType: 'human' | 'agent' | 'system'
 	joinedAt: string | null
 	addedBy: string | null
 }
@@ -1961,6 +1961,8 @@ export interface MessageQuestionItem {
 export interface MessageQuestion {
 	session_id: string
 	questions: MessageQuestionItem[]
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -1988,6 +1990,8 @@ export interface MessageMetadata {
 	question?: MessageQuestion
 	/** Client-supplied: pairs a human's reply back to the question it answers. */
 	question_answer?: MessageQuestionAnswer
+	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
+	helper_return?: string
 }
 
 export interface MessageResponse {
@@ -2021,12 +2025,16 @@ export interface SpawnedSession {
 	actorId: string
 	actorName: string
 	actionPrompt: string
+	/** When the session was created: where its card sits in the chat's timeline. */
+	createdAt: string | null
 	startedAt: string | null
 	completedAt: string | null
 	durationMs: number | null
 	result: unknown
 	currentActivity: string | null
 	depends_on_session_ids: string[]
+	/** What the session is waiting on the person for; null when it is not waiting. */
+	awaiting: { message_id: number; question: MessageQuestion } | null
 }
 
 /**
@@ -2050,6 +2058,8 @@ export interface EditMessageInput {
 export interface MessagesListResponse {
 	messages: MessageResponse[]
 	has_more: boolean
+	/** Handoffs no message carries yet; present on the newest page only. */
+	pending_handoffs?: SpawnedSession[]
 }
 
 export interface CreateConversationInput {
@@ -2129,6 +2139,7 @@ export interface SessionInputAttachment {
 export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface SessionLogResponse {

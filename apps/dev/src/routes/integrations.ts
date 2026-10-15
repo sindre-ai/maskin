@@ -109,12 +109,15 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		storageProvider: StorageProvider
@@ -440,6 +443,7 @@ app.openapi(listLinkableRoute, (async (c) => {
 const linkInstallationRoute = createRoute({
 	method: 'post',
 	path: '/github/link',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Bind an existing GitHub App installation to this workspace',
 	request: {
@@ -472,6 +476,7 @@ app.openapi(linkInstallationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { installation_id: installationId } = c.req.valid('json')
 
 	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
@@ -663,6 +668,7 @@ app.openapi(getPendingSelectionRoute, (async (c) => {
 const selectInstallationRoute = createRoute({
 	method: 'post',
 	path: '/github/select-installation',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Finalize a GitHub connect by choosing one of the authorized installations',
 	request: {
@@ -698,6 +704,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { integration_id: integrationId, installation_id: installationId } = c.req.valid('json')
 
 	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
@@ -772,6 +779,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 const connectRoute = createRoute({
 	method: 'post',
 	path: '/{provider}/connect',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Start integration connection flow',
 	request: {
@@ -816,6 +824,7 @@ app.openapi(connectRoute, (async (c) => {
 	const db = c.get('db')
 	const { provider: providerName } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const actorId = c.get('actorId')
 
 	let resolved: ResolvedProvider
@@ -1708,6 +1717,10 @@ app.openapi(callbackRoute, (async (c) => {
 		)
 		.limit(1)
 
+	// Reconnecting onto a row that was already active is a refresh, not a new
+	// connect, so it must not count toward integration_connected.
+	const isNewConnect = existingSameInstall?.status !== 'active'
+
 	if (existingSameInstall) {
 		await db
 			.update(integrations)
@@ -1784,13 +1797,15 @@ app.openapi(callbackRoute, (async (c) => {
 		},
 	})
 
-	void trackIntegrationConnected({
-		provider: providerName,
-		workspaceId: stateData.workspaceId,
-		actorId: stateData.actorId,
-		integrationId,
-		authType: 'oauth',
-	})
+	if (isNewConnect) {
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			integrationId,
+			authType: 'oauth',
+		})
+	}
 
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
@@ -1803,6 +1818,7 @@ app.openapi(callbackRoute, (async (c) => {
 const deleteIntegrationRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Disconnect an integration',
 	request: {
@@ -1827,6 +1843,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const [existing] = await db
 		.select()
@@ -1921,6 +1938,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 const updateIntegrationRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Update integration settings',
 	request: {
@@ -1957,6 +1975,7 @@ app.openapi(updateIntegrationRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { expose_to_agent_sessions } = c.req.valid('json')
 
 	const [existing] = await db
@@ -2003,6 +2022,7 @@ app.openapi(updateIntegrationRoute, (async (c) => {
 const completeIntegrationRoute = createRoute({
 	method: 'post',
 	path: '/{id}/complete',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Complete a manual-auth integration handshake by supplying the provider secret',
 	request: {
@@ -2030,6 +2050,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = (await c.req.json().catch(() => ({}))) as { secret?: string }
 	const secret = body.secret?.trim()
@@ -2276,7 +2297,10 @@ app.openapi(githubTokenRoute, (async (c) => {
 	if (recoveryRepo) {
 		try {
 			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
-			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
+			const result = await mintInstallationTokenWithRecovery(credentials, {
+				repo: recoveryRepo,
+				expectedOwnerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+			})
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
 				if (oldInstallationId) {

@@ -16,9 +16,11 @@ import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { HandedOffStrip } from './handed-off-strip'
+import { HandoffCard } from './handoff-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { useThreadsPane } from './threads-context'
 
 function copyMessage(content: string) {
 	void navigator.clipboard?.writeText(content).then(
@@ -71,6 +73,9 @@ export function MessageBubble({
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
+	// Present only under the chat route, which owns the Threads pane. Without
+	// it the handoff falls back to the strip, whose rows link out instead.
+	const threadsPane = useThreadsPane()
 	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
 	const actorLookup = useMemo(() => {
 		const map = new Map<string, { id: string; name: string; type: string }>()
@@ -323,11 +328,15 @@ export function MessageBubble({
 				{handedOffStripEnabled &&
 				message.spawned_sessions &&
 				message.spawned_sessions.length > 0 ? (
-					<HandedOffStrip
-						workspaceId={workspaceId}
-						messageId={message.id}
-						spawnedSessions={message.spawned_sessions}
-					/>
+					// With the Threads pane available, ThreadMessages draws each handoff as
+					// its own card in the timeline; the strip is the fallback without it.
+					threadsPane ? null : (
+						<HandedOffStrip
+							workspaceId={workspaceId}
+							messageId={message.id}
+							spawnedSessions={message.spawned_sessions}
+						/>
+					)
 				) : null}
 				{hasMentions ? (
 					<div className="mt-[7px] flex flex-wrap items-center gap-2">
