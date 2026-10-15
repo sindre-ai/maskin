@@ -1636,6 +1636,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			sessionManager.createSession.mockRejectedValueOnce(
 				new PlanCapExceededError({
@@ -1663,6 +1664,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1702,6 +1704,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[],
 				[],
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({

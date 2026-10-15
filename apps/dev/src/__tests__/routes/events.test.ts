@@ -973,6 +973,9 @@ describe('Events Routes', () => {
 							data: { content: 'Root' },
 						},
 					],
+					[], // thread-reply fan-out: object lookup
+					[], // thread-reply fan-out: sender line
+					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
 
@@ -1127,6 +1130,9 @@ describe('Events Routes', () => {
 					],
 					// Actor resolution for the mentioned candidate
 					[{ id: agentAId, type: 'agent' }],
+					[], // thread-reply fan-out: object lookup
+					[], // thread-reply fan-out: sender line
+					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
 

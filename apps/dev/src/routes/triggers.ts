@@ -21,6 +21,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
@@ -153,6 +154,10 @@ app.openapi(createTriggerRoute, async (c) => {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
+
+	// The trigger starts its target agent on every fire, so the agent has to be a
+	// member of this workspace.
+	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
 	const created = await db.transaction(async (tx) => {
 		const [row] = await tx
@@ -355,6 +360,9 @@ app.openapi(updateTriggerRoute, (async (c) => {
 			}
 		}
 	}
+
+	// Checked against the trigger's own workspace, which is where it will fire.
+	await assertInWorkspace(db, trigger.workspaceId, { actors: [body.target_actor_id] })
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
