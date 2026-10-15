@@ -251,7 +251,9 @@ app.openapi(listSessionsRoute, (async (c) => {
 				.select()
 				.from(sessions)
 				.where(and(...conditions))
-				.offset(sql`0`)
+				// Drizzle drops a literal `.offset(0)` and types offset as a number, so pass
+				// the raw SQL fragment through the number slot to get `offset 0` emitted.
+				.offset(sql`0` as unknown as number)
 				.as('conversation_sessions')
 			const fenced = await db
 				.select()
