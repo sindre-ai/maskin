@@ -599,6 +599,9 @@ describe('GET /api/billing/usage', () => {
 		const zeroWs = randomUUID()
 		const negWs = randomUUID()
 		const oneWs = randomUUID()
+		// Each usage read now runs three selects (workspace + sessions + topup
+		// ledger sum) instead of two — an empty slot per request keeps the
+		// per-request queue aligned. Same shape everywhere below.
 		mockResults.selectQueue = [
 			[
 				{
@@ -607,6 +610,7 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[],
 			[
 				{
 					id: negWs,
@@ -614,12 +618,14 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[],
 			[
 				{
 					id: oneWs,
 					settings: { billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 1 } },
 				},
 			],
+			[],
 			[],
 		]
 
@@ -659,7 +665,9 @@ describe('GET /api/billing/usage', () => {
 		mockResults.selectQueue = [
 			[{ id: proWs, settings: { billing: { plan: 'pro', status: 'active' } } }],
 			[],
+			[],
 			[{ id: teamWs, settings: { billing: { plan: 'team', status: 'active' } } }],
+			[],
 			[],
 		]
 

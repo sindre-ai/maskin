@@ -33,6 +33,7 @@ const baseUsage = {
 	stripe_customer_id: null,
 	stripe_subscription_id: null,
 	credit_balance_cents: 0,
+	sum_topups_last_30d_cents: 0,
 	linkedin_identity_addon: null,
 }
 

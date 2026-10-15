@@ -680,3 +680,25 @@ export function trackCreditsExhaustedErrorShown(p: {
 		{ send_instantly: true },
 	)
 }
+
+// Credit reliability bet (bet/6d84-credit-reliability) — fires the FIRST time
+// the low-balance banner renders in a workspace-session. `threshold_used` is
+// the concrete threshold number the balance was compared against ($2 floor or
+// 20% of the last 30d topups), so post-hoc analysis can distinguish the two
+// arms of the formula in `computeLowBalanceThresholdCents()`. `workspace_id`
+// rides on the event itself as well as via super-properties so the bet's Won
+// query can count distinct workspaces without joining super-properties.
+// Exactly-once-per-session is enforced at the caller, so no `send_instantly`
+// here — the banner is not blocking, so posthog-js's normal flush is fine.
+export function trackLowBalanceBannerShown(p: {
+	workspace_id: string
+	balance_cents: number
+	threshold_used: number
+}): void {
+	trackEvent('credits_low_balance_banner_shown', {
+		workspace_id: p.workspace_id,
+		balance_cents: p.balance_cents,
+		threshold_used: p.threshold_used,
+		source: 'web',
+	})
+}
