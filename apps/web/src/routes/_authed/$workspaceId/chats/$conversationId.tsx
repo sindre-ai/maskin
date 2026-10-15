@@ -93,17 +93,9 @@ function ConversationThreadPage() {
 	// the pane as a bottom Sheet — the "no persistent third column" rail from
 	// the acceptance criteria.
 	const isDesktop = useIsDesktopViewport()
-	// Feature-flag boundary for the chat thread `HANDED OFF` sub-agent
-	// delegation strip bet (bet/444b-handed-off-strip). Read once at this
-	// route, threaded down as a plain boolean prop through ThreadMessages →
-	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
-	// flags use above.
-	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
 	// Right-rail Overview (Threads + Produced tabs): local state, not a search
 	// param — a transient view over data already on the page. `?produced` still
 	// deep-links in, opening it on the Produced tab.
-	const threadsEnabled = handedOffStripEnabled
-	const overviewEnabled = threadsEnabled || producedEnabled
 	const [overview, setOverview] = useState<null | {
 		tab: OverviewTab
 		sessionId: string | null
@@ -129,10 +121,8 @@ function ConversationThreadPage() {
 	} = useConversationProduced(workspaceId, conversationId, producedEnabled)
 
 	const toggleOverview = useCallback(() => {
-		setOverview((prev) =>
-			prev ? null : { tab: threadsEnabled ? 'threads' : 'produced', sessionId: null },
-		)
-	}, [threadsEnabled])
+		setOverview((prev) => (prev ? null : { tab: 'threads', sessionId: null }))
+	}, [])
 
 	// Pulse the Overview dot when threads or produced items changed since the
 	// pane was last open. "Seen" is remembered per chat so a reload doesn't
@@ -173,10 +163,8 @@ function ConversationThreadPage() {
 	// P toggles the Overview pane. Skipped when the user is typing in an
 	// editable element (input/textarea/contentEditable) so composer keystrokes
 	// aren't hijacked — same shape as the shortcut policy in the command
-	// palette. Only registers when the flag is on so non-tester actors don't
-	// carry a listener at all.
+	// palette.
 	useEffect(() => {
-		if (!overviewEnabled) return
 		const onKey = (e: KeyboardEvent) => {
 			if (e.metaKey || e.ctrlKey || e.altKey) return
 			if (e.key !== 'p' && e.key !== 'P') return
@@ -189,7 +177,7 @@ function ConversationThreadPage() {
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [overviewEnabled, toggleOverview])
+	}, [toggleOverview])
 
 	const announcement = useOriginDeepLinkScroll({
 		messageId: deepLinkMessageId ?? null,
@@ -202,7 +190,6 @@ function ConversationThreadPage() {
 			conversationId={conversationId}
 			tab={overview.tab}
 			onTabChange={(tab) => setOverview({ tab, sessionId: null })}
-			threadsEnabled={threadsEnabled}
 			producedEnabled={producedEnabled}
 			threadsCount={threads.length}
 			producedCount={totalCount}
@@ -217,7 +204,7 @@ function ConversationThreadPage() {
 	) : null
 
 	return (
-		<ThreadsPaneContext.Provider value={threadsEnabled ? threadsContext : null}>
+		<ThreadsPaneContext.Provider value={threadsContext}>
 			<div className="flex min-h-0 flex-1">
 				{/* `min-w-0` caps min-content on the cross axis so a wide descendant
 			    (markdown table, long unbroken URL) can't widen this column past the
@@ -231,7 +218,7 @@ function ConversationThreadPage() {
 						v4Polish={chatsV4Enabled && headerV4Enabled}
 						overviewOpen={overview !== null}
 						overviewHasNew={overviewHasNew}
-						onToggleOverview={overviewEnabled ? toggleOverview : undefined}
+						onToggleOverview={toggleOverview}
 					/>
 					<ThreadMessages
 						workspaceId={workspaceId}
@@ -239,7 +226,6 @@ function ConversationThreadPage() {
 						v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
 						v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 						producedEnabled={producedEnabled}
-						handedOffStripEnabled={handedOffStripEnabled}
 					/>
 					{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
