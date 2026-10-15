@@ -8,6 +8,7 @@ import { AgentSessionsSection } from '@/components/agents/agent-sessions-section
 import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
 import { AgentToolsSection } from '@/components/agents/agent-tools-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
+import { AgentVoiceModeSection } from '@/components/agents/agent-voice-mode-section'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
@@ -132,6 +133,13 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
 				<AgentToolsSection agent={agent} />
+				{/* Voice mode toggle — self-hides when the voice-mode-v1 flag is off
+				    OR the actor isn't an agent, so the section stops rendering with
+				    a flag flip and no code path change. Placed after Tools because
+				    the SPEC's §Voice-first agent (day-one setup) section reads Voice
+				    as a call-interface capability alongside chat, not as an
+				    instructions/skills concern. */}
+				<AgentVoiceModeSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

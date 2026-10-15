@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -8,6 +9,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useActors } from '@/hooks/use-actors'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
@@ -33,7 +35,7 @@ import {
 	Plus,
 	X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -82,6 +84,23 @@ export function ThreadHeader({
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
 	const loopId = conversation?.loop_id ?? null
+	// Call mounts only for a thread with exactly one voice-enabled agent
+	// participant: a multi-agent call is v2, and with two voice agents there is
+	// no single agent for the button to mean. Reads the workspace actors list
+	// (shared cache with /agents) because the participant rows carry no
+	// voice_enabled.
+	const { data: workspaceActors } = useActors(workspaceId)
+	const voiceAgent = useMemo(() => {
+		const agentParticipantIds = new Set(
+			(conversation?.participants ?? [])
+				.filter((p) => p.actorType === 'agent')
+				.map((p) => p.actorId),
+		)
+		const voiceAgents = (workspaceActors ?? []).filter(
+			(a) => a.type === 'agent' && a.voice_enabled === true && agentParticipantIds.has(a.id),
+		)
+		return voiceAgents.length === 1 ? voiceAgents[0] : null
+	}, [conversation?.participants, workspaceActors])
 	// Only resolve the loop when the v4 chip can render — flag off means the
 	// chip never mounts, so the lookup is skipped rather than fetched and wasted.
 	const { data: loop } = useLoop(v4Polish ? (loopId ?? '') : '', workspaceId)
@@ -339,6 +358,7 @@ export function ThreadHeader({
 					</Tooltip>
 				) : null}
 				<span className="ml-auto" />
+				{voiceAgent ? <AgentCallButton agent={voiceAgent} variant="icon" /> : null}
 				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
 				    ⋯ menu; Focus + Close stay inline (v4 spec). v4-only. */}
 				{v4Polish ? (

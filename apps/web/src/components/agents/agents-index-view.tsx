@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import {
 	AgentStatusPill,
 	type PortraitStatus,
@@ -5,12 +6,14 @@ import {
 	getPortraitStatus,
 	portraitStatusToFilter,
 } from '@/components/agents/agent-portrait-card'
+import { VoiceEnabledBadge } from '@/components/agents/voice-enabled-badge'
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { formatUsd } from '@/components/settings/billing-usage'
 import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
 import { FilterTabs } from '@/components/shared/filter-tabs'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -25,7 +28,7 @@ import {
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Mic } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const AGENTS_DISPLAY_KEY = 'agents'
@@ -72,6 +75,11 @@ interface AgentRow {
 	last30dCostUsd: number
 }
 
+// Pseudo-status buckets used by the filter chip strip. Voice is expressed as
+// an *attribute* of an agent rather than a real status — but the chip strip is
+// the discovery surface, so it lives alongside Working / Idle / Failed.
+const VOICE_BUCKET = 'voice'
+
 export function AgentsIndexView({
 	workspaceId,
 	agents,
@@ -81,6 +89,7 @@ export function AgentsIndexView({
 	agents: ActorListItem[]
 	sessions: SessionResponse[]
 }) {
+	const voiceModeFlag = useFeatureFlag('voice-mode-v1')
 	const [sort, setSort] = useState('name')
 	const [order, setOrder] = useState<'asc' | 'desc'>('asc')
 	const [groupBy, setGroupBy] = useState<string | undefined>('status')
@@ -149,13 +158,24 @@ export function AgentsIndexView({
 		[statusFilter],
 	)
 
+	// Voice is an orthogonal filter — separated from Working / Idle / Failed so
+	// it can compose with any of them (a Voice-enabled agent can also be Working
+	// or Failed).
+	const voiceFilterActive = activeStatuses.includes(VOICE_BUCKET)
+	const statusOnlyFilters = useMemo(
+		() => activeStatuses.filter((s) => s !== VOICE_BUCKET),
+		[activeStatuses],
+	)
+
 	const visibleRows = useMemo(
 		() =>
 			rows.filter((row) => {
 				const bucket = portraitStatusToFilter(row.portrait)
-				return activeStatuses.length === 0 || activeStatuses.includes(bucket)
+				const statusMatches = statusOnlyFilters.length === 0 || statusOnlyFilters.includes(bucket)
+				const voiceMatches = !voiceFilterActive || row.agent.voice_enabled === true
+				return statusMatches && voiceMatches
 			}),
-		[rows, activeStatuses],
+		[rows, statusOnlyFilters, voiceFilterActive],
 	)
 
 	const sortedRows = useMemo(() => {
@@ -198,8 +218,10 @@ export function AgentsIndexView({
 			// Filter the active statuses against the known buckets instead of
 			// casting: a stale persisted filter can't crash the group render
 			// via an undefined STATUS_GROUP_META entry.
+			// Voice is orthogonal to status (see statusOnlyFilters), so it must not
+			// count here: with only Voice active every bucket would be dropped.
 			const buckets: StatusBucket[] = [...AGENT_STATUSES].filter((b) =>
-				activeStatuses.length === 0 ? true : activeStatuses.includes(b),
+				statusOnlyFilters.length === 0 ? true : statusOnlyFilters.includes(b),
 			)
 			return buckets.map((bucket) => {
 				const meta = STATUS_GROUP_META[bucket]
@@ -229,7 +251,7 @@ export function AgentsIndexView({
 				}))
 		}
 		return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
-	}, [groupBy, activeStatuses, sortedRows])
+	}, [groupBy, statusOnlyFilters, sortedRows])
 
 	const showKind = columnVisibility.kind !== false
 	const showActivity = columnVisibility.activity !== false
@@ -244,6 +266,22 @@ export function AgentsIndexView({
 		for (const row of rows) counts[portraitStatusToFilter(row.portrait)]++
 		return counts
 	}, [rows])
+
+	// Same "count from the pre-filter set" rail — the Voice chip's number stays
+	// stable while Voice is the active filter, so a user who ticks it doesn't
+	// see the badge count collapse to whatever ships in the current view.
+	const voiceCount = useMemo(
+		() => rows.reduce((n, row) => (row.agent.voice_enabled ? n + 1 : n), 0),
+		[rows],
+	)
+	// Voice mode lives on each agent's detail page, and the Empty state has no
+	// single agent to point at, so it links to the first agent by name.
+	const voiceSettingsAgent = useMemo(
+		() => [...agents].sort((a, b) => a.name.localeCompare(b.name))[0],
+		[agents],
+	)
+	// With the flag on and any voice-enabled agent, rows hold a Call slot on md+.
+	const reserveCallSlot = voiceModeFlag && voiceCount > 0
 
 	// The Display menu's Status row (mockup 2304). Same buckets and the same
 	// pre-filter counts the chip strip draws, built once so the two can't
@@ -277,8 +315,8 @@ export function AgentsIndexView({
 		[activeStatuses, statusCounts],
 	)
 
-	const statusTabs = useMemo(
-		() => [
+	const statusTabs = useMemo(() => {
+		const base: Array<{ label: string; value: string | undefined; count: number; dot?: string }> = [
 			{ label: 'All', value: undefined, count: rows.length },
 			...AGENT_STATUSES.map((bucket) => ({
 				label: STATUS_GROUP_META[bucket].label,
@@ -286,9 +324,21 @@ export function AgentsIndexView({
 				count: statusCounts[bucket],
 				dot: STATUS_DOT[bucket],
 			})),
-		],
-		[rows.length, statusCounts],
-	)
+		]
+		// The Voice chip only appears when the feature flag is on for this
+		// tester. Voice is an attribute of an agent, so its dot uses the
+		// brand-subtle grammar (matching the Voice-enabled badge) rather than
+		// a status colour token.
+		if (voiceModeFlag) {
+			base.push({
+				label: 'Voice',
+				value: VOICE_BUCKET,
+				count: voiceCount,
+				dot: 'bg-brand-subtle-foreground',
+			})
+		}
+		return base
+	}, [rows.length, statusCounts, voiceModeFlag, voiceCount])
 
 	return (
 		<div>
@@ -336,11 +386,39 @@ export function AgentsIndexView({
 			</div>
 
 			{sortedRows.length === 0 ? (
-				// A centred line, not a bordered empty-state card — the list this
-				// replaces has no frame of its own to sit inside (mockup 2313).
-				<p className="px-3.5 py-9 text-center text-[12.5px] text-muted-foreground">
-					No agents in that state right now.
-				</p>
+				voiceFilterActive && voiceCount === 0 ? (
+					// Voice-specific empty state per design SPEC §States (per screen)
+					// / §Copy. Brand-subtle circle + mic icon + verbatim heading,
+					// link to the agent settings so a workspace admin can turn voice
+					// on for a specific agent.
+					<div className="flex flex-col items-center gap-2 px-3.5 py-12 text-center">
+						<div className="mb-2 flex size-12 items-center justify-center rounded-full bg-brand-subtle text-brand-subtle-foreground">
+							<Mic size={20} aria-hidden="true" />
+						</div>
+						<p className="text-sm font-semibold text-foreground">No voice-enabled agents yet</p>
+						<p className="max-w-sm text-[12.5px] text-muted-foreground">
+							Voice is off for every agent in this workspace. Enable it on{' '}
+							{voiceSettingsAgent ? (
+								<Link
+									to="/$workspaceId/agents/$agentId"
+									params={{ workspaceId, agentId: voiceSettingsAgent.id }}
+									className="font-semibold text-brand underline-offset-2 hover:underline"
+								>
+									any agent's settings
+								</Link>
+							) : (
+								"any agent's settings"
+							)}
+							.
+						</p>
+					</div>
+				) : (
+					// A centred line, not a bordered empty-state card — the list this
+					// replaces has no frame of its own to sit inside (mockup 2313).
+					<p className="px-3.5 py-9 text-center text-[12.5px] text-muted-foreground">
+						No agents in that state right now.
+					</p>
+				)
 			) : (
 				// Groups are separated by the header's own top padding, not a gap —
 				// the hairlines have to run unbroken down the list (mockup 2315–2341).
@@ -355,6 +433,7 @@ export function AgentsIndexView({
 							showSessions={showSessions}
 							showCost={showCost}
 							showStatus={showStatus}
+							reserveCallSlot={reserveCallSlot}
 						/>
 					))}
 				</div>
@@ -371,6 +450,7 @@ function AgentGroupSection({
 	showSessions,
 	showCost,
 	showStatus,
+	reserveCallSlot,
 }: {
 	workspaceId: string
 	group: { id: string; label?: string; note?: string; rows: AgentRow[] }
@@ -379,6 +459,7 @@ function AgentGroupSection({
 	showSessions: boolean
 	showCost: boolean
 	showStatus: boolean
+	reserveCallSlot: boolean
 }) {
 	if (group.label === undefined) {
 		return (
@@ -393,6 +474,7 @@ function AgentGroupSection({
 						showSessions={showSessions}
 						showCost={showCost}
 						showStatus={showStatus}
+						reserveCallSlot={reserveCallSlot}
 					/>
 				))}
 			</ul>
@@ -431,6 +513,7 @@ function AgentGroupSection({
 							showSessions={showSessions}
 							showCost={showCost}
 							showStatus={showStatus}
+							reserveCallSlot={reserveCallSlot}
 						/>
 					))
 				) : (
@@ -453,6 +536,7 @@ function AgentRowItem({
 	showSessions,
 	showCost,
 	showStatus,
+	reserveCallSlot,
 }: {
 	workspaceId: string
 	row: AgentRow
@@ -461,6 +545,8 @@ function AgentRowItem({
 	showSessions: boolean
 	showCost: boolean
 	showStatus: boolean
+	/** Some row in the list carries a Call button: non-voice rows hold the same slot on md+ so the columns line up. */
+	reserveCallSlot: boolean
 }) {
 	const { agent, portrait, latestSession } = row
 	// Mockup 2330 puts a mono uppercase KIND badge beside the name, tinted in the
@@ -475,12 +561,12 @@ function AgentRowItem({
 		// A hairline under every row, including the last — the group below butts
 		// straight onto it, so the list reads as one unbroken column of rows rather
 		// than a stack of framed cards (mockup 2327).
-		<li className="border-b border-border-subtle">
+		<li className="group/row flex items-center border-b border-border-subtle">
 			{/* The whole row is the click target (mockup 2327), not just the name. */}
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="group flex items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+				className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
 			>
 				<ActorAvatar
 					name={agent.name}
@@ -503,6 +589,12 @@ function AgentRowItem({
 								{kind}
 							</span>
 						)}
+						{/* Voice-enabled badge — sits after the KIND swatch on the
+						    same identity row per the design SPEC. Purely visual;
+						    render-gated on the row data so an admin who toggles
+						    voice off on the settings surface sees it disappear
+						    without a refetch. */}
+						{agent.voice_enabled && <VoiceEnabledBadge />}
 					</span>
 					<span className="truncate text-xs text-muted-foreground" title={outcome}>
 						{outcome}
@@ -542,6 +634,16 @@ function AgentRowItem({
 					aria-hidden
 				/>
 			</Link>
+			{/* Row-level Call. A sibling of the row link, not a child: a button
+			    inside an anchor is invalid nesting and would navigate on click. Only
+			    voice-enabled agents get one; the button itself is hover-revealed on
+			    md+ and always inline below that. Renders nothing when the
+			    voice-mode-v1 flag is off. */}
+			{agent.voice_enabled ? (
+				<AgentCallButton agent={agent} variant="row" shortcut={false} />
+			) : reserveCallSlot ? (
+				<span aria-hidden className="mr-3 hidden w-[62px] shrink-0 md:block" />
+			) : null}
 		</li>
 	)
 }
