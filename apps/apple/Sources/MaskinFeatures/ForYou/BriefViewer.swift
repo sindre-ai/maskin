@@ -356,8 +356,20 @@ private struct BriefPageSlide: View {
 					.frame(maxWidth: .infinity, maxHeight: .infinity)
 			case .loaded:
 				if let file = store.file, file.kind == .html {
-					PresentedHTMLView(
-						html: store.text ?? file.text ?? "", revision: store.contentRevision, isInteractive: false)
+					let html = store.text ?? file.text ?? ""
+					if MiniAppHTML.needsNetwork(html) {
+						// The sandbox refuses the page's scripts and stylesheets, so it would show as bare markup.
+						VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+							Text(StoryDerivation.headline(html: html, fileName: output.name))
+								.maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
+							Text("This page needs a browser to show properly. Open it to see the full page.")
+								.maskinText(.body).foregroundStyle(MaskinColor.patina100)
+						}
+						.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+						.padding(.vertical, MaskinSpace.s9)
+					} else {
+						PresentedHTMLView(html: html, revision: store.contentRevision, isInteractive: false)
+					}
 				} else {
 					Text(output.name).maskinText(.subhead).foregroundStyle(MaskinColor.patina100)
 						.frame(maxWidth: .infinity, maxHeight: .infinity)
