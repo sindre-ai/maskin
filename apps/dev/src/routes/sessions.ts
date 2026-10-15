@@ -238,14 +238,37 @@ app.openapi(listSessionsRoute, (async (c) => {
 	if (query.before) conditions.push(lt(sessions.updatedAt, new Date(query.before)))
 
 	if (query.verbose) {
+		// Same order as the lean path: the `before` cursor filters on updated_at, so a
+		// created_at sort skips or repeats rows when a caller walks pages with it.
+		//
+		// Ordering by updated_at lets the planner walk sessions_ws_updated_at_idx and
+		// filter conversation_id row by row. An open chat polls this query, so for a
+		// conversation the filter runs in a fenced subquery (the explicit `offset 0`
+		// stops Postgres from folding it into the outer sort) and keeps
+		// sessions_conversation_actor_idx as its access path.
+		if (query.conversation_id) {
+			const filtered = db
+				.select()
+				.from(sessions)
+				.where(and(...conditions))
+				.offset(sql`0`)
+				.as('conversation_sessions')
+			const fenced = await db
+				.select()
+				.from(filtered)
+				.orderBy(desc(filtered.updatedAt), desc(filtered.id))
+				.limit(query.limit)
+				.offset(query.offset)
+
+			return c.json(serializeArray(fenced) as z.infer<typeof sessionResponseSchema>[])
+		}
+
 		const results = await db
 			.select()
 			.from(sessions)
 			.where(and(...conditions))
 			.limit(query.limit)
 			.offset(query.offset)
-			// Same order as the lean path: the `before` cursor filters on updated_at, so a
-			// created_at sort skips or repeats rows when a caller walks pages with it.
 			.orderBy(desc(sessions.updatedAt), desc(sessions.id))
 
 		return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
