@@ -42,8 +42,9 @@ const NEUTRAL_SWATCHES: SwatchSpec[] = [
 ]
 
 const BRAND_SWATCHES: SwatchSpec[] = [
-	{ token: 'brand', label: 'Brand', text: 'brand-foreground' },
-	{ token: 'brand-hover', label: 'Brand hover', text: 'brand-foreground' },
+	{ token: 'sig', label: 'Patina', text: 'primary-foreground' },
+	{ token: 'sig-ink', label: 'Patina ink', text: 'primary-foreground' },
+	{ token: 'sig-tint', label: 'Patina tint', text: 'sig-ink' },
 	{ token: 'destructive', label: 'Destructive', text: 'destructive-foreground' },
 	{ token: 'success', label: 'Success' },
 	{ token: 'warning', label: 'Warning' },

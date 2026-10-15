@@ -20,7 +20,7 @@ interface SubAgentRowProps {
  * One row in the delegation strip: avatar + agent name + action prompt + pill
  * + optional deps clause / elapsed / current activity / failure text.
  *
- * The pill transition WORKING → DONE fires a 900ms `--brand` flash on the row
+ * The pill transition WORKING → DONE fires a 900ms `--sig` flash on the row
  * so a reader who is looking at the strip sees the completion land instead of
  * having to compare screenshots. Rows never reorder — the flash is the only
  * motion, per the design spec's Interaction details.
@@ -74,7 +74,7 @@ export function SubAgentRow({ workspaceId, session, depNames, onClick }: SubAgen
 				className={cn(
 					'flex flex-col items-start gap-1 rounded-md px-2 py-1.5 transition-colors md:flex-row md:items-center md:gap-2',
 					'hover:bg-muted focus-visible:bg-muted focus-visible:outline-none',
-					flash && 'bg-brand/10',
+					flash && 'bg-sig/10',
 				)}
 				aria-label={`Sub-agent ${session.actorName}: ${pill}`}
 			>
@@ -98,16 +98,13 @@ export function SubAgentRow({ workspaceId, session, depNames, onClick }: SubAgen
 						className={cn(
 							'font-mono text-[10px] font-bold uppercase tracking-wider leading-none rounded px-1.5 py-1',
 							pillClasses[pill],
-							flash && 'ring-2 ring-brand',
+							flash && 'ring-2 ring-sig',
 						)}
 					>
 						{pill}
 					</span>
 					{pill === 'WORKING' ? (
-						<span
-							className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand"
-							aria-hidden
-						/>
+						<span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sig" aria-hidden />
 					) : null}
 					{depClause ? (
 						<>

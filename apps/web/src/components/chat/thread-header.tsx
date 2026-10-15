@@ -294,7 +294,7 @@ export function ThreadHeader({
 								type="button"
 								onClick={handleLoopChipClick}
 								aria-label={`Loop: ${loopName ?? loopLabel}`}
-								className="inline-flex h-[22px] shrink-0 items-center rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground hover:border-[color:var(--border-strong)] hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="inline-flex h-[22px] shrink-0 items-center rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground hover:border-[color:var(--border-strong)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							>
 								{loopLabel}
 							</button>
@@ -319,8 +319,7 @@ export function ThreadHeader({
 								aria-label={producedOpen ? 'Close Produced pane' : 'Open Produced pane'}
 								className={cn(
 									'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-									producedOpen &&
-										'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
+									producedOpen && 'bg-muted text-foreground hover:bg-muted',
 								)}
 							>
 								<Layers size={11} aria-hidden />
@@ -415,12 +414,11 @@ export function ThreadHeader({
 								'h-6 w-6 shrink-0',
 								// v4 collapses Pin behind the mobile ⋯ menu.
 								v4Polish && 'hidden min-[641px]:inline-flex',
-								// Pinned is a *state*, so it holds an indigo plate rather
+								// Pinned is a *state*, so it holds an ink plate rather
 								// than swapping to a different glyph (mockup 7804–7806).
 								// PinOff read as "this button unpins" — i.e. as the action,
 								// not the current state — which is the wrong tense for a toggle.
-								conversation.pinned &&
-									'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
+								conversation.pinned && 'bg-muted text-foreground hover:bg-muted',
 							)}
 							onClick={() =>
 								updateMe.mutate({ id: conversationId, data: { pinned: !conversation.pinned } })

@@ -40,7 +40,7 @@ interface ThreadMessagesProps {
 	 *  message bubble. */
 	v4PolishBubbles?: boolean
 	/** S2 · bet 34706e2f, task 5. When on, messages that spawned a session get
-	 *  a persistent vertical --brand bar to their right and a spawn chip below
+	 *  a persistent vertical --sig bar to their right and a spawn chip below
 	 *  the bubble ("Session started · <duration> · <status>"). Gated at the
 	 *  route boundary on `graph-provenance-writes` so the sessions query fires
 	 *  only for tester actors. */

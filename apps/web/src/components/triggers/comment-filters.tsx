@@ -366,7 +366,7 @@ export function AttentionLevelSelect({ id, value, onChange }: AttentionLevelSele
 						className={cn(
 							'grid size-11 cursor-pointer place-items-center rounded-md border font-mono text-[13px] font-bold outline-none transition-colors sm:size-7 sm:text-[11px]',
 							selected
-								? 'border-brand bg-brand text-brand-foreground'
+								? 'border-primary bg-primary text-primary-foreground'
 								: 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
 							'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
 						)}
@@ -438,7 +438,7 @@ function TargetTypePills({
 						className={cn(
 							'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[11.5px] font-semibold outline-none transition-colors sm:min-h-8',
 							selected
-								? 'border-brand bg-brand-subtle text-brand-subtle-foreground'
+								? 'border-primary bg-muted text-foreground'
 								: 'border-border bg-muted text-muted-foreground hover:border-border-strong hover:text-foreground',
 							'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
 						)}

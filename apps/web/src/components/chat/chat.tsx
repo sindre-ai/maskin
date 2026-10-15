@@ -958,14 +958,14 @@ export function Composer({
 			) : null}
 			{unifiedPickerEnabled && typeFilterChip !== null ? (
 				<ul className="flex list-none flex-wrap items-center gap-1 p-0" aria-label="Type filter">
-					<li className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">
+					<li className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-semibold text-foreground">
 						<Hash size={12} aria-hidden />
 						<span>{typeFilterChip}</span>
 						<button
 							type="button"
 							onClick={() => setTypeFilterChip(null)}
 							aria-label={`Clear ${typeFilterChip} filter`}
-							className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-brand hover:bg-brand/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-foreground hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<X size={10} aria-hidden />
 						</button>

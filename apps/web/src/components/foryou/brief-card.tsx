@@ -237,7 +237,7 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 									<button
 										type="button"
 										onClick={() => setTranscriptOpen((prev) => !prev)}
-										className="mt-3 inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-brand hover:text-brand-hover"
+										className="mt-3 inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-foreground underline underline-offset-2 hover:text-muted-foreground"
 									>
 										{transcriptOpen ? 'Hide the transcript' : 'Prefer to read? Show the transcript'}
 									</button>

@@ -60,7 +60,7 @@ export function ReleaseCard() {
 										{change.link && (
 											<a
 												href={change.link.href}
-												className="whitespace-nowrap font-semibold text-brand hover:underline"
+												className="whitespace-nowrap font-semibold text-foreground underline underline-offset-2 hover:text-muted-foreground"
 											>
 												{change.link.label}
 											</a>

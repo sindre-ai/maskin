@@ -27,11 +27,11 @@ function SectionLabel({ children, className }: { children: string; className?: s
 const CREATED_DESCRIPTION =
 	'Saved, along with the plan it was drawn from. Nothing fires yet — the object types, triggers and agents above are still a preview until they are attached to the loop.'
 
-/** `NEW TYPE` / `JUST ADDED` — the brand-tinted "this doesn't exist yet" marker
+/** `NEW TYPE` / `JUST ADDED` — the Patina-tinted "this doesn't exist yet" marker
  *  (mockup 2168, 2197–2198). Distinct from a trigger's `kindLabel`. */
 function NewBadge({ children }: { children: string }) {
 	return (
-		<span className="shrink-0 rounded-md bg-brand-subtle px-1.5 py-1 font-mono text-[8.5px] font-bold tracking-wider text-brand-subtle-foreground">
+		<span className="shrink-0 rounded-md bg-sig-tint px-1.5 py-1 font-mono text-[8.5px] font-bold tracking-wider text-sig-ink">
 			{children}
 		</span>
 	)

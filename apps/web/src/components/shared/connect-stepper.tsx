@@ -37,7 +37,8 @@ export function ConnectStepper({ steps, className }: ConnectStepperProps) {
 								className={cn(
 									'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-colors duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)]',
 									step.status === 'done' && 'bg-success text-white',
-									step.status === 'active' && 'bg-brand text-brand-foreground ring-4 ring-brand/15',
+									step.status === 'active' &&
+										'bg-primary text-primary-foreground ring-4 ring-primary/15',
 									step.status === 'pending' &&
 										'border border-border bg-muted text-muted-foreground',
 								)}
