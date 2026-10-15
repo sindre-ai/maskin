@@ -115,7 +115,9 @@ public final class ChatStore {
 	@ObservationIgnored private var readSent = 0
 	/// A delivered message keeps the row id of the optimistic bubble, so SwiftUI never swaps it.
 	@ObservationIgnored private var aliases: [Int: String] = [:]
-	@ObservationIgnored private var deliveredClientIDs: Set<String> = []
+	@ObservationIgnored private var deliveredClientIDs: Set<String> = [] {
+		didSet { invalidateMessages() }
+	}
 
 	public init(
 		conversationID: String, currentActorID: String, currentActorName: String,
@@ -166,7 +168,37 @@ public final class ChatStore {
 
 	/// Server rows, then unconfirmed sends. Failed sends always show; a queued one is hidden once
 	/// its confirmed twin is in the list.
+	///
+	/// Memoised: building it decodes every queued send's JSON payload, and the thread view reads it
+	/// hundreds of times per render (the transcript, every row's mention chips, presence, read-by).
 	public var messages: [ChatMessage] {
+		_ = messagesRevision  // so a reader is told when the memo is invalidated
+		if let memo = messagesMemo { return memo }
+		messageBuilds += 1
+		var built: [ChatMessage] = []
+		// Tracks everything the build reads (the confirmed rows, the send queue, the outbox's state)
+		// and drops the memo the moment any of it changes.
+		withObservationTracking {
+			built = buildMessages()
+		} onChange: { [weak self] in
+			MainActor.assumeIsolated { self?.invalidateMessages() }
+		}
+		messagesMemo = built
+		return built
+	}
+
+	private var messagesRevision = 0
+	@ObservationIgnored private var messagesMemo: [ChatMessage]?
+	/// How many times `messages` has been built (tests assert reads are served from the memo).
+	@ObservationIgnored private(set) var messageBuilds = 0
+
+	private func invalidateMessages() {
+		guard messagesMemo != nil else { return }
+		messagesMemo = nil
+		messagesRevision &+= 1
+	}
+
+	private func buildMessages() -> [ChatMessage] {
 		let rows = queue.pending(in: conversationID)
 		var consumed: Set<Int> = []
 		var shown: [ChatMessage] = []

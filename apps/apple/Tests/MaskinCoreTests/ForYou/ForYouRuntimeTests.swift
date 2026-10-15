@@ -45,6 +45,7 @@ struct ForYouRuntimeTests {
 			environment: AppEnvironment.preview(), directory: directory())
 		try queueWrite(on: runtime)
 		runtime.stop()
+		runtime.outbox.flushPersistence()
 		#expect(runtime.outbox.entries.count == 1)
 		#expect(FileManager.default.fileExists(atPath: runtime.outbox.fileURLForTesting.path))
 		runtime.outbox.discardAll()

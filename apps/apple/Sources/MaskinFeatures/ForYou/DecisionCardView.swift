@@ -151,7 +151,7 @@ struct DecisionCardView: View {
 			}
 		}
 		// The options fade into the receipt in place, and the card eases to its new height.
-		.animation(MaskinMotion.standard, value: record.map { "\($0.phase)" })
+		.animation(MaskinMotion.standard, value: record?.phase)
 		.animation(MaskinMotion.standard, value: isExpanded)
 		.padding(.horizontal, MaskinSpace.s10)
 		.padding(.top, MaskinSpace.s9)

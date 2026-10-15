@@ -32,6 +32,12 @@ public struct SnapshotCache {
 		self.now = now
 	}
 
+	/// The disk key for the CURRENT actor and workspace, resolved now. For work that reads or writes
+	/// `disk` off the main actor, where this struct's own closures cannot be called.
+	public func resolvedKey(_ name: String, scope: Scope = .workspace) -> DiskCache.Key? {
+		key(name, scope)
+	}
+
 	private func key(_ name: String, _ scope: Scope) -> DiskCache.Key? {
 		guard let actor = actorId() else { return nil }
 		switch scope {

@@ -208,6 +208,7 @@ struct AppRuntimeSignOutTests {
 		try queue.outbox.enqueue(
 			kind: "decision.reply", lane: "o", summary: "Reply", payload: "hi", holdFor: 3600)
 		let file = dir.appendingPathComponent("outbox-actor-1.json")
+		queue.outbox.flushPersistence()
 		#expect(FileManager.default.fileExists(atPath: file.path))
 
 		await runtime.signOut()
@@ -250,6 +251,7 @@ struct AppRuntimeSignOutTests {
 		try queue.outbox.enqueue(
 			kind: "decision.reply", lane: "o", summary: "Reply", payload: "hi", holdFor: 3600)
 		let file = ForYouRuntime.outboxFileURL(actorId: "actor-1", directory: dir)
+		queue.outbox.flushPersistence()
 		#expect(FileManager.default.fileExists(atPath: file.path))
 
 		environment.auth.sessionRejected(apiKey: "ank_preview")
@@ -289,6 +291,7 @@ struct AppRuntimeSignOutTests {
 			auth.sessionRejected(apiKey: "key-actor-1")
 			runtime.sync()
 			#expect(auth.session == nil)
+			runtime.forYou.outbox.flushPersistence()
 			#expect(FileManager.default.fileExists(atPath: file.path), "held, not dropped")
 
 			// Sign in again.

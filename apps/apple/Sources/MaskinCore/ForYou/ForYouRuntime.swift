@@ -47,7 +47,7 @@ public final class ForYouRuntime {
 	public static func deletePersistedOutbox(
 		actorId: String?, directory: URL? = nil, fileManager: FileManager = .default
 	) {
-		try? fileManager.removeItem(at: outboxFileURL(actorId: actorId, directory: directory))
+		OutboxFileWriter.remove(outboxFileURL(actorId: actorId, directory: directory), fileManager: fileManager)
 	}
 
 	/// Delete every queue file that belongs to someone else. A session that ended involuntarily
@@ -60,7 +60,7 @@ public final class ForYouRuntime {
 		let keep = outboxFileURL(actorId: actorId, directory: directory).lastPathComponent
 		let names = (try? fileManager.contentsOfDirectory(atPath: dir.path)) ?? []
 		for name in names where name.hasPrefix("outbox-") && name.hasSuffix(".json") && name != keep {
-			try? fileManager.removeItem(at: dir.appendingPathComponent(name))
+			OutboxFileWriter.remove(dir.appendingPathComponent(name), fileManager: fileManager)
 		}
 	}
 
@@ -77,7 +77,7 @@ public final class ForYouRuntime {
 		let outbox = Outbox(
 			fileURL: outboxFileURL(actorId: actorId, directory: directory),
 			executor: DecisionOutboxExecutor(backend: backend),
-			workspaceId: { environment.workspaceId })
+			workspaceId: { environment.workspaceId }, writesInBackground: start)
 		let decisions = DecisionService(outbox: outbox)
 		let store = ForYouStore(
 			source: backend, decisions: decisions, workspaceId: { environment.workspaceId },

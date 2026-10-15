@@ -37,7 +37,7 @@ struct InkPillButtonStyle: ButtonStyle {
 			.frame(minHeight: MaskinSpace.touchMin)
 			.background(MaskinSurface.inverse, in: Capsule())
 			.opacity(configuration.isPressed ? 0.7 : 1)
-			.animation(MaskinMotion.quick, value: configuration.isPressed)
+			.animation(MaskinMotion.release(isPressed: configuration.isPressed), value: configuration.isPressed)
 			.contentShape(Capsule())
 	}
 }

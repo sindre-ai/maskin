@@ -177,8 +177,12 @@ public final class LoopsStore {
 
 	// MARK: Loading
 
+	/// How long a confirmed load stays good for a tab revisit.
+	static let revisitFreshness: TimeInterval = 30
+
 	public func start() async {
 		hydrateIfNeeded()
+		let wasListening = listener != nil
 		if listener == nil, let events {
 			let stream = events.subscribe()
 			listener = Task { [weak self] in
@@ -195,6 +199,9 @@ public final class LoopsStore {
 				}
 			}
 		}
+		// Revisiting the tab with the event stream still attached and a load confirmed moments ago:
+		// every change since has arrived as an event, so there is nothing to fetch.
+		if wasListening, freshness.isFresh(within: Self.revisitFreshness, now: cache?.now() ?? Date()) { return }
 		async let names: Void = loadActors()
 		async let installed: Void = loadInstalls()
 		await refresh()

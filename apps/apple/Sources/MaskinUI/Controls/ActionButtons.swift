@@ -16,7 +16,7 @@ public struct PrimaryActionButtonStyle: ButtonStyle {
 			.background(MaskinSurface.inverse, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
 			.opacity(isEnabled ? 1 : 0.4)
 			.scaleEffect(configuration.isPressed ? 0.985 : 1)
-			.animation(MaskinMotion.quick, value: configuration.isPressed)
+			.animation(MaskinMotion.release(isPressed: configuration.isPressed), value: configuration.isPressed)
 			.contentShape(Rectangle())
 	}
 }
@@ -40,7 +40,7 @@ public struct SecondaryActionButtonStyle: ButtonStyle {
 			)
 			.opacity(isEnabled ? 1 : 0.4)
 			.scaleEffect(configuration.isPressed ? 0.985 : 1)
-			.animation(MaskinMotion.quick, value: configuration.isPressed)
+			.animation(MaskinMotion.release(isPressed: configuration.isPressed), value: configuration.isPressed)
 			.contentShape(Rectangle())
 	}
 }

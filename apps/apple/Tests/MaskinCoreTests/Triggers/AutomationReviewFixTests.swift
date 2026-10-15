@@ -277,6 +277,21 @@ struct AutomationLiveTests {
 		#expect(await api.latestCalls == ["quiet"])
 	}
 
+	@Test("revisiting the flows tab while attached and fresh fetches nothing; after a stop it does")
+	func loopsRevisitIsFreeWhileAttached() async {
+		let api = FakeLoopsAPI([loopRow("a")])
+		let store = LoopsStore(api: api, events: scriptedHub([]))
+		await store.start()
+		let first = await api.loopCalls
+		#expect(first > 0)
+		await store.start()
+		#expect(await api.loopCalls == first)
+		store.stop()
+		await store.start()
+		#expect(await api.loopCalls > first)
+		store.stop()
+	}
+
 	@Test("a second tap on pause while the first is in flight is ignored")
 	func toggleReentrancy() async {
 		let api = FakeLoopsAPI([loopRow("a", status: .supervised)])

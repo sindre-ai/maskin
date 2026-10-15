@@ -12,6 +12,9 @@ import Foundation
 public final class ThreadPrefetcher {
 	/// How many conversations one pass may fetch.
 	public static let defaultLimit = 5
+	/// How many of them are in flight at once. Each is two requests, and the pass lands right after the
+	/// list loads, while the feed, the event stream and the user's first taps want the connection too.
+	private static let concurrency = 2
 	/// Recent conversations whose snapshot is inspected per pass (a cache read decodes JSON).
 	private static let inspectLimit = 12
 
@@ -65,40 +68,62 @@ public final class ThreadPrefetcher {
 
 	/// Run the selected fetches and wait for them (tests; the app uses `listChanged`).
 	public func runPass() async {
-		let picked = selection()
-		let tasks = picked.compactMap { start($0) }
-		for task in tasks { await task.value }
+		let mine = generation
+		let picked = await selection()
+		var rest = picked[...]
+		while !rest.isEmpty, mine == generation {
+			let batch = rest.prefix(Self.concurrency)
+			rest = rest.dropFirst(batch.count)
+			let tasks = batch.compactMap { start($0) }
+			for task in tasks { await task.value }
+		}
 	}
 
 	// MARK: - Selection
 
 	/// The conversations worth fetching, most recent first: not archived, and either unread with
 	/// nothing cached, or newer in the list than the newest cached message.
-	func selection() -> [ConversationSummary] {
-		Self.candidates(
-			latest, limit: limit, newestCached: { [cache] id in
-				cache.read(
-					ChatCaching.ThreadSnapshot.self, ChatCaching.threadName(id),
-					version: ChatCaching.version
-				).map { CacheState.cached($0.value.messages.last?.createdAt) } ?? CacheState.missing
+	///
+	/// Finding out what is cached means decoding each candidate's snapshot (50 messages of JSON), so
+	/// the reads run off the main actor and the result is filtered against live state afterwards.
+	func selection() async -> [ConversationSummary] {
+		let inspected = Self.recent(latest)
+		let disk = cache.disk
+		let keys: [(id: String, key: DiskCache.Key)] = inspected.compactMap { conversation in
+			cache.resolvedKey(ChatCaching.threadName(conversation.id)).map { (conversation.id, $0) }
+		}
+		let newest = await Task.detached(priority: .utility) {
+			var found: [String: CacheState] = [:]
+			for (id, key) in keys {
+				found[id] =
+					disk.read(ChatCaching.ThreadSnapshot.self, key: key, version: ChatCaching.version)
+					.map { CacheState.cached($0.value.messages.last?.createdAt) } ?? .missing
 			}
-		).filter { inFlight[$0.id] == nil && !isOpen($0.id) && fetchedFor[$0.id] != $0.lastMessageAt }
+			return found
+		}.value
+		return Self.candidates(latest, limit: limit, newestCached: { newest[$0] ?? .missing })
+			.filter { inFlight[$0.id] == nil && !isOpen($0.id) && fetchedFor[$0.id] != $0.lastMessageAt }
 	}
 
-	enum CacheState: Equatable {
+	enum CacheState: Equatable, Sendable {
 		case missing
 		case cached(Date?)
+	}
+
+	/// The recent, unarchived conversations a pass looks at, newest activity first.
+	static func recent(_ conversations: [ConversationSummary]) -> [ConversationSummary] {
+		Array(
+			conversations.filter { !$0.archived && $0.lastMessageAt != nil }
+				.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
+				.prefix(inspectLimit))
 	}
 
 	static func candidates(
 		_ conversations: [ConversationSummary], limit: Int, tolerance: TimeInterval = 5,
 		newestCached: (String) -> CacheState
 	) -> [ConversationSummary] {
-		let recent = conversations.filter { !$0.archived && $0.lastMessageAt != nil }
-			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
-			.prefix(inspectLimit)
 		var picked: [ConversationSummary] = []
-		for conversation in recent {
+		for conversation in recent(conversations) {
 			guard picked.count < limit, let last = conversation.lastMessageAt else { break }
 			switch newestCached(conversation.id) {
 			case .missing:
@@ -138,27 +163,32 @@ public final class ThreadPrefetcher {
 			let (detail, page) = try await (detailTask, pageTask)
 			// The user may have switched workspace or signed out while this was in flight.
 			guard mine == generation, !Task.isCancelled, !isOpen(id) else { return }
-			write(detail: detail, page: page, id: id)
+			await write(detail: detail, page: page, id: id)
+			guard mine == generation else { return }
 			fetchedFor[id] = conversation.lastMessageAt
 		} catch {
 			// Best effort: the thread loads normally when opened.
 		}
 	}
 
-	private func write(detail: ConversationSummary, page: MessagePage, id: String) {
-		let name = ChatCaching.threadName(id)
+	private func write(detail: ConversationSummary, page: MessagePage, id: String) async {
 		let rows = page.messages.suffix(ChatCaching.threadMessageLimit)
 			.compactMap(ChatCaching.CachedMessage.init)
-		guard let newest = rows.last?.serverID else { return }
-		// Never move a snapshot backwards (a thread may have written a newer one meanwhile).
-		if let existing = cache.read(
-			ChatCaching.ThreadSnapshot.self, name, version: ChatCaching.version),
-			let held = existing.value.messages.last?.serverID, held >= newest
-		{
-			return
-		}
-		cache.write(
-			ChatCaching.ThreadSnapshot(detail: detail, messages: Array(rows)), name,
-			version: ChatCaching.version)
+		guard let newest = rows.last?.serverID,
+			let key = cache.resolvedKey(ChatCaching.threadName(id))
+		else { return }
+		let snapshot = ChatCaching.ThreadSnapshot(detail: detail, messages: Array(rows))
+		let disk = cache.disk
+		// Decoding the snapshot already on disk and encoding the new one is not main-actor work.
+		await Task.detached(priority: .utility) {
+			// Never move a snapshot backwards (a thread may have written a newer one meanwhile).
+			if let existing = disk.read(
+				ChatCaching.ThreadSnapshot.self, key: key, version: ChatCaching.version),
+				let held = existing.value.messages.last?.serverID, held >= newest
+			{
+				return
+			}
+			disk.write(snapshot, key: key, version: ChatCaching.version)
+		}.value
 	}
 }

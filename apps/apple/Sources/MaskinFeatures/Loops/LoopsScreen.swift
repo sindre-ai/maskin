@@ -74,8 +74,8 @@ private struct LoopsContainer: View {
 				}
 			}
 		}
+		// Not stopped on disappear (see ChatsScreen): `start()` skips the fetch while attached and fresh.
 		.task { await loops.start() }
-		.onDisappear { loops.stop() }
 		.sheet(item: $triggersRequest) { request in
 			TriggersSheet(
 				environment: environment, workspaceID: workspaceID, initialSelection: request.triggerID)

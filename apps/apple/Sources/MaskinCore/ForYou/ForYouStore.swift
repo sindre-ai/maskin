@@ -147,7 +147,9 @@ public final class ForYouStore {
 
 	/// Cards the reader has acted on this sitting. The server drops them from the feed once the
 	/// thread is read, but the receipt stays in place until the next workspace change.
-	@ObservationIgnored private var retained: [String: ForYouCard] = [:]
+	@ObservationIgnored private var retained: [String: ForYouCard] = [:] {
+		didSet { invalidateFeed() }
+	}
 	@ObservationIgnored private let source: any ForYouSource
 	@ObservationIgnored private let workspaceId: @MainActor () -> String?
 	@ObservationIgnored private let defaults: UserDefaults
@@ -283,6 +285,17 @@ public final class ForYouStore {
 		}
 		if cards.isEmpty { phase = .loading }
 		await fetch(workspace: ws)
+	}
+
+	/// `load()` unless this workspace's feed was confirmed moments ago. The store's own event
+	/// listener keeps a visible feed current, so a tab revisit has nothing to fetch.
+	public func loadIfStale(within interval: TimeInterval = 30) async {
+		if let ws = workspaceId(), loadedWorkspace == ws,
+			freshness.isFresh(within: interval, now: cache?.now() ?? now())
+		{
+			return
+		}
+		await load()
 	}
 
 	/// Pull-to-refresh and event-driven refetch. Keeps what is on screen; a failure while the
@@ -481,12 +494,68 @@ public final class ForYouStore {
 	/// The ordered feed: decisions first (blocking, then due, then the rest), then what waits on an
 	/// agent, then FYIs, then what has been handled. Stable within a rank. Cards the reader
 	/// deferred and asks still behind the "N new" pill are not here.
-	public var entries: [FeedEntry] { build(deferred: false) }
+	public var entries: [FeedEntry] { currentFeed().entries }
 
 	/// Cards deferred with Later and not yet due, in the order they come back.
-	public var laterEntries: [FeedEntry] {
-		build(deferred: true)
-			.sorted { (later.entry(for: $0.id)?.until ?? .distantFuture) < (later.entry(for: $1.id)?.until ?? .distantFuture) }
+	public var laterEntries: [FeedEntry] { currentFeed().later }
+
+	// MARK: Memoised feed
+
+	/// Everything derived from the cards, computed together. `entries` is read by the feed, the tab
+	/// badge, the filter pills, the display menu and the watch publisher, many times per render, and
+	/// each read used to filter, sort and score every card again.
+	private struct FeedMemo {
+		var computedAt: Date?
+		var isValid = false
+		var entries: [FeedEntry] = []
+		var later: [FeedEntry] = []
+		var intentCounts: [ForYouIntent?: Int] = [:]
+	}
+
+	/// How long a computed feed is trusted regardless of observed changes: urgency ("due in 5 min")
+	/// and a deferral coming due depend on the clock, which nothing observes.
+	private static let feedMemoLifetime: TimeInterval = 1
+
+	/// Observed by whoever reads the feed, and bumped when the memo is invalidated. Reading the memo
+	/// does not touch the cards, decisions or deferrals it was built from, so without this a view that
+	/// read `entries` would never learn they changed.
+	private var feedRevision = 0
+	@ObservationIgnored private var feedMemo = FeedMemo()
+	/// How many times the feed has been computed (tests assert reads are served from the memo).
+	@ObservationIgnored private(set) var feedBuilds = 0
+
+	private func invalidateFeed() {
+		guard feedMemo.isValid else { return }
+		feedMemo.isValid = false
+		feedRevision &+= 1
+	}
+
+	private func currentFeed() -> FeedMemo {
+		_ = feedRevision
+		let at = now()
+		if feedMemo.isValid, let computed = feedMemo.computedAt,
+			abs(at.timeIntervalSince(computed)) < Self.feedMemoLifetime
+		{
+			return feedMemo
+		}
+		feedBuilds += 1
+		var fresh = FeedMemo()
+		// Anything the feed was built from changing (a card, a decision, a deferral, an option)
+		// invalidates it: the tracking covers every observable property read while building.
+		withObservationTracking {
+			fresh.entries = build(deferred: false)
+			fresh.later = build(deferred: true)
+				.sorted { (later.entry(for: $0.id)?.until ?? .distantFuture) < (later.entry(for: $1.id)?.until ?? .distantFuture) }
+			for intent in [nil] + ForYouIntent.allCases.map(Optional.some) {
+				fresh.intentCounts[intent] = computeIntentCount(intent)
+			}
+		} onChange: { [weak self] in
+			MainActor.assumeIsolated { self?.invalidateFeed() }
+		}
+		fresh.computedAt = at
+		fresh.isValid = true
+		feedMemo = fresh
+		return fresh
 	}
 
 	private func build(deferred wantDeferred: Bool) -> [FeedEntry] {
@@ -552,6 +621,10 @@ public final class ForYouStore {
 
 	/// Open asks per intent, for the filter pills.
 	public func intentCount(_ intent: ForYouIntent?) -> Int {
+		currentFeed().intentCounts[intent] ?? computeIntentCount(intent)
+	}
+
+	private func computeIntentCount(_ intent: ForYouIntent?) -> Int {
 		let at = now()
 		return cards.filter { card in
 			guard isOpenCandidate(card), shownIds.contains(card.id) else { return false }

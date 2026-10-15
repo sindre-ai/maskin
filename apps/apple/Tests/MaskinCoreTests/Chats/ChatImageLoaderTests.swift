@@ -28,7 +28,65 @@ private final class Counter: @unchecked Sendable {
 	func count(_ id: String) -> Int { lock.withLock { counts[id] ?? 0 } }
 }
 
+private final class Concurrency: @unchecked Sendable {
+	private let lock = NSLock()
+	private var active = 0
+	private(set) var peak = 0
+	private(set) var started: [String] = []
+	func enter(_ id: String) {
+		lock.withLock {
+			active += 1
+			peak = max(peak, active)
+			started.append(id)
+		}
+	}
+	func leave() { lock.withLock { active -= 1 } }
+	var order: [String] { lock.withLock { started } }
+	var highWater: Int { lock.withLock { peak } }
+}
+
 @Suite("ChatImageLoader") struct ChatImageLoaderTests {
+	@Test("no more photos load at once than the cap, and all of them still load")
+	func capsConcurrency() async {
+		let probe = Concurrency()
+		let data = png()
+		let loader = ChatImageLoader(maxConcurrent: 3) { id in
+			probe.enter(id)
+			defer { probe.leave() }
+			try? await Task.sleep(for: .milliseconds(30))
+			return data
+		}
+		let ids = (0..<12).map { "f\($0)" }
+		let loaded = await withTaskGroup(of: Bool.self) { group in
+			for id in ids { group.addTask { await loader.image(for: id) != nil } }
+			return await group.reduce(0) { $0 + ($1 ? 1 : 0) }
+		}
+		#expect(loaded == 12)
+		#expect(probe.highWater == 3)
+	}
+
+	@Test("while the slots are full, the photo asked for last is loaded first")
+	func newestRequestFirst() async {
+		let probe = Concurrency()
+		let data = png()
+		let loader = ChatImageLoader(maxConcurrent: 1) { id in
+			probe.enter(id)
+			defer { probe.leave() }
+			try? await Task.sleep(for: .milliseconds(60))
+			return data
+		}
+		let first = Task { await loader.image(for: "first") }
+		try? await Task.sleep(for: .milliseconds(15))
+		var rest: [Task<DecodedImage?, Never>] = []
+		for id in ["a", "b", "c"] {
+			rest.append(Task { await loader.image(for: id) })
+			try? await Task.sleep(for: .milliseconds(10))
+		}
+		_ = await first.value
+		for task in rest { _ = await task.value }
+		#expect(probe.order == ["first", "c", "b", "a"])
+	}
+
 	@Test("a photo is fetched once and then served from memory")
 	func cachesDecodedImages() async {
 		let counter = Counter()

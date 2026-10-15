@@ -177,7 +177,7 @@ private struct QuestionOptionStyle: ButtonStyle {
 			.background(background, in: shape)
 			.overlay(shape.strokeBorder(border, lineWidth: 1))
 			.scaleEffect(configuration.isPressed ? 0.985 : 1)
-			.animation(MaskinMotion.quick, value: configuration.isPressed)
+			.animation(MaskinMotion.release(isPressed: configuration.isPressed), value: configuration.isPressed)
 			.contentShape(shape)
 	}
 

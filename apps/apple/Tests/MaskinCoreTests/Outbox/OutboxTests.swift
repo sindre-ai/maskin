@@ -47,6 +47,34 @@ struct OutboxTests {
 		#expect(third.entries.isEmpty)
 	}
 
+	@Test func aBackgroundWriterPersistsAfterAFlushAndSurvivesARestart() async throws {
+		let file = temporaryOutboxFile()
+		let offline = ManualNetworkMonitor(isOnline: false)
+		let first = Outbox(
+			fileURL: file, executor: ScriptedExecutor(), network: offline, workspaceId: { "ws-1" },
+			backoff: { _ in 0.02 }, writesInBackground: true)
+		var ids: [UUID] = []
+		for i in 0..<25 {
+			ids.append(try first.enqueue(kind: "t", lane: "a", summary: "s", payload: "p\(i)").id)
+		}
+		first.flushPersistence()
+		// A burst coalesces, but the file holds the newest queue: every entry, in order.
+		let (second, _, _, _) = makeOutbox(file: file)
+		#expect(second.entries.map(\.id) == ids)
+	}
+
+	@Test func signingOutDeletesTheFileEvenWithSavesStillQueued() async throws {
+		let file = temporaryOutboxFile()
+		let offline = ManualNetworkMonitor(isOnline: false)
+		let outbox = Outbox(
+			fileURL: file, executor: ScriptedExecutor(), network: offline, workspaceId: { "ws-1" },
+			backoff: { _ in 0.02 }, writesInBackground: true)
+		for i in 0..<25 { try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "p\(i)") }
+		outbox.discardAll()
+		outbox.flushPersistence()
+		#expect(!FileManager.default.fileExists(atPath: file.path))
+	}
+
 	@Test func replaysOnNetworkReturn() async throws {
 		let offline = ManualNetworkMonitor(isOnline: false)
 		let (outbox, executor, _, _) = makeOutbox(network: offline)

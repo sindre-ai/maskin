@@ -447,3 +447,124 @@ struct ForYouStoreTests {
 		#expect(store.brief == .loaded(ForYouBrief(markdown: "# Brief\nAll quiet.")))
 	}
 }
+
+
+private final class ChangeFlag: @unchecked Sendable {
+	private let lock = NSLock()
+	private var value = false
+	var isSet: Bool { lock.withLock { value } }
+	func set() { lock.withLock { value = true } }
+}
+
+/// The feed is computed once and served from a memo; these pin down that it is still recomputed, and
+/// observers still told, whenever anything it was built from changes.
+@MainActor
+struct ForYouFeedMemoTests {
+	private func make(
+		now: @escaping @Sendable () -> Date = { Date() }
+	) -> (ForYouStore, FakeForYouSource) {
+		let source = FakeForYouSource()
+		let backend = FakeDecisionBackend()
+		let outbox = Outbox(
+			fileURL: temporaryOutboxFile(), executor: DecisionOutboxExecutor(backend: backend),
+			network: ManualNetworkMonitor(), workspaceId: { "ws-1" }, backoff: { _ in 0.02 })
+		let store = ForYouStore(
+			source: source, decisions: DecisionService(outbox: outbox, undoWindow: 0.1),
+			workspaceId: { "ws-1" }, defaults: UserDefaults(suiteName: "foryou-memo-\(UUID().uuidString)")!,
+			eventDebounce: .milliseconds(10), now: now)
+		return (store, source)
+	}
+
+	@Test func loadIfStaleSkipsTheFetchRightAfterALoad() async {
+		let clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+		let (store, source) = make(now: { clock.now })
+		source.feed = .success([decisionCard("a")])
+		await store.load()
+		let fetched = source.fetches
+		await store.loadIfStale()
+		#expect(source.fetches == fetched)
+	}
+
+	@Test func loadIfStaleFetchesBeforeTheFirstLoadAndAfterAFailedRefresh() async {
+		let (store, source) = make()
+		source.feed = .success([decisionCard("a")])
+		await store.loadIfStale()  // never loaded: loads
+		#expect(source.fetches == 1)
+		#expect(store.phase == .loaded)
+		source.feed = .failure(ForYouLoadError("offline"))
+		await store.refresh()
+		let afterFailure = source.fetches
+		await store.loadIfStale()  // last revalidate failed: not fresh
+		#expect(source.fetches == afterFailure + 1)
+	}
+
+	@Test func manyReadsOfOneFeedComputeItOnce() async {
+		let (store, source) = make()
+		source.feed = .success([decisionCard("a"), threadCard("b")])
+		await store.load()
+		let before = store.feedBuilds
+		for _ in 0..<200 {
+			_ = store.entries
+			_ = store.needsCount
+			_ = store.unreadCount
+			_ = store.intentCount(nil)
+			_ = store.laterEntries
+		}
+		#expect(store.feedBuilds - before <= 1)
+	}
+
+	@Test func changingTheSortRecomputesAndTellsObservers() async {
+		let (store, source) = make()
+		source.feed = .success([
+			decisionCard("low", attention: 2, age: 10), decisionCard("high", attention: 5, age: 500),
+		])
+		await store.load()
+		#expect(store.entries.map(\.id) == ["high", "low"])
+
+		// A second reader of the memoised value must still be told about the change.
+		let told = ChangeFlag()
+		withObservationTracking { _ = store.entries } onChange: { told.set() }
+		store.options.sort = .latest
+		#expect(told.isSet)
+		#expect(store.entries.map(\.id) == ["low", "high"])
+	}
+
+	@Test func aNewFeedFromTheServerIsSeenByAnObserverOfTheMemo() async {
+		let (store, source) = make()
+		source.feed = .success([decisionCard("a")])
+		await store.load()
+		_ = store.entries  // memoised
+		let told = ChangeFlag()
+		withObservationTracking { _ = store.needsCount } onChange: { told.set() }
+		source.feed = .success([decisionCard("a"), decisionCard("b")])
+		await store.load()
+		#expect(told.isSet)
+		#expect(store.needsCount == 2)
+	}
+
+	@Test func decidingACardUpdatesTheBadgeAtOnce() async {
+		let (store, source) = make()
+		source.feed = .success([decisionCard("a"), decisionCard("b")])
+		await store.load()
+		#expect(store.needsCount == 2)
+		_ = store.entries
+		let card = store.entries[0].card
+		store.choose(card.decision!.options[0], on: card)
+		#expect(store.needsCount == 1)
+		#expect(store.entries.map(\.bucket).contains(.done))
+	}
+
+	@Test func theMemoExpiresWithTheClockSoTimeDependentPartsStayCurrent() async {
+		let clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+		let (store, source) = make(now: { clock.now })
+		source.feed = .success([decisionCard("a")])
+		await store.load()
+		_ = store.entries
+		let before = store.feedBuilds
+		_ = store.entries
+		#expect(store.feedBuilds == before)
+		clock.now = clock.now.addingTimeInterval(5)
+		_ = store.entries
+		#expect(store.feedBuilds == before + 1)
+	}
+}

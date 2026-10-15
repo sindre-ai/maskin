@@ -37,7 +37,7 @@ public struct MaskinPressedButtonStyle: ButtonStyle {
 		PressedLabel(kind: kind) { configuration.label }
 			.opacity(look.opacity)
 			.scaleEffect(look.scale)
-			.animation(reduceMotion ? nil : MaskinMotion.quick, value: configuration.isPressed)
+			.animation(reduceMotion ? nil : MaskinMotion.release(isPressed: configuration.isPressed), value: configuration.isPressed)
 			.contentShape(Rectangle())
 	}
 }
