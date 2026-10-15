@@ -32,6 +32,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -1097,6 +1098,7 @@ app.openapi(askSessionRoute, (async (c) => {
 const connectCardRoute = createRoute({
 	method: 'post',
 	path: '/{id}/connect-card',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Post an integration Connect card into the session chat',
 	request: {
@@ -1153,6 +1155,8 @@ app.openapi(connectCardRoute, (async (c) => {
 	if (session.actorId !== actorId) {
 		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
 	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
 
 	if (!session.interactive || !session.conversationId) {
 		return c.json(
