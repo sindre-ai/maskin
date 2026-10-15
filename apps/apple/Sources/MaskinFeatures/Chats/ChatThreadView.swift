@@ -360,7 +360,7 @@ struct ChatThreadView: View {
 				.onAppear { if !followingOpen { loadEarlier(proxy) } }
 		}
 		// The heading and the typing hint make way for the call's own empty state.
-		if call == nil || !store.messages.isEmpty { topicHeading }
+		if (call == nil || !store.messages.isEmpty) && !repeatsNavTitle { topicHeading }
 		if let pinned = store.pinnedMessage {
 			PinnedMessageStrip(message: pinned, onOpen: { scroll(to: pinned.id, proxy: proxy) }, onUnpin: { store.unpin() })
 				.padding(.bottom, MaskinSpace.s9)
@@ -454,6 +454,10 @@ struct ChatThreadView: View {
 			}
 		}
 	}
+
+	/// A direct chat's heading is the nav bar's title again (and the "WITH …" link opens what the
+	/// tappable nav title already opens), so it is left out; a topic or flow title still shows.
+	private var repeatsNavTitle: Bool { (flow?.name ?? store.title) == navTitle }
 
 	/// The conversation's title as the 24pt heading at the top of the scrolling content.
 	private var topicHeading: some View {
