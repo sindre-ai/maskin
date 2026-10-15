@@ -42,11 +42,28 @@ public struct LiveCallLog {
 	private let defaults: UserDefaults
 	private let key = "live.calls.v1"
 
+	/// The last list decoded, with the stored bytes it came from. The thread view reads the log on
+	/// every render, and decoding up to 60 calls' worth of spoken lines each time is wasted work: the
+	/// bytes are compared instead, so a write from anywhere (another instance included) is still seen.
+	private final class Decoded {
+		var bytes: Data?
+		var records: [LiveCallRecord] = []
+	}
+	private let decoded = Decoded()
+
 	public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
 	public func all() -> [LiveCallRecord] {
-		guard let data = defaults.data(forKey: key) else { return [] }
-		return (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		guard let data = defaults.data(forKey: key) else {
+			decoded.bytes = nil
+			decoded.records = []
+			return []
+		}
+		if decoded.bytes == data { return decoded.records }
+		let records = (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		decoded.bytes = data
+		decoded.records = records
+		return records
 	}
 
 	public func records(for conversationID: String) -> [LiveCallRecord] {

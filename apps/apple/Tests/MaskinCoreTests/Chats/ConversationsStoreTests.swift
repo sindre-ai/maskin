@@ -384,6 +384,7 @@ private actor TeamFakeAPI: ConversationsAPI, ConversationDeleting {
 	var failDelete = false
 	var deleted: [String] = []
 	var stateCalls: [String] = []
+	var actorFetches = 0
 
 	init(active: [ConversationSummary], archived: [ConversationSummary] = []) {
 		self.active = active
@@ -420,7 +421,10 @@ private actor TeamFakeAPI: ConversationsAPI, ConversationDeleting {
 		}
 	}
 
-	func actors() async throws -> [ChatActor] { actorList }
+	func actors() async throws -> [ChatActor] {
+		actorFetches += 1
+		return actorList
+	}
 	func latestMessageID(conversationID: String) async throws -> Int? { 100 }
 
 	func delete(conversationID: String) async throws {
@@ -609,5 +613,65 @@ struct ConversationsStoreTeamTests {
 		await store.markRead(ids)
 		#expect(store.totalUnread == 0)
 		#expect(await api.stateCalls.allSatisfy { $0.contains("read=100") })
+	}
+}
+
+@Suite("ConversationsStore working agents memo")
+@MainActor
+struct WorkingAgentsMemoTests {
+	private final class Flag: @unchecked Sendable {
+		private let lock = NSLock()
+		private var value = false
+		var isSet: Bool { lock.withLock { value } }
+		func set() { lock.withLock { value = true } }
+	}
+
+	@Test("the set follows the actor list and tells a reader of the memo when it changes")
+	func followsActors() async {
+		let api = TeamFakeAPI(active: [chatConvo("a")])
+		await api.set(actors: [ChatActor(participant: chatRelay, agentState: .idle), ChatActor(participant: chatSam)])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refreshActors()
+		#expect(store.workingAgentIDs.isEmpty)
+		#expect(store.workingAgentIDs.isEmpty)  // served from the memo
+
+		let told = Flag()
+		withObservationTracking { _ = store.workingAgentIDs } onChange: { told.set() }
+		await api.set(actors: [ChatActor(participant: chatRelay, agentState: .running), ChatActor(participant: chatSam)])
+		await store.refreshActors()
+		#expect(told.isSet)
+		#expect(store.workingAgentIDs == [chatRelay.id])
+		// And back to idle.
+		await api.set(actors: [ChatActor(participant: chatRelay, agentState: .idle)])
+		await store.refreshActors()
+		#expect(store.workingAgentIDs.isEmpty)
+	}
+}
+
+
+@Suite("ConversationsStore agent activity events")
+@MainActor
+struct AgentActivityEventsTests {
+	@Test("a burst of session events becomes one actor refresh")
+	func burstIsCoalesced() async {
+		let api = TeamFakeAPI(active: [chatConvo("a")])
+		var frames = ""
+		for id in 1...12 { frames += conversationFrame(id, conversation: "s\(id)", action: "updated", entity: "session") }
+		let hub = scriptedHub([frames])
+		let store = ConversationsStore(api: api, events: hub, agentActivityDebounce: .milliseconds(80))
+		await store.start()
+		let afterStart = await api.actorFetches
+		hub.connect(workspaceId: "w1")
+		// The burst must still refresh the actors...
+		var refreshed = false
+		for _ in 0..<200 where !refreshed {
+			refreshed = await api.actorFetches > afterStart
+			if !refreshed { try? await Task.sleep(for: .milliseconds(10)) }
+		}
+		#expect(refreshed, "the burst must still refresh the actors")
+		// ...but as one trailing refresh, not one per event (12 without the debounce).
+		try? await Task.sleep(for: .milliseconds(400))
+		#expect(await api.actorFetches - afterStart <= 3)
+		store.stop()
 	}
 }

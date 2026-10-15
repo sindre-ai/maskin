@@ -82,6 +82,9 @@ public final class ConversationsStore {
 	@ObservationIgnored private let preferences: TeamPreferences?
 	@ObservationIgnored private let pageSize = 30
 	@ObservationIgnored private var listener: Task<Void, Never>?
+	/// Session and actor events arrive in bursts while agents work. Each used to refetch the actor
+	/// list and every flow room (plus a latest-post read per flow); a burst is now one refresh.
+	@ObservationIgnored private let agentActivityDebouncer: RefreshDebouncer
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var generation = 0
@@ -90,8 +93,10 @@ public final class ConversationsStore {
 
 	public init(
 		api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil,
-		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil
+		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil,
+		agentActivityDebounce: Duration = .milliseconds(500)
 	) {
+		self.agentActivityDebouncer = RefreshDebouncer(delay: agentActivityDebounce)
 		self.api = api
 		self.events = events
 		self.cache = cache
@@ -181,8 +186,31 @@ public final class ConversationsStore {
 	}
 
 	/// Agents running right now, from the workspace actor list.
+	///
+	/// Memoised: every Team row asks (through `status(for:)`) and the list reads it again for the
+	/// pinned tiles and the flow rows, so each render filtered the whole actor list per row. Built
+	/// inside observation tracking so a change to `actors` drops it, with a tracked revision so
+	/// views reading it are still told.
 	public var workingAgentIDs: Set<String> {
-		Set(actors.filter { $0.participant.kind == .agent && $0.agentState == .running }.map(\.id))
+		_ = workingRevision
+		if let memo = workingMemo { return memo }
+		var built: Set<String> = []
+		withObservationTracking {
+			built = Set(actors.filter { $0.participant.kind == .agent && $0.agentState == .running }.map(\.id))
+		} onChange: { [weak self] in
+			MainActor.assumeIsolated { self?.invalidateWorking() }
+		}
+		workingMemo = built
+		return built
+	}
+
+	private var workingRevision = 0
+	@ObservationIgnored private var workingMemo: Set<String>?
+
+	private func invalidateWorking() {
+		guard workingMemo != nil else { return }
+		workingMemo = nil
+		workingRevision &+= 1
 	}
 
 	/// The second line of a conversation's row. `draft` and `tick` come from the screen (the draft
@@ -243,8 +271,10 @@ public final class ConversationsStore {
 						await self.refresh()
 					case .event(let event) where event.entityType == .session || event.entityType == .actor:
 						// Working state on rows and avatars follows the agents' runs.
-						await self.refreshActors()
-						await self.refreshFlowRooms()
+						self.agentActivityDebouncer.schedule { [weak self] in
+							await self?.refreshActors()
+							await self?.refreshFlowRooms()
+						}
 					case .event:
 						break
 					}
@@ -264,6 +294,7 @@ public final class ConversationsStore {
 	public func stop() {
 		listener?.cancel()
 		listener = nil
+		agentActivityDebouncer.cancel()
 	}
 
 	/// Reload the first page. Overlapping calls coalesce into one trailing reload so a burst of
