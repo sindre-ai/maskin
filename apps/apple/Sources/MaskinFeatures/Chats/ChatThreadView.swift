@@ -526,7 +526,9 @@ struct ChatThreadView: View {
 					.padding(.bottom, MaskinSpace.s1)
 					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 			}
-			let replies = call == nil ? quickReplies : []
+			// They answer the last message, so they wait until you have read down to it: pinned over
+			// the middle of a long reply they hide the very text you are reading.
+			let replies = call == nil && isNearBottom ? quickReplies : []
 			if !replies.isEmpty {
 				QuickReplyChips(replies: replies) { reply in
 					if store.send(reply) == nil { composer.text = reply }
@@ -552,7 +554,7 @@ struct ChatThreadView: View {
 		.padding(.bottom, MaskinSpace.s3)
 		.frame(maxWidth: .infinity)
 		.animation(MaskinMotion.standard, value: isNearBottom)
-		.animation(MaskinMotion.quick, value: quickReplies)
+		.animation(MaskinMotion.quick, value: isNearBottom ? quickReplies : [])
 	}
 
 	/// The call running in this thread, if any.
