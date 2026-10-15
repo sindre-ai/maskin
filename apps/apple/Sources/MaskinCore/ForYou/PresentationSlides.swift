@@ -89,9 +89,7 @@ public enum PresentationParser {
 	static func plain(_ html: String) -> String {
 		var text = html.replacingOccurrences(of: "(?i)</(p|div|li|tr|h[1-6]|section)>|<br\\s*/?>", with: "\n", options: .regularExpression)
 		text = text.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-		for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
-			text = text.replacingOccurrences(of: entity, with: char)
-		}
+		text = HTMLEntities.decode(text)
 		return text.components(separatedBy: "\n")
 			.map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
 			.filter { !$0.isEmpty }.joined(separator: "\n")
