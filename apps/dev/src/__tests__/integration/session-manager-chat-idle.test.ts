@@ -426,5 +426,122 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			expect(row?.status).toBe('timeout')
 			expect((row?.result as { error?: string })?.error).toBe('Session timed out')
 		})
+
+		it('preserves accumulated token/cost totals when a session times out after producing output', async () => {
+			// A CLI `result` envelope in the session's stdout log represents work
+			// the session did produce before the ceiling hit. When the reaper
+			// closes the row as `timeout`, those totals must land on the row so
+			// a productive timeout is distinguishable from a barren one — the
+			// bug this test pins is the reaper skipping accumulateSessionUsage.
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+				config: { llm_route: 'claude_oauth' },
+				modelName: 'claude-opus-4-7',
+			})
+			await insertSessionLog(db, session.id, {
+				stream: 'stdout',
+				content: `${JSON.stringify({
+					type: 'result',
+					total_cost_usd: 1.23,
+					duration_ms: 3_600_000,
+					usage: {
+						input_tokens: 12_000,
+						output_tokens: 3_400,
+						cache_creation_input_tokens: 500,
+						cache_read_input_tokens: 800,
+					},
+				})}\n`,
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect(row?.totalCostUsd).toBe('1.230000')
+			expect(row?.inputTokens).toBe(12_000)
+			expect(row?.outputTokens).toBe(3_400)
+			expect(row?.cacheCreationInputTokens).toBe(500)
+			expect(row?.cacheReadInputTokens).toBe(800)
+		})
+
+		it('records tokens from assistant messages and leaves cost null when a timeout has no result envelope', async () => {
+			// A non-interactive run killed at the ceiling never emits a `result`
+			// line, so the assistant messages are the only usage in the log. The
+			// same message id repeats once per content block and must count once.
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+				config: { llm_route: 'claude_oauth' },
+				modelName: 'claude-opus-4-7',
+			})
+			const assistant = (id: string, usage: Record<string, number>) =>
+				`${JSON.stringify({ type: 'assistant', message: { id, usage } })}\n`
+			for (const content of [
+				assistant('msg_1', { input_tokens: 1_000, output_tokens: 200 }),
+				assistant('msg_1', { input_tokens: 1_000, output_tokens: 250 }),
+				assistant('msg_2', {
+					input_tokens: 2_000,
+					output_tokens: 300,
+					cache_creation_input_tokens: 50,
+					cache_read_input_tokens: 400,
+				}),
+			]) {
+				await insertSessionLog(db, session.id, { stream: 'stdout', content })
+			}
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect(row?.inputTokens).toBe(3_000)
+			expect(row?.outputTokens).toBe(550)
+			expect(row?.cacheCreationInputTokens).toBe(50)
+			expect(row?.cacheReadInputTokens).toBe(400)
+			expect(row?.totalCostUsd).toBeNull()
+		})
+
+		it('leaves token/cost columns null when a session times out without producing output', async () => {
+			// A timeout with no `result` envelope is a genuinely barren timeout:
+			// the row must stay NULL, not be filled with silent zeros. This pins
+			// the second acceptance criterion — accumulateSessionUsage returns
+			// null when no usage was parsed, and nothing gets written.
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect(row?.totalCostUsd).toBeNull()
+			expect(row?.inputTokens).toBeNull()
+			expect(row?.outputTokens).toBeNull()
+		})
 	})
 })
