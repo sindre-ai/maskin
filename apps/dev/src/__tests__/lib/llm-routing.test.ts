@@ -45,6 +45,7 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
 	'MASKIN_FALLBACK_ZDR',
+	'MASKIN_FALLBACK_PROVIDER_IGNORE',
 	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
@@ -435,6 +436,31 @@ describe('resolveLlmRoute priority order', () => {
 				expect((await resolveEnv('acme/BAR-1'))?.MASKIN_STRIP_IMAGES).toBe('1')
 				const deepseek = await resolveEnv('deepseek/deepseek-v4-flash')
 				expect(deepseek?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+		})
+
+		describe('provider block list', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('hands the container the list through MASKIN_PROVIDER_PREFS', async () => {
+				process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({ ignore: ['CoreWeave'] })
+			})
+
+			it('sets no MASKIN_PROVIDER_PREFS when the list is empty', async () => {
+				expect(await resolveEnv()).not.toHaveProperty('MASKIN_PROVIDER_PREFS')
 			})
 		})
 
@@ -1267,6 +1293,30 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+})
+
+describe('MASKIN_FALLBACK_PROVIDER_IGNORE block list', () => {
+	it('parses a comma separated list, trimming blanks', () => {
+		expect(
+			readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_IGNORE: ' CoreWeave, ,Foo ' }).ignoreProviders,
+		).toEqual(['CoreWeave', 'Foo'])
+	})
+
+	it('defaults to an empty list', () => {
+		expect(readFallbackConfig({}).ignoreProviders).toEqual([])
+	})
+
+	it('sends ignore alongside zdr on the funded chat route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.providerPrefs).toEqual({ zdr: true, ignore: ['CoreWeave'] })
 	})
 })
 

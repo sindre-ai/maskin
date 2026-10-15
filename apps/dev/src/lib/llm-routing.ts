@@ -100,6 +100,25 @@ export interface FallbackConfig {
 	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
 	 */
 	zdr: boolean
+	/**
+	 * OpenRouter provider names that must never serve a funded request, sent as
+	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
+	 */
+	ignoreProviders: string[]
+}
+
+/** The subset of OpenRouter's request-body "provider" object Maskin sends. */
+export interface ProviderPrefs {
+	zdr?: true
+	ignore?: string[]
+}
+
+/** Undefined when no preference is configured, so callers send no "provider" at all. */
+export function buildProviderPrefs(fallback: FallbackConfig): ProviderPrefs | undefined {
+	const prefs: ProviderPrefs = {}
+	if (fallback.zdr) prefs.zdr = true
+	if (fallback.ignoreProviders?.length) prefs.ignore = fallback.ignoreProviders
+	return Object.keys(prefs).length > 0 ? prefs : undefined
 }
 
 export interface AgentLlmConfig {
@@ -143,6 +162,10 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			'deepseek/deepseek-v4.1-flash',
 		textOnlyModels: readTextOnlyModels(env),
 		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
+		ignoreProviders: (env.MASKIN_FALLBACK_PROVIDER_IGNORE ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter(Boolean),
 	}
 }
 
@@ -469,6 +492,12 @@ function buildMaskinPlanEnv(
 	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
 	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
 		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	// The Claude CLI builds its own request body, so the agent-container proxy
+	// injects these into each /v1/messages call (strip-images-proxy.js). Only
+	// routing exclusions go here: zdr stays chat-only, as it was before.
+	if (fallback.ignoreProviders?.length) {
+		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ignore: fallback.ignoreProviders })
 	}
 	return env
 }
@@ -893,7 +922,7 @@ export interface ChatCredentials {
 	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
 	 * can reject unknown body fields with a 400.
 	 */
-	providerPrefs?: { zdr: true }
+	providerPrefs?: ProviderPrefs
 }
 
 /**
@@ -982,6 +1011,7 @@ export function resolveChatCredentials(params: {
 	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
+	const providerPrefs = buildProviderPrefs(fallback)
 	return {
 		provider: 'openai',
 		apiKey: fallback.apiKey,
@@ -991,6 +1021,6 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
-		...(fallback.zdr && { providerPrefs: { zdr: true as const } }),
+		...(providerPrefs && { providerPrefs }),
 	}
 }

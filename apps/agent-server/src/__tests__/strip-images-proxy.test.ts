@@ -101,6 +101,33 @@ describe('strip-images proxy over HTTP', () => {
 		expect(stub.seen.headers?.['content-length']).toBe(String(forwarded.length))
 	})
 
+	it('injects provider preferences into a request that holds no images', async () => {
+		const stub = await startStub((_req, _body, res) => res.end('ok'))
+		const proxyPort = await listen(
+			createProxyServer(`http://127.0.0.1:${stub.port}`, { ignore: ['CoreWeave'] }),
+		)
+		await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+		})
+		const forwarded = JSON.parse((stub.seen.body as Buffer).toString())
+		expect(forwarded.provider).toEqual({ ignore: ['CoreWeave'] })
+		expect(forwarded.messages).toEqual([{ role: 'user', content: 'hi' }])
+	})
+
+	it('sends no provider field when no preferences are configured', async () => {
+		const stub = await startStub((_req, _body, res) => res.end('ok'))
+		const proxyPort = await listen(createProxyServer(`http://127.0.0.1:${stub.port}`, null))
+		const body = JSON.stringify({ model: 'm', messages: [] })
+		await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body,
+		})
+		expect(stub.seen.body?.toString()).toBe(body)
+	})
+
 	it('forwards an unparseable body unchanged', async () => {
 		const stub = await startStub((_req, _body, res) => res.end('ok'))
 		const proxyPort = await listen(createProxyServer(`http://127.0.0.1:${stub.port}`))
