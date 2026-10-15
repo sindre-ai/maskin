@@ -40,6 +40,7 @@ import {
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { disconnectedLinkedInSlugMatcher } from '../lib/integrations/providers/linkedin-unipile/disconnect-slugs'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
 	isSubdomainName,
@@ -1890,6 +1891,14 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// revoked and leave the customer billed for it. Quantity changes carry
 	// `proration_behavior: 'none'`, so the identity stays paid for through the
 	// end of the period it was connected in.
+	// LinkedIn serves one MCP endpoint per identity, so the agent-config cleanup
+	// below may only remove this credential's entries. Resolve them before the
+	// registry is cleared for this credential.
+	const linkedInSlugMatcher =
+		existing.provider === LINKEDIN_IDENTITY_PROVIDER
+			? await disconnectedLinkedInSlugMatcher(db, existing)
+			: undefined
+
 	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
 		await syncLinkedInAddonQuantity(db, existing.workspaceId)
 		// P3-C · Drop every fan-out MCP instance owned by this credential row
@@ -1914,7 +1923,13 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// outlives the credential behind it. Left in place, the agent boots with
 	// the server attached, advertises its tools, and fails every call — so it
 	// reports a broken platform instead of a missing connection.
-	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+	await detachProviderMcpServers(
+		db,
+		existing.workspaceId,
+		existing.provider,
+		actorId,
+		linkedInSlugMatcher,
+	)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)

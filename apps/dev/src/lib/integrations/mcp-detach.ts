@@ -23,6 +23,14 @@ import { logger } from '../logger'
  * URL removes a renamed entry and, equally important, leaves alone a
  * hand-written server that merely happens to share the name.
  *
+ * Providers that serve one endpoint per identity (LinkedIn:
+ * `/api/integrations/linkedin-unipile/mcp/<instanceSlug>`) must not be detached
+ * by provider alone: disconnecting one identity would strip every other live
+ * identity's entry from every agent. Those callers pass `instanceSlugMatches`,
+ * and only entries whose URL ends in a slug it accepts are removed. Entries
+ * with no slug (the deprecated aggregate endpoint) and entries for other slugs
+ * are left alone.
+ *
  * Reconnecting does NOT re-attach: the agent's tool list is the user's to
  * curate, and silently re-adding a server someone may have deliberately
  * removed would be the same overreach in the other direction.
@@ -35,15 +43,39 @@ function providerMcpPath(provider: string): string {
 
 type McpServerEntry = { url?: unknown } & Record<string, unknown>
 
-function entryTargetsProvider(entry: unknown, provider: string): boolean {
+/** Narrows a per-identity provider's detach to the endpoint slugs it accepts. */
+export type InstanceSlugMatcher = (slug: string) => boolean
+
+/**
+ * The `<instanceSlug>` segment after the provider's MCP path, or null when the
+ * URL has none (aggregate endpoint) or merely continues the path text.
+ */
+function endpointSlug(url: string, provider: string): string | null {
+	const path = providerMcpPath(provider)
+	const at = url.indexOf(path)
+	if (at === -1) return null
+	const rest = url.slice(at + path.length)
+	if (!rest.startsWith('/')) return null
+	return rest.slice(1).split(/[/?#]/)[0] || null
+}
+
+function entryTargetsProvider(
+	entry: unknown,
+	provider: string,
+	instanceSlugMatches?: InstanceSlugMatcher,
+): boolean {
 	if (!entry || typeof entry !== 'object') return false
 	const url = (entry as McpServerEntry).url
 	if (typeof url !== 'string') return false
-	return url.includes(providerMcpPath(provider))
+	if (!url.includes(providerMcpPath(provider))) return false
+	if (!instanceSlugMatches) return true
+	const slug = endpointSlug(url, provider)
+	return slug !== null && instanceSlugMatches(slug)
 }
 
 /**
- * Removes the provider's MCP entry from every agent in the workspace.
+ * Removes the provider's MCP entry from every agent in the workspace, or with
+ * `instanceSlugMatches`, only the entries for the identities it accepts.
  * Returns the number of agents changed.
  *
  * Never throws: this runs after the disconnect has already committed, and a
@@ -57,6 +89,8 @@ export async function detachProviderMcpServers(
 	provider: string,
 	/** The actor performing the disconnect — recorded on the audit event. */
 	actorId: string,
+	/** Per-identity providers only: restricts removal to the disconnected identity's slugs. */
+	instanceSlugMatches?: InstanceSlugMatcher,
 ): Promise<number> {
 	try {
 		const rows = await db
@@ -74,7 +108,7 @@ export async function detachProviderMcpServers(
 			const kept: Record<string, unknown> = {}
 			const removed: string[] = []
 			for (const [key, entry] of Object.entries(servers as Record<string, unknown>)) {
-				if (entryTargetsProvider(entry, provider)) removed.push(key)
+				if (entryTargetsProvider(entry, provider, instanceSlugMatches)) removed.push(key)
 				else kept[key] = entry
 			}
 			if (removed.length === 0) continue
