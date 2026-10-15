@@ -49,7 +49,7 @@ public final class ChatsRuntime {
 			})
 		let outbox = Outbox(
 			fileURL: outboxFileURL(actorId: actorId, directory: directory), executor: executor,
-			workspaceId: { environment.workspaceId })
+			workspaceId: { environment.workspaceId }, writesInBackground: start)
 		let queue = ChatSendQueue(
 			outbox: outbox, failedFileURL: ChatSendQueue.failedFileURL(actorId: actorId, directory: directory))
 		box.queue = queue
@@ -69,7 +69,7 @@ public final class ChatsRuntime {
 			running.queue.stop()
 			running.outbox.discardAll()
 		}
-		try? FileManager.default.removeItem(at: outboxFileURL(actorId: actorId, directory: directory))
+		OutboxFileWriter.remove(outboxFileURL(actorId: actorId, directory: directory))
 		ChatSendQueue.deletePersistedFailures(actorId: actorId, directory: directory)
 	}
 

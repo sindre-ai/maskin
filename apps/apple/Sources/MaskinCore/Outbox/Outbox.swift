@@ -121,6 +121,9 @@ public final class Outbox {
 	@ObservationIgnored nonisolated(unsafe) private var wake: Task<Void, Never>?
 	@ObservationIgnored nonisolated(unsafe) private var tasks: [Task<Void, Never>] = []
 	@ObservationIgnored private var isDiscarded = false
+	/// Set when the app's own runtime owns this outbox: saves are encoded and written off the main
+	/// actor (latest snapshot wins) instead of blocking the tap that enqueued.
+	@ObservationIgnored private let writesInBackground: Bool
 	/// While `isAuthBlocked`, the only entry allowed out: the one that was refused, retried after
 	/// its back-off as a probe. Everything else waits for it to get through.
 	@ObservationIgnored private var authProbe: UUID?
@@ -137,8 +140,10 @@ public final class Outbox {
 		fileManager: FileManager = .default,
 		now: @escaping @Sendable () -> Date = { Date() },
 		backoff: @escaping @Sendable (Int) -> TimeInterval = Outbox.defaultBackoff,
-		maxAttempts: Int = 8
+		maxAttempts: Int = 8,
+		writesInBackground: Bool = false
 	) {
+		self.writesInBackground = writesInBackground
 		self.fileURL = fileURL
 		self.fileManager = fileManager
 		self.executor = executor
@@ -232,7 +237,12 @@ public final class Outbox {
 			save()
 			Task { await drain() }
 		}
+		// The app is going to the background: the queue must be on disk before it can be suspended.
+		flushPersistence()
 	}
+
+	/// Blocks until every save so far is on disk. A no-op unless the outbox writes in the background.
+	public func flushPersistence() { if writesInBackground { OutboxFileWriter.flush() } }
 
 	// MARK: Enqueue / cancel
 
@@ -291,7 +301,7 @@ public final class Outbox {
 		failures = []
 		isAuthBlocked = false
 		authProbe = nil
-		try? fileManager.removeItem(at: fileURL)
+		OutboxFileWriter.remove(fileURL, fileManager: fileManager)
 	}
 
 	public func dismissFailure(_ id: UUID) {
@@ -467,13 +477,16 @@ public final class Outbox {
 
 	// MARK: Persistence
 
-	private struct Snapshot: Codable {
+	struct Snapshot: Codable, Sendable {
 		var version = 1
 		var entries: [OutboxEntry]
 		var failures: [OutboxFailure]
 	}
 
 	private func load() {
+		// A save queued by an earlier outbox over this file (a runtime rebuilt in-process) must land
+		// first, or this one would restore a stale queue.
+		OutboxFileWriter.flush()
 		guard let data = try? Data(contentsOf: fileURL) else { return }
 		let decoder = JSONDecoder()
 		guard let snapshot = try? decoder.decode(Snapshot.self, from: data) else { return }
@@ -483,13 +496,75 @@ public final class Outbox {
 
 	private func save() {
 		guard !isDiscarded else { return }
+		let snapshot = Snapshot(entries: entries, failures: failures)
+		if writesInBackground {
+			OutboxFileWriter.save(snapshot, to: fileURL, fileManager: fileManager)
+			return
+		}
 		do {
 			try fileManager.createDirectory(
 				at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-			let data = try JSONEncoder().encode(Snapshot(entries: entries, failures: failures))
+			let data = try JSONEncoder().encode(snapshot)
 			try data.write(to: fileURL, options: .atomic)
 		} catch {
 			// Persistence is best-effort: the in-memory queue still replays this session.
+		}
+	}
+}
+
+/// Writes outbox files on one serial queue, for the whole process. Immediate, not delayed (the file
+/// is the durability guarantee, so there is no debounce window to lose a write in), but off the
+/// caller's thread, and coalescing: a burst of saves to one file becomes one write of the newest.
+///
+/// It is process-wide, and every DELETION of an outbox file goes through `remove`, because a
+/// queued write that lands after a sign-out deleted the file would put the previous account's
+/// queued writes back on disk. Ordering both on one queue makes that impossible.
+enum OutboxFileWriter {
+	private static let queue = DispatchQueue(label: "io.maskin.outbox", qos: .userInitiated)
+	private static let lock = NSLock()
+	nonisolated(unsafe) private static var pending: [URL: (snapshot: Outbox.Snapshot, fileManager: FileManager)] = [:]
+	nonisolated(unsafe) private static var scheduled = false
+
+	static func save(_ snapshot: Outbox.Snapshot, to url: URL, fileManager: FileManager) {
+		lock.lock()
+		pending[url] = (snapshot, fileManager)
+		let start = !scheduled
+		scheduled = true
+		lock.unlock()
+		if start { queue.async { drain() } }
+	}
+
+	/// Blocks until every save so far is on disk.
+	static func flush() { queue.sync {} }
+
+	/// Delete an outbox file and any save still queued for it, ordered after a write in progress.
+	static func remove(_ url: URL, fileManager: FileManager = .default) {
+		queue.sync {
+			lock.lock()
+			pending[url] = nil
+			lock.unlock()
+			try? fileManager.removeItem(at: url)
+		}
+	}
+
+	private static func drain() {
+		while true {
+			lock.lock()
+			guard let (url, work) = pending.first else {
+				scheduled = false
+				lock.unlock()
+				return
+			}
+			pending[url] = nil
+			lock.unlock()
+			do {
+				try work.fileManager.createDirectory(
+					at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+				let data = try JSONEncoder().encode(work.snapshot)
+				try data.write(to: url, options: .atomic)
+			} catch {
+				// Persistence is best-effort: the in-memory queue still replays this session.
+			}
 		}
 	}
 }
