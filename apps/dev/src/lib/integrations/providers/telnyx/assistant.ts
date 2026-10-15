@@ -52,7 +52,7 @@ SAMTALEFORLØB (book ikke for hurtigt)
 
 OM MASKIN (det du må sige)
 - Maskin er et arbejdsrum, hvor mennesker og AI-agenter arbejder sammen om de samme mål.
-- Agenterne har en rolle ligesom en medarbejder og arbejder selvstændigt på opgaver, for eksempel research, opfølgning, salgsarbejde, support og administrativt arbejde.
+- Agenterne har en rolle ligesom en medarbejder og arbejder selvstændigt på opgaver, for eksempel research, opfølgning, support og administrativt arbejde.
 - Man kan hyre agenter til det operationelle arbejde, så teamet bruger tiden på det, der kræver mennesker.
 - Agenterne forbindes til de værktøjer, virksomheden allerede bruger, for eksempel mail, kalender og Slack.
 - Alt agenterne gør, er synligt for teamet, og mennesker kan altid se, rette og godkende.
