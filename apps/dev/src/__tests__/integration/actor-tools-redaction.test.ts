@@ -299,6 +299,8 @@ function buildStoredArgsTools() {
 			meetings: {
 				type: 'stdio',
 				command: 'npx',
+				// The update schema fills in env, so seed it to compare the stored row as-is.
+				env: {},
 				args: [
 					'-y',
 					'fake-remote-proxy',
