@@ -35,6 +35,7 @@ struct ObjectsBoardView: View {
 		.task(id: BoardKey(type: store.typeFilter, sort: store.display.sort)) {
 			await board.load(type: store.typeFilter, sort: store.display.sort)
 		}
+		.onDisappear { board.stopShowing() }
 	}
 
 	private struct BoardKey: Hashable {

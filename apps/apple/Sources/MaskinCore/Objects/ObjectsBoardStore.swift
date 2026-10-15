@@ -31,8 +31,16 @@ public final class ObjectsBoardStore {
 	@ObservationIgnored private var generation = 0
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
+	/// The board view is on screen. Object events only refetch a board someone is looking at: the
+	/// view loads again when it reappears, so a hidden board has nothing to catch up on.
+	@ObservationIgnored private var isShowing = false
+	/// Folds a burst of object events into one board refetch.
+	@ObservationIgnored private let eventDebouncer: RefreshDebouncer
 
-	public init(remote: any ObjectsRemote) { self.remote = remote }
+	public init(remote: any ObjectsRemote, eventDebounce: Duration = .milliseconds(300)) {
+		self.remote = remote
+		self.eventDebouncer = RefreshDebouncer(delay: eventDebounce)
+	}
 
 	/// Every status of the type, in workspace order, so a card can be dropped into an empty one.
 	/// Only the "no status" column is hidden while it is empty.
@@ -51,7 +59,15 @@ public final class ObjectsBoardStore {
 		needsYouOnly ? column.objects.filter(ObjectsUrgency.needsYou).count : column.total
 	}
 
+	/// The board view left the screen: stop refetching on events until it loads again.
+	public func stopShowing() {
+		isShowing = false
+		eventDebouncer.cancel()
+	}
+
 	public func reset() {
+		isShowing = false
+		eventDebouncer.cancel()
 		generation += 1
 		columns = []
 		phase = .idle
@@ -68,6 +84,7 @@ public final class ObjectsBoardStore {
 			reset()
 			return
 		}
+		isShowing = true
 		if newType != type {
 			generation += 1
 			columns = []
@@ -162,13 +179,16 @@ public final class ObjectsBoardStore {
 
 	/// Runs until cancelled: object events and reconnects refetch the board.
 	public func observe(_ signals: AsyncStream<HubSignal>) async {
+		defer { eventDebouncer.cancel() }
 		for await signal in signals {
 			if Task.isCancelled { return }
 			switch signal {
 			case .reconnected:
-				await refresh()
+				if isShowing { await refresh() }
 			case .event(let event) where event.entityType == .object:
-				if phase != .idle { await refresh() }
+				if phase != .idle, isShowing {
+					eventDebouncer.schedule { [weak self] in await self?.refresh() }
+				}
 			default:
 				break
 			}

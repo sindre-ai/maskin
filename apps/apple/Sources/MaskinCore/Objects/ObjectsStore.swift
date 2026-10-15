@@ -77,6 +77,9 @@ public final class ObjectsStore {
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var pendingDeletes: [String: PendingDelete] = [:]
+	/// Folds a burst of object events (an agent run touches many) into one refetch of the list and
+	/// the inventory, instead of two requests per event queued behind each other.
+	@ObservationIgnored private let eventDebouncer: RefreshDebouncer
 
 	private struct PendingDelete {
 		var object: WorkObject
@@ -87,8 +90,10 @@ public final class ObjectsStore {
 
 	public init(
 		remote: any ObjectsRemote, directory: ObjectsDirectory, cache: SnapshotCache? = nil,
-		displayStorage: (any ObjectsDisplayStorage)? = nil, defaults: UserDefaults = .standard
+		displayStorage: (any ObjectsDisplayStorage)? = nil, defaults: UserDefaults = .standard,
+		eventDebounce: Duration = .milliseconds(300)
 	) {
+		self.eventDebouncer = RefreshDebouncer(delay: eventDebounce)
 		self.remote = remote
 		self.directory = directory
 		self.cache = cache
@@ -516,6 +521,7 @@ public final class ObjectsStore {
 
 	/// Runs until cancelled. Object events refresh the list and the inventory; a reconnect refetches.
 	public func observe(_ signals: AsyncStream<HubSignal>) async {
+		defer { eventDebouncer.cancel() }
 		for await signal in signals {
 			if Task.isCancelled { return }
 			switch signal {
@@ -528,9 +534,12 @@ public final class ObjectsStore {
 					objects.removeAll { $0.id == id }
 					inventory.removeAll { $0.id == id }
 				} else if phase != .idle {
-					async let stock: Void = refreshInventory()
-					await refreshInPlace()
-					await stock
+					eventDebouncer.schedule { [weak self] in
+						guard let self else { return }
+						async let stock: Void = self.refreshInventory()
+						await self.refreshInPlace()
+						await stock
+					}
 				}
 			default:
 				break
