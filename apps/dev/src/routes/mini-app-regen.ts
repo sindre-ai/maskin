@@ -6,7 +6,7 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { errorSchema, triggerResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 import {
 	MASKIN_APP_DATA_WINDOW_KEY,
 	MASKIN_STATE_SLOT_ID,
@@ -55,6 +55,7 @@ const regenResponseSchema = z.object({
 const regenRoute = createRoute({
 	method: 'post',
 	path: '/regen',
+	'x-viewer-policy': 'writer',
 	tags: ['Mini-apps'],
 	summary: 'Point/keep an html app current with a daily regen trigger',
 	request: {
@@ -84,7 +85,7 @@ app.openapi(regenRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
