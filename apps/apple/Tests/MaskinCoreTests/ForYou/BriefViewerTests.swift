@@ -46,6 +46,18 @@ struct BriefSequenceTests {
 		#expect(text.body == "Also moving: voice. Recently closed: articles.")
 	}
 
+	@Test("tell-me-more quotes the whole first sentence, not the cut headline")
+	func tellMeMoreFullSentence() {
+		let first = String(repeating: "word ", count: 40).trimmingCharacters(in: .whitespaces) + "."
+		let cut = String(first.prefix(139)) + "\u{2026}"
+		let card = StoryCard(
+			id: "b", unit: "Daily briefing", headline: "Good morning", updatedAt: nil,
+			content: .briefing(headline: cut, script: first + " More."))
+		let text = BriefSequence.tellMeMore(about: card)
+		#expect(text.contains(first))
+		#expect(!text.contains("\u{2026}"))
+	}
+
 	@Test("a short headline that opens the script is not repeated, and one that doesn't is left alone")
 	func briefingTextOther() {
 		#expect(BriefSequence.briefingText(headline: "All quiet.", script: "All quiet. Nothing to do.") == ("All quiet.", "Nothing to do."))
