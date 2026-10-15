@@ -181,6 +181,10 @@ const postVoiceSessionRoute = createRoute({
 				'The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`',
 			content: { 'application/json': { schema: rateLimitedResponse } },
 		},
+		500: {
+			description: 'The reservation row could not be written',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 

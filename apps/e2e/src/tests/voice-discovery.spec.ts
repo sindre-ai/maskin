@@ -73,6 +73,13 @@ test.describe('Voice discovery — badge, filter chip, empty state', () => {
 		const text = await account.api.createAgentActor('Tia Text')
 		await account.api.addWorkspaceMember(account.workspaceId, text.id)
 
+		// Workspace provisioning seeds Chief of Staff with voice on, so turn voice
+		// off for every agent before asserting the "none enabled" state.
+		const actors = await account.api.listWorkspaceActors(account.workspaceId)
+		for (const actor of actors.filter((a) => a.type === 'agent')) {
+			await account.api.setActorVoiceMode(account.workspaceId, actor.id, false)
+		}
+
 		await page.addInitScript(() => {
 			window.localStorage.setItem('ff:voice-mode-v1', 'on')
 		})

@@ -61,7 +61,7 @@ test.describe('Voice call dialog — Permission state and flag boundary', () => 
 			await callButton.click()
 
 			// Verbatim copy per SPEC §Copy — a string not listed there is a bug.
-			await expect(page.getByText('Call Vera Voice', { exact: true })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'Call Vera Voice' })).toBeVisible()
 			await expect(
 				page.getByText(
 					'Your microphone will only be used while this call is running. Transcript saves to this workspace.',
