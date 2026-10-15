@@ -1,0 +1,322 @@
+import type { Database } from '@maskin/db'
+import { objects } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
+import { Cron } from 'croner'
+import { and, eq, ne, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
+import { createTelnyxClient } from '../lib/integrations/providers/telnyx/client'
+import { readTelnyxRuntimeConfig } from '../lib/integrations/providers/telnyx/config'
+import { logger } from '../lib/logger'
+import {
+	ERASURE_MARKER_FIELD,
+	erasureMarkerFor,
+	normalizeDanishNumber,
+} from '../lib/outreach/voice/dnc-gate'
+import { type ErasureKey, parseErasureKey } from '../lib/outreach/voice/erasure-key'
+import {
+	DELETED_BY_REQUEST,
+	RETENTION_MONTHS,
+	type TelnyxRecordingClientFactory,
+	collectCallIds,
+	deleteTelnyxRecordings,
+	deleteVoiceBlobs,
+} from '../lib/outreach/voice/recordings'
+
+/**
+ * Daily sweep for call recordings and transcripts (voice-outreach/<contact_id>/ in S3, and the
+ * original recording Telnyx hosts).
+ *
+ *   1. Expiry: a contact whose retention_expires_at (default: voice_last_touch_at plus
+ *      24 months) has passed loses its Telnyx-hosted recordings and its blobs, and
+ *      last_call_recording_id and last_call_transcript_id are cleared.
+ *   2. Erasure: a contact whose stored status is deleted_by_request loses its Telnyx-hosted
+ *      recordings, its blobs, its content, and every metadata key except consent_*;
+ *      erased_at marks it done.
+ *
+ * Erasure also writes the suppression marker (voice outreach errata section 9): a keyed hash
+ * of the stored phone, kept as one more key in the rebuilt metadata, in the same write that
+ * strips the number. No valid +45 number means no marker. A missing or short
+ * VOICE_ERASURE_MARKER_KEY means no marker and one error event (contact id only) per contact;
+ * erasure itself still completes. The contact title is kept, and metadata is rebuilt wholesale.
+ *
+ * Telnyx goes first on both paths. The call ids to delete come from the blob keys,
+ * last_call_id and the contact's events, which the later steps remove or clear, so a
+ * failed Telnyx delete throws before anything is touched: the row keeps its ids, has no
+ * erased_at, and the next daily tick is the retry. No separate marker key.
+ *
+ * Consent evidence is not on this clock. Nothing here reads or writes the events table
+ * except to add an audit row, and consent_* fields are never removed on expiry. Erasure
+ * keeps consent_* too, pending the CTO's call on what proof survives an erasure request.
+ *
+ * Same shape as purge-idempotency.ts: a cron expression, no overlapping runs, a tick that
+ * logs and never throws. One contact failing does not stop the others.
+ */
+const CRON_EXPRESSION = '41 3 * * *'
+
+/**
+ * VOICE_RETENTION_SWEEP_CRON overrides the schedule so E2E can observe a sweep within
+ * seconds (croner accepts a leading seconds field). Unset, blank or unparseable falls
+ * back to the daily default, so a typo cannot stop the sweep from running.
+ */
+export function resolveSweepCron(raw: string | undefined): string {
+	const candidate = raw?.trim()
+	if (!candidate) return CRON_EXPRESSION
+	try {
+		new Cron(candidate, { timezone: 'UTC', paused: true }).stop()
+		return candidate
+	} catch {
+		logger.warn('VOICE_RETENTION_SWEEP_CRON is not a valid cron expression, using the default', {
+			value: candidate,
+		})
+		return CRON_EXPRESSION
+	}
+}
+
+const KEPT_ON_ERASURE = /^consent_/
+
+/** What a caller that passes no key gets: erasure completes, no marker, one error event. */
+const NO_ERASURE_KEY: ErasureKey = parseErasureKey(undefined)
+
+/** The Telnyx key is read when a contact has a call to look up, not at startup. */
+export const telnyxClientFromEnv: TelnyxRecordingClientFactory = () => {
+	const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
+	if (!apiKey) throw new Error('TELNYX_API_KEY is not configured')
+	return createTelnyxClient({ apiKey, baseUrl: apiBaseUrl })
+}
+
+export class VoiceRetentionSweepJob {
+	private job: Cron | null = null
+	private running = false
+
+	constructor(
+		private db: Database,
+		private storage: StorageProvider,
+		private cronExpression: string = CRON_EXPRESSION,
+		private telnyx: TelnyxRecordingClientFactory = telnyxClientFromEnv,
+		// Parsed once, when the job is built at startup. A bad key never stops the server.
+		private erasureKey: ErasureKey = parseErasureKey(process.env.VOICE_ERASURE_MARKER_KEY),
+	) {}
+
+	start(): void {
+		if (this.job) return
+		this.job = new Cron(this.cronExpression, { timezone: 'UTC' }, async () => {
+			await this.tick()
+		})
+	}
+
+	stop(): void {
+		if (this.job) {
+			this.job.stop()
+			this.job = null
+		}
+	}
+
+	async tick(): Promise<void> {
+		if (this.running) return
+		this.running = true
+		try {
+			await processVoiceRetentionSweep(
+				this.db,
+				this.storage,
+				this.telnyx,
+				new Date(),
+				this.erasureKey,
+			)
+		} finally {
+			this.running = false
+		}
+	}
+}
+
+export interface VoiceRetentionSweepResult {
+	expired: number
+	erased: number
+}
+
+export async function processVoiceRetentionSweep(
+	db: Database,
+	storage: StorageProvider,
+	telnyx: TelnyxRecordingClientFactory,
+	now: Date = new Date(),
+	erasureKey: ErasureKey = NO_ERASURE_KEY,
+): Promise<VoiceRetentionSweepResult> {
+	const result = { expired: 0, erased: 0 }
+	try {
+		result.erased = await sweepErased(db, storage, telnyx, erasureKey)
+	} catch (err) {
+		logger.error('voice retention sweepErased failed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+	try {
+		result.expired = await sweepExpired(db, storage, telnyx, now)
+	} catch (err) {
+		logger.error('voice retention sweepExpired failed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+	if (result.expired > 0 || result.erased > 0) logger.info('voice retention sweep tick', result)
+	return result
+}
+
+export async function sweepExpired(
+	db: Database,
+	storage: StorageProvider,
+	telnyx: TelnyxRecordingClientFactory,
+	now: Date,
+): Promise<number> {
+	const due = await db
+		.select({
+			id: objects.id,
+			workspaceId: objects.workspaceId,
+			driver: objects.driver,
+			createdBy: objects.createdBy,
+			metadata: objects.metadata,
+		})
+		.from(objects)
+		.where(
+			and(
+				eq(objects.type, 'contact'),
+				ne(objects.status, DELETED_BY_REQUEST),
+				sql`(${objects.metadata}->>'last_call_recording_id' is not null
+					or ${objects.metadata}->>'last_call_transcript_id' is not null)`,
+				sql`coalesce(
+					nullif(${objects.metadata}->>'retention_expires_at', '')::timestamptz,
+					nullif(${objects.metadata}->>'voice_last_touch_at', '')::timestamptz + ${sql.raw(`interval '${RETENTION_MONTHS} months'`)}
+				) < ${now.toISOString()}::timestamptz`,
+			),
+		)
+
+	let expired = 0
+	for (const row of due) {
+		try {
+			// Telnyx first: its call ids come from the blob keys and metadata cleared below.
+			const telnyxDeleted = await deleteTelnyxRecordings(
+				telnyx,
+				await collectCallIds(db, storage, row),
+			)
+			const deleted = await deleteVoiceBlobs(storage, row.id)
+			await db
+				.update(objects)
+				.set({
+					metadata: sql`coalesce(${objects.metadata}, '{}'::jsonb) - 'last_call_recording_id' - 'last_call_transcript_id'`,
+					updatedAt: new Date(),
+				})
+				.where(eq(objects.id, row.id))
+			await recordEvent(db, {
+				workspaceId: row.workspaceId,
+				actorId: row.driver ?? row.createdBy,
+				action: 'updated',
+				entityType: 'object',
+				entityId: row.id,
+				data: {
+					source: 'voice_retention_sweep',
+					reason: 'retention_expired',
+					blobs_deleted: deleted,
+					telnyx_recordings_deleted: telnyxDeleted,
+				},
+			})
+			expired++
+		} catch (err) {
+			logger.error('voice retention expiry for contact failed', {
+				contactId: row.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+	return expired
+}
+
+export async function sweepErased(
+	db: Database,
+	storage: StorageProvider,
+	telnyx: TelnyxRecordingClientFactory,
+	erasureKey: ErasureKey = NO_ERASURE_KEY,
+): Promise<number> {
+	const pending = await db
+		.select({
+			id: objects.id,
+			workspaceId: objects.workspaceId,
+			driver: objects.driver,
+			createdBy: objects.createdBy,
+			metadata: objects.metadata,
+		})
+		.from(objects)
+		.where(
+			and(
+				eq(objects.type, 'contact'),
+				eq(objects.status, DELETED_BY_REQUEST),
+				sql`${objects.metadata}->>'erased_at' is null`,
+			),
+		)
+
+	let erased = 0
+	for (const row of pending) {
+		try {
+			// Telnyx first, then blobs, then the strip. The call ids live in the blob keys, last_call_id
+			// and events; if either delete fails the row is left untouched (ids kept, no erased_at)
+			// and the next tick retries.
+			const telnyxDeleted = await deleteTelnyxRecordings(
+				telnyx,
+				await collectCallIds(db, storage, row),
+			)
+			const deleted = await deleteVoiceBlobs(storage, row.id)
+			const kept = Object.fromEntries(
+				Object.entries((row.metadata ?? {}) as Record<string, unknown>).filter(([key]) =>
+					KEPT_ON_ERASURE.test(key),
+				),
+			)
+			// The marker is computed from the stored phone here, after the Telnyx and blob deletes, so a
+			// failed delete leaves the row untouched. Nothing else is added to the row.
+			const phone = (row.metadata as Record<string, unknown> | null)?.phone
+			const hasNumber = normalizeDanishNumber(phone) !== null
+			const marker = erasureKey.ok ? erasureMarkerFor(phone, erasureKey.key) : null
+			const updated = await db
+				.update(objects)
+				.set({
+					content: null,
+					metadata: {
+						...kept,
+						erased_at: new Date().toISOString(),
+						...(marker ? { [ERASURE_MARKER_FIELD]: marker } : {}),
+					},
+					updatedAt: new Date(),
+				})
+				.where(and(eq(objects.id, row.id), eq(objects.status, DELETED_BY_REQUEST)))
+				.returning({ id: objects.id })
+			if (updated.length === 0) continue
+			await recordEvent(db, {
+				workspaceId: row.workspaceId,
+				actorId: row.driver ?? row.createdBy,
+				action: 'updated',
+				entityType: 'object',
+				entityId: row.id,
+				data: {
+					source: 'voice_retention_sweep',
+					reason: 'erasure',
+					blobs_deleted: deleted,
+					telnyx_recordings_deleted: telnyxDeleted,
+				},
+			})
+			if (hasNumber && !erasureKey.ok) {
+				// Stripped without a marker: the number is gone, so it can never get one. This event is the
+				// list of who to check once the key is set. Contact id only, never the number.
+				await recordEvent(db, {
+					workspaceId: row.workspaceId,
+					actorId: row.driver ?? row.createdBy,
+					action: 'voice_erasure_marker_failed',
+					entityType: 'object',
+					entityId: row.id,
+					data: { source: 'voice_retention_sweep', reason: erasureKey.reason },
+				})
+			}
+			erased++
+		} catch (err) {
+			logger.error('voice erasure for contact failed', {
+				contactId: row.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+	return erased
+}

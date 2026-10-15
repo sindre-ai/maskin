@@ -81,6 +81,9 @@ function IntegrationsPage() {
 	const visibleProviders = (providers ?? []).filter((p) => {
 		if (p.name === 'google-meet' && !googleMeetVisible) return false
 		if (p.name === 'resend' && !resendVisible) return false
+		// Telnyx credentials come from server env, not a UI connect. Its api_key card would open
+		// the PostHog-worded key dialog, so it stays hidden until a real connect flow exists.
+		if (p.name === 'telnyx') return false
 		return true
 	})
 

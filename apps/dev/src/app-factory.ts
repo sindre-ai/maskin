@@ -11,8 +11,10 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
+import { registerTelnyxToolRouter } from './lib/integrations/providers/telnyx/tools'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
+import { registerVoiceCallHooks } from './lib/outreach/voice/call-hooks'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -45,6 +47,8 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsTelnyxToolsRoutes from './routes/integrations-telnyx-tools'
+import integrationsTelnyxWebhookRoutes from './routes/integrations-telnyx-webhook'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -297,6 +301,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// `unipile-signature` HMAC header, verified inside the handler
 		// against `UNIPILE_WEBHOOK_SECRET`.
 		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
+		// Telnyx call-event webhook: posted from outside our network, so it cannot carry a
+		// Maskin API key. Authenticated by the Ed25519 signature check inside the handler.
+		if (path === '/api/integrations/telnyx/webhook' && method === 'POST') return next()
+		// Telnyx assistant tool calls: plain JSON POSTs from outside our network, authenticated by the
+		// shared Bearer secret (TELNYX_TOOL_WEBHOOK_SECRET) checked inside the handler.
+		if (method === 'POST' && /^\/api\/integrations\/telnyx\/tools\/[^/]+$/.test(path)) return next()
 		// The linkedin-unipile MCP endpoints are POST-only and answer every GET with
 		// a bare 405 (routes/integrations-linkedin-unipile-mcp.ts). MCP clients
 		// probe them with GET to open a server-to-client stream and retry, ~250k
@@ -391,6 +401,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	registerTelnyxToolRouter()
+	registerVoiceCallHooks()
+	// Telnyx webhook: more specific than the generic /api/integrations catch-all, so mounted first.
+	app.route('/api/integrations/telnyx/webhook', integrationsTelnyxWebhookRoutes)
+	app.route('/api/integrations/telnyx/tools', integrationsTelnyxToolsRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
