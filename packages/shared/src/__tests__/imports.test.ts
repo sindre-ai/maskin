@@ -145,6 +145,37 @@ describe('importMappingSchema', () => {
 	it('rejects missing typeMappings', () => {
 		expect(() => importMappingSchema.parse({ relationships: [] })).toThrow()
 	})
+
+	it('accepts a title or metadata match key and an onMatch mode', () => {
+		const result = importMappingSchema.parse({
+			typeMappings: [
+				{ objectType: 'task', columns: [validColumn], matchOn: 'title' },
+				{ objectType: 'insight', columns: [validColumn], matchOn: 'metadata.domain' },
+			],
+			onMatch: 'update',
+		})
+		expect(result.typeMappings[1]?.matchOn).toBe('metadata.domain')
+		expect(result.onMatch).toBe('update')
+	})
+
+	it('rejects a match key that is not title or a safe metadata field', () => {
+		for (const matchOn of ['content', 'metadata.', "metadata.x'--", 'metadata.a.b']) {
+			expect(() =>
+				importMappingSchema.parse({
+					typeMappings: [{ objectType: 'task', columns: [validColumn], matchOn }],
+				}),
+			).toThrow()
+		}
+	})
+
+	it('rejects an unknown onMatch mode', () => {
+		expect(() =>
+			importMappingSchema.parse({
+				typeMappings: [{ objectType: 'task', columns: [validColumn] }],
+				onMatch: 'merge',
+			}),
+		).toThrow()
+	})
 })
 
 describe('updateImportMappingSchema', () => {

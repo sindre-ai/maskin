@@ -34,6 +34,7 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
 	deriveEntryAgentRole,
 	trackChatMentionInserted,
@@ -193,6 +194,34 @@ export interface ComposerProps {
 	 *  composer's own internal state. */
 	value?: string
 	onValueChange?: (value: string) => void
+	/**
+	 * Opt-in draft persistence key. When set (and the composer is uncontrolled),
+	 * the draft is mirrored to `sessionStorage` under `composer-draft:<key>` and
+	 * restored on mount. iOS reloads the tab when the user switches apps and
+	 * comes back, which otherwise discards unsent text; `sessionStorage`
+	 * survives that, and dies with the tab so an unsent prompt never outlives it.
+	 */
+	draftKey?: string
+}
+
+const DRAFT_PREFIX = 'composer-draft:'
+
+function readDraft(key: string): string {
+	try {
+		return sessionStorage.getItem(`${DRAFT_PREFIX}${key}`) ?? ''
+	} catch {
+		return ''
+	}
+}
+
+function writeDraft(key: string, value: string): void {
+	try {
+		if (value) sessionStorage.setItem(`${DRAFT_PREFIX}${key}`, value)
+		else sessionStorage.removeItem(`${DRAFT_PREFIX}${key}`)
+	} catch {
+		// Safari private mode throws on write; losing the draft is preferable to
+		// breaking typing.
+	}
 }
 
 /**
@@ -228,8 +257,11 @@ export function Composer({
 	textareaLabel,
 	value: controlledValue,
 	onValueChange,
+	draftKey,
 }: ComposerProps) {
-	const [internalValue, setInternalValue] = useState('')
+	const [internalValue, setInternalValue] = useState(() =>
+		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
+	)
 	const value = controlledValue ?? internalValue
 	// Mirrors `value` for the functional-update path — a controlled caller has
 	// no state for us to read back synchronously.
@@ -244,6 +276,24 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
+	// Mirror the draft into sessionStorage. The chat route swaps `draftKey`
+	// without remounting the composer, so on a key change load the incoming
+	// key's stored draft instead of writing the outgoing text under it.
+	const draftKeyRef = useRef(draftKey)
+	useEffect(() => {
+		if (draftKey === undefined || controlledValue !== undefined) return
+		if (draftKeyRef.current !== draftKey) {
+			draftKeyRef.current = draftKey
+			setValue(readDraft(draftKey))
+			return
+		}
+		writeDraft(draftKey, value)
+	}, [draftKey, value, controlledValue, setValue])
+	// Mobile soft keyboards have no Shift key, so the desktop `Shift+Enter`
+	// newline shortcut is unreachable on a phone — plain Enter sends instead.
+	// On touch viewports we let the browser insert a newline and rely on the
+	// visible send button as the send affordance.
+	const isMobile = useIsMobile()
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
@@ -514,11 +564,16 @@ export function Composer({
 				unifiedPickerRef.current?.selectActive()
 				return
 			}
+			// On touch viewports there is no Shift key, so Enter must insert a
+			// newline rather than send. The visible send button is the send
+			// affordance there.
+			if (isMobile) return
 			e.preventDefault()
 			void handleSubmit()
 		},
 		[
 			handleSubmit,
+			isMobile,
 			unifiedPickerEnabled,
 			unifiedOpen,
 			typeFilterChip,
@@ -1071,12 +1126,14 @@ export function Composer({
 						<DropdownMenuTrigger asChild>
 							{/* No 44 px `::before` here: Attach next to it already carries one,
 							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design. */}
+							    taps from each other. The v2 control row is 28 px by design.
+							    Attach's hit area is anchored to its right edge, so it reaches 8 px
+							    over this button; `z-[1]` keeps this one's full box on top. */}
 							<Button
 								type="button"
 								size="icon"
 								variant="outline"
-								className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
 								disabled={disabled}
 								aria-label="Add an object, file, or mention"
 							>
@@ -1129,7 +1186,7 @@ export function Composer({
 						type="button"
 						size="icon"
 						variant="ghost"
-						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:-inset-2 before:h-11 before:w-11 before:content-['']"
+						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
 						aria-label="Attach file"

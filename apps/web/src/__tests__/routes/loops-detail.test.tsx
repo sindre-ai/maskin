@@ -1,9 +1,11 @@
 import type { LoopStep, LoopSummary, TriggerResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildLoopStep, buildLoopSummary } from '../factories'
 
+const mockNavigate = vi.fn()
 // Tanstack router — the route file calls `createFileRoute` at module top; the
 // mock keeps the returned options shape so the component under test can be
 // pulled off `Route.component`, matching `loops-index.test.tsx`.
@@ -11,6 +13,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
+		useNavigate: () => mockNavigate,
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
 			useParams: () => ({ loopId: 'loop-1' }),
@@ -46,10 +49,12 @@ vi.mock('@/hooks/use-relationships', () => ({
 	useRelationships: () => mockUseRelationships(),
 }))
 
+const mockDeleteObject = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({ data: undefined }),
 	useObjects: () => ({ data: [] }),
 	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+	useDeleteObject: () => ({ mutate: mockDeleteObject, isPending: false }),
 }))
 
 const mockUseFeatureFlag = vi.fn()
@@ -69,7 +74,10 @@ vi.mock('@/lib/analytics', () => ({
 // Layout + heavy child components are irrelevant to the AskBanner wiring
 // assertions; stub them so the route renders without their real dependencies.
 vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: () => null,
+	// Render the actions slot so the delete-affordance tests below can query it;
+	// the AskBanner tests don't assert against page-header content, so exposing
+	// actions here is safe for the whole file.
+	PageHeader: ({ actions }: { actions?: React.ReactNode }) => <>{actions}</>,
 }))
 vi.mock('@/components/loops/loop-flow', () => ({
 	LoopFlow: () => null,
@@ -342,5 +350,61 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 		render(<LoopDetailRoute />)
 
 		expect(screen.queryByRole('region', { name: /Pending ask/i })).not.toBeInTheDocument()
+	})
+})
+
+describe('LoopDetailRoute — delete affordance', () => {
+	beforeEach(() => {
+		mockUseLoops.mockReturnValue({
+			data: [buildLoopSummary({ id: 'loop-1', name: 'Deal pipeline' })],
+		})
+	})
+
+	async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+		await user.click(screen.getByRole('button', { name: 'More' }))
+	}
+
+	it('opens an inline confirm when Delete loop is selected', async () => {
+		const user = userEvent.setup()
+		render(<LoopDetailRoute />)
+
+		await openMenu(user)
+		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+
+		expect(screen.getByText(/Delete this loop\?/i)).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+		expect(mockDeleteObject).not.toHaveBeenCalled()
+	})
+
+	it('fires useDeleteObject with the loop id and navigates back to /loops on success', async () => {
+		mockDeleteObject.mockImplementation((_id: string, opts?: { onSuccess?: () => void }) =>
+			opts?.onSuccess?.(),
+		)
+		const user = userEvent.setup()
+		render(<LoopDetailRoute />)
+
+		await openMenu(user)
+		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+		expect(mockDeleteObject).toHaveBeenCalledWith('loop-1', expect.any(Object))
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/loops',
+			params: { workspaceId: 'ws-1' },
+		})
+	})
+
+	it('cancel dismisses the confirm without firing the delete', async () => {
+		const user = userEvent.setup()
+		render(<LoopDetailRoute />)
+
+		await openMenu(user)
+		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+		expect(screen.queryByText(/Delete this loop\?/i)).not.toBeInTheDocument()
+		expect(mockDeleteObject).not.toHaveBeenCalled()
+		expect(mockNavigate).not.toHaveBeenCalled()
 	})
 })

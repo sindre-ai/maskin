@@ -123,6 +123,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			// names the counterpart — a name that changed with the thread's lead
 			// would make the same control a different control to a screen reader.
 			textareaLabel="Message this conversation"
+			draftKey={conversationId}
 		/>
 	)
 }

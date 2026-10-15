@@ -138,8 +138,47 @@ export type LinkedInSearchPeopleQuery = {
 /** `GET /v2/{account_id}/users/{identifier}` */
 export type LinkedInGetProfileQuery = {
 	account_id: string
-	/** Public identifier ("janedoe"), provider id, or `me`. */
+	/**
+	 * Public identifier ("janedoe"), provider id, or `me`. A member-shaped
+	 * LinkedIn URN is accepted and reduced to its bare provider id before the
+	 * request goes out — see `normalizeProfileIdentifier`.
+	 */
 	identifier: string
+	/**
+	 * Extra profile sections to pull, as Unipile v2 `with_sections` values (e.g.
+	 * `linkedin_experience`). Omit for the base profile: the param is only sent
+	 * when set, because LinkedIn may throttle section pulls and callers that do
+	 * not need them should pay nothing.
+	 */
+	with_sections?: readonly string[]
+}
+
+/**
+ * Member-shaped LinkedIn URN prefixes the provider hands back to callers.
+ * `get_profile` round-trips whatever `search_people` / `list_connections`
+ * surfaced, and those surface URNs — `urn:li:fsd_profile:<id>` off the
+ * provider's own payloads, `urn:li:person:<id>` from fan-out/enumeration. The
+ * `users/{identifier}` route accepts only the bare provider id or the public
+ * handle, so a URN passed verbatim faults with `INVALID_INPUT`.
+ */
+const LINKEDIN_MEMBER_URN_PREFIXES = [
+	'urn:li:fsd_profile:',
+	'urn:li:person:',
+	'urn:li:member:',
+] as const
+
+/**
+ * Reduce a member identifier to the form `users/{identifier}` accepts: strip a
+ * member-shaped LinkedIn URN prefix down to its bare provider id. Public
+ * handles, bare provider ids, and `me` pass through untouched. Pure, so the
+ * outgoing path can be asserted directly.
+ */
+export function normalizeProfileIdentifier(identifier: string): string {
+	const trimmed = identifier.trim()
+	for (const prefix of LINKEDIN_MEMBER_URN_PREFIXES) {
+		if (trimmed.toLowerCase().startsWith(prefix)) return trimmed.slice(prefix.length)
+	}
+	return trimmed
 }
 
 /**
@@ -558,9 +597,18 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		},
 		getProfile(query) {
 			// GET /v2/{account_id}/users/{identifier}; `me` returns the account's
-			// own profile.
+			// own profile. Normalize first: callers round-trip the URN the
+			// provider handed them, and this route rejects a URN passed verbatim
+			// with INVALID_INPUT.
 			const acc = encodeURIComponent(query.account_id)
-			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
+			const identifier = normalizeProfileIdentifier(query.identifier)
+			// Unipile encodes an array query param as one `with_sections` pair
+			// per value.
+			const params = new URLSearchParams()
+			for (const section of query.with_sections ?? []) params.append('with_sections', section)
+			const qs = params.toString()
+			const path = `/v2/${acc}/users/${encodeURIComponent(identifier)}`
+			return call('GET', qs ? `${path}?${qs}` : path)
 		},
 		getManagedCompanyPages(query) {
 			// GET /v2/{account_id}/linkedin/company/pages — pages the connected

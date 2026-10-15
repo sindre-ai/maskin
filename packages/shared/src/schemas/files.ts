@@ -35,9 +35,10 @@ function validateContent(
 ) {
 	if (encoding === 'base64') {
 		if (content.length % 4 !== 0 || !base64Re.test(content)) {
+			const lengthNote = content.length % 4 === 0 ? 'a multiple of 4' : 'not a multiple of 4'
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: 'Content must be base64-encoded',
+				message: `Content must be base64-encoded (received ${content.length} characters; length is ${lengthNote})`,
 				path,
 			})
 			return
@@ -155,6 +156,9 @@ export const fileDetailSchema = fileListItemSchema.extend({
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
 	annotations: fileAnnotationsSchema.default([]),
+	// Set on create/update responses when the save succeeded but the viewer
+	// will not render the content as written (e.g. outside resources in HTML).
+	warning: z.string().optional(),
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>

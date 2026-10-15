@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { sendFromComposer } from '../helpers/composer.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // The plan snapshot `/loops/new` writes to `metadata.plan`. Only loops that
@@ -54,7 +55,7 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 			await expect(composer).toBeVisible({ timeout: 10000 })
 
 			await composer.fill(UTTERANCE)
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, viewport.width)
 
 			// Nothing navigates: the change is read back in place.
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops/${loop.id}`))

@@ -4,11 +4,16 @@ import userEvent from '@testing-library/user-event'
 import { buildTriggerResponse, buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-const { useAutoSave, useEntityEvents } = vi.hoisted(() => {
+const { useAutoSave, useEntityEvents, useFeatureFlag } = vi.hoisted(() => {
 	const useAutoSave = vi.fn()
 	const useEntityEvents = vi.fn()
-	return { useAutoSave, useEntityEvents }
+	const useFeatureFlag = vi.fn()
+	return { useAutoSave, useEntityEvents, useFeatureFlag }
 })
+
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => useFeatureFlag(id),
+}))
 
 vi.mock('@/hooks/use-auto-save', () => ({
 	useAutoSave: (args: unknown) => useAutoSave(args),
@@ -83,6 +88,7 @@ describe('TriggerForm', () => {
 		vi.clearAllMocks()
 		useAutoSave.mockReturnValue({ showSaved: false })
 		useEntityEvents.mockReturnValue({ data: [] })
+		useFeatureFlag.mockReturnValue(false)
 	})
 
 	it('renders the trigger name as an in-place editable heading', () => {
@@ -242,6 +248,52 @@ describe('TriggerForm', () => {
 		expect(screen.getByText('created')).toBeInTheDocument()
 	})
 
+	describe('commented action (trigger_engine_v2 on)', () => {
+		const commentedTrigger = () =>
+			buildTriggerResponse({
+				name: 'Comment trigger',
+				type: 'event',
+				config: { entity_type: 'object', action: 'commented' },
+				targetActorId: 'agent-1',
+			})
+
+		beforeEach(() => {
+			useFeatureFlag.mockImplementation((id: string) => id === 'trigger_engine_v2')
+		})
+
+		it('shows "On comment posted" and lists every action for a saved commented trigger', async () => {
+			const user = userEvent.setup()
+			render(<TriggerForm {...defaultProps} initialValues={commentedTrigger()} isCreated />, {
+				wrapper: TestWrapper,
+			})
+
+			const select = screen.getByLabelText('Changes to')
+			expect(select).toHaveTextContent('On comment posted')
+
+			await user.click(select)
+			const options = screen.getAllByRole('option').map((o) => o.textContent)
+			expect(options).toEqual([
+				expect.stringContaining('created'),
+				expect.stringContaining('updated'),
+				expect.stringContaining('status_changed'),
+				expect.stringContaining('On comment posted'),
+			])
+		})
+
+		it('resets Subject to a real type when the author leaves commented', async () => {
+			const user = userEvent.setup()
+			render(<TriggerForm {...defaultProps} initialValues={commentedTrigger()} isCreated />, {
+				wrapper: TestWrapper,
+			})
+
+			await user.click(screen.getByLabelText('Changes to'))
+			await user.click(screen.getByRole('option', { name: /^updated/ }))
+
+			expect(screen.getByLabelText('Changes to')).toHaveTextContent('updated')
+			expect(screen.getByLabelText('Subject')).toHaveTextContent('Insights')
+		})
+	})
+
 	it('cron type shows frequency buttons', async () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
@@ -346,6 +398,62 @@ describe('TriggerForm', () => {
 		rerender(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />)
 
 		expect(screen.getByDisplayValue('Original name edited locally')).toBeInTheDocument()
+	})
+
+	// Agents create triggers via MCP, which writes the destination status filter
+	// as `config.filter.status` — NOT `config.to_status`. Before the fix the
+	// summary + trigger row read only the form's `from_status`/`to_status`
+	// fields, so every agent-authored status_changed trigger rendered as
+	// "changes from any status to any status".
+	it('displays filter.status (MCP shape) as the "to" status in the summary', () => {
+		const workspaceWithStatuses = buildWorkspaceWithRole({
+			settings: { statuses: { insight: ['new', 'in_progress', 'done'] } },
+		})
+		const trigger = buildTriggerResponse({
+			type: 'event',
+			config: {
+				entity_type: 'insight',
+				action: 'status_changed',
+				filter: { status: 'in_progress' },
+			},
+			targetActorId: 'agent-2',
+		})
+
+		render(
+			<TriggerForm
+				{...defaultProps}
+				workspace={workspaceWithStatuses}
+				initialValues={trigger}
+				isCreated
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		// Summary text is the "What happens" plain-language read-back; also
+		// verify the target agent (agent-2 = Analyst) is picked, not agents[0].
+		expect(
+			screen.getByText(/changes from any status to in_progress.*"Analyst".*prompted/),
+		).toBeInTheDocument()
+	})
+
+	// A rendered snapshot cannot lock in the initialValues-arrives-late race
+	// on its own, so simulate it with a rerender: first mount with no
+	// initialValues (fresh, cache-miss), then rerender with the trigger loaded.
+	it('re-adopts targetActorId when initialValues arrives after the form mounted', () => {
+		const { rerender } = render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		// Zero state: no server row → useState fell back to agents[0] = Scout.
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Scout')
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				initialValues={buildTriggerResponse({ targetActorId: 'agent-2' })}
+				isCreated
+			/>,
+		)
+
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Analyst')
 	})
 
 	it('shows error message when error prop set', () => {

@@ -189,6 +189,17 @@
 	--color-type-bet-text: var(--tp-bet-text);
 	--color-type-task-bg: var(--tp-task-bg);
 	--color-type-task-text: var(--tp-task-text);
+	/* S2 · provenance graph endpoints (bet 34706e2f) get their own TypeBadge
+	 * variants so a `spawned` / `produced_by` edge row reads as a first-class
+	 * node not a generic muted chip. Palettes stay inside the existing v2
+	 * zinc / cyan / fuchsia families (per §Design system reuse); text stops
+	 * hit ≥ 4.5:1 in both modes. */
+	--color-type-file-bg: var(--tp-file-bg);
+	--color-type-file-text: var(--tp-file-text);
+	--color-type-conversation-bg: var(--tp-conversation-bg);
+	--color-type-conversation-text: var(--tp-conversation-text);
+	--color-type-session-bg: var(--tp-session-bg);
+	--color-type-session-text: var(--tp-session-text);
 
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
@@ -414,6 +425,12 @@
 	--tp-bet-text: #4338ca;
 	--tp-task-bg: #f4f4f5;
 	--tp-task-text: #71717a;
+	--tp-file-bg: #ecfeff;
+	--tp-file-text: #0e7490;
+	--tp-conversation-bg: #cffafe;
+	--tp-conversation-text: #155e75;
+	--tp-session-bg: #fae8ff;
+	--tp-session-text: #86198f;
 
 	/* Sidebar */
 	--sidebar: #fafafa;
@@ -552,6 +569,12 @@
 	--tp-bet-text: #a5b4fc;
 	--tp-task-bg: #27272a;
 	--tp-task-text: #a1a1aa;
+	--tp-file-bg: #083344;
+	--tp-file-text: #67e8f9;
+	--tp-conversation-bg: #164e63;
+	--tp-conversation-text: #a5f3fc;
+	--tp-session-bg: #4a044e;
+	--tp-session-text: #f0abfc;
 
 	--sidebar: #0a0a0b;
 	--sidebar-foreground: #fafafa;
@@ -786,5 +809,42 @@
 		background-color: var(--muted);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
+	}
+
+	/* Origin deep-link — the message that spawned a session, pulsing once on
+	   arrival + carrying a persistent vertical brand rail on its right edge.
+	   Both attributes are stamped by `useOriginDeepLinkScroll` in the chat
+	   detail route from `?msg=<id>`, and read here as CSS selectors so no
+	   per-message-bubble prop threading is needed. The pulse attribute is
+	   removed after 2.2s so it never loops; the spawn attribute persists for
+	   the duration of the page view.
+
+	   `position: relative` is added so the ::after rule can pin the bar to
+	   the wrapper's right edge — the wrapper is already a flex column and
+	   otherwise has no positioning context. */
+	[data-origin-spawn] {
+		position: relative;
+	}
+	[data-origin-spawn]::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: -6px;
+		width: 3px;
+		border-radius: 2px;
+		background-color: var(--brand);
+		pointer-events: none;
+	}
+	[data-origin-pulse] {
+		animation: origin-spawn-pulse 2.2s ease-out 1;
+	}
+	@keyframes origin-spawn-pulse {
+		0% {
+			background-color: color-mix(in oklab, var(--brand) 22%, transparent);
+		}
+		100% {
+			background-color: color-mix(in oklab, var(--brand) 0%, transparent);
+		}
 	}
 }

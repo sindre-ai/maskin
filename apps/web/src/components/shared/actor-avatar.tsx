@@ -35,10 +35,16 @@ const AVATAR_PALETTE_STRONG = [
 /** Tint plate (the default everywhere) vs the solid plate v2 uses for a row anchor. */
 export type ActorAvatarTone = 'subtle' | 'strong'
 
+/** Strip everything that is not a letter or digit so a bracketed qualifier
+ *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
-	const words = trimmed.split(/\s+/).filter(Boolean)
+	const words = trimmed
+		.split(/\s+/)
+		.map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
+		.filter(Boolean)
+	if (words.length === 0) return '?'
 	if (words.length >= 2) {
 		const first = words[0]?.[0] ?? ''
 		const second = words[1]?.[0] ?? ''
@@ -149,7 +155,10 @@ export function ActorAvatar({
 					className={cn(
 						baseClasses,
 						'cursor-pointer transition-opacity hover:opacity-80',
-						'after:absolute after:left-1/2 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""]',
+						// Anchored to the right edge so the 44px hit area only grows leftward: a
+						// centred one pokes past the button's right edge and counts as horizontal
+						// overflow on every ancestor scroller.
+						'after:absolute after:right-0 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-y-1/2 after:content-[""]',
 					)}
 				>
 					{content}

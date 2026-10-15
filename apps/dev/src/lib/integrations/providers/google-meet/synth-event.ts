@@ -1,7 +1,9 @@
 import type { Database } from '@maskin/db'
-import { events, integrations, objects, relationships } from '@maskin/db/schema'
+import { integrations, objects, relationships } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import { capturePosthogRelationshipCreated, recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
+import { derivePairEndpointKinds } from '../../../relationships-endpoint-kind'
 import type { IntegrationConfig } from '../../../types'
 
 /**
@@ -201,7 +203,7 @@ export async function synthesizeMeetOnlyWrappedEvent(
 			if (!inserted) throw new Error('event object insert returned no row')
 			createdEventId = inserted.id
 
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: 'status_changed',
@@ -217,13 +219,32 @@ export async function synthesizeMeetOnlyWrappedEvent(
 				},
 			})
 
+			// meetingId + the freshly-inserted event id are both objects today,
+			// but the centralised derive keeps this writer honest if either ever
+			// resolves to a file/session/etc. — no re-audit needed when Slice 2
+			// widens the union.
+			const { sourceType, targetType } = await derivePairEndpointKinds(
+				tx,
+				workspaceId,
+				meetingId,
+				inserted.id,
+			)
 			await tx.insert(relationships).values({
-				sourceType: 'object',
+				sourceType,
 				sourceId: meetingId,
-				targetType: 'object',
+				targetType,
 				targetId: inserted.id,
 				type: 'relates_to',
 				createdBy: actorId,
+			})
+
+			// PostHog · one capture per relationships write, source of truth
+			// for the ship-metric across every prod writer. Fire-and-forget.
+			capturePosthogRelationshipCreated(actorId, {
+				workspaceId,
+				sourceType: 'object',
+				targetType: 'object',
+				type: 'relates_to',
 			})
 		})
 	} catch (err) {

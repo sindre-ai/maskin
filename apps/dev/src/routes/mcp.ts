@@ -46,8 +46,7 @@ interface JsonRpcMessage {
 
 app.post('/', async (c) => {
 	const url = new URL(c.req.url, 'http://localhost')
-	const apiKey =
-		c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? ''
+	const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
 	// Resolved before the server is built so it can be threaded into telemetry:
 	// the in-process MCP server would otherwise stamp its events with the app
@@ -69,6 +68,13 @@ app.post('/', async (c) => {
 	// out of the per-SESSION one, which is the honest reading of "we do not
 	// know who this was".
 	const session = resolveSessionIdentity(c.req.header.bind(c.req))
+	// Triggering-event id: read the same way as X-Maskin-Session-Id — the
+	// container's `MASKIN_TRIGGERING_EVENT_ID` env is substituted into the
+	// header by agent-run.sh's `envsubst` pass. When the session wasn't
+	// dispatched from a comment, session-manager.ts doesn't stamp the header
+	// at all, so we see nothing here and the create_comment default reverts to
+	// "post as a new top-level comment", matching pre-existing behaviour.
+	const triggeringEventId = resolveTriggeringEventId(c.req.header.bind(c.req))
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey,
@@ -83,6 +89,11 @@ app.post('/', async (c) => {
 			session.source === 'maskin-session' || session.source === 'unknown'
 				? session.source
 				: ('process' as const),
+		triggeringEventId,
+		// Forward the caller's session id so create_session can link
+		// the helper to its sender. Only a uuid-shaped header counts, and it is
+		// still just a claim: POST /api/sessions checks it belongs to the caller.
+		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
@@ -305,6 +316,25 @@ export function resolveSessionIdentity(
 		id: `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
 		source: 'unknown',
 	}
+}
+
+// Triggering-event id parsing mirrors `usableSessionId`: reject an unexpanded
+// `${...}` placeholder (a caller who never went through the agent-run.sh
+// envsubst pass) and reject anything that isn't a positive integer, so the
+// MCP tool layer never defaults `parent_event_id` to a bogus value. Any
+// non-integer or non-positive value is treated as absent — the caller falls
+// back to the pre-existing "post as a new top-level comment" behaviour.
+export function resolveTriggeringEventId(
+	header: (name: string) => string | undefined,
+): number | undefined {
+	const raw = header('X-Maskin-Triggering-Event-Id')?.trim()
+	if (!raw) return undefined
+	if (UNEXPANDED_PLACEHOLDER_RE.test(raw)) return undefined
+	const parsed = Number(raw)
+	if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+		return undefined
+	}
+	return parsed
 }
 
 // ── Trace + misfire emission ────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
@@ -56,6 +57,7 @@ function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterIte
 }
 
 function MarketplaceRoute() {
+	useDocumentTitle('Marketplace')
 	const { workspaceId } = useWorkspace()
 	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')

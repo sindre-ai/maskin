@@ -6,7 +6,8 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
-import { ApiError, api } from '@/lib/api'
+import { useDocumentTitle } from '@/hooks/use-document-title'
+import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
@@ -22,6 +23,7 @@ function AgentDetailPage() {
 	const { workspaceId } = useWorkspace()
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
+	useDocumentTitle(agentListItem?.name)
 	const createActor = useCreateActor(workspaceId)
 	const updateActor = useUpdateActor(workspaceId)
 	const isCreatedRef = useRef(false)
@@ -50,27 +52,9 @@ function AgentDetailPage() {
 				id: agentId,
 				type: 'agent',
 				name: data.name,
+				// The server adds the agent to this workspace in the same request.
+				workspace_id: workspaceId,
 			})
-			// Auto-add agent to workspace members. A conflict means the membership
-			// already exists, which is the one benign outcome — anything else (403,
-			// 404, 5xx, network) leaves an agent that is not a workspace member, so
-			// it must be surfaced rather than swallowed under a success toast.
-			try {
-				await api.workspaces.members.add(workspaceId, {
-					actor_id: agentId,
-					role: 'member',
-				})
-			} catch (err) {
-				const isDuplicate = err instanceof ApiError && (err.status === 409 || err.status === 400)
-				if (!isDuplicate) {
-					toast.error(
-						`Agent created, but adding it to the workspace failed: ${
-							err instanceof Error ? err.message : 'unknown error'
-						}`,
-					)
-					return
-				}
-			}
 			toast.success('Agent created')
 		} catch {
 			// The create itself failed. Allow a retry, and let the error surface

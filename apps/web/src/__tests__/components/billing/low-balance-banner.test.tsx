@@ -50,6 +50,7 @@ function build(overrides: Partial<BillingUsageResponse> = {}): BillingUsageRespo
 		stripe_subscription_id: null,
 		credit_balance_cents: 185,
 		sum_topups_last_30d_cents: 0,
+		credit_topup_available: true,
 		linkedin_identity_addon: null,
 		...overrides,
 	}
@@ -100,6 +101,19 @@ describe('LowBalanceBanner', () => {
 			</TestWrapper>,
 		)
 		expect(screen.queryByTestId('low-balance-banner')).not.toBeInTheDocument()
+	})
+
+	it('does not render when top-up is unavailable, since the button would go nowhere', () => {
+		mockUseBillingUsage.mockReturnValue({
+			data: build({ credit_balance_cents: 185, credit_topup_available: false }),
+		})
+		render(
+			<TestWrapper>
+				<LowBalanceBanner workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+		expect(screen.queryByTestId('low-balance-banner')).not.toBeInTheDocument()
+		expect(trackLowBalanceBannerShown).not.toHaveBeenCalled()
 	})
 
 	it('does not render while the usage query is still loading', () => {

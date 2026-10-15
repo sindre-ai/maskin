@@ -247,4 +247,44 @@ test.describe('Loop detail page', () => {
 		})
 		await expect(page).not.toHaveURL(new RegExp(`${account.workspaceId}/objects/${loop.id}`))
 	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`removes a loop and returns to the index @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Retire this loop',
+				status: 'learning',
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await expect(page.getByRole('heading', { name: 'Retire this loop' })).toBeVisible({
+				timeout: 10000,
+			})
+
+			// Delete is a destructive item inside the header dropdown, next to
+			// Pause/Resume. Exact — the app-shell also renders a "More ways to
+			// start" control that a substring match would also pick up.
+			await page.getByRole('button', { name: 'More', exact: true }).click()
+			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+
+			// Inline confirm mirrors PR #1667 — Cancel is a real escape hatch, the
+			// pill and dropdown come back afterwards.
+			await expect(page.getByText('Delete this loop?')).toBeVisible()
+			await page.getByRole('button', { name: 'Cancel' }).click()
+			await expect(page.getByTestId('loop-pill')).toBeVisible()
+
+			// Confirming actually removes the loop and lands back on the /loops
+			// index without it in the list.
+			await page.getByRole('button', { name: 'More', exact: true }).click()
+			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+			await page.getByRole('button', { name: 'Confirm' }).click()
+
+			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/?$`), {
+				timeout: 15_000,
+			})
+			await expect(page.getByRole('link', { name: /Retire this loop/ })).toHaveCount(0)
+		})
+	}
 })

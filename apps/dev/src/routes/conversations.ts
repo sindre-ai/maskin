@@ -1,7 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	conversationParticipants,
 	conversations,
@@ -22,6 +21,7 @@ import {
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -30,6 +30,7 @@ import {
 	errorSchema,
 	idParamSchema,
 	messageResponseSchema,
+	messageWithSpawnedSessionsSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -37,6 +38,7 @@ import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
+import { loadSpawnedSessionsByMessage } from '../services/spawned-sessions'
 
 type Env = {
 	Variables: {
@@ -278,7 +280,7 @@ app.openapi(createConversationRoute, (async (c) => {
 				.where(eq(conversations.id, created.id))
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'conversation_created',
@@ -547,7 +549,7 @@ app.openapi(updateConversationRoute, (async (c) => {
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_updated',
@@ -619,7 +621,7 @@ app.openapi(addParticipantsRoute, (async (c) => {
 
 	await addParticipantsToConversation(db, id, body.actor_ids, callerId)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_participant_added',
@@ -685,7 +687,7 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		.returning({ actorId: conversationParticipants.actorId })
 
 	if (removed.length > 0) {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerId,
 			action: 'conversation_participant_removed',
@@ -710,7 +712,7 @@ const listMessagesRoute = createRoute({
 			content: {
 				'application/json': {
 					schema: z.object({
-						messages: z.array(messageResponseSchema),
+						messages: z.array(messageWithSpawnedSessionsSchema),
 						has_more: z.boolean(),
 					}),
 				},
@@ -760,8 +762,24 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const hasMore = rows.length > query.limit
 	const page = rows.slice(0, query.limit)
 
+	// Participant-scoped delegation strip. `loadSpawnedSessionsByMessage` returns
+	// empty buckets for a caller who is not a participant, so a non-member sees the
+	// message list with no sub-agent prompts attached.
+	const spawned = await loadSpawnedSessionsByMessage(db, {
+		conversationId: id,
+		workspaceId,
+		messageIds: page.map((m) => m.id),
+		actorId: callerId,
+	})
+
 	return c.json({
-		messages: page.map((m) => serialize(m)) as z.infer<typeof messageResponseSchema>[],
+		messages: page.map(
+			(m) =>
+				({
+					...serialize(m),
+					spawned_sessions: spawned.get(m.id) ?? [],
+				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
+		),
 		has_more: hasMore,
 	})
 }) as RouteHandler<typeof listMessagesRoute, Env>)
@@ -861,7 +879,7 @@ app.openapi(postMessageRoute, (async (c) => {
 			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
 			if (toAdd.length > 0) {
 				await addParticipantsToConversation(db, id, toAdd, callerId)
-				await db.insert(events).values({
+				await recordEvent(db, {
 					workspaceId,
 					actorId: callerId,
 					action: 'conversation_participant_added',
@@ -963,7 +981,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.returning()
 	if (!updated) throw new Error('Failed to update message')
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'message_updated',
@@ -1142,7 +1160,7 @@ app.openapi(updateMeRoute, (async (c) => {
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_participant_state_updated',

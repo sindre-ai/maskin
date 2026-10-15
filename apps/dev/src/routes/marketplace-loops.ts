@@ -29,6 +29,7 @@ import {
 } from '@maskin/db/schema'
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -753,7 +754,7 @@ app.openapi(uninstallItemRoute, (async (c) => {
 			}
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'deleted',
@@ -900,7 +901,7 @@ app.openapi(installItemRoute, (async (c) => {
 					.returning({ id: actors.id, name: actors.name })
 				if (!a) throw new Error('Actor insert returned no row')
 				await tx.insert(workspaceMembers).values({ workspaceId, actorId: a.id, role: 'member' })
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
@@ -964,7 +965,7 @@ app.openapi(installItemRoute, (async (c) => {
 					.values(buildTriggerInsert(workspaceId, rewrittenSnapshot, triggerMeta, actorId))
 					.returning({ id: triggers.id, name: triggers.name })
 				if (!t) throw new Error('Trigger insert returned no row')
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
@@ -1016,7 +1017,7 @@ app.openapi(installItemRoute, (async (c) => {
 					skillId,
 					(snapshot.content as string) ?? '',
 				)
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
@@ -1053,7 +1054,7 @@ app.openapi(installItemRoute, (async (c) => {
 					.values(buildIntegrationInsert(workspaceId, snapshot, meta, actorId))
 					.returning({ id: integrations.id })
 				if (!i) throw new Error('Integration insert returned no row')
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',

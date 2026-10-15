@@ -27,28 +27,29 @@ export const config: ProviderConfig = {
 
 	// Served in-process at /api/integrations/linkedin-unipile/mcp/:instanceSlug —
 	// one MCP endpoint per connected LinkedIn identity (personal profile plus
-	// each admined page). The provider surfaces one canonical `server` spec here
-	// for the GET /api/integrations/providers discovery contract, but this shape
-	// is NOT what the frontend Quick Add uses — the mcp-servers Quick Add UI
-	// enumerates per-identity endpoints from /api/integrations/linkedin-unipile/identities
-	// and writes one mcpServers entry per identity. `autoInject` is false on
-	// purpose (Magnus 2026-09-14 reversal of the workspace-wide auto-inject that
-	// shipped in PR #1595 / bet 56c2ffd7): a workspace with many agents does not
-	// want every agent silently attached to every LinkedIn identity — the
-	// operator picks per-agent, per-identity. envKey is retained for symmetry
-	// with other providers; the MCP route authenticates on the Maskin API key
-	// in the Authorization header, not on a per-provider container env var.
+	// each admined page). `autoInject` is false on purpose (Magnus 2026-09-14
+	// reversal of the workspace-wide auto-inject that shipped in PR #1595 / bet
+	// 56c2ffd7): a workspace with many agents does not want every agent silently
+	// attached to every LinkedIn identity — the operator picks per-agent, per-
+	// identity. envKey is retained for symmetry with other providers; the MCP
+	// route authenticates on the Maskin API key in the Authorization header,
+	// not on a per-provider container env var.
+	//
+	// Deliberately no `server`, matching github. linkedin-unipile is multi-
+	// identity: the frontend Quick Add UI enumerates identities from
+	// /api/integrations/linkedin-unipile/identities and writes one mcpServers
+	// entry per identity, each targeting the per-slug URL. There is no single
+	// paste-ready `.../mcp` shape to hand out — the aggregate URL is a
+	// deprecated, empty-tool endpoint (see routes/integrations-linkedin-unipile-mcp.ts)
+	// and advertising it as the canonical discovery answer would silently trap
+	// any non-browser client that pastes the discovery spec verbatim. Discovery
+	// clients see `mcp: { envKey, autoInject: false }` with no `server` — the
+	// same "no single spec" signal github uses for its per-installation surface.
+	// The route test enumerating which providers omit `server` in
+	// `integrations.test.ts` is what holds this line.
 	mcp: {
 		envKey: 'LINKEDIN_UNIPILE_TOKEN',
 		autoInject: false,
-		server: {
-			type: 'http',
-			url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
-			headers: {
-				Authorization: 'Bearer ${MASKIN_API_KEY}',
-				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-			},
-		},
 	},
 
 	externalIdDisplay: 'installation',

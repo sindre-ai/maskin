@@ -90,7 +90,7 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).toContain('run_agent')
+		expect(registeredNames).not.toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -775,6 +775,37 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
 			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
 		})
+
+		it('forwards trigger_id, before and verbose=true to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({
+				trigger_id: '3f6fd7e1-92f3-46d0-adfb-f93bfea9f810',
+				before: '2026-06-30T12:00:00.000Z',
+				verbose: true,
+			})
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			const calledUrl = sessionsCall?.[0] as string
+			expect(calledUrl).toContain('trigger_id=3f6fd7e1-92f3-46d0-adfb-f93bfea9f810')
+			expect(calledUrl).toContain('before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('verbose=true')
+		})
+
+		it('omits verbose from the query when false so the lean default applies', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({ verbose: false })
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			expect(sessionsCall?.[0] as string).not.toContain('verbose=')
+		})
 	})
 
 	describe('update_objects handler — file attachments', () => {
@@ -1001,45 +1032,254 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('create_actor handler', () => {
-		it('POSTs to /api/actors with skipAuth', async () => {
-			mockFetchSuccess({ id: 'actor-new', name: 'Bot', type: 'agent' })
+	describe('create_relationship handler', () => {
+		const OBJ_A = '11111111-1111-4111-8111-111111111111'
+		const OBJ_B = '22222222-2222-4222-8222-222222222222'
+		const FILE_A = '33333333-3333-4333-8333-333333333333'
+		const FILE_B = '44444444-4444-4444-8444-444444444444'
 
-			const handler = getHandler('create_actor')
-			await handler({ type: 'agent', name: 'Bot' })
+		/**
+		 * Mock a workspace where two ids live in `objects` and two ids live in
+		 * `files`. The MCP tool preflights each endpoint by hitting
+		 * `/api/files/:id` first and falling back to `/api/objects/:id`; both
+		 * routes 404 when the id doesn't belong. Anything else 500s.
+		 */
+		function mockWorkspace(existing: Set<string>, filesSet: Set<string>) {
+			const relRows: Array<Record<string, unknown>> = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const filesMatch = u.match(/\/api\/files\/([0-9a-fA-F-]{36})$/)
+				if (filesMatch) {
+					const id = filesMatch[1] as string
+					if (filesSet.has(id)) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve({ id, name: `file-${id}` }),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 404,
+						headers: new Headers(),
+						text: () => Promise.resolve('{"error":{"code":"NOT_FOUND","message":"not found"}}'),
+					} as unknown as Response
+				}
+				const objectsMatch = u.match(/\/api\/objects\/([0-9a-fA-F-]{36})$/)
+				if (objectsMatch) {
+					const id = objectsMatch[1] as string
+					if (existing.has(id) && !filesSet.has(id)) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve({ id, title: `obj-${id}` }),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 404,
+						headers: new Headers(),
+						text: () => Promise.resolve('{"error":{"code":"NOT_FOUND","message":"not found"}}'),
+					} as unknown as Response
+				}
+				if (u.endsWith('/api/relationships') && (init?.method ?? 'GET') === 'POST') {
+					const body = JSON.parse((init as RequestInit).body as string) as {
+						source_id: string
+						target_id: string
+						type: string
+					}
+					// Idempotency mirror: (source_id, target_id, type) unique.
+					const existing = relRows.find(
+						(r) =>
+							r.sourceId === body.source_id &&
+							r.targetId === body.target_id &&
+							r.type === body.type,
+					)
+					const row = existing ?? {
+						id: `rel-${relRows.length + 1}`,
+						sourceId: body.source_id,
+						targetId: body.target_id,
+						type: body.type,
+						sourceType: filesSet.has(body.source_id) ? 'file' : 'object',
+						targetType: filesSet.has(body.target_id) ? 'file' : 'object',
+						createdAt: '2026-09-22T00:00:00.000Z',
+						sourceTitle: filesSet.has(body.source_id)
+							? `file-${body.source_id}`
+							: `obj-${body.source_id}`,
+						targetTitle: filesSet.has(body.target_id)
+							? `file-${body.target_id}`
+							: `obj-${body.target_id}`,
+					}
+					if (!existing) relRows.push(row)
+					return {
+						ok: true,
+						status: 201,
+						headers: new Headers(),
+						json: () => Promise.resolve(row),
+					} as Response
+				}
+				return {
+					ok: false,
+					status: 500,
+					headers: new Headers(),
+					text: () => Promise.resolve('{"error":{"code":"INTERNAL_ERROR","message":"unexpected"}}'),
+				} as unknown as Response
+			})
+			return { relRows }
+		}
 
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/actors',
-				expect.objectContaining({ method: 'POST' }),
-			)
+		it.each([
+			['object', 'object', OBJ_A, OBJ_B],
+			['object', 'file', OBJ_A, FILE_A],
+			['file', 'object', FILE_A, OBJ_A],
+			['file', 'file', FILE_A, FILE_B],
+		])(
+			'round-trips a %s → %s pair — server derives types from ids',
+			async (_sourceKind, _targetKind, sourceId, targetId) => {
+				mockWorkspace(new Set([OBJ_A, OBJ_B, FILE_A, FILE_B]), new Set([FILE_A, FILE_B]))
+				const handler = getHandler('create_relationship')
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					source_id: sourceId,
+					target_id: targetId,
+					type: 'relates_to',
+				})) as { structuredContent: { relationship: Record<string, unknown> } }
+				expect(result.structuredContent.relationship.sourceId).toBe(sourceId)
+				expect(result.structuredContent.relationship.targetId).toBe(targetId)
+
+				// The POST body must NOT reflect caller-supplied labels; the
+				// preflight resolved kinds from the ids and passed them as
+				// placeholders the server derives past anyway.
+				const relCall = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							(c[0] as string).endsWith('/api/relationships') &&
+							(c[1] as RequestInit).method === 'POST',
+					)
+				expect(relCall).toBeDefined()
+				const relBody = JSON.parse((relCall?.[1] as RequestInit).body as string)
+				expect(relBody.source_id).toBe(sourceId)
+				expect(relBody.target_id).toBe(targetId)
+				expect(relBody.type).toBe('relates_to')
+			},
+		)
+
+		it('returns 404 when source_id belongs to neither an object nor a file', async () => {
+			mockWorkspace(new Set([OBJ_A]), new Set())
+			const handler = getHandler('create_relationship')
+			await expect(
+				handler({
+					workspace_id: 'ws-1',
+					source_id: OBJ_B,
+					target_id: OBJ_A,
+					type: 'relates_to',
+				}),
+			).rejects.toThrow(/404/)
 		})
 
-		it('adds to workspace when workspace_id provided', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/actors')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve({ id: 'actor-new' }),
-					} as Response
-				}
-				if (u.endsWith('/api/workspaces/ws-123/members')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve({}),
-					} as Response
-				}
-				if (u.endsWith('/api/workspaces')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
-					} as Response
-				}
-				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+		it('returns 404 when target_id is unknown', async () => {
+			mockWorkspace(new Set([OBJ_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+			await expect(
+				handler({
+					workspace_id: 'ws-1',
+					source_id: OBJ_A,
+					target_id: OBJ_B,
+					type: 'relates_to',
+				}),
+			).rejects.toThrow(/404/)
+		})
+
+		it('is idempotent — double-call with identical params returns the same row', async () => {
+			const { relRows } = mockWorkspace(new Set([OBJ_A, FILE_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+
+			const first = (await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+			})) as { structuredContent: { relationship: { id: string } } }
+			const second = (await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+			})) as { structuredContent: { relationship: { id: string } } }
+
+			expect(first.structuredContent.relationship.id).toBe(second.structuredContent.relationship.id)
+			expect(relRows).toHaveLength(1)
+		})
+
+		it('ignores caller-supplied source_type / target_type labels', async () => {
+			mockWorkspace(new Set([OBJ_A, FILE_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+			await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+				// These would be stripped by the schema and never reach the
+				// wire. The handler derives kinds from the id itself.
+				source_type: 'anything',
+				target_type: 'anything-else',
 			})
+			const relCall = vi
+				.mocked(fetch)
+				.mock.calls.find(
+					(c) =>
+						(c[0] as string).endsWith('/api/relationships') &&
+						(c[1] as RequestInit).method === 'POST',
+				)
+			const relBody = JSON.parse((relCall?.[1] as RequestInit).body as string)
+			expect(relBody.source_type).toBe('object')
+			expect(relBody.target_type).toBe('file')
+		})
+	})
+
+	describe('create_actor handler', () => {
+		// Collects every request the handler makes, answering /api/actors with a
+		// created agent and everything else with an empty object.
+		function recordRequests() {
+			const requests: Array<{
+				url: string
+				method?: string
+				headers: Record<string, string>
+				body: Record<string, unknown> | undefined
+			}> = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const req = init as RequestInit | undefined
+				requests.push({
+					url: String(url),
+					method: req?.method,
+					headers: (req?.headers ?? {}) as Record<string, string>,
+					body: req?.body ? JSON.parse(req.body as string) : undefined,
+				})
+				const isCreate = String(url).endsWith('/api/actors') && req?.method === 'POST'
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(isCreate ? { id: 'actor-new' } : {}),
+				} as Response
+			})
+			return requests
+		}
+
+		it('sends the API key and workspace_id on the agent create call', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.method).toBe('POST')
+			expect(create?.headers.Authorization).toBe('Bearer ank_testkey123')
+			expect(create?.body).toMatchObject({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
+		})
+
+		it('does not add the agent to the workspace in a second call, and reports member', async () => {
+			const requests = recordRequests()
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1048,20 +1288,86 @@ describe('tool handlers', () => {
 				workspace_id: 'ws-123',
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/workspaces/ws-123/members',
-				expect.objectContaining({ method: 'POST' }),
-			)
-
+			const creates = requests.filter((r) => r.url.endsWith('/api/actors') && r.method === 'POST')
+			expect(creates).toHaveLength(1)
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.workspace_id).toBe('ws-123')
 			expect(parsed.role).toBe('member')
 		})
 
+		it('ignores the role argument for agents: no role is sent and member is reported', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				role: 'admin',
+			})) as { content: Array<{ text: string }> }
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).not.toHaveProperty('role')
+			expect(JSON.parse(result.content[0].text).role).toBe('member')
+		})
+
+		it('sends no tools or llm_config unless the caller supplied them', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).not.toHaveProperty('tools')
+			expect(create?.body).not.toHaveProperty('llm_config')
+			expect(create?.body).not.toHaveProperty('llm_provider')
+		})
+
+		it('uses the default workspace when an agent create names none', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot' })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).toMatchObject({ workspace_id: 'ws-default-123' })
+		})
+
+		it('sends auto_create_workspace agents with the key and no workspace_id', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({ type: 'agent', name: 'Bot', auto_create_workspace: true })
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.headers.Authorization).toBe('Bearer ank_testkey123')
+			expect(create?.body).not.toHaveProperty('workspace_id')
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
+		})
+
+		it('still signs a human up without a key and adds them with the add-member call', async () => {
+			const requests = recordRequests()
+
+			const handler = getHandler('create_actor')
+			await handler({
+				type: 'human',
+				name: 'Pat',
+				email: 'pat@example.com',
+				workspace_id: 'ws-123',
+				role: 'admin',
+			})
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).not.toHaveProperty('workspace_id')
+			const add = requests.find((r) => r.url.endsWith('/api/workspaces/ws-123/members'))
+			expect(add?.body).toEqual({ actor_id: 'actor-new', role: 'admin' })
+		})
+
 		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
-			// config.defaultWorkspaceId is set, so create_actor also fires a
-			// members POST — isolate the /api/actors call specifically rather
-			// than assuming it's the only (or last) fetch call.
+			// create_actor also makes follow-up calls (setup block) — isolate the
+			// /api/actors call specifically rather than assuming it's the only
+			// (or last) fetch call.
 			let actorsPostBody: unknown
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				if (String(url) === 'http://localhost:3000/api/actors') {
@@ -1072,7 +1378,7 @@ describe('tool handlers', () => {
 						json: async () => ({
 							id: 'actor-new',
 							llm_provider: 'anthropic',
-							llm_config: { model: 'claude-opus-4-6' },
+							llm_config: { model: 'claude-sonnet-5-5' },
 						}),
 					} as Response
 				}
@@ -1083,16 +1389,16 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+				llm_config: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
 			})) as { content: Array<{ text: string }> }
 
 			expect(actorsPostBody).toMatchObject({
 				llm_provider: 'anthropic',
-				llm_config: { model: 'claude-opus-4-6' },
+				llm_config: { model: 'claude-sonnet-5-5' },
 			})
 			// The two API columns come back merged into one llm_config field, mirroring the input shape.
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
 			expect(parsed.llm_provider).toBeUndefined()
 		})
 
@@ -1978,6 +2284,27 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('create_session handler: notify_on_complete', () => {
+		const postedBody = (spy: { mock: { calls: unknown[][] } }) =>
+			JSON.parse(((spy.mock.calls[0] as [string, { body: string }])[1] as { body: string }).body)
+
+		it('flag on: sent to the create route', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				notify_on_complete: true,
+			})
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
+		})
+
+		it('flag off: not in the body, so the create route sees what it saw before', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
+			expect(postedBody(vi.mocked(fetch))).not.toHaveProperty('notify_on_complete')
+		})
+	})
+
 	describe('create_session handler', () => {
 		it('POSTs to /api/sessions', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
@@ -1986,7 +2313,6 @@ describe('tool handlers', () => {
 			await handler({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
-				auto_start: true,
 			})
 
 			expect(fetch).toHaveBeenCalledWith(
@@ -1994,9 +2320,287 @@ describe('tool handlers', () => {
 				expect.objectContaining({ method: 'POST' }),
 			)
 		})
+
+		it('forwards spawned_by_message_id to the create route', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = vi.mocked(fetch)
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				spawned_by_message_id: 42,
+			})
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body.spawned_by_message_id).toBe(42)
+		})
+
+		it('without wait: returns the bare session row and keeps wait off the wire', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = vi.mocked(fetch)
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body).not.toHaveProperty('wait')
+			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('logs')
+			expect(fetchSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('with wait: keeps wait off the create route', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-w', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-w', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+				wait: true,
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+			await resultPromise
+
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
+			expect(body).not.toHaveProperty('wait')
+		})
 	})
 
-	describe('run_agent handler', () => {
+	describe('create_session handler (wait: true): notify_on_complete', () => {
+		type Call = [string, { method?: string; body?: string }]
+		const callsWith = (spy: { mock: { calls: unknown[][] } }, method: string) =>
+			(spy.mock.calls as Call[]).filter(([, init]) => init?.method === method)
+
+		const neverFinishes = (id: string) =>
+			vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'pending' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'running' }),
+				} as Response)
+
+		it('flag on and the wait times out: asks for the return with one PATCH, nothing on the create call', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n1')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('registered')
+
+			const [create] = callsWith(fetchSpy, 'POST')
+			expect(JSON.parse(create[1].body as string)).not.toHaveProperty('notify_on_complete')
+			const patches = callsWith(fetchSpy, 'PATCH')
+			expect(patches).toHaveLength(1)
+			expect(patches[0][0]).toBe('http://localhost:3000/api/sessions/sess-n1')
+			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
+		})
+
+		it('flag on and the helper finishes inside the wait: no PATCH, the caller has the result inline', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n2', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n2', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed).not.toHaveProperty('notify_on_complete')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+		})
+
+		it('the wait stops at the 660s limit, still registering the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n5')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(659_000)
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.settled).toBe(false)
+			expect(parsed.session_id).toBe('sess-n5')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
+		it('survives a failed status check and still returns the result', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n6', status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 502,
+					text: () => Promise.resolve('bad gateway'),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n6', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+			})
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed.settled).toBe(true)
+			expect(parsed).not.toHaveProperty('poll_error')
+		})
+
+		it('gives up after repeated failed status checks but still returns the session id', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'POST'
+					? ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n7', status: 'running' }),
+						} as Response)
+					: ({ ok: false, status: 503, text: () => Promise.resolve('down') } as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(60_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session_id).toBe('sess-n7')
+			expect(parsed.settled).toBe(false)
+			expect(parsed.poll_error).toEqual(expect.any(String))
+			expect(parsed.logs).toBeNull()
+			expect(parsed.logs_error).toEqual(expect.any(String))
+		})
+
+		it('flag off and the wait times out: no PATCH, as before', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n3')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('notify_on_complete')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+		})
+
+		it('a failed PATCH does not fail the call; it says the return was not registered', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'PATCH'
+					? ({ ok: false, status: 500, text: () => Promise.resolve('boom') } as Response)
+					: ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n4', status: 'running' }),
+						} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('failed')
+			expect(parsed.notify_on_complete_reason).toEqual(expect.any(String))
+			expect(parsed.session.status).toBe('running')
+		})
+
+		it('passes on what the server did with an already-ended helper: skipped, with the reason', async () => {
+			vi.useFakeTimers()
+			const respond = async (_url: unknown, init?: RequestInit) =>
+				init?.method === 'PATCH'
+					? ({
+							ok: true,
+							json: () =>
+								Promise.resolve({
+									id: 'sess-n5',
+									status: 'completed',
+									notify_on_complete: 'skipped',
+									notify_skip_reason: 'return_cap',
+								}),
+						} as Response)
+					: ({
+							ok: true,
+							json: () => Promise.resolve({ id: 'sess-n5', status: 'running' }),
+						} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				notify_on_complete: true,
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.notify_on_complete).toBe('skipped')
+			expect(parsed.notify_on_complete_reason).toBe('return_cap')
+		})
+	})
+
+	describe('create_session handler (wait: true)', () => {
 		it('creates session, polls until completed, fetches logs', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -2022,12 +2626,11 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([{ message: 'Done' }]),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
-				poll_interval_seconds: 5,
-				timeout_seconds: 60,
 			})
 
 			// Advance through the two polling intervals
@@ -2065,19 +2668,16 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id: 'sess-2', status: 'running' }),
 				} as Response)
 
-			const handler = getHandler('run_agent')
-			// Very short timeout (10s) with 5s poll interval = at most 2 polls before deadline
+			const handler = getHandler('create_session')
+			// Never reaches a terminal state, so the call gives up at the backstop limit
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
-				poll_interval_seconds: 5,
-				timeout_seconds: 10,
 			})
 
-			// Advance past deadline
-			await vi.advanceTimersByTimeAsync(5000) // first poll
-			await vi.advanceTimersByTimeAsync(5000) // second poll
-			await vi.advanceTimersByTimeAsync(5000) // past deadline
+			// Advance past the backstop limit
+			await vi.advanceTimersByTimeAsync(3_800_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -2105,8 +2705,9 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getHandler('run_agent')
+			const handler = getHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
 			})
@@ -2733,6 +3334,109 @@ describe('tool handlers', () => {
 			expect(call[1]).toMatchObject({
 				headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 			})
+		})
+
+		it('strips no_thread from the POST body', async () => {
+			mockFetchSuccess({})
+
+			const handler = getHandler('create_comment')
+			await handler({
+				entity_id: objectId,
+				content: 'top-level on purpose',
+				no_thread: true,
+			})
+
+			const call = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse((call[1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('no_thread')
+			expect(body.entity_id).toBe(objectId)
+			expect(body.content).toBe('top-level on purpose')
+		})
+	})
+
+	// Thread defaulting lives on a server built with `triggeringEventId` set,
+	// which mirrors what `routes/mcp.ts` does when the caller carries the
+	// `X-Maskin-Triggering-Event-Id` header. A separate handler map is built
+	// here so the default doesn't leak into the other create_comment tests.
+	describe('create_comment thread defaulting', () => {
+		const objectId = '550e8400-e29b-41d4-a716-446655440000'
+		let threadedHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			threadedHandlers = new Map()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				threadedHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, triggeringEventId: 4242 })
+		})
+
+		function getThreadedHandler(name: string) {
+			const h = threadedHandlers.get(name)
+			if (!h) throw new Error(`Handler ${name} not registered`)
+			return h
+		}
+
+		function mockOk() {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 1 }),
+			} as Response)
+		}
+
+		it('defaults parent_event_id to the triggering event id when the caller omits it', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({ entity_id: objectId, content: 'ack' })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body.parent_event_id).toBe(4242)
+		})
+
+		it('honours an explicit parent_event_id — a different comment always wins over the default', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({
+				entity_id: objectId,
+				content: 'reply to another thread',
+				parent_event_id: 99,
+			})
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body.parent_event_id).toBe(99)
+		})
+
+		it('opts out of threading when no_thread: true', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({ entity_id: objectId, content: 'new topic', no_thread: true })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('parent_event_id')
+			expect(body).not.toHaveProperty('no_thread')
+		})
+
+		it('does not inject a default when the server was built without a triggeringEventId', async () => {
+			// Independent server without triggeringEventId — mirrors a session
+			// dispatched from something other than a comment (cron, chat, etc.).
+			const isolated = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.clearAllMocks()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				isolated.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			})
+			createMcpServer(config)
+
+			mockOk()
+			const handler = isolated.get('create_comment')
+			if (!handler) throw new Error('create_comment not registered')
+			await handler({ entity_id: objectId, content: 'standalone' })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('parent_event_id')
 		})
 	})
 
@@ -3449,6 +4153,7 @@ describe('tool handlers', () => {
 				if (urlStr.includes('/api/objects?')) {
 					return {
 						ok: true,
+						headers: new Headers(),
 						json: () =>
 							Promise.resolve([
 								{ id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
@@ -3479,11 +4184,16 @@ describe('tool handlers', () => {
 				type: 'bet',
 				title: `Bet ${i + 1}`,
 				status: 'active',
+				createdAt: '2026-01-01T00:00:00.000Z',
 			}))
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects?')) {
-					return { ok: true, json: () => Promise.resolve(rows) } as Response
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '250' }),
+						json: () => Promise.resolve(rows),
+					} as Response
 				}
 				if (urlStr.endsWith('/api/actors')) {
 					return { ok: true, json: () => Promise.resolve([]) } as Response
@@ -3504,16 +4214,109 @@ describe('tool handlers', () => {
 			}
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
-			// The cursor walk fetches `limit + 1` as a "has more" sentinel and the
-			// requested limit is capped at LIST_ENDPOINT_MAX_LIMIT - 1 (99) so the
-			// sentinel stays within the API's hard cap of 100 — so a 100-row
-			// fixture yields 99 kept rows, not 100.
-			expect(result.structuredContent.heroCard.totalCount).toBe(99)
+			// limit=100 is honoured in full, and totalCount is the API's X-Total-Count
+			// rather than the number of rows on the page.
+			expect(result.structuredContent.heroCard.totalCount).toBe(250)
 			expect(result.structuredContent.heroCard.page).toMatchObject({
 				limit: 25,
 				hasMore: true,
 			})
-			expect(result.structuredContent.objects).toHaveLength(99)
+			expect(result.structuredContent.objects).toHaveLength(100)
+		})
+
+		describe('list_objects paging contract', () => {
+			const makeRows = (n: number, from = 0) =>
+				Array.from({ length: n }, (_, i) => ({
+					id: `obj-${from + i + 1}`,
+					type: 'task',
+					title: `Task ${from + i + 1}`,
+					status: 'todo',
+					createdAt: '2026-01-01T00:00:00.123Z',
+				}))
+
+			type PagedResult = {
+				structuredContent: {
+					heroCard: { kind: string; totalCount?: number; page?: { hasMore: boolean } }
+					objects: unknown[]
+					page: { limit: number; returned: number; next_cursor?: string }
+					next_cursor?: string
+				}
+			}
+
+			function mockObjects(pages: unknown[][], total: number) {
+				const urls: string[] = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const urlStr = url as string
+					if (urlStr.includes('/api/objects?')) {
+						urls.push(urlStr)
+						return {
+							ok: true,
+							headers: new Headers({ 'X-Total-Count': String(total) }),
+							json: () => Promise.resolve(pages.shift() ?? []),
+						} as Response
+					}
+					return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+				})
+				return urls
+			}
+
+			it('reports the real totalCount and the requested limit, with hasMore agreeing with next_cursor', async () => {
+				// limit=2: the API hands back the +1 sentinel row.
+				mockObjects([makeRows(3)], 120)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 2 })) as PagedResult
+				const { heroCard, objects, page, next_cursor } = result.structuredContent
+				expect(heroCard.totalCount).toBe(120)
+				expect(heroCard.page?.hasMore).toBe(true)
+				expect(next_cursor).toBeTruthy()
+				expect(page).toMatchObject({ limit: 2, returned: 2, next_cursor })
+				expect(objects).toHaveLength(2)
+			})
+
+			it('has no next_cursor and hasMore false on the last page', async () => {
+				mockObjects([makeRows(2)], 2)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 5 })) as PagedResult
+				const { heroCard, page, next_cursor } = result.structuredContent
+				expect(heroCard.totalCount).toBe(2)
+				expect(heroCard.page?.hasMore).toBe(false)
+				expect(next_cursor).toBeUndefined()
+				expect(page).toMatchObject({ limit: 5, returned: 2 })
+			})
+
+			it('keeps a one-row page a list when more rows match', async () => {
+				mockObjects([makeRows(2)], 40)
+				const result = (await getHandler('list_objects')({ type: 'task', limit: 1 })) as PagedResult
+				expect(result.structuredContent.heroCard.kind).toBe('list')
+				expect(result.structuredContent.heroCard.totalCount).toBe(40)
+			})
+
+			it('honours limit=100 and probes one row past a full page for has-more', async () => {
+				const urls = mockObjects([makeRows(100), makeRows(1, 100)], 101)
+				const result = (await getHandler('list_objects')({
+					type: 'task',
+					limit: 100,
+				})) as PagedResult
+				const { heroCard, objects, page, next_cursor } = result.structuredContent
+				expect(new URL(urls[0], 'http://x').searchParams.get('limit')).toBe('100')
+				const probe = new URL(urls[1], 'http://x').searchParams
+				expect(probe.get('limit')).toBe('1')
+				expect(probe.get('cursor_id')).toBe('obj-100')
+				expect(objects).toHaveLength(100)
+				expect(page).toMatchObject({ limit: 100, returned: 100 })
+				expect(next_cursor).toBeTruthy()
+				expect(heroCard.page?.hasMore).toBe(true)
+			})
+
+			it('ends the walk when the probe past a full limit=100 page finds nothing', async () => {
+				mockObjects([makeRows(100), []], 100)
+				const result = (await getHandler('list_objects')({
+					type: 'task',
+					limit: 100,
+				})) as PagedResult
+				const { heroCard, page, next_cursor } = result.structuredContent
+				expect(page).toMatchObject({ limit: 100, returned: 100 })
+				expect(next_cursor).toBeUndefined()
+				expect(heroCard.page?.hasMore).toBe(false)
+			})
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
@@ -3939,6 +4742,36 @@ describe('tool handlers', () => {
 			})
 		})
 
+		it('list_workspaces shows which workspace is the default', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).includes('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'ws-1', name: 'Maskin', role: 'owner', isDefault: false },
+								{ id: 'ws-2', name: 'Reflect Studio', role: 'member', isDefault: true },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_workspaces')
+			const result = (await handler({})) as {
+				structuredContent: {
+					workspaces: Array<{ id: string; isDefault: boolean }>
+					heroCard: { objects?: Array<{ title: string | null; contextLine?: string }> }
+				}
+			}
+
+			expect(
+				Object.fromEntries(result.structuredContent.workspaces.map((w) => [w.id, w.isDefault])),
+			).toEqual({ 'ws-1': false, 'ws-2': true })
+			const cards = result.structuredContent.heroCard.objects ?? []
+			expect(cards.find((o) => o.title === 'Reflect Studio')?.contextLine).toContain('default')
+			expect(cards.find((o) => o.title === 'Maskin')?.contextLine).not.toContain('default')
+		})
+
 		it('list_workspaces strips credentials and billing from settings, keeping the schema', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -4030,6 +4863,78 @@ describe('tool handlers', () => {
 				structuredContent: { heroCard: { kind: string } }
 			}
 			expect(result.structuredContent.heroCard.kind).toBe('single')
+		})
+
+		// Regression: `heroCard.objects` used to slice at 25 while `page.returned`
+		// / next_cursor advanced by the full fetched row count. That silently
+		// dropped rows 26–limit on every hop of a `limit > 25` walk. Now every
+		// row the API returned ships in `heroCard.objects`, so shipped-rows,
+		// `page.returned`, and the cursor advance count all agree.
+		it('list_actors returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
+			const totalRows = 60
+			const requestedLimit = 50
+			const seen = new Set<string>()
+			// Assemble a fake table indexed by (createdAt, id) so the mock can
+			// respond to a cursor by returning the slice after the cursor's row.
+			const table = Array.from({ length: totalRows }, (_, i) => ({
+				id: `a-${String(i).padStart(3, '0')}`,
+				createdAt: new Date(2026, 0, 1, 0, 0, totalRows - i).toISOString(),
+				type: 'agent' as const,
+				name: `Actor ${String(i).padStart(3, '0')}`,
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					const parsed = new URL(urlStr, 'http://x')
+					const limitParam = Number(parsed.searchParams.get('limit'))
+					const cursorCreatedAt = parsed.searchParams.get('cursor_created_at')
+					const cursorId = parsed.searchParams.get('cursor_id')
+					let start = 0
+					if (cursorCreatedAt && cursorId) {
+						start = table.findIndex((r) => r.createdAt === cursorCreatedAt && r.id === cursorId) + 1
+					}
+					const slice = table.slice(start, start + limitParam)
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(totalRows) }),
+						json: () => Promise.resolve(slice),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			let cursor: string | undefined
+			let hops = 0
+			// Walk until the tool stops handing back a cursor. Bound the loop so
+			// a regression that never emits a null cursor can't hang the suite.
+			while (hops < 10) {
+				hops++
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					limit: requestedLimit,
+					cursor,
+				})) as {
+					structuredContent: {
+						heroCard: { objects?: Array<{ id: string }> }
+						next_cursor?: string
+						page?: { returned?: number }
+					}
+				}
+				const shipped = result.structuredContent.heroCard.objects ?? []
+				for (const row of shipped) {
+					// A duplicate would mean the cursor did not advance past the
+					// last shipped row; a skip surfaces below by the size check.
+					expect(seen.has(row.id)).toBe(false)
+					seen.add(row.id)
+				}
+				if (result.structuredContent.page) {
+					expect(result.structuredContent.page.returned).toBe(shipped.length)
+				}
+				cursor = result.structuredContent.next_cursor
+				if (!cursor) break
+			}
+			// Every seeded row shows up exactly once across the walk.
+			expect(seen.size).toBe(totalRows)
 		})
 
 		it('emits a list heroCard for list_triggers with type=trigger rows + resolved target actor', async () => {
@@ -4125,6 +5030,73 @@ describe('tool handlers', () => {
 			expect(triggersCalls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
+		})
+
+		// Regression: same bug as `list_actors returns every row…` above. See
+		// that test for the fuller comment; both tools share the fix.
+		it('list_triggers returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
+			const totalRows = 60
+			const requestedLimit = 50
+			const seen = new Set<string>()
+			const table = Array.from({ length: totalRows }, (_, i) => ({
+				id: `t-${String(i).padStart(3, '0')}`,
+				createdAt: new Date(2026, 0, 1, 0, 0, totalRows - i).toISOString(),
+				type: 'cron' as const,
+				name: `Trigger ${String(i).padStart(3, '0')}`,
+				enabled: true,
+				targetActorId: null,
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/triggers')) {
+					const parsed = new URL(urlStr, 'http://x')
+					const limitParam = Number(parsed.searchParams.get('limit'))
+					const cursorCreatedAt = parsed.searchParams.get('cursor_created_at')
+					const cursorId = parsed.searchParams.get('cursor_id')
+					let start = 0
+					if (cursorCreatedAt && cursorId) {
+						start = table.findIndex((r) => r.createdAt === cursorCreatedAt && r.id === cursorId) + 1
+					}
+					const slice = table.slice(start, start + limitParam)
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(totalRows) }),
+						json: () => Promise.resolve(slice),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			let cursor: string | undefined
+			let hops = 0
+			while (hops < 10) {
+				hops++
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					limit: requestedLimit,
+					cursor,
+				})) as {
+					structuredContent: {
+						heroCard: { objects?: Array<{ id: string }> }
+						next_cursor?: string
+						page?: { returned?: number }
+					}
+				}
+				const shipped = result.structuredContent.heroCard.objects ?? []
+				for (const row of shipped) {
+					expect(seen.has(row.id)).toBe(false)
+					seen.add(row.id)
+				}
+				if (result.structuredContent.page) {
+					expect(result.structuredContent.page.returned).toBe(shipped.length)
+				}
+				cursor = result.structuredContent.next_cursor
+				if (!cursor) break
+			}
+			expect(seen.size).toBe(totalRows)
 		})
 
 		it('swaps to the hero-card resource for a single organization (customer variant)', async () => {
@@ -5373,7 +6345,7 @@ describe('url field injection', () => {
 			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
 		})
 
-		it('run_agent — url added to session in response', async () => {
+		it('create_session (wait: true) — url added to session in response', async () => {
 			vi.useFakeTimers()
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
@@ -5392,12 +6364,11 @@ describe('url field injection', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getUrlHandler('run_agent')
+			const handler = getUrlHandler('create_session')
 			const resultPromise = handler({
+				wait: true,
 				actor_id: testUuid,
 				action_prompt: 'Deploy',
-				poll_interval_seconds: 5,
-				timeout_seconds: 60,
 			})
 
 			await vi.advanceTimersByTimeAsync(5000)
@@ -5408,5 +6379,91 @@ describe('url field injection', () => {
 			}
 			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
 		})
+	})
+})
+
+// The caller's session id has to reach POST /api/sessions so a helper can be
+// linked to its sender. On stdio the container's SESSION_ID env is the caller's;
+// over HTTP the server runs inside apps/dev, so routes/mcp.ts hands the id in via
+// config.maskinSessionId and it must win over the host process env.
+describe('X-Maskin-Session-Id source', () => {
+	const callerSession = '2297f7f3-dd73-43cf-afbe-3aabd0711265'
+	const hostSession = '11111111-1111-4111-8111-111111111111'
+	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+	function build(extra: Record<string, unknown>) {
+		handlers = new Map()
+		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
+		vi.mocked(registerAppTool).mockReset()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		createMcpServer({ ...config, ...extra })
+	}
+
+	async function createSessionHeaders(): Promise<Record<string, string>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-1', status: 'pending' }),
+		} as Response)
+		const handler = handlers.get('create_session')
+		if (!handler) throw new Error('create_session handler not registered')
+		await handler({ actor_id: '550e8400-e29b-41d4-a716-446655440000', action_prompt: 'help' })
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/api/sessions'))
+		return (call?.[1] as RequestInit).headers as Record<string, string>
+	}
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	it('sends config.maskinSessionId, ahead of the host process SESSION_ID', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
+	})
+
+	it('falls back to SESSION_ID on stdio, where no override is supplied', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({})
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBe(hostSession)
+	})
+
+	it('sends no header when neither is set', async () => {
+		vi.stubEnv('SESSION_ID', '')
+		build({})
+		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBeUndefined()
+	})
+
+	// post_conversation_message stamps the same id into the request body, for
+	// messages.session_id (cost and token drill-down).
+	async function postMessageBody(): Promise<Record<string, unknown>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'hello',
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		return JSON.parse((call?.[1] as RequestInit).body as string)
+	}
+
+	it('post_conversation_message stamps config.maskinSessionId, ahead of the host SESSION_ID', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await postMessageBody()).session_id).toBe(callerSession)
+	})
+
+	it('post_conversation_message falls back to SESSION_ID on stdio', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({})
+		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 })

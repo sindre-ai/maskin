@@ -143,7 +143,7 @@ function PlanExpiredDialog({
 								onClick={() => handleUpgrade('pro')}
 								disabled={isPending}
 							>
-								Downgrade to Pro — $20/mo
+								Downgrade to Pro — $49/mo
 							</Button>
 						</>
 					) : (
@@ -154,7 +154,7 @@ function PlanExpiredDialog({
 								disabled={isPending}
 							>
 								{/* A trial never held Pro, so "Renew" would be false — it upgrades. */}
-								{plan === 'trial' ? 'Upgrade to Pro — $20/mo' : 'Renew Pro — $20/mo'}
+								{plan === 'trial' ? 'Upgrade to Pro — $49/mo' : 'Renew Pro — $49/mo'}
 							</Button>
 							<Button
 								className="w-full justify-start"

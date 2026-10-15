@@ -32,6 +32,18 @@ describe('getActorInitials', () => {
 	it('uppercases lowercase input', () => {
 		expect(getActorInitials('alice bob')).toBe('AB')
 	})
+
+	it('skips punctuation so a bracketed qualifier does not leak into the initials', () => {
+		expect(getActorInitials('Linker (Sigrid)')).toBe('LS')
+	})
+
+	it('ignores a token that is punctuation only', () => {
+		expect(getActorInitials('John - Doe')).toBe('JD')
+	})
+
+	it('returns ? when the name is punctuation only', () => {
+		expect(getActorInitials('---')).toBe('?')
+	})
 })
 
 describe('getActorAvatarPaletteClass', () => {
@@ -110,6 +122,18 @@ describe('ActorAvatar', () => {
 		const el = screen.getByTitle('Alice')
 		expect(el.className).toMatch(/after:min-h-11/)
 		expect(el.className).toMatch(/after:min-w-11/)
+	})
+
+	it('anchors the tap target to the right edge so it extends left only', () => {
+		render(<ActorAvatar name="Alice" type="human" onClick={() => {}} />)
+		const el = screen.getByTitle('Alice')
+		expect(el.className).toMatch(/after:right-0/)
+		// Vertical centring stays; the horizontal centring (left-1/2 + x-translate) is gone,
+		// because a centred 44px box overflows the button's right edge.
+		expect(el.className).toMatch(/after:top-1\/2/)
+		expect(el.className).toMatch(/after:-translate-y-1\/2/)
+		expect(el.className).not.toMatch(/after:left-1\/2/)
+		expect(el.className).not.toMatch(/after:-translate-x-1\/2/)
 	})
 
 	it('renders an img when imageUrl is set', () => {

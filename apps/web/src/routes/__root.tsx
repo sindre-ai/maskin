@@ -13,7 +13,16 @@ function RootComponent() {
 	const { resolvedTheme } = useTheme()
 
 	return (
-		<div className="min-h-screen bg-background text-foreground">
+		// `min-h-dvh`, not `min-h-screen` (100vh): on iOS Safari 100vh is the
+		// largest viewport height (URL bar collapsed) and stays that size while
+		// the URL bar is visible, so the document ends up taller than the
+		// visible viewport by the URL-bar height. That extra height renders as
+		// a strip of `bg-background` white below the shell, makes every page
+		// scrollable, and takes the sticky header down with it when the user
+		// scrolls. Same reason `SidebarProvider` was flipped to `h-dvh` in
+		// #1659 — this is the outer container that leaked past that fix on
+		// small mobile because it still measured against 100vh.
+		<div className="min-h-dvh bg-background text-foreground">
 			<HeadContent />
 			<OfflineBanner />
 			<Outlet />
@@ -42,7 +51,7 @@ function RootComponent() {
 export const Route = createRootRouteWithContext<RouterContext>()({
 	component: RootComponent,
 	errorComponent: ({ error }) => (
-		<div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+		<div className="min-h-dvh bg-background text-foreground flex items-center justify-center">
 			<RouteError error={error} />
 		</div>
 	),

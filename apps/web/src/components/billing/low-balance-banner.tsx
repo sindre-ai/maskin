@@ -18,6 +18,9 @@ import { useEffect, useRef, useState } from 'react'
  * unit-tested without a rendered tree; both the show/hide decision and the
  * `threshold_used` PostHog property come from the same call.
  *
+ * Hidden when the server reports top-up as unavailable (no Price/Stripe
+ * configured): the `Top up credits` button would lead nowhere.
+ *
  * The flag boundary (`MASKIN_CREDIT_UX`) lives one level up in the workspace
  * shell — see `apps/web/src/routes/_authed/$workspaceId.tsx`. This component
  * assumes the boundary already gated it in, per the "one flag boundary per
@@ -29,6 +32,7 @@ export function LowBalanceBanner({ workspaceId }: { workspaceId: string }) {
 	const [dismissed, setDismissed] = useState(false)
 	const analyticsFiredRef = useRef(false)
 
+	const topupAvailable = usage?.credit_topup_available === true
 	const decision = usage
 		? decideLowBalance({
 				creditBalanceCents: usage.credit_balance_cents,
@@ -42,16 +46,18 @@ export function LowBalanceBanner({ workspaceId }: { workspaceId: string }) {
 	// per the bet spec. Guard on `usage` so the event doesn't race the initial
 	// fetch and fire with a zero balance from stale defaults.
 	useEffect(() => {
-		if (!usage || !decision.show || dismissed || analyticsFiredRef.current) return
+		if (!usage || !topupAvailable || !decision.show || dismissed || analyticsFiredRef.current) {
+			return
+		}
 		analyticsFiredRef.current = true
 		trackLowBalanceBannerShown({
 			workspace_id: workspaceId,
 			balance_cents: usage.credit_balance_cents,
 			threshold_used: decision.thresholdCents,
 		})
-	}, [usage, decision.show, decision.thresholdCents, dismissed, workspaceId])
+	}, [usage, topupAvailable, decision.show, decision.thresholdCents, dismissed, workspaceId])
 
-	if (!usage || !decision.show || dismissed) return null
+	if (!usage || !topupAvailable || !decision.show || dismissed) return null
 
 	return (
 		<Banner

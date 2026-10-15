@@ -52,4 +52,9 @@ describe('CommentVisual', () => {
 		const { getByText } = render(<CommentVisual language="mermaid" source="graph TD; A-->B;" />)
 		expect(getByText(/Couldn’t render chart/)).toBeInTheDocument()
 	})
+
+	it('renders nothing for an empty chart fence instead of an error box', () => {
+		const { container } = render(<CommentVisual language="chart" source="   " />)
+		expect(container).toBeEmptyDOMElement()
+	})
 })

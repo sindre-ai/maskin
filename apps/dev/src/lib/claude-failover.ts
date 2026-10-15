@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_MESSAGES_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import {
@@ -7,6 +7,7 @@ import {
 	trackClaudeSubscriptionFailoverTriggered,
 } from './analytics/claude-failover-events'
 import {
+	type ClassifierDecision,
 	type ClassifierInput,
 	classifyClaudeFailure,
 	headersFrom,
@@ -15,10 +16,10 @@ import {
 	CLAUDE_CREDENTIAL_TIMEOUT_MS,
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
+	type RefreshBuffer,
 	decryptOAuthData,
-	encryptOAuthTokens,
-	persistRefreshedSlot,
-	refreshClaudeTokenIfNeeded,
+	refreshSlotSingleFlight,
+	reportClaudeRefreshFailure,
 } from './claude-oauth'
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
@@ -31,7 +32,9 @@ import {
 	withSlotFailure,
 	writeFailoverState,
 } from './claude-oauth-slots'
+import { recordEvent } from './events/record-event'
 import { logger } from './logger'
+import { parseSubscriptionLimitReset } from './subscription-limit-reset'
 
 /**
  * De-dup window (ms) for the `claude_subscription_failover_triggered` event.
@@ -87,10 +90,20 @@ export type SubscriptionProbe = (tokens: ClaudeOAuthTokens) => Promise<Classifie
  * container launches. `null` on 2xx; otherwise the response status/headers
  * are handed to `classifyClaudeFailure`. Network-level failures (DNS, abort,
  * etc.) are caught by `runProbe`'s wrapper, not here.
+ *
+ * In an E2E stack (MASKIN_TEST_GRANT_TOKEN set — the same seam the test-grants
+ * route mounts on), the probe returns `null` unconditionally: specs seed the
+ * chain with fake OAuth tokens, background sessions kicked off by the
+ * workspace bootstrap and trigger runner would otherwise hit Anthropic with
+ * those tokens, get 401 back, stamp `auth_failed` on the slot, and flip its
+ * card to "Unhealthy" mid-test — a real rendering of a state the test never
+ * asked for. Bypassing here keeps the slot as "Connected" and stops the
+ * cascade the shard 2 timeout was recovering from.
  */
 export async function probeClaudeSubscription(
 	tokens: ClaudeOAuthTokens,
 ): Promise<ClassifierInput | null> {
+	if (process.env.MASKIN_TEST_GRANT_TOKEN) return null
 	const res = await fetch(CLAUDE_MESSAGES_URL, {
 		method: 'POST',
 		// Bounded so a hung Anthropic socket can't stall session launch — see
@@ -145,8 +158,8 @@ export interface FailoverParams {
 	now?: () => number
 	/** Overrides `process.env` (used by tests). */
 	env?: NodeJS.ProcessEnv
-	/** Passed through to `refreshClaudeTokenIfNeeded`. */
-	bufferMs?: number
+	/** Passed through to `refreshSlotSingleFlight`. */
+	bufferMs?: RefreshBuffer
 	/**
 	 * Invoked when a CONFIGURED slot yields no usable token, reporting whether
 	 * the failure is worth retrying. Deliberately not called when nothing is
@@ -229,7 +242,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			// workspace API key / system fallback routes llm-routing would
 			// otherwise fall through to. Classify it the same way the
 			// flag-on path does below instead of only checking expiry.
-			const decision = classifyClaudeFailure(refreshFailure)
+			const decision = classifyClaudeFailureWithReset(refreshFailure)
 			if (decision.action === 'failover' || tokens.expiresAt <= now()) {
 				onUnusable?.(unusableFromRefresh(decision))
 				return null
@@ -307,7 +320,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			return { slot: entry.id, tokens }
 		}
 
-		const decision = classifyClaudeFailure(probeInput)
+		const decision = classifyClaudeFailureWithReset(probeInput)
 		if (decision.action === 'retry_primary') {
 			if (refreshFailure && tokens.expiresAt <= now()) {
 				// The refresh itself failed transiently (network/5xx) AND the
@@ -406,16 +419,14 @@ async function loadAndRefreshSlot(
 	workspaceId: string,
 	slot: OAuthSlotKind,
 	encrypted: EncryptedOAuthData,
-	bufferMs: number | undefined,
+	bufferMs: RefreshBuffer | undefined,
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshFailure: ClassifierInput | null }> {
 	const stored = decryptOAuthData(encrypted)
 	try {
-		const result = await refreshClaudeTokenIfNeeded(stored, bufferMs ?? 10 * 60 * 1000)
-		if (result.refreshed) {
-			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
-		}
+		const result = await refreshSlotSingleFlight(db, workspaceId, slot, encrypted, bufferMs)
 		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
+		reportClaudeRefreshFailure({ workspaceId, slot, caller: 'session_start', error: err })
 		logger.warn('Failed to refresh Claude OAuth slot', {
 			workspaceId,
 			slot,
@@ -440,49 +451,45 @@ async function attemptChainHeadRecovery(params: {
 	workspaceId: string
 	actorId: string
 	probe: SubscriptionProbe
-	bufferMs: number | undefined
+	bufferMs: RefreshBuffer | undefined
 	now: number
 }): Promise<ClaudeCredentials | null> {
 	const { db, workspaceId, actorId, probe, bufferMs, now } = params
 	let recoveredTokens: ClaudeOAuthTokens | null = null
-	let recoveredNeedsPersist = false
 
 	const recovery = await attemptPrimaryRecovery({
 		db,
 		workspaceId,
 		actorId,
 		now,
-		healthCheck: async (head) => {
-			const decrypted = decryptOAuthData(head)
+		healthCheck: async (head, headSlot) => {
 			try {
-				const { tokens, refreshed } = await refreshClaudeTokenIfNeeded(
-					decrypted,
-					bufferMs ?? 10 * 60 * 1000,
-				)
+				// Refresh and persist go through the shared single-flight path.
+				// healthCheck runs before attemptPrimaryRecovery opens its row-lock
+				// transaction, so persisting here never nests a transaction on the
+				// workspaces row, and the lock is released before the probe runs.
+				const { tokens } = await refreshSlotSingleFlight(db, workspaceId, headSlot, head, bufferMs)
 				const probeResult = await runProbe(probe, tokens)
 				if (probeResult) {
-					const decision = classifyClaudeFailure(probeResult)
+					const decision = classifyClaudeFailureWithReset(probeResult)
 					return { healthy: false, reason: decision.reason }
 				}
 				recoveredTokens = tokens
-				recoveredNeedsPersist = refreshed
 				return { healthy: true }
 			} catch (err) {
-				const decision = classifyClaudeFailure(classifierInputFromError(err))
+				reportClaudeRefreshFailure({
+					workspaceId,
+					slot: headSlot,
+					caller: 'failover_recovery',
+					error: err,
+				})
+				const decision = classifyClaudeFailureWithReset(classifierInputFromError(err))
 				return { healthy: false, reason: decision.reason }
 			}
 		},
 	})
 
 	if (!recovery.recovered || !recoveredTokens) return null
-
-	if (recoveredNeedsPersist) {
-		// Persist AFTER attemptPrimaryRecovery's transaction has released its
-		// row lock — persisting from inside `healthCheck` (which runs under
-		// that lock) would open a second transaction competing for the same
-		// lock and deadlock against itself.
-		await persistRefreshedSlot(db, workspaceId, recovery.slot, encryptOAuthTokens(recoveredTokens))
-	}
 	return { slot: recovery.slot, tokens: recoveredTokens }
 }
 
@@ -532,7 +539,7 @@ async function recordFailoverTransition(params: {
 			})
 			.where(eq(workspaces.id, workspaceId))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: FAILOVER_TRIGGERED_ACTION,
@@ -586,6 +593,41 @@ async function recordChainExhausted(params: {
 		now,
 		slot,
 	})
+}
+
+/**
+ * sessions.config key holding the access-token expiry (epoch ms) a container
+ * launched with. Stamped only when the refresh token was withheld from it, so
+ * its presence means "this session cannot refresh itself".
+ */
+export const SESSION_OAUTH_EXPIRES_AT_KEY = 'claude_oauth_expires_at'
+
+/** Reasons that read as a bad credential rather than a spent one. */
+const AUTH_CLASS_FAILOVER_REASONS: ReadonlySet<string> = new Set([
+	'auth_failed',
+	'not_logged_in',
+	'oauth_revoked',
+])
+
+/** An auth error this close to (or past) expiry is attributed to expiry. */
+const ACCESS_TOKEN_EXPIRY_SLACK_MS = 60_000
+
+/**
+ * True when a session that could not refresh its own token hit an auth-class
+ * error at its access token's expiry. That is the honest limit of withholding
+ * the refresh token (the slot is healthy, the session simply outlived its
+ * token), so it must not stamp auth_failed on the slot or move the workspace
+ * off it. Sessions without the stamp (flag off, other routes) never match.
+ */
+export function isAuthErrorAtAccessTokenExpiry(
+	config: Record<string, unknown>,
+	reason: string,
+	now: number = Date.now(),
+): boolean {
+	if (!AUTH_CLASS_FAILOVER_REASONS.has(reason)) return false
+	const expiresAt = config[SESSION_OAUTH_EXPIRES_AT_KEY]
+	if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return false
+	return now >= expiresAt - ACCESS_TOKEN_EXPIRY_SLACK_MS
 }
 
 /**
@@ -660,7 +702,7 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 			})
 			.where(eq(workspaces.id, workspaceId))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: FAILOVER_TRIGGERED_ACTION,
@@ -747,7 +789,7 @@ export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 				.where(eq(workspaces.id, workspaceId))
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: BACKUP_EXHAUSTED_ACTION,
@@ -803,6 +845,36 @@ function unusableFromRefresh(decision: { action: string; reason: string }): Unus
  */
 export function isTransientCredentialError(err: unknown): boolean {
 	return classifyClaudeFailure(classifierInputFromError(err)).action !== 'failover'
+}
+
+/**
+ * §7.3 / §17.5 companion parser at the failover call-sites (sources 1 + 2 in
+ * §17.2). The classifier is pure and never reads reset headers; this helper
+ * runs it, then spreads `parseSubscriptionLimitReset` over the same HTTP
+ * headers to stamp `retryAt` on the returned `ClassifierDecision`. Transport
+ * failures and any other input with no headers return the classifier's plain
+ * decision unchanged.
+ *
+ * `confidence` on the parser result determines pre-flight (authoritative) vs
+ * mid-session (advisory) provenance in downstream telemetry; the field is
+ * carried on the result but the classifier's decision only records the
+ * timestamp (`retryAt`) — source + confidence follow via `SettleOutcome`
+ * when the session eventually settles.
+ */
+function classifyClaudeFailureWithReset(input: ClassifierInput): ClassifierDecision {
+	const decision = classifyClaudeFailure(input)
+	if (input.kind !== 'http') return decision
+	const headerRecord: Record<string, string | undefined> = {}
+	// HeaderLookup is `get(name) => string | null`. Extract the two headers the
+	// parser actually reads so we don't force a full-record walk on every
+	// classifier call.
+	const unifiedReset = input.headers.get('anthropic-ratelimit-unified-reset')
+	if (unifiedReset) headerRecord['anthropic-ratelimit-unified-reset'] = unifiedReset
+	const retryAfter = input.headers.get('retry-after')
+	if (retryAfter) headerRecord['retry-after'] = retryAfter
+	const parsed = parseSubscriptionLimitReset({ anthropicHeaders: headerRecord })
+	if (!parsed) return decision
+	return { ...decision, retryAt: parsed.resetAt.toISOString() }
 }
 
 async function runProbe(

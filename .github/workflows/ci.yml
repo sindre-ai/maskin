@@ -183,6 +183,94 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
+  # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
+  # Nothing else runs that script, so a change that breaks a fresh bootstrap is
+  # otherwise first noticed by the next agent whose session needs a database.
+  # Each check lives in scripts/checks/ and bootstraps into a throwaway dir.
+  dev-bootstrap-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The cache is what keeps this job off snapshot.debian.org, which is the
+      # flake risk here rather than the check itself. Keyed on the two pinned
+      # versions the script downloads; only the downloads are cached, never a
+      # data dir.
+      - name: Read devstack versions
+        id: devstack
+        run: |
+          echo "pg=$(sed -n 's/^MASKIN_PG_VERSION="${MASKIN_PG_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+          echo "weed=$(sed -n 's/^MASKIN_WEED_VERSION="${MASKIN_WEED_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache devstack downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/maskin-devstack/postgres-*
+            ~/.cache/maskin-devstack/vendor-lib-*
+            ~/.cache/maskin-devstack/weed-*
+          key: devstack-${{ runner.os }}-${{ runner.arch }}-pg${{ steps.devstack.outputs.pg }}-weed${{ steps.devstack.outputs.weed }}
+
+      - name: Fresh bootstrap is UTF8 and migrates
+        run: bash scripts/checks/fresh-db-utf8.sh
+
+      - name: A busy SeaweedFS master port is routed around
+        run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
+
+  # Boots the real agent-base image through its entrypoint and agent-run.sh with
+  # a stub `claude` (scripts/checks/agent-image-smoke.sh). Merging a change under
+  # docker/agent-base/ publishes the image and restarts the shared agent-server
+  # (agent-base-docker.yml), and nothing else runs agent-run.sh before that, so a
+  # script that aborts under `set -e` otherwise takes down every session at once.
+  # The image build is skipped on PRs that don't touch its inputs; the job still
+  # reports success so it can be a required check.
+  agent-image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Did the agent image inputs change?
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
+              docker/agent-base scripts/checks/agent-image-smoke.sh scripts/checks/fixtures; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.changed.outputs.run == 'true'
+
+      # Reads the layer cache agent-base-docker.yml writes on main; never writes.
+      - name: Build agent-base image
+        if: steps.changed.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          load: true
+          tags: maskin-agent-base:smoke
+          cache-from: type=gha
+
+      - name: Sessions reach the agent launch
+        if: steps.changed.outputs.run == 'true'
+        run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
+
   verify-e2e:
     runs-on: ubuntu-latest
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
@@ -193,7 +281,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7]
     services:
       postgres:
         image: postgres:16-alpine
@@ -290,7 +378,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/5)
+      - name: Run E2E tests (shard ${{ matrix.shard }}/7)
         # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
         # own try/catch doesn't end up wrapping — an unhandled rejection there
         # has previously crashed an otherwise-green shard. Rather than keep
@@ -302,7 +390,7 @@ jobs:
         # upload path — quota, outage, auth, a library bug — can then never
         # fail the job, while an actual test regression still does.
         run: |
-          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5 || true
+          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/7 || true
           node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
@@ -313,6 +401,14 @@ jobs:
           # so this one entry reaches both the specs and the stack under test.
           # Never set in production — the route is not mounted without it.
           MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
+          # Bearer for the internal agent-server log-ingest endpoint
+          # (POST /api/internal/agent-servers/sessions/:id/logs), which the
+          # live-update spec posts to in order to drive the real SSE log
+          # stream. The route 503s when unset, so without this the spec fails
+          # at the first ingest call. Mirrors MASKIN_TEST_GRANT_TOKEN: the
+          # value is fixed and test-only, and reaches the stack because
+          # Playwright spawns the API itself.
+          AGENT_SERVER_SECRET: e2e-agent-server-secret
           # Argos visual-regression uploads are opt-in and never gate a PR: the
           # free-plan screenshot quota is shared across all shards of all runs,
           # so an exhausted quota fails the upload for reasons unrelated to the

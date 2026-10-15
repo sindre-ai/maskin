@@ -1,6 +1,7 @@
 import type { Database, Transaction } from '@maskin/db'
-import { events, objects } from '@maskin/db/schema'
+import { objects } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
+import { recordEvent } from '../events/record-event'
 import { logger } from '../logger'
 import { capturePosthogEvent } from './posthog'
 
@@ -125,7 +126,7 @@ export async function trackWorkspaceKnowledgeReferenced(
 	p: WorkspaceKnowledgeReferencedProps,
 ): Promise<void> {
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: p.workspaceId,
 			actorId: p.actorId,
 			action: WORKSPACE_KNOWLEDGE_REFERENCED,

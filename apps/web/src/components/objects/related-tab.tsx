@@ -14,7 +14,9 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
+import { MimeTile, formatBytes } from './file-tile'
 import { AddLinkForm } from './linked-objects'
+import type { ResolvedRow } from './related-objects-table'
 import { resolveRelatedRows } from './related-tab-utils'
 
 const DEFAULT_RELATIONSHIP_TYPES = ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']
@@ -61,18 +63,28 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 	)
 	const existingRelationships: RelationshipResponse[] = graph?.relationships ?? []
 
-	// Grouped by relationship type. The workspace's configured type list is the
-	// spine (so every group renders CTAs whether or not it has rows above) —
-	// any legacy edge whose type isn't in the config still gets its own group,
-	// appended after the configured ones, so no data is hidden.
+	// Grouped by relationship type. The workspace's configured type list is
+	// the spine (so every group renders CTAs whether or not it has rows above)
+	// — any legacy edge whose type isn't in the config still gets its own
+	// group, appended after the configured ones, so no data is hidden. Files
+	// as first-class endpoints (Slice 1): `resolved` may include `kind:'file'`
+	// rows now, so the grouping key stays the relationship type but each row
+	// renders through its own branch below.
 	const groups = useMemo(() => {
-		const byType = new Map<string, typeof resolved>()
+		const byType = new Map<string, ResolvedRow[]>()
 		for (const row of resolved) {
 			const existing = byType.get(row.rel.type)
 			if (existing) existing.push(row)
 			else byType.set(row.rel.type, [row])
 		}
-		const ordered: { type: string; rows: typeof resolved }[] = []
+		const ordered: { type: string; rows: ResolvedRow[] }[] = []
+		// The `attached` group carries file endpoints in practice; give it a
+		// stable spine slot ahead of the workspace's configured types so a
+		// file attach shows up in a predictable place.
+		if (!relationshipTypes.includes('attached') && byType.has('attached')) {
+			ordered.push({ type: 'attached', rows: byType.get('attached') ?? [] })
+			byType.delete('attached')
+		}
 		for (const type of relationshipTypes) {
 			ordered.push({ type, rows: byType.get(type) ?? [] })
 			byType.delete(type)
@@ -100,72 +112,118 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 						</div>
 						{group.rows.length > 0 && (
 							<div className="overflow-hidden rounded-xl border border-border">
-								{group.rows.map((row, index) => (
-									<div
-										key={row.rel.id}
-										className={cn(
-											'relative flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-muted/40',
-											index > 0 && 'border-t border-border',
-										)}
-									>
-										<span
-											aria-hidden="true"
-											className={cn(
-												'size-[7px] shrink-0 rounded-[2px]',
-												getTypeColor(row.object.type).bg,
-											)}
-										/>
-										<TypeBadge
-											type={row.object.type}
-											variant="mono"
-											className="shrink-0 text-[8.5px]"
-										/>
-										<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">
-											{row.object.title ?? 'Untitled'}
-										</span>
-										{/* A linked object an agent is working on right now says so here —
-									    the row's status slot is where that live state belongs. */}
-										{row.object.activeSessionId ? (
-											<span className="relative z-[2] shrink-0">
-												<AgentWorkingBadge
-													sessionId={row.object.activeSessionId}
-													workspaceId={workspaceId}
-												/>
-											</span>
-										) : (
-											<span
+								{group.rows.map((row, index) => {
+									if (row.kind === 'file' && 'file' in row) {
+										// File endpoints render as a compact FileRow that
+										// stays consistent with the surrounding object rows
+										// (mime tile in the leading colour slot, filename in
+										// the title slot, mime/size mono meta in the trailing
+										// meta slot). No status or activeSession affordances —
+										// files carry neither.
+										return (
+											<div
+												key={row.rel.id}
 												className={cn(
-													'hidden max-w-[150px] shrink-0 truncate text-[11px] font-semibold md:block',
-													getStatusColor(row.object.status).text,
+													'relative flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-muted',
+													index > 0 && 'border-t border-border',
 												)}
 											>
-												{statusLabel(row.object.status)}
-											</span>
-										)}
-										<RelativeTime
-											date={row.object.updatedAt ?? row.object.createdAt}
-											compact
-											className="w-[38px] shrink-0 text-right text-[10px] uppercase tabular-nums text-border-strong"
-										/>
-										{/* The link covers the row so the whole thing opens the object;
-									    the remove button sits above it so × still hits ×. */}
-										<Link
-											to="/$workspaceId/objects/$objectId"
-											params={{ workspaceId, objectId: row.object.id }}
-											aria-label={row.object.title ?? 'Untitled'}
-											className="absolute inset-0 z-[1]"
-										/>
-										<button
-											type="button"
-											aria-label={`Remove link to ${row.object.title ?? 'Untitled'}`}
-											title="Remove link"
-											onClick={() => deleteRelationship.mutate(row.rel.id)}
-											className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
+												<MimeTile mimeType={row.file.mimeType} size="sm" />
+												<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">
+													{row.file.name}
+												</span>
+												<span className="hidden shrink-0 truncate font-mono text-[10.5px] text-muted-foreground md:block">
+													{row.file.mimeType} · {formatBytes(row.file.sizeBytes)}
+												</span>
+												<TypeBadge type="file" variant="mono" className="shrink-0 text-[8.5px]" />
+												<a
+													href={row.file.url}
+													target="_blank"
+													rel="noreferrer"
+													aria-label={row.file.name}
+													className="absolute inset-0 z-[1]"
+												>
+													<span className="sr-only">{row.file.name}</span>
+												</a>
+												<button
+													type="button"
+													aria-label={`Remove link to ${row.file.name}`}
+													title="Remove link"
+													onClick={() => deleteRelationship.mutate(row.rel.id)}
+													className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
+												>
+													<X size={13} />
+												</button>
+											</div>
+										)
+									}
+									return (
+										<div
+											key={row.rel.id}
+											className={cn(
+												'relative flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-muted/40',
+												index > 0 && 'border-t border-border',
+											)}
 										>
-											<X size={13} />
-										</button>
-									</div>
-								))}
+											<span
+												aria-hidden="true"
+												className={cn(
+													'size-[7px] shrink-0 rounded-[2px]',
+													getTypeColor(row.object.type).bg,
+												)}
+											/>
+											<TypeBadge
+												type={row.object.type}
+												variant="mono"
+												className="shrink-0 text-[8.5px]"
+											/>
+											<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">
+												{row.object.title ?? 'Untitled'}
+											</span>
+											{/* A linked object an agent is working on right now says so here —
+										    the row's status slot is where that live state belongs. */}
+											{row.object.activeSessionId ? (
+												<span className="relative z-[2] shrink-0">
+													<AgentWorkingBadge
+														sessionId={row.object.activeSessionId}
+														workspaceId={workspaceId}
+													/>
+												</span>
+											) : (
+												<span
+													className={cn(
+														'hidden max-w-[150px] shrink-0 truncate text-[11px] font-semibold md:block',
+														getStatusColor(row.object.status).text,
+													)}
+												>
+													{statusLabel(row.object.status)}
+												</span>
+											)}
+											<RelativeTime
+												date={row.object.updatedAt ?? row.object.createdAt}
+												compact
+												className="w-[38px] shrink-0 text-right text-[10px] uppercase tabular-nums text-border-strong"
+											/>
+											{/* The link covers the row so the whole thing opens the object;
+										    the remove button sits above it so × still hits ×. */}
+											<Link
+												to="/$workspaceId/objects/$objectId"
+												params={{ workspaceId, objectId: row.object.id }}
+												aria-label={row.object.title ?? 'Untitled'}
+												className="absolute inset-0 z-[1]"
+											/>
+											<button
+												type="button"
+												aria-label={`Remove link to ${row.object.title ?? 'Untitled'}`}
+												title="Remove link"
+												onClick={() => deleteRelationship.mutate(row.rel.id)}
+												className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
+											>
+												<X size={13} />
+											</button>
+										</div>
+									)
+								})}
 							</div>
 						)}
 						{pickerOpenForType === group.type && (

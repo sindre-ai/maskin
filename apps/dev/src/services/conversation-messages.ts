@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { events, conversations, messages } from '@maskin/db/schema'
+import { conversations, messages } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 
 export type InsertConversationMessageArgs = {
 	conversationId: string
@@ -57,7 +58,7 @@ export async function insertConversationMessage(
 		.set({ lastMessageAt: created.createdAt ?? new Date(), updatedAt: new Date() })
 		.where(eq(conversations.id, args.conversationId))
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: args.workspaceId,
 		actorId: args.actorId,
 		action: 'message_posted',

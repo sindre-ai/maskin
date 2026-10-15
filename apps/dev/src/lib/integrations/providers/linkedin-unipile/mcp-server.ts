@@ -30,7 +30,11 @@ import {
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
- * over Streamable HTTP at `/api/integrations/linkedin-unipile/mcp`.
+ * over Streamable HTTP at `/api/integrations/linkedin-unipile/mcp/{instanceSlug}`
+ * (one endpoint per connected LinkedIn identity). The un-slugged aggregate
+ * `/api/integrations/linkedin-unipile/mcp` path is a deprecated, empty-tool
+ * endpoint kept live for backwards compatibility — see
+ * `routes/integrations-linkedin-unipile-mcp.ts`.
  *
  * R11-A rebuilds this file around the fan-out identity model — see
  * linkedin-mcp-phase2-technical-spec.md §1 and §2. The old flat
@@ -442,10 +446,13 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'get_profile'),
 			{
 				description: scopedDescription(
-					'Fetch one LinkedIn profile by public handle or provider id',
+					'Fetch one LinkedIn profile by public handle, provider id, or the recipient_urn a prior search_people / list_connections result surfaced (a urn:li:... member URN is accepted and reduced to its bare provider id). Pass sections: ["experience"] to also get dated job history (company, title, start and end as ISO dates, current); it is off by default and only that value is supported. An experience pull is a heavier LinkedIn view that may be throttled: Unipile suggests staying under about 100 profile views per account per day. If the pull is throttled or rejected you still get the base profile plus experience_unavailable: true, never an empty list that looks like no jobs.',
 					cfg,
 				),
-				inputSchema: { identifier: z.string().min(1) },
+				inputSchema: {
+					identifier: z.string().min(1),
+					sections: z.array(z.enum(['experience'])).optional(),
+				},
 			},
 			async (args) => {
 				try {

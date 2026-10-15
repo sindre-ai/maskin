@@ -77,6 +77,32 @@ describe('MessageActivity', () => {
 		expect(screen.getByText('Starting…')).toBeInTheDocument()
 	})
 
+	it('renders the Stop button on a running live turn', () => {
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn({
+					inProgress: true,
+					steps: [{ id: '1', kind: 'tool_use', text: 'Using search_objects' }],
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+	})
+
+	it('hides the Stop button while the session is still booting (no live process to stop)', () => {
+		render(
+			<MessageActivity workspaceId="ws-1" turn={buildTurn({ inProgress: true, starting: true })} />,
+			{ wrapper: TestWrapper },
+		)
+		// The spinner is still there so the user knows a reply is coming, but
+		// there is no container/agent-server to stop yet — clicking Stop would
+		// 400 with "no container" and silently fail, which is the reported bug.
+		expect(screen.getByText('Starting…')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
+	})
+
 	it('collapses a finished turn to what it last did, expandable to the full trace', () => {
 		render(
 			<MessageActivity

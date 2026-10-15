@@ -1,3 +1,4 @@
+import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { CreateSessionInput, SessionResponse } from '@/lib/api'
@@ -5,6 +6,8 @@ import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
+const ACTIVE_CONVERSATION_POLL_MS = 5_000
+const IDLE_CONVERSATION_POLL_MS = 30_000
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
@@ -20,6 +23,12 @@ export function useSession(id: string | null, workspaceId: string) {
  * page past the API's 100-row clamp (sessionQuerySchema) until a short page —
  * the Agents index's per-agent counts and latest-session status are
  * load-bearing on full history.
+ *
+ * `verbose: true` keeps today's fat SessionResponse payload during the
+ * lean-list compat window — the UI's per-agent counts, activity indicators
+ * and status branches all read fields (config, result, currentActivity, ...)
+ * the lean shape doesn't carry. A follow-up bet migrates each consumer to
+ * the lean shape and drops this flag.
  */
 export function useWorkspaceSessions(
 	workspaceId: string,
@@ -30,12 +39,13 @@ export function useWorkspaceSessions(
 			? [...queryKeys.sessions.all(workspaceId), 'paged']
 			: queryKeys.sessions.all(workspaceId),
 		queryFn: async () => {
-			if (!paged) return api.sessions.list(workspaceId, { limit: '100' })
+			if (!paged) return api.sessions.list(workspaceId, { verbose: 'true', limit: '100' })
 			const pageSize = 100
 			const all: SessionResponse[] = []
 			let offset = 0
 			for (;;) {
 				const page = await api.sessions.list(workspaceId, {
+					verbose: 'true',
 					limit: String(pageSize),
 					offset: String(offset),
 				})
@@ -59,7 +69,8 @@ export function useWorkspaceSessions(
 export function useActorSessions(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '100' }),
+		queryFn: () =>
+			api.sessions.list(workspaceId, { verbose: 'true', actor_id: actorId, limit: '100' }),
 		enabled: !!actorId && !!workspaceId,
 	})
 }
@@ -123,7 +134,11 @@ export function useMentionSessionsForObject(workspaceId: string, objectId: strin
 	return useQuery({
 		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),
 		queryFn: () =>
-			api.sessions.list(workspaceId, { mention_object_id: objectId as string, limit: '100' }),
+			api.sessions.list(workspaceId, {
+				verbose: 'true',
+				mention_object_id: objectId as string,
+				limit: '100',
+			}),
 		enabled: !!workspaceId && !!objectId,
 	})
 }
@@ -131,7 +146,8 @@ export function useMentionSessionsForObject(workspaceId: string, objectId: strin
 export function useActiveSessionsForActor(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActor(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, status: 'running' }),
+		queryFn: () =>
+			api.sessions.list(workspaceId, { verbose: 'true', actor_id: actorId, status: 'running' }),
 		enabled: !!actorId && !!workspaceId,
 	})
 }
@@ -153,6 +169,7 @@ export function useActiveSessionsForConversation(
 		queryKey: queryKeys.sessions.byConversation(workspaceId, conversationId ?? ''),
 		queryFn: () =>
 			api.sessions.list(workspaceId, {
+				verbose: 'true',
 				conversation_id: conversationId as string,
 			}),
 		enabled: !!workspaceId && !!conversationId,
@@ -160,8 +177,14 @@ export function useActiveSessionsForConversation(
 		// activity only renders for sessions cached as `running`. Relying on
 		// SSE invalidation alone meant one dropped connection froze the
 		// transcript until the user reloaded. Poll as a floor so the worst
-		// case is a few seconds of lag rather than a dead UI.
-		refetchInterval: 5000,
+		// case is a few seconds of lag rather than a dead UI. Fast only while a
+		// session in this conversation is live (that is when the transcript is
+		// changing); an idle chat falls back to a slow floor. Background tabs do
+		// not poll (refetchIntervalInBackground defaults to false).
+		refetchInterval: (query) =>
+			query.state.data?.some((s) => ACTIVE_STATUSES.has(s.status))
+				? ACTIVE_CONVERSATION_POLL_MS
+				: IDLE_CONVERSATION_POLL_MS,
 	})
 }
 
@@ -188,6 +211,7 @@ export function useActorSessionsInfinite(actorId: string, workspaceId: string) {
 		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
 		queryFn: ({ pageParam }) =>
 			api.sessions.list(workspaceId, {
+				verbose: 'true',
 				actor_id: actorId,
 				limit: String(ACTOR_SESSIONS_PAGE_SIZE),
 				offset: String(pageParam),

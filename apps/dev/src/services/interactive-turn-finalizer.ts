@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
-import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
-import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { messages, sessionLogs, sessions } from '@maskin/db/schema'
+import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
+import * as Sentry from '@sentry/node'
+import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
@@ -164,6 +165,46 @@ const PSEUDO_TOOL_CALL_UNAVAILABLE_MESSAGE =
 const PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE =
 	"I got that turn wrong — I wrote out the tool calls I meant to make instead of running them. I asked myself to run that again, but the run never came back. Send the message again and I'll pick it up."
 
+/**
+ * How many extra attempts an empty turn gets on the SAME model before the
+ * fallback model is tried.
+ *
+ * On top of the CLI's own "no visible output" nudge, which has already failed
+ * by the time a blank `result` reaches us. Two, because most of the empty
+ * completions this exists for are one-off (about 45 of 71 CLI nudges
+ * recovered), while a model that has answered nothing three times in a row is
+ * unlikely to on a fourth identical ask.
+ */
+const MAX_EMPTY_TURN_RETRIES = 2
+
+/**
+ * The correction written to the model's stdin as a user turn after an empty one.
+ *
+ * Not a replay of the human's message: the empty turn usually ended right after
+ * tools had run, and replaying the message would run them again (a second
+ * object created, a second message sent). This names the problem and sends the
+ * model back to the results it already has.
+ */
+const EMPTY_TURN_NUDGE =
+	'[system correction] Your last turn ended without any reply for the human: the model returned an empty response, so nothing was posted. Continue from where you left off. Use the tool results you already have; do not repeat tool calls that already succeeded. End the turn with the reply for the human: what you found or did, in prose.'
+
+/** What the human reads when every attempt, fallback included, came back empty. */
+const EMPTY_TURN_GIVE_UP_MESSAGE =
+	"I couldn't complete that turn — the model came back empty every time I asked. Send your message again and I'll pick it up."
+
+/**
+ * What the human reads when the turn was empty and no new attempt could be
+ * made — nothing can reach the CLI's stdin, or the session has gone. Distinct
+ * from the message above because claiming a retry that never happened
+ * misdescribes what they are looking at.
+ */
+const EMPTY_TURN_UNAVAILABLE_MESSAGE =
+	"I couldn't complete that turn — the model came back empty and I couldn't ask it again. Send your message again and I'll pick it up."
+
+/** What the human reads when a new attempt was written but the turn never came back. */
+const EMPTY_TURN_UNANSWERED_MESSAGE =
+	"I couldn't complete that turn — the model came back empty, I asked it again, and the run never came back. Send your message again and I'll pick it up."
+
 /** What the human reads for a failure no replay would fix. */
 const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
@@ -204,6 +245,17 @@ type PseudoToolCallMetadata = {
 	nudges: number
 }
 
+/**
+ * Carried on every notice an empty-completion episode ends in, so a turn the
+ * model left blank is never counted as a model-API failure (`error_kind`) or
+ * as a tool-calls-as-text turn (`pseudo_tool_calls`).
+ */
+type EmptyCompletionMetadata = {
+	attempts: number
+	model: string | null
+	fallback_model?: string
+}
+
 type ReplayWatchdog = {
 	timer: NodeJS.Timeout
 	gate: SessionGate
@@ -220,6 +272,8 @@ type ReplayWatchdog = {
 	unansweredMessage: string
 	/** Set when this watchdog was armed for a pseudo-tool-call turn, for its notice metadata. */
 	pseudoToolCalls?: PseudoToolCallMetadata
+	/** Set when this watchdog was armed for an empty-completion turn, for its notice metadata. */
+	emptyCompletion?: EmptyCompletionMetadata
 }
 
 type SessionGate = {
@@ -227,7 +281,16 @@ type SessionGate = {
 	conversationId: string | null
 	actorId: string
 	workspaceId: string
+	/** `config.llm_route`, for tagging empty-completion telemetry. '' when unrecorded. */
+	llmRoute: string
 }
+
+/** What the backwards scan of a blank-`result` turn concluded. */
+type BlankTurn =
+	| { kind: 'text'; text: string }
+	| { kind: 'replied' }
+	| { kind: 'empty' }
+	| { kind: 'unknown' }
 
 /**
  * Replays one failed turn on the session that produced it.
@@ -263,6 +326,18 @@ export type InteractiveTurnFinalizerOptions = {
 	 * and swallowed so the human still sees the moved-subscription message.
 	 */
 	onStopSession?: (sessionId: string, reason: string) => Promise<void>
+	/**
+	 * Switches the running CLI onto another model for its next turns. Injected
+	 * for the same reason as the options above. Without it an empty turn can
+	 * only be retried on the model that produced it.
+	 */
+	setModel?: (sessionId: string, model: string) => Promise<void>
+	/**
+	 * The model an empty turn falls back to once retries on the original model
+	 * are spent (CHAT_EMPTY_TURN_FALLBACK_MODEL). Unset disables the fallback;
+	 * the retries and the visible message still apply.
+	 */
+	fallbackModel?: string | null
 }
 
 export class InteractiveTurnFinalizer {
@@ -288,7 +363,30 @@ export class InteractiveTurnFinalizer {
 	 * emitting markup be nudged forever. Cleared when a turn posts normally.
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
+	/**
+	 * sessionId -> attempts spent on the empty turn answering one chat message.
+	 *
+	 * Keyed by session with the originating message id stored beside it, not by
+	 * payload: the correction is a NEW user turn with different content, so a
+	 * payload key would start a fresh budget each time. A different `origin`
+	 * means the human has moved on to a new message, which starts its own.
+	 * `model` is the session's own model, read when the episode began.
+	 */
+	private readonly emptyTurns = new Map<
+		string,
+		{ origin: number | null; attempts: number; model: string | null }
+	>()
+	/**
+	 * sessionId -> the model to put back once the turn that ran on the fallback
+	 * has closed. The fallback is for one turn, not for the rest of the session.
+	 */
+	private readonly fallbackActive = new Map<
+		string,
+		{ primaryModel: string; armedAfterLogId: number }
+	>()
 	private readonly retryTurn?: RetryTurnFn
+	private readonly setModel?: InteractiveTurnFinalizerOptions['setModel']
+	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
 	private readonly delay: (ms: number) => Promise<void>
@@ -297,6 +395,8 @@ export class InteractiveTurnFinalizer {
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
 		this.retryTurn = options.retryTurn
+		this.setModel = options.setModel
+		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onStopSession = options.onStopSession
 		this.delay =
@@ -353,6 +453,8 @@ export class InteractiveTurnFinalizer {
 	forgetSession(sessionId: string): void {
 		this.clearRetryCounts(sessionId)
 		this.pseudoToolCallNudges.delete(sessionId)
+		this.emptyTurns.delete(sessionId)
+		this.fallbackActive.delete(sessionId)
 		// A replay was written and its turn never came back; the session going
 		// away is proof it never will. Fire the notice instead of dropping the
 		// timer — a discarded watchdog leaves the human in an empty thread,
@@ -399,6 +501,14 @@ export class InteractiveTurnFinalizer {
 		const watchdog = this.replayWatchdogs.get(sessionId)
 		if (watchdog && logId > watchdog.armedAfterLogId) this.disarmReplayWatchdog(sessionId)
 
+		// The turn that ran on the fallback model has closed, however it ended.
+		// Put the session's own model back before the next message arrives.
+		const onFallback = this.fallbackActive.get(sessionId)
+		if (onFallback && logId > onFallback.armedAfterLogId) {
+			this.fallbackActive.delete(sessionId)
+			await this.restorePrimaryModel(sessionId, onFallback.primaryModel)
+		}
+
 		const gate = await this.loadGate(sessionId)
 		if (!gate) return
 		if (!gate.interactive) return
@@ -434,12 +544,22 @@ export class InteractiveTurnFinalizer {
 
 		let text = result.text.trim()
 		let recovered = false
+		let blank: BlankTurn | null = null
 		if (!text) {
-			const fallback = await this.recoverTurnText(sessionId, logId, result.raw)
-			if (fallback) {
-				text = fallback
+			blank = await this.assessBlankTurn(sessionId, logId, result.raw)
+			if (blank.kind === 'text') {
+				text = blank.text
 				recovered = true
 			}
+		}
+
+		// A turn that produced no text AND whose last model call came back empty
+		// (right after a tool result, or at the very start) is not silence by
+		// choice: the human asked and got nothing. Retry it, then fall back, then
+		// say so — see handleEmptyTurn.
+		if (!text && blank?.kind === 'empty') {
+			await this.handleEmptyTurn(sessionId, gate, gate.conversationId, result, logId)
+			return
 		}
 
 		// A turn that genuinely produced no text has nothing to say — most often
@@ -448,6 +568,7 @@ export class InteractiveTurnFinalizer {
 		// because a false negative here is an invisible dropped reply, and this
 		// was previously the one path in this service with no telemetry at all.
 		if (!text) {
+			if (blank?.kind === 'replied') this.emptyTurns.delete(sessionId)
 			logger.info(
 				`Interactive session ${sessionId} closed a turn with no postable text (log ${logId}, subtype ${result.subtype ?? 'none'}); nothing to post`,
 			)
@@ -479,6 +600,7 @@ export class InteractiveTurnFinalizer {
 		// postable, and clearing before the check would refund the budget on the
 		// very turn that spends it.
 		this.pseudoToolCallNudges.delete(sessionId)
+		this.emptyTurns.delete(sessionId)
 
 		await this.postTurnMessage(
 			sessionId,
@@ -489,6 +611,276 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+	}
+
+	/**
+	 * A turn whose last model call came back empty: ask again on the same model,
+	 * then on the fallback model, then tell the human in words.
+	 *
+	 * Shaped like handlePseudoToolCallTurn on purpose — same dedupe, same
+	 * watchdog, same not-awaited write — since it differs only in what it tells
+	 * the model, how many attempts it allows, and the model switch in between.
+	 *
+	 * Acts only on the newest turn of the session. The agent-server replays a
+	 * session's whole stdout when this process restarts, so without that guard a
+	 * deploy would nudge live sessions about turns that ended hours ago and post
+	 * a "couldn't complete that turn" notice under every old blank one.
+	 */
+	private async handleEmptyTurn(
+		sessionId: string,
+		gate: SessionGate,
+		conversationId: string,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<void> {
+		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
+		if (this.seen.has(dedupeKey)) return
+
+		if (
+			!(await this.isNewestTurn(sessionId, logId)) ||
+			(await this.findExistingFinalOutputMessageId(sessionId, dedupeKey)) !== null
+		) {
+			logger.info(
+				`Interactive session ${sessionId} closed an old turn with no postable text (log ${logId}); not retrying a turn that is no longer the latest`,
+			)
+			return
+		}
+
+		const origin = await this.resolveTurnMessageId(sessionId, logId)
+		const tracked = this.emptyTurns.get(sessionId)
+		const sameEpisode = tracked && tracked.origin === origin ? tracked : null
+		const spent = sameEpisode?.attempts ?? 0
+		// Read once per episode. After a switch the CLI prints a fresh init line
+		// naming the model it was switched TO, so a later read would mistake the
+		// fallback for the session's own model.
+		const model = sameEpisode ? sameEpisode.model : await this.findSessionModel(sessionId)
+
+		// Fallback only within the same model family. The slug is an OpenRouter
+		// name: sent to a session on another provider it is a 404 on the very next
+		// turn, which would swap one silence for an error.
+		const fallback = this.fallbackModel
+		const vendor = (slug: string) => (slug.includes('/') ? slug.split('/')[0] : null)
+		const canFallback =
+			!!fallback &&
+			!!this.setModel &&
+			!!model &&
+			model !== fallback &&
+			vendor(model) !== null &&
+			vendor(model) === vendor(fallback)
+
+		const stage: 'retry' | 'fallback' | 'gave_up' | 'unavailable' = !this.retryTurn
+			? 'unavailable'
+			: spent < MAX_EMPTY_TURN_RETRIES
+				? 'retry'
+				: spent === MAX_EMPTY_TURN_RETRIES && canFallback
+					? 'fallback'
+					: 'gave_up'
+		this.reportEmptyCompletion(sessionId, gate, result, logId, model, spent + 1, stage)
+
+		// A give-up past the same-model retries means the fallback was tried too.
+		const usedFallback =
+			stage === 'fallback' || (stage === 'gave_up' && spent > MAX_EMPTY_TURN_RETRIES)
+		const metadata: EmptyCompletionMetadata = {
+			attempts: spent,
+			model,
+			...(usedFallback && fallback ? { fallback_model: fallback } : {}),
+		}
+
+		if (stage === 'unavailable' || stage === 'gave_up') {
+			this.emptyTurns.delete(sessionId)
+			await this.postTurnMessage(
+				sessionId,
+				gate,
+				conversationId,
+				result,
+				logId,
+				stage === 'gave_up' ? EMPTY_TURN_GIVE_UP_MESSAGE : EMPTY_TURN_UNAVAILABLE_MESSAGE,
+				{ is_error: true, empty_completion: metadata },
+			)
+			return
+		}
+
+		this.emptyTurns.set(sessionId, { origin, attempts: spent + 1, model })
+		this.rememberKey(dedupeKey)
+		const attempted: EmptyCompletionMetadata = { ...metadata, attempts: spent + 1 }
+
+		const task = (async () => {
+			// Armed before the writes: the empty envelope is already in `seen`, so
+			// this watchdog is the only remaining record that the human is owed an
+			// answer.
+			this.armReplayWatchdog(
+				sessionId,
+				gate,
+				conversationId,
+				dedupeKey,
+				logId,
+				EMPTY_TURN_UNANSWERED_MESSAGE,
+				undefined,
+				attempted,
+			)
+			let switched = false
+			try {
+				if (stage === 'fallback' && fallback && model) {
+					await this.setModel?.(sessionId, fallback)
+					switched = true
+					this.fallbackActive.set(sessionId, { primaryModel: model, armedAfterLogId: logId })
+				}
+				await this.retryTurn?.(sessionId, {
+					type: 'user',
+					message: { role: 'user', content: EMPTY_TURN_NUDGE },
+				})
+			} catch (err) {
+				this.disarmReplayWatchdog(sessionId)
+				this.emptyTurns.delete(sessionId)
+				logger.error(
+					`Interactive session ${sessionId} could not be asked again after an empty turn: ${describeError(err)}`,
+				)
+				// The switch landed but no turn is coming to close it, so nothing
+				// would ever switch back.
+				if (switched && model) {
+					this.fallbackActive.delete(sessionId)
+					await this.restorePrimaryModel(sessionId, model)
+				}
+				await this.postRetryNotice(
+					sessionId,
+					gate,
+					conversationId,
+					dedupeKey,
+					'undeliverable',
+					EMPTY_TURN_UNAVAILABLE_MESSAGE,
+					undefined,
+					attempted,
+				)
+			}
+		})()
+
+		this.pendingRetries.add(task)
+		void task.finally(() => this.pendingRetries.delete(task))
+	}
+
+	/**
+	 * Make each empty completion countable.
+	 *
+	 * Until now they left nothing behind: the CLI drops an empty assistant
+	 * message, so session_logs has no row for the call that failed and the rate
+	 * could only be reconstructed from OpenRouter's side. The CLI's stream does
+	 * not carry the OpenRouter request id or the serving provider for it either,
+	 * so this records what it does carry — the model, the result's stop_reason
+	 * and terminal_reason, and output tokens — and the session's LLM route.
+	 */
+	private reportEmptyCompletion(
+		sessionId: string,
+		gate: SessionGate,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+		model: string | null,
+		attempt: number,
+		stage: 'retry' | 'fallback' | 'gave_up' | 'unavailable',
+	): void {
+		let raw: Record<string, unknown> = {}
+		try {
+			raw = JSON.parse(result.raw) as Record<string, unknown>
+		} catch {
+			// The envelope parsed once already; a miss here only loses the extras.
+		}
+		const usage = (raw.usage ?? {}) as Record<string, unknown>
+		const route = gate.llmRoute || 'unknown'
+		logger.warn(
+			`Interactive session ${sessionId} turn ended with an empty model completion (log ${logId}, attempt ${attempt}, ${stage})`,
+			{
+				sessionId,
+				attempt,
+				stage,
+				model,
+				route,
+				stop_reason: raw.stop_reason ?? null,
+				terminal_reason: raw.terminal_reason ?? null,
+				output_tokens: usage.output_tokens ?? null,
+				num_turns: raw.num_turns ?? null,
+			},
+		)
+		try {
+			Sentry.metrics.count('chat.empty_completion', 1, {
+				attributes: { model: model ?? 'unknown', route, stage },
+			})
+		} catch (err) {
+			logger.warn(`Could not record the empty-completion metric: ${describeError(err)}`)
+		}
+	}
+
+	/** Put the session's own model back after a turn ran on the fallback. */
+	private async restorePrimaryModel(sessionId: string, model: string): Promise<void> {
+		try {
+			await this.setModel?.(sessionId, model)
+		} catch (err) {
+			logger.error(
+				`Interactive session ${sessionId} could not be switched back to ${model} after a fallback turn: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
+	 * True when nothing in the session's log follows this turn's `result` line —
+	 * no later turn closed and no later human message opened. Matched on the
+	 * unescaped `"type":"result"` and on `maskin_message_id`, the same markers
+	 * the turn scans use, so a tool output that merely quotes JSON cannot hide a
+	 * turn from this check.
+	 */
+	private async isNewestTurn(sessionId: string, logId: number): Promise<boolean> {
+		const [later] = await this.db
+			.select({ id: sessionLogs.id })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					gt(sessionLogs.id, logId),
+					eq(sessionLogs.stream, 'stdout'),
+					or(
+						like(sessionLogs.content, '%"type":"result"%'),
+						like(sessionLogs.content, '%maskin_message_id%'),
+					),
+				),
+			)
+			.limit(1)
+		return !later
+	}
+
+	/**
+	 * The model the CLI started this session on, from its `system` init line.
+	 * The most recent init wins, since a resumed session announces itself again.
+	 * Null when no init line is in the log — callers then skip anything that
+	 * needs to switch back.
+	 */
+	private async findSessionModel(sessionId: string): Promise<string | null> {
+		const [row] = await this.db
+			.select({ content: sessionLogs.content })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					eq(sessionLogs.stream, 'stdout'),
+					like(sessionLogs.content, '%"subtype":"init"%'),
+				),
+			)
+			.orderBy(desc(sessionLogs.id))
+			.limit(1)
+		if (!row) return null
+		const lines = splitRowLines(row.content)
+		for (let i = lines.length - 1; i >= 0; i--) {
+			try {
+				const parsed = JSON.parse((lines[i] ?? '').trim()) as Record<string, unknown>
+				if (
+					parsed.type === 'system' &&
+					parsed.subtype === 'init' &&
+					typeof parsed.model === 'string'
+				) {
+					return parsed.model
+				}
+			} catch {
+				// Not JSON, or a partial — keep walking the row's other lines.
+			}
+		}
+		return null
 	}
 
 	/**
@@ -661,6 +1053,24 @@ export class InteractiveTurnFinalizer {
 
 		this.rememberKey(dedupeKey)
 
+		// Anchor the handed-off strip: every sub-agent spawned inside this turn
+		// carries source_session_id = primarySessionId but was inserted with
+		// spawned_by_message_id = NULL (the assistant message row it needs to
+		// point at did not exist yet — insertConversationMessage above is what
+		// created it). Backfill the anchor now.
+		//
+		// On the recovery-scan replay path (the finalizer re-processes an already-
+		// posted result line — the `!created` branch below), the previous pass
+		// usually completed the same backfill; the UPDATE's IS NULL guard makes
+		// it a no-op. If the previous pass crashed between insert and backfill,
+		// looking up the existing dedupe-matched message id lets the replay
+		// complete the anchor rather than leaving the strip permanently unanchored.
+		const anchorMessageId =
+			created?.id ?? (await this.findExistingFinalOutputMessageId(sessionId, dedupeKey))
+		if (anchorMessageId !== null) {
+			await this.backfillSpawnAnchor(sessionId, logId, anchorMessageId)
+		}
+
 		if (!created) {
 			// The unique index suppressed it — a replayed log line, not a new turn.
 			// Logged because a false positive here is a silently dropped reply.
@@ -668,6 +1078,107 @@ export class InteractiveTurnFinalizer {
 				`Skipped duplicate final output for session ${sessionId} (dedupe_key ${dedupeKey})`,
 			)
 		}
+	}
+
+	/**
+	 * Backfill sessions.spawned_by_message_id for every sub-agent spawned during
+	 * this turn, so the handed-off strip's per-row render can find its anchor
+	 * bubble.
+	 *
+	 * The WHERE is keyed on the session_logs row that opened this turn — the
+	 * user-turn envelope SessionManager.writeInput persists — rather than a
+	 * wall-clock turnStart timestamp. The finalizer has a recovery-scan replay
+	 * path bounded by RECOVERY_SCAN_LIMIT (a Docker log stream tails 'all' on
+	 * first connect after an apps/dev restart, re-ingesting every past chunk);
+	 * a wall-clock filter reads a different bound on each pass and would either
+	 * miss rows or over-scope on replay. Anchoring on already-persisted log-row
+	 * createdAt values gives the same window every time.
+	 *
+	 * The primary session's own createdAt is the fallback lower bound for a
+	 * seeded first turn that carries no user-turn envelope — a sub-agent cannot
+	 * be created before its parent session exists.
+	 *
+	 * Best-effort: any error here must not break log ingest (see onStdout's
+	 * per-line try/catch). Not awaited by callers that ingest lines — but this
+	 * one runs synchronously with insertConversationMessage so the anchor
+	 * arrives in the same DB round as the message it points at.
+	 */
+	private async backfillSpawnAnchor(
+		primarySessionId: string,
+		logId: number,
+		messageId: number,
+	): Promise<void> {
+		try {
+			const [currentLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(eq(sessionLogs.id, logId))
+				.limit(1)
+			if (!currentLog?.createdAt) return
+
+			const [turnStartLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(
+					and(
+						eq(sessionLogs.sessionId, primarySessionId),
+						lte(sessionLogs.id, logId),
+						eq(sessionLogs.stream, 'stdout'),
+						like(sessionLogs.content, '%maskin_message_id%'),
+					),
+				)
+				.orderBy(desc(sessionLogs.id))
+				.limit(1)
+
+			let lowerBound = turnStartLog?.createdAt ?? null
+			if (!lowerBound) {
+				const [session] = await this.db
+					.select({ createdAt: sessions.createdAt })
+					.from(sessions)
+					.where(eq(sessions.id, primarySessionId))
+					.limit(1)
+				lowerBound = session?.createdAt ?? null
+			}
+			if (!lowerBound) return
+
+			await this.db
+				.update(sessions)
+				.set({ spawnedByMessageId: messageId })
+				.where(
+					and(
+						eq(sessions.sourceSessionId, primarySessionId),
+						isNull(sessions.spawnedByMessageId),
+						gte(sessions.createdAt, lowerBound),
+						lte(sessions.createdAt, currentLog.createdAt),
+					),
+				)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${primarySessionId} could not backfill spawn anchor for message ${messageId}: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
+	 * The existing final-output row for this (session, dedupe_key) — a hit
+	 * proves the previous pass already inserted the message, so the replay path
+	 * can still anchor sub-agents at it even though the insert conflicted.
+	 */
+	private async findExistingFinalOutputMessageId(
+		sessionId: string,
+		dedupeKey: string,
+	): Promise<number | null> {
+		const [row] = await this.db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.sessionId, sessionId),
+					sql`(${messages.metadata}->'final_output'->>'dedupe_key') = ${dedupeKey}`,
+				),
+			)
+			.limit(1)
+		return row?.id ?? null
 	}
 
 	/** Move the workspace onto its next Claude subscription; `null` if nothing moved. */
@@ -878,6 +1389,7 @@ export class InteractiveTurnFinalizer {
 		reason: 'undeliverable' | 'unanswered',
 		content: string,
 		pseudoToolCalls?: PseudoToolCallMetadata,
+		emptyCompletion?: EmptyCompletionMetadata,
 	): Promise<void> {
 		try {
 			const created = await insertConversationMessage(this.db, {
@@ -892,6 +1404,7 @@ export class InteractiveTurnFinalizer {
 						error_kind: 'transient',
 						retry: reason,
 						...(pseudoToolCalls ? { pseudo_tool_calls: pseudoToolCalls } : {}),
+						...(emptyCompletion ? { is_error: true, empty_completion: emptyCompletion } : {}),
 					},
 				},
 				sessionId,
@@ -925,6 +1438,7 @@ export class InteractiveTurnFinalizer {
 		armedAfterLogId: number,
 		unansweredMessage: string = RETRY_UNANSWERED_MESSAGE,
 		pseudoToolCalls?: PseudoToolCallMetadata,
+		emptyCompletion?: EmptyCompletionMetadata,
 	): void {
 		this.disarmReplayWatchdog(sessionId)
 		const timer = setTimeout(() => {
@@ -939,6 +1453,7 @@ export class InteractiveTurnFinalizer {
 			armedAfterLogId,
 			unansweredMessage,
 			pseudoToolCalls,
+			emptyCompletion,
 		})
 	}
 
@@ -967,6 +1482,7 @@ export class InteractiveTurnFinalizer {
 			'unanswered',
 			watchdog.unansweredMessage,
 			watchdog.pseudoToolCalls,
+			watchdog.emptyCompletion,
 		)
 	}
 
@@ -1116,6 +1632,7 @@ export class InteractiveTurnFinalizer {
 				conversationId: sessions.conversationId,
 				actorId: sessions.actorId,
 				workspaceId: sessions.workspaceId,
+				config: sessions.config,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -1128,13 +1645,22 @@ export class InteractiveTurnFinalizer {
 			return null
 		}
 
-		if (row.interactive && !row.conversationId) return row
-		this.gates.set(sessionId, row)
-		return row
+		const config = row.config as Record<string, unknown> | null
+		const gate: SessionGate = {
+			interactive: row.interactive,
+			conversationId: row.conversationId,
+			actorId: row.actorId,
+			workspaceId: row.workspaceId,
+			llmRoute: typeof config?.llm_route === 'string' ? config.llm_route : '',
+		}
+		if (gate.interactive && !gate.conversationId) return gate
+		this.gates.set(sessionId, gate)
+		return gate
 	}
 
 	/**
-	 * The agent's last spoken text in the turn that is now closing.
+	 * Read the turn that is now closing, from a blank `result` envelope, and say
+	 * whether the human was answered.
 	 *
 	 * Walks this session's stdout backwards from the `result` line, stopping at
 	 * the turn boundary (the previous `result`, or the user turn envelope that
@@ -1142,26 +1668,36 @@ export class InteractiveTurnFinalizer {
 	 * earlier turn — which would re-post a reply the human already read. A call
 	 * to AskUserQuestion or to the post_conversation_message MCP tool is also a
 	 * boundary: both put a message on the human's screen, so anything said
-	 * before one of them has already been read. See scanTurnLine for why.
+	 * before one of them has already been read. See classifyTurnLine for why.
+	 *
+	 * Concludes one of:
+	 *  - `text`: the agent's last spoken text, with no tool call after it. The
+	 *    envelope blanked, but the reply is right there (a trailing thinking
+	 *    block is the usual cause), so it is recovered and tagged.
+	 *  - `replied`: the agent answered through a chat tool and closed silently,
+	 *    the commonest way a turn legitimately ends blank.
+	 *  - `empty`: nothing the human can read. Either no model output at all, or
+	 *    output that a tool call followed — narration like "Almost there…" ahead
+	 *    of a tool is not an answer, and the model was owed a reply to the tool's
+	 *    result which came back empty. Also when a chat tool was called earlier
+	 *    but other tools ran after it, since the turn then went on past the post.
+	 *  - `unknown`: the scan ran out of rows before reaching a boundary, so
+	 *    nothing can be said. Treated like `replied`: a missed retry is the same
+	 *    silence we had before, a wrong one re-runs a turn that was fine.
 	 *
 	 * Rows are split into lines before classifying. A session_logs row is one
 	 * envelope on the agent-server path but a raw Docker chunk on the local one
-	 * (session-manager writes `chunk.data` verbatim), and scanTurnLine parses a
-	 * whole line — so a packed chunk would classify as 'other', which both loses
+	 * (session-manager writes `chunk.data` verbatim), and classifyTurnLine parses
+	 * a whole line — so a packed chunk would classify as 'other', which both loses
 	 * the reply AND fails to detect a boundary buried in it. Failing to detect a
 	 * boundary is the dangerous half: the scan walks into the previous turn and
 	 * re-posts a reply the human already read.
-	 *
-	 * Returns the LAST non-empty assistant text of the turn. Mid-turn narration
-	 * ("let me check X") can win that way when the agent said nothing else, but
-	 * a slightly over-eager bubble beats a lost reply, and the message is
-	 * tagged `recovered` so this path stays visible in the data.
 	 */
-	private async recoverTurnText(
+	private async assessBlankTurn(
 		sessionId: string,
 		logId: number,
 		resultRaw: string,
-	): Promise<string> {
+	): Promise<BlankTurn> {
 		const rows = await this.db
 			.select({ id: sessionLogs.id, content: sessionLogs.content })
 			.from(sessionLogs)
@@ -1178,6 +1714,7 @@ export class InteractiveTurnFinalizer {
 			.orderBy(desc(sessionLogs.id))
 			.limit(RECOVERY_SCAN_LIMIT)
 
+		let sawWorkTool = false
 		for (const row of rows) {
 			let lines = splitRowLines(row.content)
 
@@ -1192,12 +1729,23 @@ export class InteractiveTurnFinalizer {
 			}
 
 			for (let i = lines.length - 1; i >= 0; i--) {
-				const scanned = scanTurnLine(lines[i] ?? '')
-				if (scanned.kind === 'boundary') return ''
-				if (scanned.kind === 'assistant_text') return scanned.text.trim()
+				const line = classifyTurnLine(lines[i] ?? '')
+				switch (line.kind) {
+					case 'turn_start':
+						return { kind: 'empty' }
+					case 'reply_tool':
+						return sawWorkTool ? { kind: 'empty' } : { kind: 'replied' }
+					case 'work_tool':
+						sawWorkTool = true
+						break
+					case 'assistant_text':
+						return sawWorkTool ? { kind: 'empty' } : { kind: 'text', text: line.text.trim() }
+				}
 			}
 		}
-		return ''
+		// Fewer rows than the limit means the whole log was read: this is the
+		// session's first turn, which has no tagged opening envelope to stop on.
+		return rows.length < RECOVERY_SCAN_LIMIT ? { kind: 'empty' } : { kind: 'unknown' }
 	}
 
 	/**
