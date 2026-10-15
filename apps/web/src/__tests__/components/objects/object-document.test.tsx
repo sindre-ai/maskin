@@ -157,6 +157,13 @@ describe('ObjectDocumentView', () => {
 			{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
 			{ actorId: 'actor-bot', role: 'member', joinedAt: null, name: 'Bot', type: 'agent' },
 		]
+		const systemMember = {
+			actorId: 'actor-slack',
+			role: 'member',
+			joinedAt: null,
+			name: 'Slack',
+			type: 'system',
+		}
 
 		it('does not render owner select when members are not provided', () => {
 			const object = buildObjectResponse({ driver: null })
@@ -200,6 +207,28 @@ describe('ObjectDocumentView', () => {
 			await user.click(screen.getByRole('option', { name: /Alice/ }))
 
 			expect(onUpdateDriver).toHaveBeenCalledWith('actor-alice')
+		})
+
+		it('does not offer system actors as a driver choice', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const object = buildObjectResponse({ driver: null })
+			render(
+				<ObjectDocumentView {...baseProps} object={object} members={[...members, systemMember]} />,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[triggers.length - 1])
+
+			expect(screen.getByRole('option', { name: /Alice/ })).toBeInTheDocument()
+			expect(screen.queryByRole('option', { name: /Slack/ })).not.toBeInTheDocument()
+		})
+
+		it('still shows a system actor that is already the driver', () => {
+			const object = buildObjectResponse({ driver: 'actor-slack' })
+			render(
+				<ObjectDocumentView {...baseProps} object={object} members={[...members, systemMember]} />,
+			)
+			expect(screen.getByText('Slack')).toBeInTheDocument()
 		})
 
 		it('calls onUpdateDriver with null when selecting "Unassigned"', async () => {
