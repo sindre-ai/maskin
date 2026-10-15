@@ -995,6 +995,17 @@ export class SessionManager extends EventEmitter {
 		// pre-stage a temp dir locally — we only own the queue handoff.
 		if (this.dispatchQueue) {
 			try {
+				// Mark the row as waiting on a machine before it is enqueued. The row
+				// otherwise keeps its default session_state='queued', which the
+				// reaper's queued-rescue reads as a dead driver after 2 min: it
+				// re-fires _driveToRunning, startSession throws on the 'starting'
+				// status, and boot-stall fails the row as startup_stalled 5 min later
+				// while it is still legitimately waiting for a slot. Written before
+				// enqueue so it cannot overwrite the dispatcher's 'running'.
+				await this.db
+					.update(sessions)
+					.set({ sessionState: 'waiting_for_machine', stateEnteredAt: new Date() })
+					.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'starting')))
 				await this.dispatchQueue.enqueue(sessionId)
 				logger.info(`Session enqueued for remote dispatch: ${sessionId}`, {
 					workspaceId: session.workspaceId,

@@ -1387,7 +1387,7 @@ export const tools = {
 	},
 	list_sessions: {
 		description:
-			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window.",
+			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window. A response over the size cap is trimmed from the tail: _meta.truncated is true and next_cursor holds the updated_at of the last row returned. To continue, call again with the same filters, before set to next_cursor and offset left at 0; repeat until next_cursor is absent.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
