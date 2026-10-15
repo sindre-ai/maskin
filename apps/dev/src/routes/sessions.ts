@@ -1,11 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
+	MULTI_INSTALL_PROVIDERS,
 	createSessionSchema,
+	formatIntegrationConnectAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionAskSchema,
+	sessionConnectCardSchema,
 	sessionInputSchema,
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
@@ -19,6 +22,7 @@ import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -28,6 +32,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -1081,6 +1086,147 @@ app.openapi(askSessionRoute, (async (c) => {
 
 	return c.json({ message_id: created.id, posted: true as const })
 }) as RouteHandler<typeof askSessionRoute, Env>)
+
+// POST /:id/connect-card - Surface a "connect this integration" card in the chat
+//
+// Called by the `connect_integration` MCP tool when it runs inside a chat
+// session. The human finishes the connection in the card — an OAuth button, or
+// an input for an API key — so a credential never passes through the model and
+// the agent never has to paste a URL. Same gates as /ask: only the agent that
+// owns an interactive chat session may post, and anything else gets a 409 so the
+// tool can fall back to the URL flow.
+const connectCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/connect-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post an integration Connect card into the session chat',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionConnectCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						posted: z.boolean(),
+						message_id: z.number().optional(),
+						already_connected: z.boolean().optional(),
+					}),
+				},
+			},
+			description: 'Card posted, or the provider is already connected and nothing was posted',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Unknown provider',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(connectCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { provider: providerName } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is no card to show',
+			),
+			409,
+		)
+	}
+
+	// Registry membership is the only validation the provider name needs — it is
+	// stored on the message and resolved against the live provider list by the UI.
+	const provider = listProviders().find((p) => p.config.name === providerName)
+	if (!provider) {
+		return c.json(
+			createApiError('BAD_REQUEST', `Unknown integration provider: ${providerName}`),
+			400,
+		)
+	}
+
+	// Live status, not cached registration: an active row is the only proof the
+	// workspace is connected. For a single-install provider that means there is
+	// nothing to show — tell the agent so it carries on. A multi-install provider
+	// (another GitHub org, another LinkedIn account) still gets the card, which
+	// renders "Connected" beside a "+ Add another" button.
+	if (!MULTI_INSTALL_PROVIDERS.has(providerName)) {
+		const [active] = await db
+			.select({ id: integrations.id })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, session.workspaceId),
+					eq(integrations.provider, providerName),
+					eq(integrations.status, 'active'),
+				),
+			)
+			.limit(1)
+		if (active) return c.json({ posted: false, already_connected: true })
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatIntegrationConnectAsMarkdown(provider.config.displayName),
+		metadata: { integration_connect: { session_id: session.id, provider: providerName } },
+		sessionId: session.id,
+	})
+
+	// Null means a unique constraint suppressed the insert, which this caller has
+	// no dedupe key to trigger. Surface it as a 500, never a 409 (see /ask).
+	if (!created) {
+		logger.error('Integration connect card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			provider: providerName,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Connect card could not be posted'), 500)
+	}
+
+	logger.info('Posted integration connect card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		provider: providerName,
+	})
+
+	return c.json({ posted: true, message_id: created.id })
+}) as RouteHandler<typeof connectCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

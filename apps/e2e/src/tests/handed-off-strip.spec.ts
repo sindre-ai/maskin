@@ -64,11 +64,6 @@ test.describe('Chats v2 — handed-off strip', () => {
 				spawned_by_message_id: messageId,
 			})
 
-			// The strip is gated on the visual-layer flag; seed it for this run.
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:handed-off-strip', 'on')
-			})
-
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 15_000 })
@@ -106,10 +101,6 @@ test.describe('Chats v2 — handed-off strip (light + dark)', () => {
 				message_id: messageId,
 				auto_start: false,
 				spawned_by_message_id: messageId,
-			})
-
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:handed-off-strip', 'on')
 			})
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)

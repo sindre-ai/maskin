@@ -13,8 +13,7 @@ interface OverviewPaneProps {
 	conversationId: string
 	tab: OverviewTab
 	onTabChange: (tab: OverviewTab) => void
-	/** Which tabs the actor has access to; a tab whose flag is off is not offered. */
-	threadsEnabled: boolean
+	/** Whether the actor has access to the Produced tab; it is not offered otherwise. */
 	producedEnabled: boolean
 	threadsCount: number
 	producedCount: number
@@ -47,7 +46,6 @@ export function OverviewPane({
 	conversationId,
 	tab,
 	onTabChange,
-	threadsEnabled,
 	producedEnabled,
 	threadsCount,
 	producedCount,
@@ -59,8 +57,7 @@ export function OverviewPane({
 	onClose,
 	className,
 }: OverviewPaneProps) {
-	const activeTab = tab === 'threads' && !threadsEnabled ? 'produced' : tab
-	const threadOpen = activeTab === 'threads' && openSessionId !== null
+	const threadOpen = tab === 'threads' && openSessionId !== null
 
 	return (
 		<div
@@ -69,15 +66,13 @@ export function OverviewPane({
 		>
 			{threadOpen ? null : (
 				<div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<Tabs value={activeTab} onValueChange={(v) => onTabChange(v as OverviewTab)}>
+					<Tabs value={tab} onValueChange={(v) => onTabChange(v as OverviewTab)}>
 						<TabsList>
-							{threadsEnabled ? (
-								<TabsTrigger value="threads" className="gap-1">
-									<Hand size={13} aria-hidden />
-									Threads
-									<CountPill n={threadsCount} />
-								</TabsTrigger>
-							) : null}
+							<TabsTrigger value="threads" className="gap-1">
+								<Hand size={13} aria-hidden />
+								Threads
+								<CountPill n={threadsCount} />
+							</TabsTrigger>
 							{producedEnabled ? (
 								<TabsTrigger value="produced" className="gap-1">
 									<Layers size={13} aria-hidden />
@@ -99,7 +94,7 @@ export function OverviewPane({
 					</Button>
 				</div>
 			)}
-			{activeTab === 'threads' ? (
+			{tab === 'threads' ? (
 				<ThreadsPane
 					workspaceId={workspaceId}
 					conversationId={conversationId}
