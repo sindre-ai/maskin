@@ -1830,46 +1830,49 @@ export const liveActivityTokens = pgTable(
 		// 'push_to_start' | 'update' — validated by registerLiveActivityTokenSchema.
 		kind: text('kind').notNull(),
 		token: text('token').notNull(),
-		// Set for 'update' tokens only.
-		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		// Set for 'update' tokens only: the workspace of the aggregate "Agents working" activity
+		// the token belongs to (one activity per device and workspace).
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		check(
-			'live_activity_tokens_kind_session_chk',
-			sql`(${t.kind} = 'push_to_start' AND ${t.sessionId} IS NULL) OR (${t.kind} = 'update' AND ${t.sessionId} IS NOT NULL)`,
+			'live_activity_tokens_kind_workspace_chk',
+			sql`(${t.kind} = 'push_to_start' AND ${t.workspaceId} IS NULL) OR (${t.kind} = 'update' AND ${t.workspaceId} IS NOT NULL)`,
 		),
 		uniqueIndex('live_activity_tokens_push_to_start_uniq')
 			.on(t.deviceId)
 			.where(sql`${t.kind} = 'push_to_start'`),
 		uniqueIndex('live_activity_tokens_update_uniq')
-			.on(t.deviceId, t.sessionId)
+			.on(t.deviceId, t.token)
 			.where(sql`${t.kind} = 'update'`),
-		index('live_activity_tokens_session_idx').on(t.sessionId),
+		index('live_activity_tokens_workspace_idx').on(t.workspaceId, t.actorId),
 		index('live_activity_tokens_actor_idx').on(t.actorId),
 	],
 )
 
-// A session ended while the recipient had no per-activity update token registered, so the
-// 'end' push could not be addressed (ActivityKit ends a card only through that card's own
-// token; push-to-start tokens can only start). Held here until the device registers the
-// update token, then pushed immediately. One row per session; rows cascade with it.
-export const liveActivityPendingEnds = pgTable(
-	'live_activity_pending_ends',
+// The (actor, workspace) pairs the backend believes have an "Agents working" card outstanding.
+// `endPending`: the last agent stopped while no per-activity update token was registered, so the
+// end could not be addressed (ActivityKit ends a card only through that card's own token;
+// push-to-start tokens can only start). Flushed when the device registers the update token.
+export const liveActivityCards = pgTable(
+	'live_activity_cards',
 	{
-		sessionId: uuid('session_id')
-			.primaryKey()
-			.references(() => sessions.id, { onDelete: 'cascade' }),
 		actorId: uuid('actor_id')
 			.notNull()
 			.references(() => actors.id, { onDelete: 'cascade' }),
-		// 'done' | 'failed'
-		endStatus: text('end_status').notNull(),
-		startedAt: timestamp('started_at', { withTimezone: true }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		endPending: boolean('end_pending').notNull().default(false),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [index('live_activity_pending_ends_actor_idx').on(t.actorId)],
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.workspaceId] }),
+		index('live_activity_cards_workspace_idx').on(t.workspaceId),
+	],
 )
 
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
