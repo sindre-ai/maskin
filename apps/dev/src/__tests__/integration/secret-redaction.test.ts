@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { actors, sessions, workspaceMembers } from '@maskin/db/schema'
+import { actors, conversations, sessions, workspaceMembers } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { MASKED_VALUE } from '../../lib/actor-tools-redaction'
 import type { SessionManager } from '../../services/session-manager'
@@ -236,6 +236,33 @@ describe('Session config redaction — sessions routes', () => {
 
 		const res = await createApp().request(
 			jsonGet('/api/sessions?verbose=true', { 'x-workspace-id': ws.id }),
+		)
+
+		expect(res.status).toBe(200)
+		const text = await res.text()
+		const row = (JSON.parse(text) as { id: string; config: StoredSessionConfig }[]).find(
+			(r) => r.id === session.id,
+		)
+		expect(row).toBeDefined()
+		expectRedacted(text, row?.config as StoredSessionConfig)
+	})
+
+	it('masks the secrets in GET /api/sessions with verbose=true and a conversation_id', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Chat Agent' })
+		const [conversation] = await db
+			.insert(conversations)
+			.values({ workspaceId: ws.id, title: 'New chat', createdBy: getTestActorId() })
+			.returning()
+		const session = await insertSession(db, ws.id, agent.id, getTestActorId(), {
+			config: buildStoredSessionConfig(),
+			conversationId: conversation.id,
+		})
+
+		const res = await createApp().request(
+			jsonGet(`/api/sessions?verbose=true&conversation_id=${conversation.id}`, {
+				'x-workspace-id': ws.id,
+			}),
 		)
 
 		expect(res.status).toBe(200)
