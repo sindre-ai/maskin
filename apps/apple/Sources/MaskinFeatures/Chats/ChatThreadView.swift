@@ -109,7 +109,9 @@ struct ChatThreadView: View {
 	}
 
 	private var quickReplies: [String] {
-		guard !searching else { return [] }
+		// Never while a reply is owed: you have already answered, and a chip for the old question
+		// would send a stale answer to a question the conversation has moved past.
+		guard !searching, store.awaitingReplySince == nil else { return [] }
 		return QuickReplyRules.suggestions(
 			latest: store.messages.last, currentActorID: store.currentActorID,
 			composerEmpty: composer.text.isEmpty && composer.attachments.isEmpty, somebodyTyping: busy)
@@ -447,6 +449,16 @@ struct ChatThreadView: View {
 			// The live activity card grows a line per step: keep it in view while the reader is at the bottom.
 			.onChange(of: liveStepCount) { _, _ in
 				guard isNearBottom, !followingOpen else { return }
+				Task { @MainActor in
+					await Task.yield()
+					scrollToBottom(proxy)
+				}
+			}
+			// The working card appears under your message a moment after the send (once the agent has
+			// the message). The send already scrolled to the bubble; without this the card lands below
+			// the composer, out of sight, until the first step arrives.
+			.onChange(of: store.presences().count) { _, _ in
+				guard !followingOpen, isNearBottom || store.awaitingReplySince != nil else { return }
 				Task { @MainActor in
 					await Task.yield()
 					scrollToBottom(proxy)
@@ -810,7 +822,8 @@ struct ThreadTranscript: View {
 				} else {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
-						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) }, startedAt: session?.startedAt)
+						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) },
+						sentAt: store.awaitingReplySince, startedAt: session?.startedAt)
 				}
 			}
 			.padding(.top, Self.listGap)

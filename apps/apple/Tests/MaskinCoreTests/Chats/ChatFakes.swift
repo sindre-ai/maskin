@@ -258,7 +258,7 @@ final class ChatHarness {
 	init(
 		server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1"), online: Bool = true,
 		events: EventHub? = nil, file: URL? = nil, pageSize: Int = 50, failedFile: URL? = nil,
-		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [],
+		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [], pollInterval: Duration? = nil,
 		pinStore: any ChatPinStoring = MemoryChatPinStore()
 	) {
 		let api = existing ?? FakeChatAPI(server: server, detail: detail)
@@ -280,7 +280,7 @@ final class ChatHarness {
 		outbox.start()
 		store = ChatStore(
 			conversationID: "c1", currentActorID: "me", currentActorName: "Me", api: api, queue: queue,
-			events: events, pageSize: pageSize, pollInterval: nil, retryDelays: retryDelays, pinStore: pinStore,
+			events: events, pageSize: pageSize, pollInterval: pollInterval, retryDelays: retryDelays, pinStore: pinStore,
 			now: { chatT0 })
 	}
 

@@ -494,8 +494,13 @@ public final class ChatStore {
 				while !Task.isCancelled {
 					try? await Task.sleep(for: interval)
 					guard let self, !Task.isCancelled else { return }
-					if self.isActive, self.needsSessionPoll {
-						if self.hasLiveSpawnedSession { await self.sync(full: true) }
+					// Not gated on `isActive`: the app is "inactive" (not backgrounded) behind Control
+					// Center, a screen recording or a system sheet, and the thread is still on screen.
+					if self.needsSessionPoll {
+						// Messages normally arrive on the event stream. While a reply is owed, also ask for
+						// what is newer than the last row held (cheap, `after_id`), so a stream that
+						// dropped or stalled can't leave the reader looking at a frozen thread.
+						await self.sync(full: self.hasLiveSpawnedSession)
 						await self.refreshSessions()
 					}
 				}
