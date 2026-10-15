@@ -126,8 +126,10 @@ private struct ChatsContainer: View {
 			runtime?.chatDraft = nil
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
+		// Not stopped on disappear: a tab switch or a push would detach the event stream and the next
+		// appearance would refetch everything. `start()` skips the fetch while the stream is attached
+		// and the list is fresh.
 		.task { await store.start() }
-		.onDisappear { store.stop() }
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,

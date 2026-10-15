@@ -243,6 +243,13 @@ public final class ObjectsStore {
 		await inventoryLoad
 	}
 
+	/// `load()` unless the list was confirmed moments ago (a tab revisit). Filters and search the
+	/// reader set are left alone; events keep the loaded list current.
+	public func loadIfStale(within interval: TimeInterval = 30) async {
+		if phase == .loaded, freshness.isFresh(within: interval, now: cache?.now() ?? Date()) { return }
+		await load()
+	}
+
 	/// Forget everything (workspace switch); the next `load()` starts clean.
 	public func reset() {
 		generation += 1

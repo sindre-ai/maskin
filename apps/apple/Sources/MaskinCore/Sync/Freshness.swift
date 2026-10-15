@@ -39,6 +39,13 @@ public struct Freshness: Sendable, Equatable {
 	/// Data on screen that the server has not confirmed this session, or whose last refresh failed.
 	public var isStale: Bool { source == .cache || (source != .none && lastRevalidateFailed) }
 
+	/// The server confirmed the data within `interval`, and no refresh has failed since. Used to
+	/// skip a revalidate when a tab is revisited moments after it loaded.
+	public func isFresh(within interval: TimeInterval, now: Date = Date()) -> Bool {
+		guard source == .network, !lastRevalidateFailed, let updatedAt else { return false }
+		return now.timeIntervalSince(updatedAt) < interval
+	}
+
 	/// "Updated 3 min ago", or nil when there is nothing to say yet.
 	public func label(now: Date = Date()) -> String? {
 		guard let updatedAt else { return nil }

@@ -223,9 +223,13 @@ public final class ConversationsStore {
 
 	// MARK: - Loading
 
+	/// How long a confirmed load stays good for a tab revisit.
+	static let revisitFreshness: TimeInterval = 30
+
 	/// Initial load plus the live subscription. Safe to call repeatedly.
 	public func start() async {
 		hydrateIfNeeded()
+		let wasListening = listener != nil
 		if listener == nil, let events {
 			let stream = events.subscribe()
 			listener = Task { [weak self] in
@@ -247,6 +251,9 @@ public final class ConversationsStore {
 				}
 			}
 		}
+		// Revisiting the tab with the event stream still attached and a load confirmed moments ago:
+		// every change since has arrived as an event, so there is nothing to fetch.
+		if wasListening, freshness.isFresh(within: Self.revisitFreshness, now: cache?.now() ?? Date()) { return }
 		async let main: Void = refresh()
 		async let archived: Void = refreshArchived()
 		async let flows: Void = refreshFlowRooms()

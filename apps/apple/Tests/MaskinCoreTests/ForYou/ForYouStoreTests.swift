@@ -475,6 +475,29 @@ struct ForYouFeedMemoTests {
 		return (store, source)
 	}
 
+	@Test func loadIfStaleSkipsTheFetchRightAfterALoad() async {
+		let clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+		let (store, source) = make(now: { clock.now })
+		source.feed = .success([decisionCard("a")])
+		await store.load()
+		let fetched = source.fetches
+		await store.loadIfStale()
+		#expect(source.fetches == fetched)
+	}
+
+	@Test func loadIfStaleFetchesBeforeTheFirstLoadAndAfterAFailedRefresh() async {
+		let (store, source) = make()
+		source.feed = .success([decisionCard("a")])
+		await store.loadIfStale()  // never loaded: loads
+		#expect(source.fetches == 1)
+		#expect(store.phase == .loaded)
+		source.feed = .failure(ForYouLoadError("offline"))
+		await store.refresh()
+		let afterFailure = source.fetches
+		await store.loadIfStale()  // last revalidate failed: not fresh
+		#expect(source.fetches == afterFailure + 1)
+	}
+
 	@Test func manyReadsOfOneFeedComputeItOnce() async {
 		let (store, source) = make()
 		source.feed = .success([decisionCard("a"), threadCard("b")])

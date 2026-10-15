@@ -32,6 +32,26 @@ private func ask(_ objectId: String, by name: String? = "Forge", text: String = 
 @MainActor
 @Suite("ObjectsStore")
 struct ObjectsStoreTests {
+	@Test("loadIfStale does not refetch or clear the list right after a load")
+	func loadIfStaleKeepsState() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		let shown = store.objects.map(\.id)
+		let queries = remote.listQueries.count
+		await store.loadIfStale()
+		#expect(remote.listQueries.count == queries)
+		#expect(store.objects.map(\.id) == shown)
+		#expect(store.phase == .loaded)
+	}
+
+	@Test("loadIfStale loads a store that has not loaded yet")
+	func loadIfStaleLoadsWhenIdle() async {
+		let (store, _) = makeStore()
+		#expect(store.phase == .idle)
+		await store.loadIfStale()
+		#expect(store.phase == .loaded)
+	}
+
 	@Test("loads objects and groups them by status in the workspace's order")
 	func loadsAndGroups() async {
 		let (store, _) = makeStore()

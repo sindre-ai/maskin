@@ -278,6 +278,19 @@ struct FreshnessTests {
 		#expect(f.updatedAt == Date(timeIntervalSince1970: 20))
 	}
 
+	@Test func isFreshOnlyWhenTheServerConfirmedItRecentlyAndNothingFailedSince() {
+		let t0 = Date(timeIntervalSince1970: 1000)
+		var f = Freshness()
+		#expect(!f.isFresh(within: 30, now: t0))  // nothing yet
+		f.hydrated(from: t0)
+		#expect(!f.isFresh(within: 30, now: t0))  // disk only: not confirmed
+		f.refreshed(at: t0)
+		#expect(f.isFresh(within: 30, now: t0.addingTimeInterval(29)))
+		#expect(!f.isFresh(within: 30, now: t0.addingTimeInterval(30)))
+		f.revalidateFailed()
+		#expect(!f.isFresh(within: 30, now: t0))
+	}
+
 	@Test func labelsReadNaturally() {
 		var f = Freshness()
 		#expect(f.label() == nil)

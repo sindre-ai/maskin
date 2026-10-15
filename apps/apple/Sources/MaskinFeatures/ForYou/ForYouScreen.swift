@@ -30,6 +30,8 @@ public struct ForYouScreen: View {
 	@State private var path: [String] = []
 	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
 	@State private var undoOffer: UndoOffer?
+	/// The workspace whose schema type names are already in the store (see the feed's task).
+	@State private var typeNamesWorkspace: String?
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -54,10 +56,15 @@ public struct ForYouScreen: View {
 				displaySymbol: ShellActions.slidersSymbol)
 		)
 		.task(id: environment.workspaceId) {
-			async let feed: Void = runtime.store.load()
+			// Runs on every appearance, not only a workspace change: fetch only what is not already
+			// current. The feed keeps itself fresh from events; the type names change with the schema.
+			let namesAreCurrent =
+				typeNamesWorkspace == environment.workspaceId && !runtime.store.typeDisplayNames.isEmpty
+			async let feed: Void = runtime.store.loadIfStale()
 			async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
-			async let names: Void = loadTypeNames()
+			async let names: Void = namesAreCurrent ? () : loadTypeNames()
 			_ = await (feed, stories, names)
+			typeNamesWorkspace = environment.workspaceId
 		}
 	}
 

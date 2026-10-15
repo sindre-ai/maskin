@@ -14,6 +14,9 @@ public struct ObjectsScreen: View {
 	@State private var picking = SelectionModel()
 	@State private var intents = ObjectsListIntents()
 	@State private var path: [ObjectRoute] = []
+	/// The workspace `store` and `board` currently hold. The tab's task runs on every appearance,
+	/// but only a different workspace may throw away the list, the filters and a pushed detail.
+	@State private var boundWorkspace: String?
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -26,6 +29,8 @@ public struct ObjectsScreen: View {
 				remote: services.remote, directory: services.directory,
 				cache: environment.snapshotCache, displayStorage: UserDefaultsObjectsDisplayStorage()))
 		_board = State(initialValue: ObjectsBoardStore(remote: services.remote))
+		// The stores above were built (and hydrated) for the current workspace.
+		_boundWorkspace = State(initialValue: environment.workspaceId)
 	}
 
 	/// The For You feed: where open asks come from, and where answers go.
@@ -35,11 +40,14 @@ public struct ObjectsScreen: View {
 		// One wide column at every width; a row pushes its detail (iPad handoff: no list beside detail).
 		stack
 		.task(id: environment.workspaceId) {
-			store.reset()
-			board.reset()
-			path = []
+			if boundWorkspace != environment.workspaceId {
+				store.reset()
+				board.reset()
+				path = []
+				boundWorkspace = environment.workspaceId
+			}
 			store.bindWorkspace(environment.workspaceId)
-			await store.load()
+			await store.loadIfStale()
 		}
 		.task { await store.observe(environment.events.subscribe()) }
 		.task { await board.observe(environment.events.subscribe()) }

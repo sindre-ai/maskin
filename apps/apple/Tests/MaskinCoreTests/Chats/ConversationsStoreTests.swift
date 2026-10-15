@@ -124,6 +124,23 @@ struct ConversationsStoreTests {
 		#expect(store.totalUnread == 3)
 	}
 
+	@Test("revisiting the tab while attached and fresh fetches nothing; after a stop it does")
+	func revisitIsFreeWhileAttached() async {
+		let api = FakeListAPI([chatConvo("a"), chatConvo("b")])
+		let store = ConversationsStore(api: api, events: scriptedHub([]))
+		await store.start()
+		let first = await api.listCalls
+		#expect(first > 0)
+		await store.start()
+		await store.start()
+		#expect(await api.listCalls == first)
+		// Detached (stopped) the stream may have missed events, so the next start refetches.
+		store.stop()
+		await store.start()
+		#expect(await api.listCalls > first)
+		store.stop()
+	}
+
 	@Test("pinning is optimistic and rolls back when the server refuses")
 	func pinRollback() async {
 		let api = FakeListAPI([chatConvo("a")])

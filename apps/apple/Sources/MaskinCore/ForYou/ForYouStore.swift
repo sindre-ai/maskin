@@ -287,6 +287,17 @@ public final class ForYouStore {
 		await fetch(workspace: ws)
 	}
 
+	/// `load()` unless this workspace's feed was confirmed moments ago. The store's own event
+	/// listener keeps a visible feed current, so a tab revisit has nothing to fetch.
+	public func loadIfStale(within interval: TimeInterval = 30) async {
+		if let ws = workspaceId(), loadedWorkspace == ws,
+			freshness.isFresh(within: interval, now: cache?.now() ?? now())
+		{
+			return
+		}
+		await load()
+	}
+
 	/// Pull-to-refresh and event-driven refetch. Keeps what is on screen; a failure while the
 	/// feed is already showing is swallowed rather than replacing cards with an error.
 	///
