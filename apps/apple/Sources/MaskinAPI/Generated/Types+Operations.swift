@@ -54561,6 +54561,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/annotations`.
                         public var annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/warning`.
+                        public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -54578,6 +54580,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - warning:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -54592,7 +54595,8 @@ public enum Operations {
                             content: Swift.String,
                             encoding: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
-                            annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload? = nil
+                            annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload? = nil,
+                            warning: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -54608,6 +54612,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -54624,6 +54629,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case warning
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/application\/json`.
@@ -55172,6 +55178,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/annotations`.
                         public var annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/warning`.
+                        public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -55189,6 +55197,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - warning:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -55203,7 +55212,8 @@ public enum Operations {
                             content: Swift.String,
                             encoding: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
-                            annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil
+                            annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
+                            warning: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -55219,6 +55229,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -55235,6 +55246,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case warning
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/application\/json`.
@@ -55813,6 +55825,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/annotations`.
                         public var annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/warning`.
+                        public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -55830,6 +55844,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - warning:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -55844,7 +55859,8 @@ public enum Operations {
                             content: Swift.String,
                             encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
-                            annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil
+                            annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
+                            warning: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -55860,6 +55876,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -55876,6 +55893,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case warning
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/application\/json`.

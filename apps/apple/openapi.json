@@ -17,6 +17,7 @@
 	"paths": {
 		"/api/objects": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -2374,6 +2375,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -2651,6 +2653,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -2747,6 +2750,7 @@
 		},
 		"/api/objects/{id}/verification": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -3126,6 +3130,7 @@
 		},
 		"/api/objects/{id}/undo-write": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -3563,6 +3568,7 @@
 		},
 		"/api/objects/migrate-type": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -3772,6 +3778,7 @@
 		},
 		"/api/objects/bulk-update": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -15744,6 +15751,7 @@
 		},
 		"/api/relationships": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"relationships"
 				],
@@ -16294,6 +16302,7 @@
 		},
 		"/api/relationships/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"relationships"
 				],
@@ -25041,6 +25050,7 @@
 		},
 		"/api/events": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"events"
 				],
@@ -33786,6 +33796,7 @@
 		},
 		"/api/graph": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Graph"
 				],
@@ -34316,6 +34327,7 @@
 		},
 		"/api/imports": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Imports"
 				],
@@ -34794,6 +34806,7 @@
 		},
 		"/api/imports/{id}/mapping": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Imports"
 				],
@@ -35242,6 +35255,7 @@
 		},
 		"/api/imports/{id}/confirm": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Imports"
 				],
@@ -37121,6 +37135,7 @@
 		},
 		"/api/files": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -37309,6 +37324,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -37811,6 +37829,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -37892,6 +37913,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -38143,6 +38165,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -38281,6 +38306,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -38571,6 +38597,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -38872,6 +38899,7 @@
 		},
 		"/api/files/{id}/comments/{cid}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -39198,6 +39226,7 @@
 		},
 		"/api/files/{id}/comments/rounds": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
