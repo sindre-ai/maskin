@@ -95,6 +95,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -2343,7 +2344,10 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
 				oauthExpiresAtTaken = resolved.oauthExpiresAt
-				routeModelName = resolved.modelName
+				// maskin_plan names its model on the result; a BYO endpoint's model is
+				// the ANTHROPIC_MODEL it was configured with.
+				routeModelName =
+					resolved.route === LLM_ROUTE_CUSTOM ? resolved.envVars.ANTHROPIC_MODEL : resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -2404,11 +2408,11 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
-		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
-		// OpenRouter model that will actually run: the follow-on local cost
-		// resolver keys OpenRouter's pricing table on that value, and without
+		// On the maskin_plan and workspace_custom routes we ALSO stamp
+		// `sessions.model_name` with the model that will actually run: the local
+		// cost resolver keys OpenRouter's pricing table on that value, and without
 		// it every non-Anthropic session reads as an Opus-priced number.
-		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// claude_oauth and the API-key routes leave `model_name` null on purpose —
 		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
@@ -2420,7 +2424,7 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
 			)
 			const modelNameToPersist =
-				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				(routeTaken === LLM_ROUTE_MASKIN_PLAN || routeTaken === LLM_ROUTE_CUSTOM) &&
 				routeModelName &&
 				routeModelName !== session.modelName
 					? routeModelName
