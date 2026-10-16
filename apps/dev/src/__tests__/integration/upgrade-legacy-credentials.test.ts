@@ -1,7 +1,8 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type KmsProvider, LocalFileKmsProvider } from '@maskin/auth/kms'
+import { type KmsProvider, MasterKeyProvider } from '@maskin/auth/kms'
 import { integrations } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -17,13 +18,13 @@ import { insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 const kmsCalls = { encrypt: 0, decrypt: 0 }
 let beforeEncrypt: ((workspaceId: string) => Promise<void>) | undefined
 
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'legacy-upgrade-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	// Counts calls, and lets a test run a concurrent write in the middle of a row's upgrade.
 	const counting: KmsProvider = {
 		async encrypt(workspaceId, plaintext) {

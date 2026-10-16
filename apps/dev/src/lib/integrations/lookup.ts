@@ -192,7 +192,7 @@ export type CredentialReadContext = {
 }
 
 export interface GetCredentialDeps {
-	/** Defaults to the process KMS provider chosen by KEYCHAIN_KMS. */
+	/** Defaults to the process KMS provider built from KEYCHAIN_MASTER_KEY. */
 	kms?: KmsProvider
 }
 
@@ -269,8 +269,8 @@ export async function getCredential(
 
 	// Legacy rows (no dek_ciphertext) never touch KMS, so resolve it lazily.
 	const kms: KmsProvider = deps.kms ?? {
-		encrypt: (ws, dek) => getKmsProvider(db).encrypt(ws, dek),
-		decrypt: (ws, wrapped) => getKmsProvider(db).decrypt(ws, wrapped),
+		encrypt: (ws, dek) => getKmsProvider().encrypt(ws, dek),
+		decrypt: (ws, wrapped) => getKmsProvider().decrypt(ws, wrapped),
 	}
 	// Undone rows are refused above; a NULL on any other status is a broken row, and
 	// the migration's CHECK keeps that from existing. Refuse rather than decrypt(null).

@@ -6,16 +6,16 @@ import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 
 /**
- * Nightly DEK rotation, the lazy half of KEK rotation.
+ * Nightly DEK rotation, the lazy half of master key rotation.
  *
  * Re-wraps every envelope credential that was read in the last 24 hours under a
- * fresh DEK and the workspace's current KEK alias. Credentials nobody reads are
+ * fresh DEK and the current master key. Credentials nobody reads are
  * left alone: they keep decrypting under the old key, and are rotated the first
  * time they are used and the next night comes round. Legacy rows (no
  * dek_ciphertext) are never selected, so this can never upgrade one by accident;
  * the legacy upgrade job owns that, behind its flag.
  *
- * KMS is only reached when there is something to rotate. Rows are done one at a
+ * The key is only used when there is something to rotate. Rows are done one at a
  * time: one failing row is logged and the run goes on.
  */
 const CRON_EXPRESSION = '23 4 * * *'
@@ -82,7 +82,7 @@ export class RotateDeksJob {
 			result.candidates = rows.length
 			if (rows.length === 0) return result
 
-			const kms = getKmsProvider(this.db)
+			const kms = getKmsProvider()
 			for (const row of rows) {
 				try {
 					const outcome = await rotateIntegrationDek(this.db, kms, {

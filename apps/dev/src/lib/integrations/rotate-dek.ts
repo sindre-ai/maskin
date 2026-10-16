@@ -8,9 +8,9 @@ import { insertCredentialAccessLog } from './credential-audit'
 export type RotateDekOutcome = 'rotated' | 'not_found' | 'not_envelope' | 'changed'
 
 /**
- * Re-wraps one credential under a fresh DEK, using the workspace's current KEK
- * alias. The decrypted value does not change. This is how a KEK rotation reaches
- * existing credentials lazily: nothing is re-encrypted when the alias moves, and a
+ * Re-wraps one credential under a fresh DEK and the current master key. The
+ * decrypted value does not change. This is how a master key rotation reaches
+ * existing credentials lazily: nothing is re-encrypted when the key changes, and a
  * credential picks up the new key the next time it goes through here.
  *
  * Legacy rows (no dek_ciphertext) are never touched: this is not the upgrade path,

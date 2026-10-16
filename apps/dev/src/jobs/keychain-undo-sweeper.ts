@@ -12,7 +12,7 @@ import { logger } from '../lib/logger'
  * few minutes out. Once that moment passes the undo window is closed, so this job
  * flips the row to 'active' and clears undo_expires_at.
  *
- * It is one UPDATE and nothing else touches the row: no KMS call and no DEK
+ * It is one UPDATE and nothing else touches the row: no key use and no DEK
  * re-wrap, because the envelope was written at capture time and does not change
  * when the status does. The statement spells out status = 'pending_undo' as a
  * literal so Postgres can prove the partial index integrations_undo_sweeper_idx

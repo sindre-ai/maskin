@@ -1,7 +1,8 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	type ScopeGrant,
@@ -29,10 +30,10 @@ import { db, getTestActorId } from './global-setup'
 const fake = (label: string) => `fake-${label}-${'0123456789'.repeat(3)}`
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'keychain-injection-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
 afterAll(() => {

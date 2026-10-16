@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import { integrations, sessions, workspaceMembers } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
@@ -30,10 +31,10 @@ const CANARY = `fake-canary-${'0123456789'.repeat(3)}`
 const REF = '${KEYCHAIN_BYO_APIKEY_CANARY}'
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'keychain-hardening-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
 afterAll(() => {

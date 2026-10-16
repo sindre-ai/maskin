@@ -3048,7 +3048,7 @@ ${HUMAN_MESSAGE_STYLE}`
 					})
 					continue
 				}
-				// Anything else (KMS unreachable, a broken row): skip this one key and log. A
+				// Anything else (a DEK that will not unwrap, a broken row): skip this one key and log. A
 				// session that starts without it fails visibly on the first call that needs
 				// it; failing the launch would take every agent in the workspace down with it.
 				logger.error('Keychain credential could not be read at launch; not injected', {

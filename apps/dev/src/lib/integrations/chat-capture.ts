@@ -75,7 +75,7 @@ export interface ChatCaptureResult {
  * getCredential during the window, flipped to active by the sweeper afterwards.
  *
  * Order matters for the invariant that no data key outlives the request: the
- * DEK is generated, used to encrypt, wrapped by KMS and zeroised inside
+ * DEK is generated, used to encrypt, wrapped by the master key and zeroised inside
  * encryptEnvelope, before the transaction opens. The transaction then carries
  * only ciphertext, so no KMS call happens while the audit chain lock is held.
  */
