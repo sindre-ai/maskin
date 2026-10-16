@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { messageQuestionAnswerSchema } from './conversations'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
@@ -197,6 +198,10 @@ export const createSessionSchema = z.object({
 	// Both optional — a spawn without them reads as "no strip".
 	spawned_by_message_id: z.number().int().positive().optional(),
 	depends_on_session_ids: z.array(z.string().uuid()).optional(),
+	// A session started from inside a chat is interactive by default: it can ask
+	// the person a question and ends when it returns its result. Pass `false` to
+	// run it as a plain one-shot job instead.
+	interactive: z.boolean().optional(),
 	// Ask for the helper's final message to be sent back to the session that
 	// started it when this one ends. Stored in config only when the spawn link
 	// is accepted; unset keeps the return exactly as it is without the flag.
@@ -352,6 +357,8 @@ export const sessionInputAttachmentSchema = z.object({
 export const sessionInputSchema = z.object({
 	content: z.string().min(1),
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
+	/** Set when this input answers a question the session asked in a chat. */
+	question_answer: messageQuestionAnswerSchema.optional(),
 })
 
 export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])

@@ -532,3 +532,127 @@ describe('Content channel parity — content is always the full JSON dump, never
 		expect(contentBytes).toBeGreaterThanOrEqual(objectsBytes * 0.9)
 	})
 })
+
+// ─────────────────────────────────────────────────────────────────
+// list_sessions — a trimmed page hands back a cursor to continue
+// ─────────────────────────────────────────────────────────────────
+//
+// Verbose session rows carry the full action prompt and config, so a page of
+// them passes the token cap long before `limit`. The cap drops rows from the
+// tail; without a cursor the caller could not reach them.
+
+describe('list_sessions — trimmed pages resume through next_cursor', () => {
+	let handlers: Map<string, Handler>
+
+	const TOTAL = 30
+	const BASE_MS = Date.UTC(2026, 5, 1, 12, 0, 0)
+
+	function sessionRow(idx: number) {
+		const updatedAt = new Date(BASE_MS - idx * 60_000).toISOString()
+		return {
+			id: `50000000-0000-0000-0000-${String(idx).padStart(12, '0')}`,
+			workspaceId: wsId,
+			actorId: '10000000-0000-0000-0000-000000000001',
+			status: 'completed',
+			actionPrompt: `Session ${idx} prompt. ${'p'.repeat(2500)}`,
+			config: { notify_on_complete: true },
+			createdAt: updatedAt,
+			updatedAt,
+		}
+	}
+
+	// Stands in for GET /api/sessions: newest updated_at first, `before` is a
+	// strict less-than on updated_at, `limit` applies before the token cap.
+	function stubSessionsApi(rows: ReturnType<typeof sessionRow>[]) {
+		return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			const u = new URL(String(url))
+			if (u.pathname !== '/api/sessions') {
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			}
+			const before = u.searchParams.get('before')
+			const limit = Number(u.searchParams.get('limit') ?? 50)
+			const page = rows
+				.filter((r) => !before || r.updatedAt < before)
+				.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+				.slice(0, limit)
+			return { ok: true, headers: new Headers(), json: () => Promise.resolve(page) } as Response
+		})
+	}
+
+	type SessionsResult = {
+		_meta: { truncated?: boolean; fetch_handle?: { tool: string; ids: string[] } }
+		structuredContent: { sessions: Array<{ id: string; updatedAt: string }>; next_cursor?: string }
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		handlers = setupServer()
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('trims a verbose page over the cap, flags it, and returns a cursor that continues after the last shipped row', async () => {
+		const rows = Array.from({ length: TOTAL }, (_, i) => sessionRow(i))
+		stubSessionsApi(rows)
+		const handler = handlers.get('list_sessions')
+		if (!handler) throw new Error('list_sessions handler not registered')
+
+		const first = (await handler({ verbose: true, limit: 200 })) as SessionsResult
+		const shipped = first.structuredContent.sessions
+		expect(first._meta.truncated).toBe(true)
+		expect(shipped.length).toBeGreaterThan(0)
+		expect(shipped.length).toBeLessThan(TOTAL)
+		expect(estimateResponseTokens(first)).toBeLessThanOrEqual(DEFAULT_MAX_RESPONSE_TOKENS)
+		expect(first.structuredContent.next_cursor).toBe(shipped[shipped.length - 1].updatedAt)
+
+		const second = (await handler({
+			verbose: true,
+			limit: 200,
+			before: first.structuredContent.next_cursor,
+		})) as SessionsResult
+		expect(second.structuredContent.sessions[0].id).toBe(rows[shipped.length].id)
+	})
+
+	it('a full cursor walk returns every row once, in order, with no repeats', async () => {
+		const rows = Array.from({ length: TOTAL }, (_, i) => sessionRow(i))
+		stubSessionsApi(rows)
+		const handler = handlers.get('list_sessions')
+		if (!handler) throw new Error('list_sessions handler not registered')
+
+		const seen: string[] = []
+		let before: string | undefined
+		let pages = 0
+		do {
+			const page = (await handler({
+				verbose: true,
+				limit: 200,
+				...(before ? { before } : {}),
+			})) as SessionsResult
+			seen.push(...page.structuredContent.sessions.map((s) => s.id))
+			before = page.structuredContent.next_cursor
+			pages++
+		} while (before && pages < TOTAL + 1)
+
+		expect(pages).toBeGreaterThan(1)
+		expect(seen).toEqual(rows.map((r) => r.id))
+	})
+
+	it('a lean page under the cap is not flagged and carries no cursor', async () => {
+		const rows = Array.from({ length: TOTAL }, (_, i) => ({
+			id: sessionRow(i).id,
+			title: `Session ${i}`,
+			status: 'completed',
+			updatedAt: sessionRow(i).updatedAt,
+		}))
+		stubSessionsApi(rows as unknown as ReturnType<typeof sessionRow>[])
+		const handler = handlers.get('list_sessions')
+		if (!handler) throw new Error('list_sessions handler not registered')
+
+		const result = (await handler({ limit: 200 })) as SessionsResult
+		expect(result._meta.truncated).toBeUndefined()
+		expect(result.structuredContent.sessions).toHaveLength(TOTAL)
+		expect(result.structuredContent.next_cursor).toBeUndefined()
+	})
+})

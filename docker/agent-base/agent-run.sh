@@ -304,8 +304,9 @@ STRIP_IMAGES_PROXY_PORT=9334
 setup_strip_images_proxy() {
   # `return 0`, not a bare `return`: that would pass on the failed test's status
   # (1), and `set -e` would abort the whole script for every non-stripping session.
-  [ "$MASKIN_STRIP_IMAGES" = "1" ] || return 0
-  [ -z "$ANTHROPIC_BASE_URL" ] && return
+  # Also needed when only provider exclusions are set: the proxy injects them.
+  [ "$MASKIN_STRIP_IMAGES" = "1" ] || [ -n "$MASKIN_PROVIDER_PREFS" ] || return 0
+  [ -z "$ANTHROPIC_BASE_URL" ] && return 0
   node /strip-images-proxy.js "$STRIP_IMAGES_PROXY_PORT" "$ANTHROPIC_BASE_URL" \
     > >(tee "${TMPDIR:-/tmp}/strip-images-proxy.log" | sed -u 's/^/[strip-images-proxy] /' >&2) 2>&1 &
   local proxy_pid=$!
