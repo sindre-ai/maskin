@@ -24,13 +24,24 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 
 /**
  * Every session on the Claude-subscription route runs this model at this
- * effort, whatever the agent's own `llm_config.model` says. Other routes (the
- * Maskin-funded DeepSeek fallback, custom endpoints, API keys) never receive
- * these — `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and
- * turned into `--effort`.
+ * effort, whatever the agent's own `llm_config.model` says. Other routes
+ * (custom endpoints, API keys) never receive these — `MASKIN_CLAUDE_EFFORT` is
+ * read by docker/agent-base/agent-run.sh and turned into `--effort`. The
+ * Maskin-funded route sets its own, lower effort (MASKIN_PLAN_EFFORT).
  */
 export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
 export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
+
+/**
+ * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
+ * of a session's output was hidden reasoning (Claude: about 30%), one think
+ * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
+ * maps low and medium to high, and the CLI still asks for adaptive thinking.
+ * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
+ * thinking field from the request, which is what stops the reasoning. Low
+ * effort stays as the secondary setting.
+ */
+export const MASKIN_PLAN_EFFORT = 'low'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
@@ -100,6 +111,25 @@ export interface FallbackConfig {
 	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
 	 */
 	zdr: boolean
+	/**
+	 * OpenRouter provider names that must never serve a funded request, sent as
+	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
+	 */
+	ignoreProviders: string[]
+}
+
+/** The subset of OpenRouter's request-body "provider" object Maskin sends. */
+export interface ProviderPrefs {
+	zdr?: true
+	ignore?: string[]
+}
+
+/** Undefined when no preference is configured, so callers send no "provider" at all. */
+export function buildProviderPrefs(fallback: FallbackConfig): ProviderPrefs | undefined {
+	const prefs: ProviderPrefs = {}
+	if (fallback.zdr) prefs.zdr = true
+	if (fallback.ignoreProviders?.length) prefs.ignore = fallback.ignoreProviders
+	return Object.keys(prefs).length > 0 ? prefs : undefined
 }
 
 export interface AgentLlmConfig {
@@ -143,6 +173,10 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			'deepseek/deepseek-v4.1-flash',
 		textOnlyModels: readTextOnlyModels(env),
 		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
+		ignoreProviders: (env.MASKIN_FALLBACK_PROVIDER_IGNORE ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter(Boolean),
 	}
 }
 
@@ -463,12 +497,24 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_API_KEY: '',
 		ANTHROPIC_MODEL: model,
 		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
+		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
+		MAX_THINKING_TOKENS: '0',
+		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
+		// does not run: the call dies with "search was cut off" and the turn ends
+		// with no visible output. Without it the model uses WebFetch or the browser.
+		MASKIN_DISABLE_WEB_SEARCH: '1',
 	}
 	// Decided on the main model only: the small-fast model can differ, and the
 	// proxy strips for the whole session either way.
 	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
 	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
 		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	// The Claude CLI builds its own request body, so the agent-container proxy
+	// injects these into each /v1/messages call (strip-images-proxy.js). Only
+	// routing exclusions go here: zdr stays chat-only, as it was before.
+	if (fallback.ignoreProviders?.length) {
+		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ignore: fallback.ignoreProviders })
 	}
 	return env
 }
@@ -893,7 +939,7 @@ export interface ChatCredentials {
 	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
 	 * can reject unknown body fields with a 400.
 	 */
-	providerPrefs?: { zdr: true }
+	providerPrefs?: ProviderPrefs
 }
 
 /**
@@ -982,6 +1028,7 @@ export function resolveChatCredentials(params: {
 	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
+	const providerPrefs = buildProviderPrefs(fallback)
 	return {
 		provider: 'openai',
 		apiKey: fallback.apiKey,
@@ -991,6 +1038,6 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
-		...(fallback.zdr && { providerPrefs: { zdr: true as const } }),
+		...(providerPrefs && { providerPrefs }),
 	}
 }

@@ -11,7 +11,7 @@ import {
 } from '../lib/integrations/providers/slack/mcp-server'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -105,7 +105,7 @@ app.post('/', async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 

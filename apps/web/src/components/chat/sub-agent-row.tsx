@@ -3,7 +3,12 @@ import { useDuration } from '@/hooks/use-duration'
 import type { SpawnedSession } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationMs } from '@/lib/format-duration'
-import { failureText, formatDepNames, statusToPill } from '@/lib/handed-off-strip'
+import {
+	STRIP_PILL_CLASSES,
+	failureText,
+	formatDepNames,
+	statusToPill,
+} from '@/lib/handed-off-strip'
 import type { StripPill } from '@/lib/handed-off-strip'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
@@ -55,13 +60,6 @@ export function SubAgentRow({ workspaceId, session, depNames, onClick }: SubAgen
 
 	if (!pill) return null
 
-	const pillClasses: Record<StripPill, string> = {
-		QUEUED: 'bg-[var(--st-todo-bg)] text-[var(--st-todo-text)]',
-		WORKING: 'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
-		DONE: 'bg-[var(--st-active-bg)] text-[var(--st-active-text)]',
-		FAILED: 'bg-destructive/10 text-destructive',
-	}
-
 	const clauseClass = 'text-[11px] text-muted-foreground'
 
 	return (
@@ -97,7 +95,7 @@ export function SubAgentRow({ workspaceId, session, depNames, onClick }: SubAgen
 					<span
 						className={cn(
 							'font-mono text-[10px] font-bold uppercase tracking-wider leading-none rounded px-1.5 py-1',
-							pillClasses[pill],
+							STRIP_PILL_CLASSES[pill],
 							flash && 'ring-2 ring-brand',
 						)}
 					>
