@@ -47,6 +47,7 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_ZDR',
 	'MASKIN_FALLBACK_PROVIDER_IGNORE',
 	'MASKIN_FALLBACK_PROVIDER_ONLY',
+	'MASKIN_FALLBACK_TTFT_TIMEOUT_MS',
 	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
@@ -492,6 +493,20 @@ describe('resolveLlmRoute priority order', () => {
 				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
 					only: ['digitalocean', 'gmicloud'],
 				})
+			})
+
+			it('asks the proxy to guard time to first token at 5s by default', async () => {
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('5000')
+			})
+
+			it('takes the first-token timeout from MASKIN_FALLBACK_TTFT_TIMEOUT_MS', async () => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = '8000'
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('8000')
+			})
+
+			it.each(['0', 'none', 'abc', '-5'])('turns the guard off for %s', async (value) => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = value
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBeUndefined()
 			})
 
 			it('sends the allow list together with the block list', async () => {

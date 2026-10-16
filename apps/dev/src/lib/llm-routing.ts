@@ -122,6 +122,13 @@ export interface FallbackConfig {
 	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
 	 */
 	ignoreProviders: string[]
+	/**
+	 * Cancel and retry a funded streamed request whose first token takes longer
+	 * than this many milliseconds (strip-images-proxy.js, in the agent container).
+	 * From MASKIN_FALLBACK_TTFT_TIMEOUT_MS; unset uses DEFAULT_TTFT_TIMEOUT_MS,
+	 * 0 or "none" turns the guard off. Undefined here means off.
+	 */
+	ttftTimeoutMs?: number
 }
 
 /** The subset of OpenRouter's request-body "provider" object Maskin sends. */
@@ -165,6 +172,22 @@ export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
  */
 export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
 
+/**
+ * A funded request that has produced no token after this long is cancelled and
+ * retried once, then sent to the other allowed provider (two tries there), then
+ * fails with a try-again error. Healthy first-token times on the allowed
+ * providers are 1-3s.
+ */
+export const DEFAULT_TTFT_TIMEOUT_MS = 5000
+
+function readTtftTimeoutMs(env: NodeJS.ProcessEnv): number {
+	const raw = env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS?.trim()
+	if (raw === undefined || raw === '') return DEFAULT_TTFT_TIMEOUT_MS
+	if (raw.toLowerCase() === 'none') return 0
+	const ms = Number(raw)
+	return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0
+}
+
 function readOnlyProviders(env: NodeJS.ProcessEnv): string[] {
 	const raw = env.MASKIN_FALLBACK_PROVIDER_ONLY
 	if (raw === undefined) return DEFAULT_ONLY_PROVIDERS
@@ -206,6 +229,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			.split(',')
 			.map((p) => p.trim())
 			.filter(Boolean),
+		ttftTimeoutMs: readTtftTimeoutMs(env),
 	}
 }
 
@@ -546,6 +570,10 @@ function buildMaskinPlanEnv(
 	const { only, ignore } = buildProviderPrefs({ ...fallback, zdr: false }) ?? {}
 	if (only || ignore) {
 		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
+	}
+	// The same proxy cancels and retries a request whose first token is slow.
+	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
+		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
 	}
 	return env
 }

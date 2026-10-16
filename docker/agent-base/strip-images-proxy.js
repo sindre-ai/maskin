@@ -4,7 +4,8 @@
 //
 // Started by agent-run.sh only when MASKIN_STRIP_IMAGES=1 (set by llm-routing.ts
 // only for models that cannot read images) or MASKIN_PROVIDER_PREFS is set (the
-// OpenRouter provider exclusions, injected into every request). Without it, a screenshot tool
+// OpenRouter provider exclusions, injected into every request) or MASKIN_TTFT_TIMEOUT_MS is
+// set (the time-to-first-token guard below). Without it, a screenshot tool
 // result sent to such a model dies with "400 No endpoints found that support
 // image input" and the whole turn is lost. Images are found in user messages
 // and inside tool_result content (screenshots, the get_file tool, attachments).
@@ -88,25 +89,70 @@ function rewriteBody(req, bytes, providerPrefs = null) {
 	}
 }
 
-function forward(req, res, bytes, target) {
+// Time-to-first-token guard, off unless MASKIN_TTFT_TIMEOUT_MS is a positive
+// number. A streamed /v1/messages call whose first content event has not
+// arrived by then is cancelled and sent again; after attemptsPerProvider tries
+// on one provider the next one in provider.only is used. Measured against
+// OpenRouter: it sends the response headers and message_start only once the
+// provider has produced its first token, so waiting for the first content_block_*
+// event is the same moment, and still correct if a gateway sends headers early.
+const DEFAULT_ATTEMPTS_PER_PROVIDER = 2
+
+function readTtftConfig(env = process.env) {
+	const timeoutMs = Number(env.MASKIN_TTFT_TIMEOUT_MS)
+	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { timeoutMs: 0, attemptsPerProvider: 0 }
+	const per = Number(env.MASKIN_TTFT_ATTEMPTS_PER_PROVIDER)
+	return {
+		timeoutMs,
+		attemptsPerProvider: Number.isInteger(per) && per > 0 ? per : DEFAULT_ATTEMPTS_PER_PROVIDER,
+	}
+}
+
+// One provider-prefs object per attempt. With two or more providers in
+// prefs.only each gets attemptsPerProvider consecutive attempts, pinned with
+// only: [p], starting at index `start` so load is spread; with one or none the
+// same prefs are tried attemptsPerProvider times.
+function buildAttemptPlan(providerPrefs, attemptsPerProvider, start = 0) {
+	const only = Array.isArray(providerPrefs?.only) ? providerPrefs.only : []
+	if (only.length < 2) return Array.from({ length: attemptsPerProvider }, () => providerPrefs)
+	const plan = []
+	for (let i = 0; i < only.length; i++) {
+		const provider = only[(start + i) % only.length]
+		for (let n = 0; n < attemptsPerProvider; n++) plan.push({ ...providerPrefs, only: [provider] })
+	}
+	return plan
+}
+
+function isStreamingMessagesRequest(req, bytes) {
+	const pathname = (req.url || '').split('?')[0]
+	if (req.method !== 'POST' || !/\/v1\/messages$/.test(pathname)) return false
+	if (req.headers['content-encoding']) return false
+	try {
+		return JSON.parse(bytes.toString('utf8')).stream === true
+	} catch {
+		return false
+	}
+}
+
+function upstreamOptions(req, bytes, target) {
 	// Body is fully buffered, so the length is known; drop hop-by-hop framing.
 	const { 'transfer-encoding': _te, connection: _conn, ...passthrough } = req.headers
-	const headers = { ...passthrough, host: target.host, 'content-length': bytes.length }
+	return {
+		hostname: target.hostname,
+		port: target.port || (target.protocol === 'https:' ? 443 : 80),
+		method: req.method,
+		path: target.pathname.replace(/\/$/, '') + req.url,
+		headers: { ...passthrough, host: target.host, 'content-length': bytes.length },
+	}
+}
+
+function forward(req, res, bytes, target) {
 	const lib = target.protocol === 'https:' ? https : http
-	const upstream = lib.request(
-		{
-			hostname: target.hostname,
-			port: target.port || (target.protocol === 'https:' ? 443 : 80),
-			method: req.method,
-			path: target.pathname.replace(/\/$/, '') + req.url,
-			headers,
-		},
-		(upstreamRes) => {
-			res.writeHead(upstreamRes.statusCode, upstreamRes.headers)
-			upstreamRes.on('error', () => res.destroy())
-			upstreamRes.pipe(res)
-		},
-	)
+	const upstream = lib.request(upstreamOptions(req, bytes, target), (upstreamRes) => {
+		res.writeHead(upstreamRes.statusCode, upstreamRes.headers)
+		upstreamRes.on('error', () => res.destroy())
+		upstreamRes.pipe(res)
+	})
 	upstream.on('error', (err) => {
 		console.error(`strip-images-proxy: upstream error: ${err.message}`)
 		if (res.headersSent) res.destroy()
@@ -119,9 +165,121 @@ function forward(req, res, bytes, target) {
 	upstream.end(bytes)
 }
 
+const TTFT_FAILED_MESSAGE =
+	'The model provider is too slow to respond right now. Please try again in a moment.'
+const FIRST_TOKEN_EVENT = /event: content_block_(start|delta)/
+const ERROR_EVENT = /event: error/
+
+// forward() plus the time-to-first-token guard. bodyFor(prefs) is the request
+// body to send for one attempt's provider preferences.
+function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
+	const lib = target.protocol === 'https:' ? https : http
+	let current = null
+	let finished = false
+
+	// The client hung up (user stopped the turn): drop the upstream call and stop retrying.
+	res.on('close', () => {
+		if (!res.writableFinished) {
+			finished = true
+			current?.abort()
+		}
+	})
+
+	function giveUp() {
+		finished = true
+		console.error(`strip-images-proxy: no first token after ${plan.length} attempts, giving up`)
+		// x-should-retry: false keeps the CLI from stacking its own retries on top.
+		res.writeHead(504, { 'content-type': 'application/json', 'x-should-retry': 'false' })
+		res.end(
+			JSON.stringify({ type: 'error', error: { type: 'api_error', message: TTFT_FAILED_MESSAGE } }),
+		)
+	}
+
+	function attempt(index) {
+		if (finished) return
+		const prefs = plan[index]
+		const bytes = bodyFor(prefs)
+		const label = prefs?.only ? ` (provider only=${prefs.only.join(',')})` : ''
+		let settled = false
+		let upstreamRes = null
+		let timer = null
+
+		const upstream = lib.request(upstreamOptions(req, bytes, target), (r) => {
+			upstreamRes = r
+			// Anything but a 200 event stream is an answer, not a slow start: pass it through.
+			if (
+				r.statusCode !== 200 ||
+				!String(r.headers['content-type']).includes('text/event-stream')
+			) {
+				return release(Buffer.alloc(0))
+			}
+			const held = []
+			const onData = (chunk) => {
+				held.push(chunk)
+				const text = Buffer.concat(held).toString('utf8')
+				if (FIRST_TOKEN_EVENT.test(text) || ERROR_EVENT.test(text))
+					release(Buffer.concat(held), onData)
+			}
+			r.on('data', onData)
+			r.on('end', () => release(Buffer.concat(held), onData))
+			r.on('error', () => {
+				if (settled) res.destroy()
+				else retry('stream error before first token')
+			})
+		})
+
+		function release(head, onData) {
+			if (settled || finished) return
+			settled = true
+			clearTimeout(timer)
+			if (onData) upstreamRes.removeListener('data', onData)
+			res.writeHead(upstreamRes.statusCode, upstreamRes.headers)
+			if (head.length) res.write(head)
+			upstreamRes.on('error', () => res.destroy())
+			upstreamRes.pipe(res)
+		}
+
+		function retry(reason) {
+			if (settled || finished) return
+			settled = true
+			clearTimeout(timer)
+			upstream.destroy()
+			upstreamRes?.destroy()
+			const left = plan.length - index - 1
+			console.error(
+				`strip-images-proxy: ${reason} on attempt ${index + 1}/${plan.length}${label}, ${left ? 'retrying' : 'out of attempts'}`,
+			)
+			if (left) attempt(index + 1)
+			else giveUp()
+		}
+
+		current = {
+			abort: () => {
+				settled = true
+				clearTimeout(timer)
+				upstream.destroy()
+				upstreamRes?.destroy()
+			},
+		}
+		timer = setTimeout(() => retry(`no first token within ${timeoutMs}ms`), timeoutMs)
+		upstream.on('error', (err) => {
+			if (settled || finished) return
+			clearTimeout(timer)
+			settled = true
+			finished = true
+			console.error(`strip-images-proxy: upstream error: ${err.message}`)
+			res.writeHead(502).end()
+		})
+		upstream.end(bytes)
+	}
+
+	attempt(0)
+}
+
 function createProxyServer(
 	upstreamBaseUrl,
 	providerPrefs = readProviderPrefs(process.env.MASKIN_PROVIDER_PREFS),
+	ttft = readTtftConfig(),
 ) {
 	const target = new URL(upstreamBaseUrl)
 	return http.createServer((req, res) => {
@@ -130,7 +288,21 @@ function createProxyServer(
 		req.on('error', () => res.destroy())
 		req.on('end', () => {
 			try {
-				forward(req, res, rewriteBody(req, Buffer.concat(chunks), providerPrefs), target)
+				const bytes = Buffer.concat(chunks)
+				if (ttft.timeoutMs > 0 && isStreamingMessagesRequest(req, bytes)) {
+					const start = Math.floor(Math.random() * 1000)
+					const plan = buildAttemptPlan(providerPrefs, ttft.attemptsPerProvider, start)
+					forwardGuarded(
+						req,
+						res,
+						(prefs) => rewriteBody(req, bytes, prefs),
+						plan,
+						target,
+						ttft.timeoutMs,
+					)
+					return
+				}
+				forward(req, res, rewriteBody(req, bytes, providerPrefs), target)
 			} catch (err) {
 				console.error(`strip-images-proxy: request failed: ${err.message}`)
 				if (res.headersSent) res.destroy()
@@ -158,4 +330,10 @@ if (require.main === module) {
 	})
 }
 
-module.exports = { PLACEHOLDER, stripImages, createProxyServer }
+module.exports = {
+	PLACEHOLDER,
+	stripImages,
+	createProxyServer,
+	readTtftConfig,
+	buildAttemptPlan,
+}
