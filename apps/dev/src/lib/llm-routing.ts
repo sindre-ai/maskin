@@ -175,10 +175,11 @@ export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
 /**
  * A funded request that has produced no token after this long is cancelled and
  * retried once, then sent to the other allowed provider (two tries there), then
- * fails with a try-again error. Healthy first-token times on the allowed
- * providers are 1-3s.
+ * fails with a try-again error. Measured first tokens on the allowed providers:
+ * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
+ * 8s leaves headroom for both and still catches the stalls.
  */
-export const DEFAULT_TTFT_TIMEOUT_MS = 5000
+export const DEFAULT_TTFT_TIMEOUT_MS = 8000
 
 function readTtftTimeoutMs(env: NodeJS.ProcessEnv): number {
 	const raw = env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS?.trim()

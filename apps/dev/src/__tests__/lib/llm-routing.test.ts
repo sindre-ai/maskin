@@ -495,13 +495,13 @@ describe('resolveLlmRoute priority order', () => {
 				})
 			})
 
-			it('asks the proxy to guard time to first token at 5s by default', async () => {
-				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('5000')
+			it('asks the proxy to guard time to first token at 8s by default', async () => {
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('8000')
 			})
 
 			it('takes the first-token timeout from MASKIN_FALLBACK_TTFT_TIMEOUT_MS', async () => {
-				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = '8000'
-				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('8000')
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = '6000'
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('6000')
 			})
 
 			it.each(['0', 'none', 'abc', '-5'])('turns the guard off for %s', async (value) => {
