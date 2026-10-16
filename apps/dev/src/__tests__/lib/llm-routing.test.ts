@@ -389,9 +389,11 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
-				// Low effort keeps DeepSeek's hidden reasoning short; web search is off
-				// because OpenRouter cannot run the CLI's server-side tool.
+				// Thinking is off (MAX_THINKING_TOKENS=0) because DeepSeek maps low
+				// effort to high, so effort alone leaves the hidden reasoning in place.
+				// Web search is off because OpenRouter cannot run the CLI's server-side tool.
 				expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('low')
+				expect(result?.envVars.MAX_THINKING_TOKENS).toBe('0')
 				expect(result?.envVars.MASKIN_DISABLE_WEB_SEARCH).toBe('1')
 				// modelName carries through to `sessions.model_name` — the local
 				// cost resolver keys OpenRouter's pricing table on it.

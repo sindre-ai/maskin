@@ -35,7 +35,11 @@ export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
 /**
  * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
  * of a session's output was hidden reasoning (Claude: about 30%), one think
- * ran 2m37s with nothing on screen. Low keeps agent turns short.
+ * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
+ * maps low and medium to high, and the CLI still asks for adaptive thinking.
+ * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
+ * thinking field from the request, which is what stops the reasoning. Low
+ * effort stays as the secondary setting.
  */
 export const MASKIN_PLAN_EFFORT = 'low'
 
@@ -494,6 +498,7 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_MODEL: model,
 		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
 		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
+		MAX_THINKING_TOKENS: '0',
 		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
 		// does not run: the call dies with "search was cut off" and the turn ends
 		// with no visible output. Without it the model uses WebFetch or the browser.
