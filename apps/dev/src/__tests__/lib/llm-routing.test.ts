@@ -46,11 +46,15 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_SMALL_MODEL',
 	'MASKIN_FALLBACK_ZDR',
 	'MASKIN_FALLBACK_PROVIDER_IGNORE',
+	'MASKIN_FALLBACK_PROVIDER_ONLY',
 	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
+	// Most tests are not about the provider allow list (it defaults on); the
+	// 'provider allow list' blocks below pin the default and the override.
+	process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'none'
 	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
 	// These tests are about route priority, not refresh behaviour: keep the
 	// platform refresh off so a fixture token never triggers a real refresh call.
@@ -465,6 +469,46 @@ describe('resolveLlmRoute priority order', () => {
 
 			it('sets no MASKIN_PROVIDER_PREFS when the list is empty', async () => {
 				expect(await resolveEnv()).not.toHaveProperty('MASKIN_PROVIDER_PREFS')
+			})
+		})
+
+		describe('provider allow list', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('restricts agent sessions to DigitalOcean and GMICloud by default', async () => {
+				Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
+					only: ['digitalocean', 'gmicloud'],
+				})
+			})
+
+			it('sends the allow list together with the block list', async () => {
+				process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean'
+				process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
+					only: ['digitalocean'],
+					ignore: ['CoreWeave'],
+				})
+			})
+
+			it('sends no zdr to agent sessions even when it is on', async () => {
+				process.env.MASKIN_FALLBACK_ZDR = '1'
+				process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({ only: ['digitalocean'] })
 			})
 		})
 
@@ -1321,6 +1365,43 @@ describe('MASKIN_FALLBACK_PROVIDER_IGNORE block list', () => {
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		expect(creds?.providerPrefs).toEqual({ zdr: true, ignore: ['CoreWeave'] })
+	})
+})
+
+describe('MASKIN_FALLBACK_PROVIDER_ONLY allow list', () => {
+	it('defaults to DigitalOcean and GMICloud when unset', () => {
+		expect(readFallbackConfig({}).onlyProviders).toEqual(['digitalocean', 'gmicloud'])
+	})
+
+	it('parses a comma separated list, trimming blanks', () => {
+		expect(
+			readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_ONLY: ' digitalocean, ,Foo ' }).onlyProviders,
+		).toEqual(['digitalocean', 'Foo'])
+	})
+
+	it.each(['', 'none', ' NONE '])('lifts the restriction when set to %j', (value) => {
+		expect(readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_ONLY: value }).onlyProviders).toEqual([])
+	})
+
+	it('sends only on the funded chat route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.providerPrefs).toEqual({ only: ['digitalocean', 'gmicloud'] })
+	})
+
+	it('does not send it to a customer endpoint or key', () => {
+		Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		const creds = resolveChatCredentials({
+			wsSettings: { llm_keys: { anthropic: 'sk-ant-own' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds).not.toHaveProperty('providerPrefs')
 	})
 })
 
