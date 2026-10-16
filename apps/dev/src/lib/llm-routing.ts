@@ -112,6 +112,12 @@ export interface FallbackConfig {
 	 */
 	zdr: boolean
 	/**
+	 * The only OpenRouter providers allowed to serve a funded request, sent as
+	 * provider.only. From MASKIN_FALLBACK_PROVIDER_ONLY (comma separated); unset
+	 * uses DEFAULT_ONLY_PROVIDERS, empty or "none" lifts the restriction.
+	 */
+	onlyProviders: string[]
+	/**
 	 * OpenRouter provider names that must never serve a funded request, sent as
 	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
 	 */
@@ -121,6 +127,7 @@ export interface FallbackConfig {
 /** The subset of OpenRouter's request-body "provider" object Maskin sends. */
 export interface ProviderPrefs {
 	zdr?: true
+	only?: string[]
 	ignore?: string[]
 }
 
@@ -128,6 +135,7 @@ export interface ProviderPrefs {
 export function buildProviderPrefs(fallback: FallbackConfig): ProviderPrefs | undefined {
 	const prefs: ProviderPrefs = {}
 	if (fallback.zdr) prefs.zdr = true
+	if (fallback.onlyProviders?.length) prefs.only = fallback.onlyProviders
 	if (fallback.ignoreProviders?.length) prefs.ignore = fallback.ignoreProviders
 	return Object.keys(prefs).length > 0 ? prefs : undefined
 }
@@ -146,6 +154,26 @@ export interface AgentLlmConfig {
  * "none" is the kill switch that turns stripping off.
  */
 export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
+
+/**
+ * OpenRouter providers (slugs, as OpenRouter spells them in provider.only) that
+ * may serve a funded request. Chosen on measured time to first token and tok/s:
+ * most other hosts of the fallback model were 10-30s to first token at 5-25
+ * tok/s. MASKIN_FALLBACK_PROVIDER_ONLY (comma separated) overrides it; empty or
+ * "none" lifts the restriction. A model neither host serves fails with a 404
+ * ("no endpoints found") instead of falling back to a slow host.
+ */
+export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
+
+function readOnlyProviders(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_FALLBACK_PROVIDER_ONLY
+	if (raw === undefined) return DEFAULT_ONLY_PROVIDERS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim())
+		.filter(Boolean)
+}
 
 function readTextOnlyModels(env: NodeJS.ProcessEnv): string[] {
 	const raw = env.MASKIN_TEXT_ONLY_MODELS
@@ -173,6 +201,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			'deepseek/deepseek-v4.1-flash',
 		textOnlyModels: readTextOnlyModels(env),
 		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
+		onlyProviders: readOnlyProviders(env),
 		ignoreProviders: (env.MASKIN_FALLBACK_PROVIDER_IGNORE ?? '')
 			.split(',')
 			.map((p) => p.trim())
@@ -512,9 +541,11 @@ function buildMaskinPlanEnv(
 	}
 	// The Claude CLI builds its own request body, so the agent-container proxy
 	// injects these into each /v1/messages call (strip-images-proxy.js). Only
-	// routing exclusions go here: zdr stays chat-only, as it was before.
-	if (fallback.ignoreProviders?.length) {
-		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ignore: fallback.ignoreProviders })
+	// routing (allow and block lists) goes here: zdr stays chat-only, as it was
+	// before.
+	const { only, ignore } = buildProviderPrefs({ ...fallback, zdr: false }) ?? {}
+	if (only || ignore) {
+		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
 	}
 	return env
 }

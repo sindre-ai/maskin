@@ -102,7 +102,7 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 							body: errorBody,
 						})
 						throw new LlmNoEligibleHostError(
-							`No OpenRouter host satisfies the provider preferences for ${model}. Unset MASKIN_FALLBACK_ZDR and MASKIN_FALLBACK_PROVIDER_IGNORE to stop sending them.`,
+							`No OpenRouter host satisfies the provider preferences for ${model}. Unset MASKIN_FALLBACK_ZDR and MASKIN_FALLBACK_PROVIDER_IGNORE, and set MASKIN_FALLBACK_PROVIDER_ONLY to none, to stop sending them.`,
 						)
 					}
 				}
