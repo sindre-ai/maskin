@@ -595,14 +595,19 @@ run_agent() {
       if [ -n "$MCP_CONFIG_FILE" ]; then
         mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
       fi
-      # Effort is only set on the Claude-subscription route (apps/dev sets
-      # MASKIN_CLAUDE_EFFORT there). Other routes (e.g. the Maskin-funded
-      # DeepSeek fallback) leave it unset and keep the CLI default. Validated
-      # because the value is interpolated into the CLI's arguments.
+      # Effort is set on the Claude-subscription and Maskin-funded routes
+      # (apps/dev sets MASKIN_CLAUDE_EFFORT there). Other routes leave it unset
+      # and keep the CLI default. Validated because the value is interpolated
+      # into the CLI's arguments.
       local effort_args=()
       case "${MASKIN_CLAUDE_EFFORT:-}" in
         low|medium|high|xhigh|max) effort_args=(--effort "$MASKIN_CLAUDE_EFFORT") ;;
       esac
+      # The Maskin-funded route cannot run the CLI's server-side WebSearch.
+      local search_args=()
+      if [ "${MASKIN_DISABLE_WEB_SEARCH:-}" = "1" ]; then
+        search_args=(--disallowedTools=WebSearch)
+      fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
@@ -633,6 +638,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
+            "${search_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -643,6 +649,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
+            "${search_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
@@ -653,6 +660,7 @@ run_agent() {
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
           "${effort_args[@]}" \
+          "${search_args[@]}" \
           "${mcp_args[@]}"
       fi
       ;;

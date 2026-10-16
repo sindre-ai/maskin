@@ -24,13 +24,24 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 
 /**
  * Every session on the Claude-subscription route runs this model at this
- * effort, whatever the agent's own `llm_config.model` says. Other routes (the
- * Maskin-funded DeepSeek fallback, custom endpoints, API keys) never receive
- * these — `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and
- * turned into `--effort`.
+ * effort, whatever the agent's own `llm_config.model` says. Other routes
+ * (custom endpoints, API keys) never receive these — `MASKIN_CLAUDE_EFFORT` is
+ * read by docker/agent-base/agent-run.sh and turned into `--effort`. The
+ * Maskin-funded route sets its own, lower effort (MASKIN_PLAN_EFFORT).
  */
 export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
 export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
+
+/**
+ * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
+ * of a session's output was hidden reasoning (Claude: about 30%), one think
+ * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
+ * maps low and medium to high, and the CLI still asks for adaptive thinking.
+ * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
+ * thinking field from the request, which is what stops the reasoning. Low
+ * effort stays as the secondary setting.
+ */
+export const MASKIN_PLAN_EFFORT = 'low'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
@@ -486,6 +497,12 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_API_KEY: '',
 		ANTHROPIC_MODEL: model,
 		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
+		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
+		MAX_THINKING_TOKENS: '0',
+		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
+		// does not run: the call dies with "search was cut off" and the turn ends
+		// with no visible output. Without it the model uses WebFetch or the browser.
+		MASKIN_DISABLE_WEB_SEARCH: '1',
 	}
 	// Decided on the main model only: the small-fast model can differ, and the
 	// proxy strips for the whole session either way.
