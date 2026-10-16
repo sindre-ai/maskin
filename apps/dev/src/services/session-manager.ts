@@ -3207,7 +3207,10 @@ ${HUMAN_MESSAGE_STYLE}`
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
-						if (chunk.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, chunk.data)) {
+						if (
+							chunk.stream === 'stdout' &&
+							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
+						) {
 							continue
 						}
 						if (chunk.stream === 'stdout') {
