@@ -2348,7 +2348,9 @@ ${HUMAN_MESSAGE_STYLE}`
 				// maskin_plan names its model on the result; a BYO endpoint's model is
 				// the ANTHROPIC_MODEL it was configured with.
 				routeModelName =
-					resolved.route === LLM_ROUTE_CUSTOM ? resolved.envVars.ANTHROPIC_MODEL : resolved.modelName
+					resolved.route === LLM_ROUTE_CUSTOM
+						? resolved.envVars.ANTHROPIC_MODEL
+						: resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
