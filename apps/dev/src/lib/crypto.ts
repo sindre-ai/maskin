@@ -85,7 +85,7 @@ export function decrypt(ciphertext: string): string {
 // Each credential gets its own random 32-byte data key (DEK). The credential is
 // AES-256-GCM encrypted under the DEK and stored in integrations.credentials in
 // the same iv:tag:ciphertext format as the legacy path; the DEK, wrapped by the
-// workspace KEK in KMS, is stored in integrations.dek_ciphertext. The DEK in the
+// master key, is stored in integrations.dek_ciphertext. The DEK in the
 // clear exists only inside these functions and is zeroised before they return,
 // on every path including errors.
 

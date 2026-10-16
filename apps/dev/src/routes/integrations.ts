@@ -154,7 +154,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 
 	// Never expose credentials
 	const safe = results.map((r) => {
-		// dekCiphertext is the KMS-wrapped data key: ciphertext, but it has no
+		// dekCiphertext is the wrapped data key: ciphertext, but it has no
 		// business leaving the server.
 		const { credentials, dekCiphertext: _dekCiphertext, ...rest } = r
 

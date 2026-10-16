@@ -1,10 +1,5 @@
 import { createHash } from 'node:crypto'
-import {
-	KmsAccessError,
-	KmsConfigError,
-	KmsDecryptError,
-	KmsKekMissingError,
-} from '@maskin/auth/kms'
+import { KmsConfigError, KmsDecryptError } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
@@ -142,9 +137,7 @@ function isKeychainReadError(err: unknown): boolean {
 		err instanceof CredentialPendingError ||
 		err instanceof CredentialUnavailableError ||
 		err instanceof KmsDecryptError ||
-		err instanceof KmsAccessError ||
-		err instanceof KmsConfigError ||
-		err instanceof KmsKekMissingError
+		err instanceof KmsConfigError
 	)
 }
 

@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import { integrations, sessions, workspaceMembers } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
@@ -34,14 +35,14 @@ const TOKEN = `fake-coolify-${'0123456789'.repeat(3)}`
 const HEADER_TEMPLATE = 'Bearer ${KEYCHAIN_BYO_APIKEY_COOLIFY}'
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 let mcpServer: Server
 let mcpUrl: string
 const received: Array<string | undefined> = []
 
 beforeAll(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'keychain-header-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 	mcpServer = createServer((req, res) => {
 		received.push(req.headers.authorization)

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { KmsDecryptError, type KmsProvider, LocalFileKmsProvider } from '@maskin/auth/kms'
+import { KmsDecryptError, type KmsProvider, MasterKeyProvider } from '@maskin/auth/kms'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const TEST_KEY = 'a'.repeat(64) // 32 bytes in hex
@@ -75,13 +75,13 @@ const OTHER_WORKSPACE = '22222222-2222-4222-8222-222222222222'
 describe('envelope encryption', () => {
 	let originalKey: string | undefined
 	let dir: string
-	let kms: LocalFileKmsProvider
+	let kms: MasterKeyProvider
 
 	beforeEach(() => {
 		originalKey = process.env.INTEGRATION_ENCRYPTION_KEY
 		process.env.INTEGRATION_ENCRYPTION_KEY = TEST_KEY
 		dir = mkdtempSync(join(tmpdir(), 'envelope-kek-'))
-		kms = new LocalFileKmsProvider(join(dir, 'kek'))
+		kms = new MasterKeyProvider(randomBytes(32))
 	})
 
 	afterEach(() => {

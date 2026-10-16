@@ -22,7 +22,7 @@ import {
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
-import { assertKeychainKmsConfig, prepareLocalKek } from './lib/keychain-kms'
+import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
@@ -52,10 +52,9 @@ if (!databaseUrl) {
 }
 const db = createDb(databaseUrl)
 
-// An unknown KEYCHAIN_KMS value must stop the process here, not surface on the
+// A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
-assertKeychainKmsConfig()
-await prepareLocalKek(db)
+assertKeychainKeyConfig()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -228,7 +227,7 @@ purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
 // Keychain: flips chat-captured keys from pending_undo to active once the undo
-// window has passed. One UPDATE per minute, no KMS.
+// window has passed. One UPDATE per minute, no key use.
 const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
 keychainUndoSweeperJob.start()
 logger.info('Keychain undo sweeper started')
@@ -240,13 +239,12 @@ upgradeLegacyCredentialsJob.start()
 logger.info('Legacy credential upgrade job scheduled')
 
 // Keychain: nightly re-wrap of every envelope credential read in the last 24 hours
-// under a fresh DEK and the workspace's current KEK (the lazy half of KEK rotation).
+// under a fresh DEK and the current master key (the lazy half of master key rotation).
 const rotateDeksJob = new RotateDeksJob(db)
 rotateDeksJob.start()
 logger.info('DEK rotation job scheduled')
 
-// Keychain: daily audit-chain snapshot into the write-once bucket, plus the verifier.
-// Inert until KEYCHAIN_WORM_BUCKET is set.
+// Keychain: daily audit-chain snapshot into credential_chain_snapshots, plus the verifier.
 const chainSnapshotJob = new ChainSnapshotJob(db)
 chainSnapshotJob.start()
 logger.info('Chain snapshot job scheduled')
