@@ -166,14 +166,20 @@ function retryDelayMs(res: Response, attempt: number): number {
 	return BASE_BACKOFF_MS * 2 ** attempt
 }
 
-/** fetch with exponential backoff on 429 and 5xx. Other statuses fail immediately. */
+/** Per-request ceiling, covering the response body too. A hung Google call must not pin the sync. */
+export const GSC_FETCH_TIMEOUT_MS = 60_000
+
+/**
+ * fetch with a timeout and exponential backoff on 429 and 5xx. Other statuses
+ * fail immediately. A timed-out request rejects (TimeoutError) and is not retried.
+ */
 export async function gscFetch(
 	url: string,
 	init: RequestInit,
 	sleep: Sleep = defaultSleep,
 ): Promise<Response> {
 	for (let attempt = 0; ; attempt++) {
-		const res = await fetch(url, init)
+		const res = await fetch(url, { signal: AbortSignal.timeout(GSC_FETCH_TIMEOUT_MS), ...init })
 		if (res.ok) return res
 		const transient = res.status === 429 || res.status >= 500
 		if (!transient || attempt >= MAX_ATTEMPTS - 1) {

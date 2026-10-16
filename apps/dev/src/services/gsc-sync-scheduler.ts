@@ -3,6 +3,7 @@ import { syncAllGscIntegrations } from '../lib/integrations/providers/google-sea
 import { logger } from '../lib/logger'
 
 const TICK_MS = 6 * 60 * 60 * 1000 // 6h
+const TICK_TIMEOUT_MS = 60 * 60 * 1000 // 1h
 
 /**
  * Background loop for the daily Search Console sync. Ticks every 6h; an
@@ -14,7 +15,10 @@ export class GscSyncScheduler {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
 
-	constructor(private db: Database) {}
+	constructor(
+		private db: Database,
+		private tickTimeoutMs = TICK_TIMEOUT_MS,
+	) {}
 
 	start(): void {
 		if (this.timer) return
@@ -32,13 +36,27 @@ export class GscSyncScheduler {
 	async tick(): Promise<void> {
 		if (this.running) return
 		this.running = true
+		let timer: NodeJS.Timeout | undefined
 		try {
-			await syncAllGscIntegrations(this.db)
+			// Bound the whole batch: a hung await (dead DB connection) would otherwise pin
+			// `running` and silently stop the sync for every workspace. The hung work
+			// carries on detached with its rejection swallowed.
+			const batch = syncAllGscIntegrations(this.db)
+			batch.catch(() => {})
+			const timedOut = new Promise<'timeout'>((resolve) => {
+				timer = setTimeout(() => resolve('timeout'), this.tickTimeoutMs)
+			})
+			if ((await Promise.race([batch, timedOut])) === 'timeout') {
+				logger.error('GSC sync scheduler tick timed out; releasing the tick', {
+					timeoutMs: this.tickTimeoutMs,
+				})
+			}
 		} catch (err) {
 			logger.error('GSC sync scheduler tick failed', {
 				error: err instanceof Error ? err.message : String(err),
 			})
 		} finally {
+			clearTimeout(timer)
 			this.running = false
 		}
 	}

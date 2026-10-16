@@ -3,7 +3,7 @@ import { objects } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
-import { GSC_PROVIDER, type GscRow, isoDate, parseRows, syncEndDate } from './sync'
+import { GSC_PROVIDER, type GscRow, isoDate, parseRows, rowKey, syncEndDate } from './sync'
 
 /** Days of Search Console rows a derivation looks at, ending at the sync end date. */
 export const SEARCH_DEMAND_WINDOW_DAYS = 30
@@ -80,21 +80,33 @@ export function normalizePageUrl(url: string): string {
 		.replace(/\/+$/, '')
 }
 
-/** Window rows from every connected property, indexed by normalized query. */
+/**
+ * Window rows from every connected property, indexed by normalized query.
+ * Properties overlap: a site connected as both `sc-domain:example.com` and
+ * `https://example.com/` reports the same (date, page, query, country, device)
+ * row in each, and summing both would roughly double the demand. Such a row is
+ * counted once, keeping the copy with the most impressions (the wider property).
+ */
 export function indexWindowRows(
 	rowSets: GscRow[][],
 	windowStart: string,
 	windowEnd: string,
 ): Map<string, GscRow[]> {
-	const byQuery = new Map<string, GscRow[]>()
+	const unique = new Map<string, GscRow>()
 	for (const rows of rowSets) {
 		for (const row of rows) {
 			if (row[0] < windowStart || row[0] > windowEnd) continue
-			const key = normalizeKeyword(row[2])
-			const bucket = byQuery.get(key)
-			if (bucket) bucket.push(row)
-			else byQuery.set(key, [row])
+			const key = rowKey(row)
+			const seen = unique.get(key)
+			if (!seen || row[5] > seen[5]) unique.set(key, row)
 		}
+	}
+	const byQuery = new Map<string, GscRow[]>()
+	for (const row of unique.values()) {
+		const key = normalizeKeyword(row[2])
+		const bucket = byQuery.get(key)
+		if (bucket) bucket.push(row)
+		else byQuery.set(key, [row])
 	}
 	return byQuery
 }

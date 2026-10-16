@@ -160,6 +160,24 @@ describe('gscFetch backoff', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(3)
 	})
 
+	it('passes an abort signal so a hung request cannot pin the sync', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}))
+		vi.stubGlobal('fetch', fetchMock)
+		await gscFetch('https://example.test', { method: 'POST' }, async () => {})
+		const init = fetchMock.mock.calls[0][1] as RequestInit
+		expect(init.signal).toBeInstanceOf(AbortSignal)
+		expect(init.method).toBe('POST')
+	})
+
+	it('rejects, without retrying, when the request is aborted', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'))
+		vi.stubGlobal('fetch', fetchMock)
+		await expect(gscFetch('https://example.test', {}, async () => {})).rejects.toThrow(/timed out/)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
 	it('does not retry a 403', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(new Response('no', { status: 403 }))
 		vi.stubGlobal('fetch', fetchMock)

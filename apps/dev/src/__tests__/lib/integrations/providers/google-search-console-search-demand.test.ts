@@ -65,6 +65,37 @@ describe('indexWindowRows', () => {
 		)
 		expect(byQuery.get('kw')).toHaveLength(2)
 	})
+
+	it('counts a row once when overlapping properties both report it', () => {
+		const domainProperty = [row('2026-10-01', 'kw', 40), row('2026-10-02', 'kw', 10)]
+		const urlPrefixProperty = [row('2026-10-01', 'kw', 40), row('2026-10-03', 'kw', 6)]
+		const byQuery = indexWindowRows([domainProperty, urlPrefixProperty], WINDOW_START, WINDOW_END)
+		expect(byQuery.get('kw')).toHaveLength(3)
+		expect(keywordStats(byQuery, 'kw', PAGE)?.impressions).toBe(56)
+	})
+
+	it('keeps the copy with the most impressions when overlapping properties disagree', () => {
+		const byQuery = indexWindowRows(
+			[[row('2026-10-01', 'kw', 30)], [row('2026-10-01', 'kw', 45)]],
+			WINDOW_START,
+			WINDOW_END,
+		)
+		expect(keywordStats(byQuery, 'kw', PAGE)?.impressions).toBe(45)
+	})
+
+	it('still separates rows that differ by country or device', () => {
+		const byQuery = indexWindowRows(
+			[
+				[
+					row('2026-10-01', 'kw', 5, { country: 'usa' }),
+					row('2026-10-01', 'kw', 5, { country: 'nor' }),
+				],
+			],
+			WINDOW_START,
+			WINDOW_END,
+		)
+		expect(byQuery.get('kw')).toHaveLength(2)
+	})
 })
 
 describe('estimateSearchDemand', () => {
