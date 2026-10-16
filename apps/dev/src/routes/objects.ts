@@ -1839,14 +1839,6 @@ app.openapi(updateObjectRoute, async (c) => {
 		updatedAt: new Date(),
 	}
 
-	// Shallow-merge metadata: new fields are added/overwritten, existing fields are preserved
-	if (body.metadata && existing.metadata) {
-		updateData.metadata = {
-			...(existing.metadata as typeof body.metadata),
-			...body.metadata,
-		}
-	}
-
 	// All three writes (object update, status event, notification fan-out) run in
 	// one transaction so a fan-out failure cannot leave the bet updated but
 	// watchers un-notified.
@@ -1869,6 +1861,18 @@ app.openapi(updateObjectRoute, async (c) => {
 			.for('update')
 			.limit(1)
 		if (!current) return // object deleted concurrently; 404 handled below
+
+		// Shallow-merge metadata against the locked row, not the pre-transaction
+		// read: a writer that committed between that read and the lock would
+		// otherwise have its keys overwritten with stale values. New fields are
+		// added/overwritten, existing fields are preserved; with no stored
+		// metadata the body metadata is written as is.
+		if (body.metadata && current.metadata) {
+			updateData.metadata = {
+				...(current.metadata as typeof body.metadata),
+				...body.metadata,
+			}
+		}
 
 		const [row] = await tx.update(objects).set(updateData).where(eq(objects.id, id)).returning()
 		if (!row) return

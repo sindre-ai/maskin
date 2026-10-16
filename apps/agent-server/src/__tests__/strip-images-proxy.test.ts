@@ -12,7 +12,10 @@ const { PLACEHOLDER, stripImages, createProxyServer } = createRequire(import.met
 ) as {
 	PLACEHOLDER: string
 	stripImages: (payload: unknown) => { payload: Payload; count: number }
-	createProxyServer: (upstreamBaseUrl: string) => Server
+	createProxyServer: (
+		upstreamBaseUrl: string,
+		providerPrefs?: Record<string, unknown> | null,
+	) => Server
 }
 
 const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
@@ -99,6 +102,33 @@ describe('strip-images proxy over HTTP', () => {
 		const forwarded = stub.seen.body as Buffer
 		expect(JSON.parse(forwarded.toString()).messages[0].content).toEqual([note])
 		expect(stub.seen.headers?.['content-length']).toBe(String(forwarded.length))
+	})
+
+	it('injects provider preferences into a request that holds no images', async () => {
+		const stub = await startStub((_req, _body, res) => res.end('ok'))
+		const proxyPort = await listen(
+			createProxyServer(`http://127.0.0.1:${stub.port}`, { ignore: ['CoreWeave'] }),
+		)
+		await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+		})
+		const forwarded = JSON.parse((stub.seen.body as Buffer).toString())
+		expect(forwarded.provider).toEqual({ ignore: ['CoreWeave'] })
+		expect(forwarded.messages).toEqual([{ role: 'user', content: 'hi' }])
+	})
+
+	it('sends no provider field when no preferences are configured', async () => {
+		const stub = await startStub((_req, _body, res) => res.end('ok'))
+		const proxyPort = await listen(createProxyServer(`http://127.0.0.1:${stub.port}`, null))
+		const body = JSON.stringify({ model: 'm', messages: [] })
+		await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body,
+		})
+		expect(stub.seen.body?.toString()).toBe(body)
 	})
 
 	it('forwards an unparseable body unchanged', async () => {

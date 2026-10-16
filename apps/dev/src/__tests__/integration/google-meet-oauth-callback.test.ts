@@ -7,6 +7,7 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: integrationsRoutes } = await import('../../routes/integrations')
 const { encrypt } = await import('../../lib/crypto')
+const { decodeState } = await import('../../lib/integrations/oauth/state')
 
 const FRONTEND_URL = 'https://app.test'
 const PEOPLE_URL = 'https://people.googleapis.com/v1/people/me?personFields=metadata'
@@ -94,6 +95,29 @@ async function seedPendingConnect() {
 	return { ws, nonce, state }
 }
 
+async function seedPendingConnectIn(workspaceId: string, actorId: string, returnTo?: string) {
+	const nonce = randomBytes(16).toString('hex')
+	await db.insert(integrations).values({
+		workspaceId,
+		provider: 'google-meet',
+		status: 'pending',
+		externalId: nonce,
+		credentials: '',
+		createdBy: actorId,
+	})
+	const state = encrypt(
+		JSON.stringify({
+			workspaceId,
+			actorId,
+			ts: Date.now(),
+			nonce,
+			codeVerifier: 'verifier',
+			...(returnTo ? { returnTo } : {}),
+		}),
+	)
+	return { nonce, state }
+}
+
 function callback(state: string, nonce: string) {
 	const app = createIntegrationApp({ path: '/api/integrations', module: integrationsRoutes })
 	return app.request(
@@ -175,6 +199,82 @@ describe('GET /api/integrations/google-meet/callback', () => {
 				peopleId: '112233445566778899',
 				subscriptionName: 'subscriptions/sub-1',
 			},
+		})
+	})
+
+	// "Land back in the chat where I clicked Connect": the chat path rides inside the
+	// sealed OAuth state, so the callback can redirect there instead of Settings.
+	describe('return path', () => {
+		const MEET_PEOPLE = () =>
+			json({ metadata: { sources: [{ type: 'PROFILE', id: '112233445566778899' }] } })
+		const MEET_SUBSCRIPTION = () =>
+			json({
+				name: 'subscriptions/sub-1',
+				targetResource: '//cloudidentity.googleapis.com/users/112233445566778899',
+				expireTime: '2026-10-13T00:00:00Z',
+			})
+
+		it('redirects to the chat the connect started from', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			const returnTo = `/${ws.id}/chats/22222222-2222-2222-2222-222222222222`
+			const seeded = await seedPendingConnectIn(ws.id, actorId, returnTo)
+			stubGoogle({ people: MEET_PEOPLE, subscription: MEET_SUBSCRIPTION })
+
+			const res = await callback(seeded.state, seeded.nonce)
+
+			expect(res.status).toBe(302)
+			expect(res.headers.get('location')).toBe(`${FRONTEND_URL}${returnTo}`)
+			expect((await meetRows(ws.id))[0].status).toBe('active')
+		})
+
+		it('ignores a return path that points into another workspace', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			const seeded = await seedPendingConnectIn(
+				ws.id,
+				actorId,
+				'/99999999-9999-9999-9999-999999999999/chats/x',
+			)
+			stubGoogle({ people: MEET_PEOPLE, subscription: MEET_SUBSCRIPTION })
+
+			const res = await callback(seeded.state, seeded.nonce)
+
+			expect(res.headers.get('location')).toBe(`${FRONTEND_URL}/${ws.id}/settings/integrations`)
+		})
+
+		it('seals return_to into the OAuth state when the connect starts', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			const returnTo = `/${ws.id}/chats/22222222-2222-2222-2222-222222222222`
+			const app = createIntegrationApp({ path: '/api/integrations', module: integrationsRoutes })
+
+			const res = await app.request('/api/integrations/google-meet/connect', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': ws.id },
+				body: JSON.stringify({ return_to: returnTo }),
+			})
+
+			expect(res.status).toBe(200)
+			const { install_url } = (await res.json()) as { install_url: string }
+			const state = new URL(install_url).searchParams.get('state')
+			expect(decodeState(state as string).returnTo).toBe(returnTo)
+		})
+
+		it('drops a return_to that is not a plain path inside the workspace', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			const app = createIntegrationApp({ path: '/api/integrations', module: integrationsRoutes })
+
+			const res = await app.request('/api/integrations/google-meet/connect', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': ws.id },
+				body: JSON.stringify({ return_to: 'https://evil.example/phish' }),
+			})
+
+			const { install_url } = (await res.json()) as { install_url: string }
+			const state = new URL(install_url).searchParams.get('state')
+			expect(decodeState(state as string).returnTo).toBeUndefined()
 		})
 	})
 })

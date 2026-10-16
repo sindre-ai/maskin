@@ -283,6 +283,10 @@ type SessionGate = {
 	workspaceId: string
 	/** `config.llm_route`, for tagging empty-completion telemetry. '' when unrecorded. */
 	llmRoute: string
+	/** A helper another agent started: it ends when it returns its result. */
+	stopOnResult: boolean
+	/** The helper has asked the person a question and is waiting on the answer. */
+	awaiting: boolean
 }
 
 /** What the backwards scan of a blank-`result` turn concluded. */
@@ -338,6 +342,12 @@ export type InteractiveTurnFinalizerOptions = {
 	 * the retries and the visible message still apply.
 	 */
 	fallbackModel?: string | null
+	/**
+	 * Called when a helper session (config.stop_on_result) closes a turn with a
+	 * result and is not waiting on an answer: the session is done. Injected for
+	 * the same reason as the options above — no session-manager import here.
+	 */
+	onHelperResult?: (sessionId: string, outcome: { isError: boolean; text: string }) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -389,6 +399,7 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
@@ -398,6 +409,7 @@ export class InteractiveTurnFinalizer {
 		this.setModel = options.setModel
 		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
+		this.onHelperResult = options.onHelperResult
 		this.onStopSession = options.onStopSession
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
@@ -512,6 +524,12 @@ export class InteractiveTurnFinalizer {
 		const gate = await this.loadGate(sessionId)
 		if (!gate) return
 		if (!gate.interactive) return
+		// A helper has no chat of its own to post into: its result goes back to
+		// whoever started it, and the session ends here unless it is mid-question.
+		if (gate.stopOnResult) {
+			await this.finishHelperTurn(sessionId, gate, result, logId)
+			return
+		}
 		if (!gate.conversationId) {
 			logger.warn(
 				`Interactive session ${sessionId} produced final output before a conversation was attached; dropping this turn's reply`,
@@ -611,6 +629,34 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+	}
+
+	/**
+	 * A helper closed a turn. If it asked the person something, keep it alive for
+	 * the answer; otherwise this was its last turn, so end the session.
+	 *
+	 * Acts only on the newest turn: the agent-server replays a session's stdout
+	 * after a restart, and an old result must not end a session that has since
+	 * been answered and is mid-way through a later turn.
+	 */
+	private async finishHelperTurn(
+		sessionId: string,
+		gate: SessionGate,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<void> {
+		if (gate.awaiting) return
+		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
+		if (this.seen.has(dedupeKey)) return
+		if (!(await this.isNewestTurn(sessionId, logId))) return
+		this.rememberKey(dedupeKey)
+		try {
+			await this.onHelperResult?.(sessionId, { isError: result.isError, text: result.text })
+		} catch (err) {
+			logger.error(
+				`Helper session ${sessionId} could not be ended after its result: ${describeError(err)}`,
+			)
+		}
 	}
 
 	/**
@@ -1146,7 +1192,13 @@ export class InteractiveTurnFinalizer {
 				.set({ spawnedByMessageId: messageId })
 				.where(
 					and(
-						eq(sessions.sourceSessionId, primarySessionId),
+						// REST `create_session` records the spawner as
+						// `spawned_by_session_id` (from the X-Maskin-Session-Id header);
+						// `source_session_id` is only set when the agent passes it.
+						or(
+							eq(sessions.sourceSessionId, primarySessionId),
+							eq(sessions.spawnedBySessionId, primarySessionId),
+						),
 						isNull(sessions.spawnedByMessageId),
 						gte(sessions.createdAt, lowerBound),
 						lte(sessions.createdAt, currentLog.createdAt),
@@ -1652,8 +1704,11 @@ export class InteractiveTurnFinalizer {
 			actorId: row.actorId,
 			workspaceId: row.workspaceId,
 			llmRoute: typeof config?.llm_route === 'string' ? config.llm_route : '',
+			stopOnResult: config?.stop_on_result === true,
+			awaiting: Boolean(config?.awaiting),
 		}
-		if (gate.interactive && !gate.conversationId) return gate
+		// Uncached: a helper's `awaiting` flips with every question and answer.
+		if (gate.interactive && (!gate.conversationId || gate.stopOnResult)) return gate
 		this.gates.set(sessionId, gate)
 		return gate
 	}

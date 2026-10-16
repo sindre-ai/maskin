@@ -7,6 +7,8 @@ import { type Env, getOpenApiConfig } from '../app-factory'
  * A write route (POST, PUT, PATCH, DELETE) is accounted for when it is
  *   - tagged 'x-viewer-policy': 'writer' in its route config (read back from
  *     the OpenAPI document), meaning a viewer gets a 403 on it,
+ *   - on HAND_GATED_ROUTES: gated in the handler but not built with createRoute,
+ *     so it has no OpenAPI entry to tag (the viewer 403 test proves the gate), or
  *   - on OPEN_ROUTES, with the reason a viewer may reach it, or
  *   - on PENDING_ROUTES, with the group (see the write route list on the
  *     "Viewers are read-only" task) whose pull request will tag it.
@@ -18,6 +20,7 @@ import { type Env, getOpenApiConfig } from '../app-factory'
  * Paths are Hono paths, as in app.routes (':id', not '{id}').
  * Extension routes under /api/m are not mounted by the test app, and a route
  * not built with createRoute has no OpenAPI entry, so it can never be tagged.
+ * Those go on HAND_GATED_ROUTES instead, and need a case in the viewer 403 test.
  */
 
 export const VIEWER_POLICY_KEY = 'x-viewer-policy'
@@ -63,6 +66,20 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'the one-time code and its PKCE verifier are the credential',
 	],
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
+	// Group B leftovers: no handler logic or no workspace data.
+	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
+	[
+		'DELETE',
+		'/api/integrations/linkedin-unipile/mcp/:instanceSlug',
+		'always answers 405, no handler',
+	],
+	[
+		'POST',
+		'/api/integrations/resend/dns-precheck',
+		'looks up public DNS records for a typed domain, touches no workspace data',
+	],
 	// Group E: personal state a viewer may keep.
 	['POST', '/api/notifications', 'Group E, personal state'],
 	[
@@ -86,51 +103,29 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/mcp', 'tools reach data only through the gated REST routes'],
 ]
 
+/**
+ * Gated in the handler (assertWorkspaceWriterRole or isWorkspaceWriter) but not
+ * built with createRoute, so the OpenAPI document cannot carry the tag. Each
+ * entry needs a viewer 403 case in integration/viewer-read-only.test.ts.
+ */
+export const HAND_GATED_ROUTES: OpenRoute[] = [
+	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
+	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
+	['POST', '/api/integrations/linkedin-unipile/mcp', 'MCP endpoint, tools act as the identity'],
+	[
+		'POST',
+		'/api/integrations/linkedin-unipile/mcp/:instanceSlug',
+		'MCP endpoint, tools act as the identity',
+	],
+	['POST', '/api/integrations/linkedin-unipile/send-message', 'sends a LinkedIn message'],
+	['POST', '/api/integrations/linkedin-unipile/reply', 'sends a LinkedIn reply'],
+	['POST', '/api/integrations/linkedin-unipile/publish-post', 'publishes a LinkedIn post'],
+	['POST', '/api/integrations/linkedin-unipile/comment-on-post', 'posts a LinkedIn comment'],
+	['POST', '/api/integrations/linkedin-unipile/reply-to-comment', 'posts a LinkedIn reply'],
+	['POST', '/api/admin/linkedin-unipile/refresh-identities', 'refreshes stored credentials'],
+]
+
 export const PENDING_ROUTES: PendingRoute[] = [
-	// Group B: workspace configuration
-	['PATCH', '/api/workspaces/:id', 'B'],
-	['PATCH', '/api/workspaces/admin/:id', 'B'],
-	['POST', '/api/workspaces/:workspaceId/skills', 'B'],
-	['POST', '/api/workspaces/:workspaceId/skills/upload', 'B'],
-	['PUT', '/api/workspaces/:workspaceId/skills/:name', 'B'],
-	['DELETE', '/api/workspaces/:workspaceId/skills/:name', 'B'],
-	['POST', '/api/triggers', 'B'],
-	['PATCH', '/api/triggers/:id', 'B'],
-	['DELETE', '/api/triggers/:id', 'B'],
-	['POST', '/api/installed-loops', 'B'],
-	['POST', '/api/installed-loops/:id/fork', 'B'],
-	['DELETE', '/api/installed-loops/:id', 'B'],
-	['POST', '/api/marketplace/items/:id/install', 'B'],
-	['DELETE', '/api/marketplace/items/:id/uninstall', 'B'],
-	['PATCH', '/api/integrations/:id', 'B'],
-	['DELETE', '/api/integrations/:id', 'B'],
-	['POST', '/api/integrations/:provider/connect', 'B'],
-	['POST', '/api/integrations/:id/complete', 'B'],
-	['POST', '/api/integrations/github/link', 'B'],
-	['POST', '/api/integrations/github/select-installation', 'B'],
-	['POST', '/api/integrations/resend/dns-precheck', 'B'],
-	['POST', '/api/integrations/skjald/authorize', 'B'],
-	['POST', '/api/integrations/google-meet/mcp', 'B'],
-	['DELETE', '/api/integrations/google-meet/mcp', 'B'],
-	['POST', '/api/integrations/slack/mcp', 'B'],
-	['DELETE', '/api/integrations/slack/mcp', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/mcp', 'B'],
-	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/mcp/:instanceSlug', 'B'],
-	['DELETE', '/api/integrations/linkedin-unipile/mcp/:instanceSlug', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/connect', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/publish-post', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/send-message', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/reply', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/comment-on-post', 'B'],
-	['POST', '/api/integrations/linkedin-unipile/reply-to-comment', 'B'],
-	['POST', '/api/admin/linkedin-unipile/refresh-identities', 'B'],
-	['DELETE', '/api/claude-oauth', 'B'],
-	['PATCH', '/api/claude-oauth/nickname', 'B'],
-	['POST', '/api/claude-oauth/import', 'B'],
-	['POST', '/api/claude-oauth/promote', 'B'],
-	['POST', '/api/claude-oauth/swap', 'B'],
-	['POST', '/api/mini-apps/regen', 'B'],
 	// Group C: agents and sessions
 	['PATCH', '/api/actors/:id', 'C'],
 	['DELETE', '/api/actors/:id', 'C'],
@@ -205,16 +200,20 @@ export interface RouteAudit {
 	badTag: string[]
 	taggedAndPending: string[]
 	taggedAndOpen: string[]
+	taggedAndHandGated: string[]
 	openAndPending: string[]
+	handGatedAndOpenOrPending: string[]
 	/** On the open or pending list but not a route on the app. */
 	staleEntries: string[]
 	taggedCount: number
+	handGatedCount: number
 	openCount: number
 	pendingByGroup: Record<string, number>
 }
 
 export function auditWriteRoutes(routes: WriteRoute[]): RouteAudit {
 	const open = new Set(OPEN_ROUTES.map(([m, p]) => key(m, p)))
+	const handGated = new Set(HAND_GATED_ROUTES.map(([m, p]) => key(m, p)))
 	const pending = new Set(PENDING_ROUTES.map(([m, p]) => key(m, p)))
 	const group = new Map(PENDING_ROUTES.map(([m, p, g]) => [key(m, p), g]))
 	const real = new Set(routes.map((r) => key(r.method, r.path)))
@@ -224,9 +223,12 @@ export function auditWriteRoutes(routes: WriteRoute[]): RouteAudit {
 		badTag: [],
 		taggedAndPending: [],
 		taggedAndOpen: [],
+		taggedAndHandGated: [],
 		openAndPending: [],
+		handGatedAndOpenOrPending: [],
 		staleEntries: [],
 		taggedCount: 0,
+		handGatedCount: 0,
 		openCount: 0,
 		pendingByGroup: {},
 	}
@@ -238,8 +240,11 @@ export function auditWriteRoutes(routes: WriteRoute[]): RouteAudit {
 		if (hasTag && !tagged) audit.badTag.push(k)
 		if (tagged && pending.has(k)) audit.taggedAndPending.push(k)
 		if (tagged && open.has(k)) audit.taggedAndOpen.push(k)
+		if (tagged && handGated.has(k)) audit.taggedAndHandGated.push(k)
 		if (open.has(k) && pending.has(k)) audit.openAndPending.push(k)
+		if (handGated.has(k) && (open.has(k) || pending.has(k))) audit.handGatedAndOpenOrPending.push(k)
 		if (tagged) audit.taggedCount++
+		else if (handGated.has(k)) audit.handGatedCount++
 		else if (open.has(k)) audit.openCount++
 		else if (pending.has(k)) {
 			const g = group.get(k) as string
@@ -247,6 +252,6 @@ export function auditWriteRoutes(routes: WriteRoute[]): RouteAudit {
 		} else audit.unaccounted.push(k)
 	}
 
-	for (const k of [...open, ...pending]) if (!real.has(k)) audit.staleEntries.push(k)
+	for (const k of [...open, ...handGated, ...pending]) if (!real.has(k)) audit.staleEntries.push(k)
 	return audit
 }
