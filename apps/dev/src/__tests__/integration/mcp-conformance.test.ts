@@ -85,6 +85,14 @@ describe('MCP conformance matrix', () => {
 		features = await detectFeatures(target)
 	})
 
+	// The shared integration setup truncates workspaces and members before every
+	// test, so the workspace made in beforeAll is gone by the first row. Give each
+	// row its own.
+	beforeEach(async () => {
+		const workspace = await insertWorkspace(db, getTestActorId())
+		target.workspaceId = workspace.id
+	})
+
 	afterAll(async () => {
 		vi.unstubAllEnvs()
 		await new Promise<void>((resolve) => server.close(() => resolve()))
