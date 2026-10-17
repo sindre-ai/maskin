@@ -11,6 +11,7 @@ import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
 	type DevBootstrapResult,
@@ -47,6 +48,8 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+warnIfPosthogKeyUnset()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
