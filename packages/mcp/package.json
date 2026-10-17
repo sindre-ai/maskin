@@ -18,7 +18,9 @@
 		"start": "tsx src/server.ts",
 		"build": "tsc",
 		"type-check": "tsc --noEmit",
-		"test": "vitest"
+		"test": "vitest",
+		"conformance": "tsx src/__tests__/conformance/cli.ts",
+		"conformance:docs": "tsx src/__tests__/conformance/docs-cli.ts"
 	},
 	"dependencies": {
 		"@maskin/ext-crm": "workspace:*",
@@ -33,6 +35,7 @@
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
+		"@modelcontextprotocol/client": "^2.3.1",
 		"tsx": "^4.21.0",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"

@@ -1,0 +1,266 @@
+{
+	"recordedFrom": "v1 main @ 0ddf711 (SDK 1.29.0, before the SDK v2 swap)",
+	"recordedAt": "2026-10-17T19:44:14.294Z",
+	"tools": [
+		{
+			"name": "create_objects",
+			"digest": "53e40afa9ac5df3c5557ad759602c615748fb3940ccc6b203d0190f18670bccb"
+		},
+		{
+			"name": "get_objects",
+			"digest": "e89b7f0bbea3756bdcdd981a1bd204594ec491636e8f96342f485f19ac9b68d0"
+		},
+		{
+			"name": "update_objects",
+			"digest": "f6788bc22a96acb3c98e6e25a62e176b0484ffbfdd36a8a010d7999320a1136c"
+		},
+		{
+			"name": "delete_object",
+			"digest": "b9bfc1129766b2f82835a746ceeb0e8afd1226054df1e1a247296ed32afa5a8c"
+		},
+		{
+			"name": "list_objects",
+			"digest": "eb0b1cd8595b9ddf8f8ef9faaafd21b1ec9fe58a9c3b3fdac6f5884300f040ea"
+		},
+		{
+			"name": "search_objects",
+			"digest": "2547d5ab9babc20823c22137edbf65aada2fa2e3291b5390355fc4c205c348fa"
+		},
+		{
+			"name": "create_relationship",
+			"digest": "b5a00fa27cfe1dba9a7c0ebbd589249fc95468801eafa4b8ba7c28042bb40492"
+		},
+		{
+			"name": "list_relationships",
+			"digest": "a441f7fbdd319065e04f9e867d1c45986bc4ecb69164c965a5fed53f26dc0540"
+		},
+		{
+			"name": "traverse_graph",
+			"digest": "d91bca450b2dad7d153a1d5c8259d357ad2f901a216f9295268bab1ca54b18ec"
+		},
+		{
+			"name": "delete_relationship",
+			"digest": "e725e0f8384140c30c2f67742bd5f7af4e4284c6dcd084d4bdbd5574933b107a"
+		},
+		{
+			"name": "create_actor",
+			"digest": "ba107b296035f1ec35f0b2daa57eec069b9645dd4ed8fbfe069d5eb117f42f67"
+		},
+		{
+			"name": "list_actors",
+			"digest": "82aa39a21886e1b27f02865d7ec96d50436252209f4e8e27253abee9c80223cd"
+		},
+		{
+			"name": "get_actor",
+			"digest": "3de19cfe2828620035263ab1969b671f56e5b87df6b1bfcdddb48607f2d72ef1"
+		},
+		{
+			"name": "update_actor",
+			"digest": "fef0ac6c1e483345f8e514533f9181d1e5885104de0bd87c01edb4dd2f7a1d93"
+		},
+		{
+			"name": "create_workspace",
+			"digest": "71943803f4b2baae662391c5e6256046131bcbdb71d8df34da3730665b0d61ab"
+		},
+		{
+			"name": "update_workspace",
+			"digest": "1276fc103a612acdbb59bf01da3fe97800e52d190b9e4887cf42e59fc8656a62"
+		},
+		{
+			"name": "list_workspaces",
+			"digest": "4f3a58c360e204edad365898e7ecf02ae463091222ef94c91335c88d43e84d4b"
+		},
+		{
+			"name": "get_workspace_schema",
+			"digest": "2f8abd5991f690b2527b03368e396456f6535bd7590119b97c70e20bb45e1964"
+		},
+		{
+			"name": "create_workspace_field",
+			"digest": "59a49c78df534c3c024af54ed53c825c8352e7cf98a9f5e30cb90a67de337f34"
+		},
+		{
+			"name": "update_workspace_field",
+			"digest": "8b7e0d2a8ae978ba43beb9762b5d6889a6b867ad406182883b05882417eb7386"
+		},
+		{
+			"name": "delete_workspace_field",
+			"digest": "f0c0b7cd1dcd68a189e02b0765023c35ce60958fb0a0b3ebba56d72d7bf4e034"
+		},
+		{
+			"name": "list_workspace_skills",
+			"digest": "803269e8cb2a355574dd6ebbf94871df3301dc40b5f543c22e18113a23241f7a"
+		},
+		{
+			"name": "get_workspace_skill",
+			"digest": "3f7df0c8bf8ecc6c20911cfb455b473efd186c56976c7580450b1d47c7491079"
+		},
+		{
+			"name": "create_workspace_skill",
+			"digest": "3a23f9ee4b182a4e4d4e8f32c0b016d2102d5e71cebbfb35b6d087d547a8a193"
+		},
+		{
+			"name": "update_workspace_skill",
+			"digest": "8029d34235f170d8ce96fbc61fc702a79de804e1827866f3171d82fe9df670a4"
+		},
+		{
+			"name": "delete_workspace_skill",
+			"digest": "e3c599d4843ac275b029ac5b946d974c2b0302b4752eecc5bb6ac55a19a32680"
+		},
+		{
+			"name": "create_file",
+			"digest": "ca3199acefc5c731a3aa2bdb166ccdabf997c2aae7f934f343b8e2e98ad2644b"
+		},
+		{
+			"name": "list_files",
+			"digest": "91c5f30a5a8edd4f13f3e16b55a75fc8fe08ed4d7f221df089ee901be98d1ff6"
+		},
+		{
+			"name": "get_file",
+			"digest": "c6bacc7e44c59f808083d0d1ce0fa165c156e3e870caac668714dc0e66abff1f"
+		},
+		{
+			"name": "update_file",
+			"digest": "5cdeb3b7c1af589a23ac8627d8160c2ee72d2596a211cae3d4be18836fb1e6a9"
+		},
+		{
+			"name": "delete_file",
+			"digest": "6795f67e7769e9df77a0f6e7bdf642453147efc9cc6a0f3ba5c43f7e001c468a"
+		},
+		{
+			"name": "get_events",
+			"digest": "a241d7e79afa953cc0ae8eaeb467501e909f191e3671d00885ffa707d2e7bd2e"
+		},
+		{
+			"name": "get_comments",
+			"digest": "57b511684c5621f8937135f5d8f423e85570603886033c1c5017ad4deec40e56"
+		},
+		{
+			"name": "create_comment",
+			"digest": "17220baeb21506bfddfa88c7a94113bb2809fd3bd1753013fdbffd085f5fcc6b"
+		},
+		{
+			"name": "get_conversation",
+			"digest": "a5ca79868331bbf7b6af13adc6f847fb31329e5e3386930668b0fda08205f8d4"
+		},
+		{
+			"name": "list_conversation_messages",
+			"digest": "597ce98d738c1c2439f8aaac773d6fc3d78391c9d16cc572ee93b6c96a60ed9e"
+		},
+		{
+			"name": "post_conversation_message",
+			"digest": "b713817671b6970b15ef05c3f8e7c2592690095c1872153c5a267b523c0fb1cd"
+		},
+		{
+			"name": "create_trigger",
+			"digest": "b1da885cf2d17d365b162ef888b87b81f2b3e5c268a8924b803fc46d4f1f0354"
+		},
+		{
+			"name": "list_triggers",
+			"digest": "67356715eb11d5dab8d24622d1aab5c03209e9ada3124313dcd6b327b991f9bd"
+		},
+		{
+			"name": "update_trigger",
+			"digest": "3d38a88c262beaa7c97ef725697da7f1c03b9a7e7e121bd1b59885138120571b"
+		},
+		{
+			"name": "delete_trigger",
+			"digest": "9bd6fe209113b3e4043c6583393a8ddae371d0ebf38895097bde300f6d451d2e"
+		},
+		{
+			"name": "create_loop",
+			"digest": "384d1b306c1b7e05a86565c9fb9cf18654b008dc1f799b22028c032b41c7f7e0"
+		},
+		{
+			"name": "update_loop",
+			"digest": "f5e2f8e6c9a4d9054176de087187167f7747dbad42c5e9cfebe3ebaa5c0bc6ac"
+		},
+		{
+			"name": "list_loops",
+			"digest": "95f62eaa5b29fd96ee903698540ed3e217b8b15e153453ad174118c41af67689"
+		},
+		{
+			"name": "get_loop",
+			"digest": "99e29570438c873e4d31a97ea364b13e6245e63300f7531e5a02ee000b535967"
+		},
+		{
+			"name": "delete_loop",
+			"digest": "74a4d56c73b5751166459b25c84173a7c2d642fca5413ef6653277ba1be51029"
+		},
+		{
+			"name": "mark_read",
+			"digest": "c194c8a2cec63bfe682acec8a1e7049b01f64f3ab284f0ea27f1f6f11d26f8b5"
+		},
+		{
+			"name": "list_unread",
+			"digest": "43f7ff711dfb956aedce885b6de22689d181c862a5daa9100619d23776e13cb7"
+		},
+		{
+			"name": "create_session",
+			"digest": "312ed3e8c5b9d930d9cb2d46977f6bb35eba1dc04a8050c2a20c8586913f503e"
+		},
+		{
+			"name": "ask_user_question",
+			"digest": "b0168306d54e3ed1afa1b8aeb52fe9f366caf3f57d88af7b2490b85b227da151"
+		},
+		{
+			"name": "list_sessions",
+			"digest": "0c4cfa546690ab5cad653285914ed95705d916bccf19a12294bdf1e913a806c9"
+		},
+		{
+			"name": "get_session",
+			"digest": "0ae020e1c89a2342ec660fc0689085dfd99c0ced89a32365ade05936dd14f0da"
+		},
+		{
+			"name": "get_session_logs",
+			"digest": "a1f1d317aa872e75e06b7fe1d105869f4dd59146014ef62df994f18d55f3e75e"
+		},
+		{
+			"name": "stop_session",
+			"digest": "905dabe6ed0310592db0e459877eca57087c25c74e3bcc9c7bd530fe4e63a6be"
+		},
+		{
+			"name": "pause_session",
+			"digest": "95a2b6d95a187f5a653f192548a6b1b02cdebb13d5460606387cebaab6086d4d"
+		},
+		{
+			"name": "resume_session",
+			"digest": "e2c98c989b3c87506bbd2d30ed0268eb62fe07aa38b369cbf99901451a527c38"
+		},
+		{
+			"name": "list_integrations",
+			"digest": "24442ef14fd223a36ef9b0da66b59f5afac98c6586d90dbcd46c238a08462833"
+		},
+		{
+			"name": "list_integration_providers",
+			"digest": "b794ee290eb542f3d311879c59df2e6c6ba4910806002851d6c739d20bce7061"
+		},
+		{
+			"name": "connect_integration",
+			"digest": "a263b90c3475e6ea1a631d28265214fafad6ef35162c08247c19147317ef97f8"
+		},
+		{
+			"name": "disconnect_integration",
+			"digest": "e4dafc31729103b53148865f28d034fc2226408d67c2e8ba452b80ffc0794e4d"
+		},
+		{
+			"name": "list_extensions",
+			"digest": "b1c27c494fd1b05e34cb0fa7797033e846ca13d6b7a6507a4930623209df705f"
+		},
+		{
+			"name": "create_extension",
+			"digest": "f8c82d52f141f4bfc50098bbf8accaae47588dc7a9e3ad15ccbbfbc9ce10034e"
+		},
+		{
+			"name": "update_extension",
+			"digest": "5c75597a37c10d07020eb20eee53d3a239477debde001b4e495178dc600ccd2f"
+		},
+		{
+			"name": "delete_extension",
+			"digest": "a4214570bba763cfe426a27d9d23a5dd3117bb26937715a2f83047c586c9fb1d"
+		},
+		{
+			"name": "get_started",
+			"digest": "2b8069d0cd5d5002aab1e29ff824c42ff3f43165c28bca1f932dabc06c62f1b3"
+		}
+	]
+}

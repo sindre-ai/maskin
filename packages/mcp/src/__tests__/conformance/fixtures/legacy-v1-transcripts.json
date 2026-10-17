@@ -1,0 +1,173 @@
+{
+	"recordedFrom": "v1 main @ 0ddf711 (SDK 1.29.0, before the SDK v2 swap)",
+	"recordedAt": "2026-10-17T19:44:14.294Z",
+	"cases": [
+		{
+			"id": "initialize",
+			"response": {
+				"status": 200,
+				"contentType": "application/json",
+				"body": {
+					"result": {
+						"protocolVersion": "2025-06-18",
+						"capabilities": {
+							"resources": {
+								"listChanged": true
+							},
+							"tools": {
+								"listChanged": true
+							}
+						},
+						"serverInfo": {
+							"name": "maskin",
+							"version": "0.1.0"
+						}
+					},
+					"jsonrpc": "2.0",
+					"id": 1
+				}
+			}
+		},
+		{
+			"id": "initialized-notification",
+			"response": {
+				"status": 202,
+				"contentType": "text/plain; charset=utf-8",
+				"body": ""
+			}
+		},
+		{
+			"id": "ping",
+			"response": {
+				"status": 200,
+				"contentType": "application/json",
+				"body": {
+					"result": {},
+					"jsonrpc": "2.0",
+					"id": 2
+				}
+			}
+		},
+		{
+			"id": "tools-call-unknown-tool",
+			"response": {
+				"status": 200,
+				"contentType": "application/json",
+				"body": {
+					"result": {
+						"content": [
+							{
+								"type": "text",
+								"text": "MCP error -32602: Tool no_such_tool not found"
+							}
+						],
+						"isError": true
+					},
+					"jsonrpc": "2.0",
+					"id": 3
+				}
+			}
+		},
+		{
+			"id": "tools-call-bad-arguments",
+			"response": {
+				"status": 200,
+				"contentType": "application/json",
+				"body": {
+					"result": {
+						"content": [
+							{
+								"type": "text",
+								"text": "MCP error -32602: Input validation error: Invalid arguments for tool get_objects: [\n  {\n    \"code\": \"invalid_type\",\n    \"expected\": \"array\",\n    \"received\": \"string\",\n    \"path\": [\n      \"ids\"\n    ],\n    \"message\": \"Expected array, received string\"\n  }\n]"
+							}
+						],
+						"isError": true
+					},
+					"jsonrpc": "2.0",
+					"id": 4
+				}
+			}
+		},
+		{
+			"id": "tools-call-no-authorization",
+			"response": {
+				"status": 200,
+				"contentType": "application/json",
+				"body": {
+					"result": {
+						"_meta": {
+							"toolName": "get_workspace_schema"
+						},
+						"content": [
+							{
+								"type": "text",
+								"text": "{\"error\":{\"tool\":\"get_workspace_schema\",\"reason\":\"Permission denied: Not authenticated. Set an `Authorization: Bearer <YOUR_MASKIN_API_KEY>` header on the MCP request (see https://sindre.ai/docs/get-started/).\",\"next\":{\"tool\":\"list_workspaces\",\"hint\":\"Confirm the caller has access to a workspace, then retry with a valid workspace_id.\"}}}"
+							}
+						],
+						"structuredContent": {
+							"error": {
+								"tool": "get_workspace_schema",
+								"reason": "Permission denied: Not authenticated. Set an `Authorization: Bearer <YOUR_MASKIN_API_KEY>` header on the MCP request (see https://sindre.ai/docs/get-started/).",
+								"next": {
+									"tool": "list_workspaces",
+									"hint": "Confirm the caller has access to a workspace, then retry with a valid workspace_id."
+								}
+							}
+						},
+						"isError": true
+					},
+					"jsonrpc": "2.0",
+					"id": 5
+				}
+			}
+		},
+		{
+			"id": "batch-array",
+			"response": {
+				"status": 200,
+				"contentType": "application/json",
+				"body": [
+					{
+						"result": {},
+						"jsonrpc": "2.0",
+						"id": 6
+					},
+					{
+						"result": {},
+						"jsonrpc": "2.0",
+						"id": 7
+					}
+				]
+			}
+		},
+		{
+			"id": "get-405",
+			"response": {
+				"status": 405,
+				"contentType": "text/plain; charset=utf-8",
+				"body": "Method Not Allowed"
+			}
+		},
+		{
+			"id": "delete-405",
+			"response": {
+				"status": 405,
+				"contentType": "text/plain; charset=utf-8",
+				"body": "Method Not Allowed"
+			}
+		},
+		{
+			"id": "malformed-json",
+			"response": {
+				"status": 400,
+				"contentType": "application/json",
+				"body": {
+					"error": {
+						"code": "BAD_REQUEST",
+						"message": "Invalid JSON in request body"
+					}
+				}
+			}
+		}
+	]
+}
