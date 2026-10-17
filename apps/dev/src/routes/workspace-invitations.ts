@@ -806,6 +806,7 @@ function sendFailureLogContext(err: unknown) {
 const createInviteRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Invite someone to a workspace by email',
 	description:
@@ -1129,6 +1130,7 @@ app.openapi(createInviteRoute, (async (c) => {
 const resendInviteRoute = createRoute({
 	method: 'post',
 	path: '/{id}/resend',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Resend a pending invite with a fresh token and expiry',
 	request: { params: idParamSchema },
@@ -1256,6 +1258,7 @@ app.openapi(resendInviteRoute, (async (c) => {
 const revokeInviteRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Revoke a pending invite',
 	request: { params: idParamSchema },
