@@ -2535,9 +2535,8 @@ describe('SessionManager', () => {
 				setupLaunchMocks(fixtures)
 				await manager.startSession(fixtures.session.id)
 
-				return (
-					mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
-				).env
+				return (mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> })
+					.env
 			}
 
 			it('gives an agent with no reference to a non-auto-injected integration no token for it', async () => {
