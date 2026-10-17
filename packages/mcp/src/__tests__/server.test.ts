@@ -1,23 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock the MCP SDK modules
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
 }))
 
-import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, registerAppResource, registerAppTool } from '../sdk'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,

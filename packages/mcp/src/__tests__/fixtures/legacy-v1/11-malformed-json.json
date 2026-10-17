@@ -1,0 +1,19 @@
+{
+	"name": "malformed-json",
+	"description": "A POST whose body is not JSON.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\": \"2.0\", \"id\": 9, \"method\": "
+	},
+	"response": {
+		"status": 400,
+		"contentType": "application/json",
+		"body": "{\"error\":{\"code\":\"BAD_REQUEST\",\"message\":\"Invalid JSON in request body\"}}"
+	}
+}

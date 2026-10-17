@@ -194,19 +194,18 @@ describe('read-side handler error envelopes (T2 DoD)', () => {
 		vi.resetModules()
 		handlers = new Map()
 
-		vi.doMock('@modelcontextprotocol/ext-apps/server', () => ({
+		vi.doMock('../sdk', () => ({
 			registerAppTool: vi.fn((_s: unknown, name: string, _def: unknown, handler: unknown) => {
 				handlers.set(name, handler as (args: Record<string, unknown>) => Promise<unknown>)
 			}),
 			registerAppResource: vi.fn(),
 			RESOURCE_MIME_TYPE: 'text/html',
-		}))
-		vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 			McpServer: vi.fn().mockImplementation(() => ({
 				registerResource: vi.fn(),
 				connect: vi.fn(),
 			})),
 			ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+			StdioServerTransport: vi.fn(),
 		}))
 		vi.doMock('node:fs', () => ({ readFileSync: vi.fn().mockReturnValue('<html>mock</html>') }))
 
@@ -216,8 +215,7 @@ describe('read-side handler error envelopes (T2 DoD)', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		vi.doUnmock('@modelcontextprotocol/ext-apps/server')
-		vi.doUnmock('@modelcontextprotocol/sdk/server/mcp.js')
+		vi.doUnmock('../sdk')
 		vi.doUnmock('node:fs')
 	})
 

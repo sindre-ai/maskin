@@ -11,13 +11,6 @@ import {
 	resolveWebAppBaseUrl,
 	stripTrailingSlash,
 } from '@maskin/shared'
-import {
-	RESOURCE_MIME_TYPE,
-	registerAppTool as _registerAppTool,
-	registerAppResource,
-} from '@modelcontextprotocol/ext-apps/server'
-import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import {
@@ -34,6 +27,14 @@ import {
 	toolErrorResponse,
 } from './read-error.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
+import {
+	McpServer,
+	RESOURCE_MIME_TYPE,
+	ResourceTemplate,
+	StdioServerTransport,
+	registerAppTool as _registerAppTool,
+	registerAppResource,
+} from './sdk.js'
 import {
 	type ApiCaller as SetupApiCaller,
 	buildActorSetupBlockFromApi,
