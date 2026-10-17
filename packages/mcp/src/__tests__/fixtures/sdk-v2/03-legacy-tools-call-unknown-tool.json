@@ -9,11 +9,11 @@
 			"Authorization": "Bearer ank_fixture",
 			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
 		},
-		"body": "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"no_such_tool\",\"arguments\":{}}}"
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"no_such_tool\",\"arguments\":{}}}"
 	},
 	"response": {
 		"status": 200,
 		"contentType": "application/json",
-		"body": "{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32602,\"message\":\"Tool no_such_tool not found\"}}"
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Tool no_such_tool not found\"}}"
 	}
 }

@@ -9,11 +9,11 @@
 			"Authorization": "Bearer ank_fixture",
 			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
 		},
-		"body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"explode\",\"arguments\":{}}}"
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"explode\",\"arguments\":{}}}"
 	},
 	"response": {
 		"status": 200,
 		"contentType": "application/json",
-		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"handler exploded: upstream API returned 500\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":3}"
+		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"handler exploded: upstream API returned 500\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":4}"
 	}
 }
