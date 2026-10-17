@@ -88,6 +88,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'Group E, personal state: mark read (the route also takes metadata)',
 	],
 	['DELETE', '/api/notifications/:id', 'Group E, personal state'],
+	[
+		'PATCH',
+		'/api/conversations/:id/me',
+		"Group E, personal state: the caller's own pin, archive and read marker",
+	],
 	['POST', '/api/subscriptions', 'Group E, personal state'],
 	['DELETE', '/api/subscriptions', 'Group E, personal state'],
 	['POST', '/api/subscriptions/read', 'Group E, personal state'],
@@ -137,34 +142,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 ]
 
 export const PENDING_ROUTES: PendingRoute[] = [
-	// Group C: agents and sessions
-	['PATCH', '/api/actors/:id', 'C'],
-	['DELETE', '/api/actors/:id', 'C'],
-	['POST', '/api/actors/:id/api-keys', 'C'],
-	['POST', '/api/actors/:id/pause', 'C'],
-	['POST', '/api/actors/:id/reset', 'C'],
-	['POST', '/api/actors/:id/run', 'C'],
-	['PUT', '/api/actors/:actorId/skills/:skillName', 'C'],
-	['DELETE', '/api/actors/:actorId/skills/:skillName', 'C'],
-	['POST', '/api/actors/:actorId/workspace-skills', 'C'],
-	['POST', '/api/actors/:actorId/workspace-skills/batch', 'C'],
-	['DELETE', '/api/actors/:actorId/workspace-skills/:workspaceSkillId', 'C'],
-	['POST', '/api/sessions', 'C'],
-	['PATCH', '/api/sessions/:id', 'C'],
-	['POST', '/api/sessions/:id/ask', 'C'],
-	['POST', '/api/sessions/:id/input', 'C'],
-	['POST', '/api/sessions/:id/pause', 'C'],
-	['POST', '/api/sessions/:id/resume', 'C'],
-	['POST', '/api/sessions/:id/stop', 'C'],
-	['POST', '/api/conversations', 'C'],
-	['PATCH', '/api/conversations/:id', 'C'],
-	['PATCH', '/api/conversations/:id/me', 'C'],
-	['POST', '/api/conversations/:id/messages', 'C'],
-	['PATCH', '/api/conversations/:id/messages/:messageId', 'C'],
-	['POST', '/api/conversations/:id/messages/:messageId/retry', 'C'],
-	['POST', '/api/conversations/:id/participants', 'C'],
-	['DELETE', '/api/conversations/:id/participants/:actorId', 'C'],
-	['POST', '/api/notifications/:id/respond', 'C'],
 ]
 
 export interface WriteRoute {

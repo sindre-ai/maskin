@@ -32,12 +32,8 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-<<<<<<< HEAD
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
-import { isWorkspaceWriter } from '../lib/workspace-auth'
-=======
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
->>>>>>> ff4e506eb ([Fix] Viewers read-only follow-up 3: gate session, conversation and notification respond writes)
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
