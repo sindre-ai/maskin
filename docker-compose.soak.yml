@@ -1,0 +1,100 @@
+# Soak variant of docker-compose.prod.yml for the MCP SDK v2 bet.
+# Lives on the throwaway branch soak/mcp-sdk-v2 only. Never merge to main.
+#
+# The soak app shares the production host. Every difference from the prod
+# file is a removal or a cap, so the soak cannot touch prod state:
+#   - no agent-base service: building it would rebuild/retag agent-base:latest,
+#     which the live agent-server uses for every session
+#   - no /var/run/docker.sock mount, no group_add, no AGENT_SERVER_* values:
+#     no agent can start from the soak
+#   - no host port publish at all (prod publishes 127.0.0.1:9327 for seaweedfs
+#     metrics; a second binding would fail or shadow it)
+#   - no POSTHOG_*, SENTRY_*, STRIPE_*, SLACK_*, LINEAR_*, GMAIL_*, RESEND_*
+#     variables. Unlisted variables never reach the container, so this block
+#     is the guard. Do not add any of them.
+#   - runtime CPU caps sum to 0.5 on a host with 1.5 CPU
+# Unchanged on purpose: seaweedfs image tag (same as prod), app image build,
+# healthcheck and boot command, so the soak behaves like prod.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-maskin}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/s3.json <<'CONF'
+        {"identities":[{"name":"admin","credentials":[{"accessKey":"admin","secretKey":"admin"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        CONF
+        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data
+    volumes:
+      - seaweed_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/dev/Dockerfile
+      args:
+        VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
+    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 6
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maskin}
+      PORT: "3000"
+      NODE_ENV: production
+      STATIC_DIR: /app/apps/web/dist
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_BUCKET: agent-files
+      S3_ACCESS_KEY: admin
+      S3_SECRET_KEY: admin
+      S3_REGION: us-east-1
+      APP_URL: ${APP_URL:-}
+      # MCP flag under test. Soak flips by committing a new default here on
+      # the soak branch and deploying; the prod-style path (value set in
+      # Coolify, then restart) is drilled once separately. Leave both unset
+      # in Coolify unless that drill is running, or the Coolify value wins.
+      MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}
+      MASKIN_MCP_PROBE_ACTOR_IDS: ${MASKIN_MCP_PROBE_ACTOR_IDS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  seaweed_data:
