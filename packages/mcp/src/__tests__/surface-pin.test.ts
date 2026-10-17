@@ -35,6 +35,11 @@ const NON_TOOL_TOKENS = new Set<string>(['create_relationship', 'delete_relation
 // on another MCP server, so they are never in the Maskin tool list.
 const EXTERNAL_TEMPLATE_TOOLS = new Set<string>(['get_pull_request'])
 
+// create_notification is temporarily hidden from the MCP surface (see server.ts),
+// so no template may tell an agent to call it. The watchdog prompt only says
+// "Do NOT call create_notification", which stays correct once the tool returns.
+const PROHIBITED_TEMPLATE_TOOLS = new Set<string>(['create_notification'])
+
 function collectStrings(value: unknown, out: string[] = []): string[] {
 	if (typeof value === 'string') out.push(value)
 	else if (Array.isArray(value)) for (const v of value) collectStrings(v, out)
@@ -125,7 +130,12 @@ describe('MCP surface pin', () => {
 					const candidate = match[0]
 					if (seen.has(candidate)) continue
 					seen.add(candidate)
-					if (NON_TOOL_TOKENS.has(candidate) || EXTERNAL_TEMPLATE_TOOLS.has(candidate)) continue
+					if (
+						NON_TOOL_TOKENS.has(candidate) ||
+						EXTERNAL_TEMPLATE_TOOLS.has(candidate) ||
+						PROHIBITED_TEMPLATE_TOOLS.has(candidate)
+					)
+						continue
 					if (!registeredTools.has(candidate)) {
 						violations.push(`${group} template references unregistered tool: ${candidate}`)
 					}
