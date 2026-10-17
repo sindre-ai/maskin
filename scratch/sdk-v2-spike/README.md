@@ -1,0 +1,1 @@
+Scratch code for the SDK v2 spike. NOT for merge. Run with: npm i --legacy-peer-deps @modelcontextprotocol/server@2.3.1 @modelcontextprotocol/client@2.3.1 @modelcontextprotocol/ext-apps@2.0.3 zod@3.25 zod-to-json-schema tsx, then npx tsx record.ts <outdir>.

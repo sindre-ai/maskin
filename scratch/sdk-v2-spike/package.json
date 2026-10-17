@@ -1,0 +1,1 @@
+{"name":"spike","private":true,"type":"module","dependencies":{"@modelcontextprotocol/client":"^2.3.1","@modelcontextprotocol/ext-apps":"^2.0.3","@modelcontextprotocol/server":"^2.3.1","tsx":"^4.23.15","zod":"3.25","zod-to-json-schema":"^3.25.2"}}
