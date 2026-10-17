@@ -1,0 +1,19 @@
+{
+	"name": "legacy-tools-call-bad-argument",
+	"description": "tools/call with an argument of the wrong type. Legacy leg: no per-request envelope, 2025-era JSON-RPC.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"list_workspaces\",\"arguments\":{\"limit\":\"ten\"}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool list_workspaces: limit: Expected number, received string\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":1}"
+	}
+}

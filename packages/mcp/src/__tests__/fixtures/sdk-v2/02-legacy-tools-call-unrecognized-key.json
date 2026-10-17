@@ -1,0 +1,19 @@
+{
+	"name": "legacy-tools-call-unrecognized-key",
+	"description": "tools/call with an object that has a key the schema does not allow. Legacy leg: no per-request envelope, 2025-era JSON-RPC.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"create_loop\",\"arguments\":{\"workspace_id\":\"00000000-0000-4000-8000-0000000000aa\",\"name\":\"Fixture loop\",\"steps\":[{\"name\":\"Step\",\"agent_id\":\"00000000-0000-4000-8000-0000000000bb\",\"prompt\":\"Do the thing\",\"when\":{\"cron\":\"*/5 * * * *\",\"not_a_field\":true}}]}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool create_loop: steps.0.when: Unrecognized key(s) in object: 'not_a_field'\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":2}"
+	}
+}
