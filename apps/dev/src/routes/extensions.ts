@@ -20,6 +20,7 @@ import {
 	hasExtensionSecret,
 	upsertExtensionSecret,
 } from '../lib/integrations/extensions-db'
+import { VENDOR_RECIPES } from '../lib/integrations/vendor-recipes'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { resolvePublicOrigin } from './integrations'
@@ -83,7 +84,12 @@ function forbidden() {
 function isUniqueViolation(err: unknown, constraintName: string): boolean {
 	// Drizzle wraps the driver's PostgresError as `err.cause`; walk the chain.
 	for (let current: unknown = err; current && typeof current === 'object'; ) {
-		const e = current as { code?: string; constraint_name?: string; message?: string; cause?: unknown }
+		const e = current as {
+			code?: string
+			constraint_name?: string
+			message?: string
+			cause?: unknown
+		}
 		if (e.code === '23505') {
 			if (e.constraint_name === constraintName) return true
 			if (typeof e.message === 'string' && e.message.includes(constraintName)) return true
@@ -227,6 +233,45 @@ app.openapi(listRoute, async (c) => {
 	)
 })
 
+// ── GET /api/extensions/recipes ─────────────────────────────────────────────
+
+const recipesRoute = createRoute({
+	method: 'get',
+	path: '/recipes',
+	tags: ['extensions'],
+	summary: 'Vendor recipes that pre-fill the extension forms ("Start from a recipe")',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Hardcoded recipes, pre-fill only',
+			content: {
+				'application/json': {
+					schema: z.array(
+						z.object({
+							slug: z.string(),
+							displayName: z.string(),
+							webhookConfig: z.unknown().optional(),
+							docsUrl: z.string(),
+						}),
+					),
+				},
+			},
+		},
+	},
+})
+
+app.openapi(recipesRoute, async (c) => {
+	return c.json(
+		VENDOR_RECIPES.map((r) => ({
+			slug: r.slug,
+			displayName: r.displayName,
+			webhookConfig: r.webhookConfig,
+			docsUrl: r.docsUrl,
+		})),
+		200,
+	)
+})
+
 // ── POST /api/extensions/generate-secret ────────────────────────────────────
 
 const generateSecretRoute = createRoute({
@@ -234,7 +279,8 @@ const generateSecretRoute = createRoute({
 	path: '/generate-secret',
 	'x-viewer-policy': 'writer',
 	tags: ['extensions'],
-	summary: 'Mint a signing secret (32 random bytes, hex) to paste into the vendor. Nothing is stored.',
+	summary:
+		'Mint a signing secret (32 random bytes, hex) to paste into the vendor. Nothing is stored.',
 	request: { headers: workspaceIdHeader },
 	responses: {
 		200: {
@@ -377,7 +423,8 @@ const updateExtensionRoute = createRoute({
 	path: '/{id}',
 	'x-viewer-policy': 'writer',
 	tags: ['extensions'],
-	summary: 'Update a custom extension. The slug cannot change; a new signing_secret replaces the old one.',
+	summary:
+		'Update a custom extension. The slug cannot change; a new signing_secret replaces the old one.',
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -406,8 +453,13 @@ app.openapi(updateExtensionRoute, async (c) => {
 	if (!existing) return c.json(notFound, 404)
 
 	// A webhook config must end up with a stored secret (ruling R2).
-	const nextWebhook = body.webhook_config === undefined ? existing.webhookConfig : body.webhook_config
-	if (nextWebhook && !body.signing_secret && !(await hasExtensionSecret(db, workspaceId, existing.slug))) {
+	const nextWebhook =
+		body.webhook_config === undefined ? existing.webhookConfig : body.webhook_config
+	if (
+		nextWebhook &&
+		!body.signing_secret &&
+		!(await hasExtensionSecret(db, workspaceId, existing.slug))
+	) {
 		return c.json(
 			createApiError('BAD_REQUEST', 'A webhook needs a signing secret', [
 				{ field: 'signing_secret', message: 'Required when webhook_config is set' },
@@ -647,7 +699,10 @@ app.openapi(sampleRoute, async (c) => {
 	try {
 		payload = JSON.parse(body.payload)
 	} catch {
-		return c.json({ ok: false as const, field: 'payload', message: 'The sample is not valid JSON' }, 200)
+		return c.json(
+			{ ok: false as const, field: 'payload', message: 'The sample is not valid JSON' },
+			200,
+		)
 	}
 
 	const result = mapWebhookEvent(config.eventMap, payload)
