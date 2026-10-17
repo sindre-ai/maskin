@@ -2,14 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Same mock scaffold as telemetry.test.ts — spin up createMcpServer without
 // side effects so the registered tool set is the ground truth.
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -41,7 +40,7 @@ describe('MCP surface pin', () => {
 		vi.resetModules()
 		registeredTools = new Set()
 
-		const { registerAppTool } = await import('@modelcontextprotocol/ext-apps/server')
+		const { registerAppTool } = await import('../sdk')
 		vi.mocked(registerAppTool).mockImplementation((_server, name) => {
 			registeredTools.add(name as string)
 		})

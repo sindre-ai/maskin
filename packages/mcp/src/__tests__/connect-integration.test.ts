@@ -2,23 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Same harness as get-objects-include.test.ts: intercept registerAppTool so the
 // connect_integration handler can be driven directly.
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
 }))
 
-import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, registerAppTool } from '../sdk'
 import { createMcpServer } from '../server'
 
 const SESSION_ID = '11111111-1111-1111-1111-111111111111'

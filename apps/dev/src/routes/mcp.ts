@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
+import { StreamableHTTPServerTransport } from '@maskin/mcp/sdk'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
 import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
@@ -32,7 +32,7 @@ type Env = {
 
 const app = new Hono<Env>()
 
-interface JsonRpcMessage {
+export interface JsonRpcMessage {
 	jsonrpc?: string
 	id?: string | number | null
 	method?: string
@@ -629,7 +629,7 @@ function listRequests(body: unknown): JsonRpcMessage[] {
 //   - `result.isError: true` with `content[0].text = "MCP error -32602: ..."`,
 //     which is how `tools/call` returns bad-input / tool-not-found errors
 //     on `@modelcontextprotocol/sdk` >= 1.29.
-function extractError(message: JsonRpcMessage): JsonRpcErrorLike | undefined {
+export function extractError(message: JsonRpcMessage): JsonRpcErrorLike | undefined {
 	if (message.error) return message.error
 	const result = message.result
 	if (!result || result.isError !== true) return undefined

@@ -5,21 +5,18 @@ import { estimateTokensFromBytes } from '../telemetry'
 // Hoisted mocks for ext-apps + sdk + node:fs so we can spin up the real
 // createMcpServer wiring without any side effects, then drive the registered
 // handlers directly to verify the token-cap wrapper.
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
 }))
 
-import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { decodeCursor, encodeCursor } from '../cursor'
 import {
 	DEFAULT_MAX_RESPONSE_TOKENS,
@@ -31,6 +28,7 @@ import {
 	estimateResponseTokens,
 	getMaxResponseTokens,
 } from '../response-cap'
+import { McpServer, registerAppTool } from '../sdk'
 
 const wsId = '00000000-0000-0000-0000-0000000000aa'
 
