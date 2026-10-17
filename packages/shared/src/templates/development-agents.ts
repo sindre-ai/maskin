@@ -2328,7 +2328,7 @@ Do the work in this order:
    - \`metadata.source: 'signup_research'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
    - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
    - \`metadata.tags\`: include 'context:company' so downstream readers find it
-5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
+5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationship\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
 6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
 7. Post a comment on the bet using \`create_comment\`, @mentioning the user (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
 
