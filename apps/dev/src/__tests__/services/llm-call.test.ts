@@ -153,11 +153,27 @@ describe('callLlm', () => {
 			return JSON.parse((init as { body: string }).body)
 		}
 
-		afterEach(() => {
-			Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_ZDR')
+		// These tests are about zdr, so lift the provider allow list (on by default).
+		beforeEach(() => {
+			process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'none'
 		})
 
-		it('sends no provider block when the flag is off (default)', async () => {
+		afterEach(() => {
+			Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_ZDR')
+			Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		})
+
+		it('sends provider: { only } on the funded key by default', async () => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+			Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+			const fetchMock = vi.fn().mockResolvedValue(okResponse)
+			vi.stubGlobal('fetch', fetchMock)
+
+			await callLlm({ system: 's', user: 'u' })
+			expect(sentBody(fetchMock).provider).toEqual({ only: ['digitalocean', 'gmicloud'] })
+		})
+
+		it('sends no provider block when zdr is off and the allow list is lifted', async () => {
 			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
 			const fetchMock = vi.fn().mockResolvedValue(okResponse)
 			vi.stubGlobal('fetch', fetchMock)

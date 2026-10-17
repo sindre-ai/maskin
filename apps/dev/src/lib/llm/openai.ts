@@ -83,7 +83,7 @@ export class OpenAIAdapter implements LLMAdapter {
 					body: error,
 				})
 				throw new LlmNoEligibleHostError(
-					`No OpenRouter host satisfies the provider preferences for ${String(body.model)}. Unset MASKIN_FALLBACK_ZDR to stop sending them.`,
+					`No OpenRouter host satisfies the provider preferences for ${String(body.model)}. Unset MASKIN_FALLBACK_ZDR and MASKIN_FALLBACK_PROVIDER_IGNORE, and set MASKIN_FALLBACK_PROVIDER_ONLY to none, to stop sending them.`,
 				)
 			}
 			throw new Error(`OpenAI API error: ${response.status} ${error}`)
