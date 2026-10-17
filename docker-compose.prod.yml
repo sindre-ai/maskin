@@ -14,7 +14,10 @@ services:
       retries: 5
 
   seaweedfs:
-    image: chrislusf/seaweedfs
+    # Pinned, not the implicit latest tag: a deploy or a rollback pulls this
+    # exact release, so the image cannot drift between two deploys. 4.48 is
+    # what latest resolves to today (released 2026-09-28). Bump it on purpose.
+    image: chrislusf/seaweedfs:4.48
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -100,6 +103,16 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-admin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-admin}
       S3_REGION: ${S3_REGION:-us-east-1}
+      # Product analytics. A variable that is not listed in this block never
+      # reaches the container, however it is set in Coolify. The server-side
+      # PostHog capture reads this key; empty disables capture.
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      # MCP modern-protocol flag: off, probe or on. Read once at boot, so a
+      # change needs a restart. Empty or any other value is treated as off.
+      MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}
+      # Actor ids (comma separated UUIDs) that get the modern path while the
+      # flag is probe. Empty means nobody matches, so probe behaves as off.
+      MASKIN_MCP_PROBE_ACTOR_IDS: ${MASKIN_MCP_PROBE_ACTOR_IDS:-}
       # GitHub integration (optional)
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
