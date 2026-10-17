@@ -97,6 +97,17 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
 	['POST', '/api/briefing/spoken', 'Group E, generates a briefing and changes no workspace data'],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
+	// Group D leftovers: the two routes that are not gated on a human admin or owner.
+	[
+		'POST',
+		'/api/workspaces',
+		'Group D, creates a new workspace the caller owns and touches no existing workspace',
+	],
+	[
+		'DELETE',
+		'/api/workspaces/:id/members/:actorId',
+		'Group D, a member may remove themselves (leave); removing anyone else needs a human admin or owner',
+	],
 	// The MCP endpoint: its tools call the REST API with the caller's key, so the
 	// route gates above apply (the test below checks packages/mcp has no db access).
 	['POST', '/mcp', 'tools reach data only through the gated REST routes'],
@@ -154,18 +165,6 @@ export const PENDING_ROUTES: PendingRoute[] = [
 	['POST', '/api/conversations/:id/participants', 'C'],
 	['DELETE', '/api/conversations/:id/participants/:actorId', 'C'],
 	['POST', '/api/notifications/:id/respond', 'C'],
-	// Group D: people and billing
-	['POST', '/api/workspaces', 'D'],
-	['POST', '/api/workspaces/:id/members', 'D'],
-	['PATCH', '/api/workspaces/:id/members/:actorId', 'D'],
-	['DELETE', '/api/workspaces/:id/members/:actorId', 'D'],
-	['POST', '/api/workspaces/:id/transfer-ownership', 'D'],
-	['POST', '/api/invites', 'D'],
-	['POST', '/api/invites/:id/resend', 'D'],
-	['DELETE', '/api/invites/:id', 'D'],
-	['POST', '/api/billing/checkout', 'D'],
-	['POST', '/api/billing/credits/checkout', 'D'],
-	['POST', '/api/billing/cancel', 'D'],
 ]
 
 export interface WriteRoute {
