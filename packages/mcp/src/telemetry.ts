@@ -1,3 +1,4 @@
+import type { McpEra, McpProtocolVersionLabel } from '@maskin/shared'
 import { measureResponseShape } from './response-shape'
 
 // MCP telemetry — fire-and-forget POSTs to /api/telemetry/mcp.
@@ -64,6 +65,15 @@ export interface TelemetryConfig {
 	 *  `unknown` marks a per-request throwaway that groups nothing — the host
 	 *  had no client identity to work from. */
 	sessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * Protocol era and allowlisted version label of the request this server is
+	 * serving, stamped onto `tool_call` and `tool_call_response_size` events.
+	 * Decided by `classifyMcpEra` in apps/dev (the only place the rule exists)
+	 * and threaded in by `routes/mcp.ts`; this package never classifies. Absent
+	 * means "not known", and the events then omit the fields.
+	 */
+	mcpEra?: McpEra
+	mcpProtocolVersion?: McpProtocolVersionLabel
 }
 
 /**
@@ -105,6 +115,10 @@ export interface ToolCallEvent {
 	 * the ingest route drops it rather than persisting it as a session.
 	 */
 	session_source?: 'maskin-session' | 'process' | 'unknown'
+	/** Protocol era of the request. Absent when unknown. */
+	mcp_era?: McpEra
+	/** Allowlisted protocol version label, never a raw header value. */
+	mcp_protocol_version?: McpProtocolVersionLabel
 }
 
 export interface MutationEvent {
@@ -156,6 +170,10 @@ export interface ToolCallResponseSizeEvent {
 	/** True when shape measurement faulted — the shape fields above are
 	 *  fallbacks, not observations. Absent means they are trustworthy. */
 	shape_error?: boolean
+	/** Protocol era of the request. Absent when unknown. */
+	mcp_era?: McpEra
+	/** Allowlisted protocol version label, never a raw header value. */
+	mcp_protocol_version?: McpProtocolVersionLabel
 }
 
 // MCP misfire event for the agent-reach-signal bet. The server-side
@@ -264,6 +282,8 @@ export function recordToolCall(
 			ok: event.ok ?? true,
 			transport: event.transport,
 			session_source: session.source,
+			mcp_era: target.mcpEra,
+			mcp_protocol_version: target.mcpProtocolVersion,
 		},
 		cfg,
 	)
@@ -349,6 +369,8 @@ export function recordToolCallResponseSize(
 			// rather than observations, so a query can exclude them instead of
 			// averaging a measurement fault in as "this tool returned no rows".
 			shape_error: shape.shapeError ? true : undefined,
+			mcp_era: target.mcpEra,
+			mcp_protocol_version: target.mcpProtocolVersion,
 		},
 		cfg,
 	)
