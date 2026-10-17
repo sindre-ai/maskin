@@ -182,6 +182,66 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Rows the server cannot serve yet are pending on a bet-branch PR and a
+          # failure on the PR into main (see the mcp-conformance job).
+          MCP_CONFORMANCE_STRICT: ${{ (github.base_ref == 'main' || github.ref == 'refs/heads/main') && '1' || '0' }}
+
+  # MCP conformance matrix against the BUILT server. One table of cases, five
+  # client styles (raw legacy fixtures recorded from v1, SDK v2 client in legacy,
+  # auto and pinned-modern mode, raw modern JSON-RPC), run with the modern flag
+  # on and again off after a restart. See docs/reference/mcp-conformance.md.
+  #
+  # Strict only for the bet -> main PR and main itself: a task PR into a bet
+  # branch can land before the server feature a row needs, and reports that row
+  # as pending. On main, pending is a failure so a feature cannot go missing.
+  mcp-conformance:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maskin_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
+      INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+      MCP_CONFORMANCE_STRICT: ${{ (github.base_ref == 'main' || github.ref == 'refs/heads/main') && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: mcp-conformance
+
+      - run: pnpm build
+
+      - name: The generated conformance docs are up to date
+        run: pnpm --filter @maskin/mcp conformance:docs -- --check
+
+      - run: pnpm db:migrate
+
+      - name: Boot the built server and run the conformance matrix
+        run: bash scripts/checks/mcp-conformance.sh
 
   # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
   # Nothing else runs that script, so a change that breaks a fresh bootstrap is
