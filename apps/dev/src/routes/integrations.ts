@@ -19,6 +19,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { getEnvOrThrow } from '../lib/integrations/env'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -2739,7 +2740,11 @@ webhookApp.post('/slack-commands', async (c) => {
 		// Should be unreachable — slack config is always timestamp-scheme.
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack slash-command signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -2778,7 +2783,11 @@ webhookApp.post('/slack-actions-account-link', async (c) => {
 	if (!webhookConfig || 'type' in webhookConfig) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -2838,7 +2847,11 @@ webhookApp.post('/slack-interactive', async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider webhook config missing'), 500)
 	}
 
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive: signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
@@ -3440,7 +3453,11 @@ webhookApp.post('/:provider', async (c) => {
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
 	} else {
-		if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		if (
+			!webhookHandler.verify(webhookConfig, body, headers, {
+				secret: getEnvOrThrow(webhookConfig.secretEnv),
+			})
+		) {
 			logger.warn(`Webhook signature verification failed for ${providerName}`)
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
