@@ -1,0 +1,138 @@
+import { z } from 'zod'
+
+// ── Custom (bring-your-own) extensions ──────────────────────────────────────
+// Shapes for the JSONB columns on `extensions` (packages/db/src/schema.ts) and
+// the API that writes them. Validated on every write; the column types in the
+// db package are inferred from here so the two cannot drift.
+
+/** Cap on declared tools per extension. Keeps every session's tool schema small. */
+export const MAX_EXTENSION_TOOLS = 20
+
+export const extensionSlugSchema = z
+	.string()
+	.min(2)
+	.max(48)
+	.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Use lowercase letters, numbers and single dashes')
+
+export const extensionStatusSchema = z.enum(['active', 'disabled', 'draft'])
+export type ExtensionStatus = z.infer<typeof extensionStatusSchema>
+
+export const mcpConfigSchema = z.object({
+	/** Env var name the child process reads. */
+	envKey: z.string(),
+	server: z.discriminatedUnion('type', [
+		z.object({
+			type: z.literal('stdio'),
+			command: z.string(),
+			args: z.array(z.string()),
+			/** Env var that receives "Bearer " + the decrypted credential. */
+			envFromCredential: z.string().optional(),
+		}),
+		// Kept in the schema, not supported by the V1 runtime.
+		z.object({ type: z.literal('http'), url: z.string().url() }),
+	]),
+	autoInject: z.boolean().default(true),
+	/** The integrations.provider slug holding the credential: 'extension:{slug}'. */
+	credentialProvider: z.string(),
+	tools: z
+		.array(
+			z.object({
+				name: z.string(),
+				kind: z.enum(['read', 'write']),
+				description: z.string().optional(),
+			}),
+		)
+		.max(MAX_EXTENSION_TOOLS)
+		.default([]),
+})
+export type McpConfig = z.infer<typeof mcpConfigSchema>
+
+const literalOrPathSchema = z.union([
+	z.object({ literal: z.string().min(1) }),
+	z.object({ path: z.string().min(1) }),
+])
+
+export const webhookConfigSchema = z
+	.object({
+		signatureScheme: z.enum(['hmac-sha256', 'hmac-sha1', 'timestamp']),
+		signatureHeader: z.string().min(1),
+		signaturePrefix: z.string().optional(),
+		timestampHeader: z.string().optional(),
+		/** Signing base for the 'timestamp' scheme, e.g. "v0:{timestamp}:{body}". */
+		timestampBodyTemplate: z.string().optional(),
+		maxAgeSeconds: z.number().int().positive().default(300),
+		/** V1 stores the signing secret encrypted per extension. */
+		secretSource: z.enum(['env', 'credential']).default('credential'),
+		eventMap: z.object({
+			externalIdPath: z.string().min(1),
+			entityType: literalOrPathSchema,
+			action: literalOrPathSchema,
+			dataPath: z.string().optional(),
+		}),
+		rateLimit: z
+			.object({ perMinute: z.number().int().positive().default(60) })
+			.default({ perMinute: 60 }),
+	})
+	.superRefine((cfg, ctx) => {
+		if (cfg.signatureScheme === 'timestamp') {
+			if (!cfg.timestampHeader) {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['timestampHeader'],
+					message: 'Required for the timestamp scheme',
+				})
+			}
+			if (!cfg.timestampBodyTemplate) {
+				ctx.addIssue({
+					code: 'custom',
+					path: ['timestampBodyTemplate'],
+					message: 'Required for the timestamp scheme',
+				})
+			}
+		}
+	})
+export type WebhookConfig = z.infer<typeof webhookConfigSchema>
+
+/**
+ * One grant value. Plain 'allow' / 'deny' today; the object form carries an
+ * expiry for time-boxed grants. No expiry logic reads it yet.
+ */
+export const toolGrantSchema = z.union([
+	z.enum(['allow', 'deny']),
+	z.object({
+		effect: z.enum(['allow', 'deny']),
+		expires_at: z.string().datetime().nullable(),
+		grant_id: z.string(),
+	}),
+])
+export type ToolGrant = z.infer<typeof toolGrantSchema>
+
+/** agentId -> toolName -> grant. Absent agent means every tool is denied. */
+export const toolGrantsSchema = z.record(z.string(), z.record(z.string(), toolGrantSchema))
+export type ToolGrants = z.infer<typeof toolGrantsSchema>
+
+// ── API bodies ──────────────────────────────────────────────────────────────
+
+export const createExtensionBodySchema = z.object({
+	slug: extensionSlugSchema,
+	name: z.string().min(1).max(80),
+	status: extensionStatusSchema.optional(),
+	mcp_config: mcpConfigSchema.nullish(),
+	webhook_config: webhookConfigSchema.nullish(),
+	/** Required whenever webhook_config is set (no unsigned webhooks). */
+	signing_secret: z.string().min(16).max(512).optional(),
+})
+export type CreateExtensionBody = z.infer<typeof createExtensionBodySchema>
+
+// slug is immutable, so the update body does not accept it.
+export const updateExtensionBodySchema = z
+	.object({
+		name: z.string().min(1).max(80).optional(),
+		status: extensionStatusSchema.optional(),
+		mcp_config: mcpConfigSchema.nullish(),
+		webhook_config: webhookConfigSchema.nullish(),
+		/** Replaces the stored secret. */
+		signing_secret: z.string().min(16).max(512).optional(),
+	})
+	.strict()
+export type UpdateExtensionBody = z.infer<typeof updateExtensionBodySchema>

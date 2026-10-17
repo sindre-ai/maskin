@@ -195,6 +195,17 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Bring-your-own integrations UI: the custom extensions list on Settings >
+	 * Extensions, the add-extension modal and the extension detail page
+	 * (/settings/extensions/$extId). Gates the visible surfaces only. The
+	 * extensions table, the /api/extensions API and POST /api/webhooks/x/:token
+	 * are not flagged: without an extension row every request to the route is
+	 * a 404, so it is safe for everyone. Default off; on for the two tester
+	 * humans through FF_TESTER_FEATURES. Retire once the surface is on for
+	 * everyone (delete the boundary, then this entry).
+	 */
+	BYO_EXTENSIONS_UI: 'byo-extensions-ui',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

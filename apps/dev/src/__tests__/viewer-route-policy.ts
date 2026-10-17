@@ -36,6 +36,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
 	['POST', '/api/webhooks/skjald/:token', 'provider webhook, authenticated by token'],
+	['POST', '/api/webhooks/x/:token', 'custom extension webhook, signed with the extension secret'],
 	['POST', '/api/webhooks/slack-actions-account-link', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/slack-commands', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/slack-interactive', 'provider webhook, signed by Slack'],

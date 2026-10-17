@@ -1,4 +1,11 @@
-import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
+import type {
+	AgentState,
+	FileAnnotation,
+	McpConfig,
+	SessionResult,
+	ToolGrants,
+	WebhookConfig as ExtensionWebhookConfig,
+} from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -1105,6 +1112,47 @@ export const files = pgTable(
 
 export type File = typeof files.$inferSelect
 export type NewFile = typeof files.$inferInsert
+
+// ── Extensions ──────────────────────────────────────────────────────────────
+// Workspace-owned custom (bring-your-own) integrations. One row can carry an
+// MCP server config, a webhook config, or both. The slug is the join key to
+// `integrations.provider = 'extension:{slug}'` (the encrypted signing secret /
+// API key) and `webhook_deliveries.provider = 'extension:{slug}'`, so it is
+// immutable after creation. `webhook_token` is the opaque URL segment of
+// POST /api/webhooks/x/:token and is globally unique because the route resolves
+// it before it knows the workspace. See drizzle/0092_extensions.sql.
+
+export const extensions = pgTable(
+	'extensions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		slug: text('slug').notNull(),
+		name: text('name').notNull(),
+		status: text('status').$type<'active' | 'disabled' | 'draft'>().notNull().default('draft'),
+		mcpConfig: jsonb('mcp_config').$type<McpConfig | null>(),
+		webhookConfig: jsonb('webhook_config').$type<ExtensionWebhookConfig | null>(),
+		webhookToken: text('webhook_token'),
+		toolGrants: jsonb('tool_grants').$type<ToolGrants>().notNull().default({}),
+		// Runtime-populated skip reason (e.g. tool cap exceeded) so the UI can
+		// show an inline warning without adding a status value.
+		mcpLastError: text('mcp_last_error'),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('extensions_workspace_slug_uniq').on(t.workspaceId, t.slug),
+		uniqueIndex('extensions_webhook_token_uniq')
+			.on(t.webhookToken)
+			.where(sql`${t.webhookToken} IS NOT NULL`),
+		index('extensions_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+export type Extension = typeof extensions.$inferSelect
+export type NewExtension = typeof extensions.$inferInsert
 
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
