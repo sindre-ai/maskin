@@ -151,7 +151,7 @@ function isEmailUniqueViolation(err: unknown): boolean {
 // /api/openapi.json so native clients can generate against it.
 app.openAPIRegistry.registerPath({
 	method: 'post',
-	path: '/api/invites/{token}/accept',
+	path: '/{token}/accept',
 	tags: ['workspace-invitations'],
 	operationId: 'acceptInvite',
 	summary: 'Accept an invite by token (public path; reads Authorization itself)',
