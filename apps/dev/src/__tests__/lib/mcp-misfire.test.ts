@@ -107,7 +107,6 @@ describe('recordMcpMisfire', () => {
 	})
 
 	it('skips the DB write when db is undefined (still fans out to PostHog)', async () => {
-		const { capturePosthogEvent } = await import('../../lib/analytics/posthog')
 		vi.mocked(capturePosthogEvent).mockClear()
 
 		await recordMcpMisfire(undefined, '00000000-0000-0000-0000-000000000001', {
@@ -258,5 +257,25 @@ describe('redactErrorMessage', () => {
 	it('passes a plain tool-not-found message through unchanged', () => {
 		const msg = 'Tool imaginary_tool not found'
 		expect(redactErrorMessage(msg)).toBe(msg)
+	})
+})
+
+describe('recordMcpMisfire era labels', () => {
+	it('stamps mcp_era and mcp_protocol_version on the PostHog event', async () => {
+		vi.mocked(capturePosthogEvent).mockClear()
+
+		await recordMcpMisfire(undefined, '00000000-0000-0000-0000-000000000001', {
+			kind: 'unknown_param',
+			toolName: 'create_objects',
+			requestedShape: { title: 'string' },
+			sessionId: null,
+			agentActorId: 'actor-3',
+			mcpEra: 'legacy',
+			mcpProtocolVersion: '2025-11-25',
+		})
+		expect(vi.mocked(capturePosthogEvent).mock.calls[0][2]).toMatchObject({
+			mcp_era: 'legacy',
+			mcp_protocol_version: '2025-11-25',
+		})
 	})
 })
