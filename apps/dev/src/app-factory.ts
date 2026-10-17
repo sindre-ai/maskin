@@ -10,6 +10,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
+import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
@@ -453,6 +454,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// `lib/analytics/method-site-pageview` in every rendered page so T2's
 	// ship metric keeps firing.
 	app.route('/method', methodRoutes)
+
+	// Universal links for the native app. Served here (not from web/dist) so the SPA catch-all
+	// below can never shadow it. 404 until APPLE_TEAM_ID is set, so nothing is advertised half-configured.
+	app.get('/.well-known/apple-app-site-association', (c) => {
+		const body = buildAppleAppSiteAssociation(process.env.APPLE_TEAM_ID)
+		if (!body) return c.json(createApiError('NOT_FOUND', 'Not configured'), 404)
+		return c.body(JSON.stringify(body), 200, { 'Content-Type': 'application/json' })
+	})
 
 	app.doc31('/api/openapi.json', getOpenApiConfig(port))
 
