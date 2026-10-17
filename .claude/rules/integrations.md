@@ -180,3 +180,13 @@ When adding a new provider:
 - If custom auth: test `getInstallUrl()`, `handleCallback()`, `getAccessToken()`
 - If custom normalizer: test event normalization with sample payloads
 - Test location: `apps/dev/src/__tests__/lib/integrations/providers/{provider}.test.ts`
+
+## Native app return target
+
+`POST /api/integrations/:provider/connect` (generic OAuth2 / GitHub) and `POST /api/integrations/linkedin-unipile/connect`
+accept an optional `native_return_url`. It must equal, byte for byte, an entry of `NATIVE_OAUTH_RETURN_URLS`
+(`packages/shared/src/schemas/native-oauth-return.ts`); anything else is a 400. It is sealed into the OAuth `state`
+(generic) or the pending credentials blob (LinkedIn), and the callback ends by redirecting to it with
+`status` / `provider` / `workspace_id` / `integration_id` / `reason` — never a token. Without the field the web
+flow is unchanged. Generic providers return a `/native-launch` URL as `install_url` so the state-binding cookie is
+set in the browser that finishes the flow (a URLSession cookie jar is not that browser).
