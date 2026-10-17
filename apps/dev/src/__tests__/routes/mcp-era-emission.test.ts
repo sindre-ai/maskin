@@ -311,4 +311,3 @@ describe('mcp_handshake via /mcp', () => {
 		expect(captureMcpHandshake).toHaveBeenCalledTimes(1)
 	})
 })
-
