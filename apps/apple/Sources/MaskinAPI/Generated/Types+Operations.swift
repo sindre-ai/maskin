@@ -15180,6 +15180,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/settings`.
                         public var settings: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.settingsPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured`.
+                        public struct llm_configuredPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured/anthropic`.
+                            public var anthropic: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured/openai`.
+                            public var openai: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured/custom_llm`.
+                            public var custom_llm: Swift.Bool
+                            /// Creates a new `llm_configuredPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.Bool,
+                                openai: Swift.Bool,
+                                custom_llm: Swift.Bool
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured`.
+                        public var llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/enterprise`.
@@ -15204,6 +15235,7 @@ public enum Operations {
                         ///   - id:
                         ///   - name:
                         ///   - settings:
+                        ///   - llm_configured:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -15217,6 +15249,7 @@ public enum Operations {
                             id: Swift.String,
                             name: Swift.String,
                             settings: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.settingsPayload? = nil,
+                            llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -15230,6 +15263,7 @@ public enum Operations {
                             self.id = id
                             self.name = name
                             self.settings = settings
+                            self.llm_configured = llm_configured
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -15244,6 +15278,7 @@ public enum Operations {
                             case id
                             case name
                             case settings
+                            case llm_configured
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -16606,6 +16641,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/settings`.
                         public var settings: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.settingsPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured`.
+                        public struct llm_configuredPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured/anthropic`.
+                            public var anthropic: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured/openai`.
+                            public var openai: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured/custom_llm`.
+                            public var custom_llm: Swift.Bool
+                            /// Creates a new `llm_configuredPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.Bool,
+                                openai: Swift.Bool,
+                                custom_llm: Swift.Bool
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured`.
+                        public var llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/enterprise`.
@@ -16624,6 +16690,7 @@ public enum Operations {
                         ///   - id:
                         ///   - name:
                         ///   - settings:
+                        ///   - llm_configured:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -16634,6 +16701,7 @@ public enum Operations {
                             id: Swift.String,
                             name: Swift.String,
                             settings: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.settingsPayload? = nil,
+                            llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -16644,6 +16712,7 @@ public enum Operations {
                             self.id = id
                             self.name = name
                             self.settings = settings
+                            self.llm_configured = llm_configured
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -16655,6 +16724,7 @@ public enum Operations {
                             case id
                             case name
                             case settings
+                            case llm_configured
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -18442,6 +18512,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/settings`.
                         public var settings: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.settingsPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured`.
+                        public struct llm_configuredPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured/anthropic`.
+                            public var anthropic: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured/openai`.
+                            public var openai: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured/custom_llm`.
+                            public var custom_llm: Swift.Bool
+                            /// Creates a new `llm_configuredPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.Bool,
+                                openai: Swift.Bool,
+                                custom_llm: Swift.Bool
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured`.
+                        public var llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/enterprise`.
@@ -18460,6 +18561,7 @@ public enum Operations {
                         ///   - id:
                         ///   - name:
                         ///   - settings:
+                        ///   - llm_configured:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -18470,6 +18572,7 @@ public enum Operations {
                             id: Swift.String,
                             name: Swift.String,
                             settings: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.settingsPayload? = nil,
+                            llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -18480,6 +18583,7 @@ public enum Operations {
                             self.id = id
                             self.name = name
                             self.settings = settings
+                            self.llm_configured = llm_configured
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -18491,6 +18595,7 @@ public enum Operations {
                             case id
                             case name
                             case settings
+                            case llm_configured
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -36520,6 +36625,31 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect`.
+                        public struct integration_connectPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/provider`.
+                            public var provider: Swift.String
+                            /// Creates a new `integration_connectPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - provider:
+                            public init(
+                                session_id: Swift.String,
+                                provider: Swift.String
+                            ) {
+                                self.session_id = session_id
+                                self.provider = provider
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case provider
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect`.
+                        public var integration_connect: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_connectPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// Creates a new `initial_message_metadataPayload`.
@@ -36533,6 +36663,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - integration_connect:
                         ///   - helper_return:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.attachmentsPayload? = nil,
@@ -36543,6 +36674,7 @@ public enum Operations {
                             final_output: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil,
+                            integration_connect: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_connectPayload? = nil,
                             helper_return: Swift.String? = nil
                         ) {
                             self.attachments = attachments
@@ -36553,6 +36685,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.integration_connect = integration_connect
                             self.helper_return = helper_return
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -36564,6 +36697,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case integration_connect
                             case helper_return
                         }
                     }
@@ -39652,6 +39786,31 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect`.
+                        public struct integration_connectPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/provider`.
+                            public var provider: Swift.String
+                            /// Creates a new `integration_connectPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - provider:
+                            public init(
+                                session_id: Swift.String,
+                                provider: Swift.String
+                            ) {
+                                self.session_id = session_id
+                                self.provider = provider
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case provider
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect`.
+                        public var integration_connect: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_connectPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// Creates a new `metadataPayload`.
@@ -39665,6 +39824,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - integration_connect:
                         ///   - helper_return:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.attachmentsPayload? = nil,
@@ -39675,6 +39835,7 @@ public enum Operations {
                             final_output: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil,
+                            integration_connect: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_connectPayload? = nil,
                             helper_return: Swift.String? = nil
                         ) {
                             self.attachments = attachments
@@ -39685,6 +39846,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.integration_connect = integration_connect
                             self.helper_return = helper_return
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -39696,6 +39858,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case integration_connect
                             case helper_return
                         }
                     }

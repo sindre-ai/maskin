@@ -9846,6 +9846,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -9883,6 +9902,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -10096,6 +10116,25 @@
 												],
 												"additionalProperties": {}
 											},
+											"llm_configured": {
+												"type": "object",
+												"properties": {
+													"anthropic": {
+														"type": "boolean"
+													},
+													"openai": {
+														"type": "boolean"
+													},
+													"custom_llm": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"anthropic",
+													"openai",
+													"custom_llm"
+												]
+											},
 											"onboardingEnabled": {
 												"type": "boolean"
 											},
@@ -10143,6 +10182,7 @@
 											"id",
 											"name",
 											"settings",
+											"llm_configured",
 											"onboardingEnabled",
 											"enterprise",
 											"billingOwnerId",
@@ -10807,6 +10847,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -10844,6 +10903,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11086,6 +11146,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11123,6 +11202,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11660,6 +11740,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11697,6 +11796,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -25678,6 +25778,24 @@
 													"answers"
 												]
 											},
+											"integration_connect": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"session_id",
+													"provider"
+												]
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
@@ -27535,6 +27653,24 @@
 												"required": [
 													"question_message_id",
 													"answers"
+												]
+											},
+											"integration_connect": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"session_id",
+													"provider"
 												]
 											},
 											"helper_return": {
@@ -31228,6 +31364,365 @@
 					},
 					"500": {
 						"description": "Question could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/connect-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post an integration Connect card into the session chat",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"provider": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								},
+								"required": [
+									"provider"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted, or the provider is already connected and nothing was posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean"
+										},
+										"message_id": {
+											"type": "number"
+										},
+										"already_connected": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"posted"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Unknown provider",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
 						"content": {
 							"application/json": {
 								"schema": {
