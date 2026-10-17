@@ -107,12 +107,17 @@ services:
       # reaches the container, however it is set in Coolify. The server-side
       # PostHog capture reads this key; empty disables capture.
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
-      # MCP modern-protocol flag: off, probe or on. Read once at boot, so a
-      # change needs a restart. Empty or any other value is treated as off.
+      # MCP modern-protocol flag: off or on. Read once at boot, so a change
+      # needs a restart. Empty or any other value is treated as off.
       MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}
-      # Actor ids (comma separated UUIDs) that get the modern path while the
-      # flag is probe. Empty means nobody matches, so probe behaves as off.
-      MASKIN_MCP_PROBE_ACTOR_IDS: ${MASKIN_MCP_PROBE_ACTOR_IDS:-}
+      # Who is served the modern path while the flag is on: probe, slice:N,
+      # workspaces:id,id or all. Read once at boot. Empty or unparseable is
+      # treated as probe, so a bare flag flip cannot move the fleet.
+      MASKIN_MCP_MODERN_SCOPE: ${MASKIN_MCP_MODERN_SCOPE:-probe}
+      # SHA-256 hex of the canary's API key (comma separated) that scope probe
+      # admits. A hash is not secret. Empty means nobody matches, so probe
+      # behaves as off.
+      MASKIN_MCP_PROBE_KEY_SHA256: ${MASKIN_MCP_PROBE_KEY_SHA256:-}
       # GitHub integration (optional)
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
