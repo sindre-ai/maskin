@@ -31,6 +31,14 @@ RUN npm install -g @playwright/mcp
 COPY --from=github-mcp /server/github-mcp-server /usr/local/bin/github-mcp-server
 RUN github-mcp-server --version
 
+# Per-tool default-deny guard for customer-declared MCP servers. A single-file
+# node script (no native deps, no compile step); the session launch starts it
+# first and it spawns the real server as a child. The --version run fails the
+# image build if the script is missing or broken.
+COPY maskin-mcp-guard.js /usr/local/bin/maskin-mcp-guard
+RUN chmod +x /usr/local/bin/maskin-mcp-guard \
+    && maskin-mcp-guard --version
+
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
 
