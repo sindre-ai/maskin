@@ -1,0 +1,19 @@
+{
+	"name": "notification",
+	"description": "A JSON-RPC notification, which has no id and expects no body back.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+	},
+	"response": {
+		"status": 202,
+		"contentType": "text/plain; charset=UTF-8",
+		"body": ""
+	}
+}

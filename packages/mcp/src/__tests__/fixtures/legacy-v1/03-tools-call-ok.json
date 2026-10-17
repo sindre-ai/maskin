@@ -1,0 +1,19 @@
+{
+	"name": "tools-call-ok",
+	"description": "A read tool that succeeds against the stubbed API.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"list_workspaces\",\"arguments\":{}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"result\":{\"_meta\":{\"toolName\":\"list_workspaces\",\"webAppBaseUrl\":\"http://localhost:5173\",\"workspaceId\":\"00000000-0000-4000-8000-0000000000aa\",\"ui\":{\"resourceUri\":\"ui://maskin/hero-card\",\"csp\":{\"font-src\":[\"https://fonts.gstatic.com\"],\"style-src\":[\"https://fonts.googleapis.com\"]}}},\"content\":[{\"type\":\"text\",\"text\":\"{\\\"workspaces\\\":[{\\\"id\\\":\\\"00000000-0000-4000-8000-0000000000aa\\\",\\\"name\\\":\\\"Fixture workspace\\\",\\\"role\\\":\\\"owner\\\"}]}\"}],\"structuredContent\":{\"heroCard\":{\"kind\":\"single\",\"tool\":\"list_workspaces\",\"object\":{\"id\":\"00000000-0000-4000-8000-0000000000aa\",\"type\":\"workspace\",\"title\":\"Fixture workspace\",\"status\":\"owner\",\"contextLine\":\"workspace\"}},\"workspaces\":[{\"id\":\"00000000-0000-4000-8000-0000000000aa\",\"name\":\"Fixture workspace\",\"role\":\"owner\"}]}},\"jsonrpc\":\"2.0\",\"id\":3}"
+	}
+}
