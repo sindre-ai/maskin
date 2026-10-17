@@ -2,6 +2,8 @@ import { McpServer, createMcpHandler, isLegacyRequest, WebStandardStreamableHTTP
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import { z } from 'zod';
 import { toStandardSchema } from './adapter.ts';
+// Real create_loop input schema (has .strict() branches), for the unrecognized-key case.
+const { tools: realTools } = await import(process.env.TOOLS_PATH ?? '../../packages/mcp/src/tools.ts');
 
 export function makeServer(ctx?: any, seen?: any[]) {
 	if (seen) seen.push({ era: ctx?.era, headers: ctx?.requestInfo ? Object.fromEntries(ctx.requestInfo.headers) : null });
@@ -15,6 +17,10 @@ export function makeServer(ctx?: any, seen?: any[]) {
 			cursor: z.string().optional().describe('Opaque cursor.'),
 		})),
 	} as any, async () => ({ content: [{ type: 'text', text: JSON.stringify({ workspaces: [{ id: '00000000-0000-4000-8000-0000000000aa', name: 'Fixture workspace', role: 'owner' }] }) }] }));
+	s.registerTool('create_loop', {
+		description: 'Scratch registration of the real create_loop input schema',
+		inputSchema: toStandardSchema(realTools.create_loop.inputSchema),
+	} as any, async () => ({ content: [{ type: 'text', text: 'ok' }] }));
 	s.registerTool('explode', {
 		description: 'Scratch tool whose handler always throws',
 		inputSchema: toStandardSchema(z.object({})),

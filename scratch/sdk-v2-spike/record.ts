@@ -17,6 +17,7 @@ type Case = { file: string; name: string; description: string; headers: Record<s
 const cases: Case[] = [];
 const calls: [string, string, string, any][] = [
 	['tools-call-bad-argument', 'tools/call with an argument of the wrong type.', 'list_workspaces', { limit: 'ten' }],
+	['tools-call-unrecognized-key', 'tools/call with an object that has a key the schema does not allow.', 'create_loop', { workspace_id: WS, name: 'Fixture loop', steps: [{ name: 'Step', agent_id: '00000000-0000-4000-8000-0000000000bb', prompt: 'Do the thing', when: { cron: '*/5 * * * *', not_a_field: true } }] }],
 	['tools-call-unknown-tool', 'tools/call for a tool that is not registered.', 'no_such_tool', {}],
 	['tools-call-handler-throw', 'tools/call for a tool whose handler throws.', 'explode', {}],
 ];
