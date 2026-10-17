@@ -92,7 +92,7 @@ targets:
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
-        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages.
+        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages and talk live with an agent.
         NSCameraUsageDescription: Maskin uses the camera so you can take a photo to attach to a message.
         UILaunchScreen:
           UIColorName: LaunchBackground
@@ -114,6 +114,8 @@ targets:
         UIBackgroundModes:
           - remote-notification
           - fetch
+          # A live call keeps the microphone and the agent's voice running with the screen locked.
+          - audio
         # Best-effort For You top-up while the app is closed (BackgroundRefresh.swift).
         BGTaskSchedulerPermittedIdentifiers:
           - io.maskin.app.refresh

@@ -20,7 +20,7 @@ struct ObjectsBoardView: View {
 	var onNew: (String) -> Void = { _ in }
 
 	/// Handoff 1B: 300pt columns that snap sideways, the next one peeking in on a phone.
-	private static let columnWidth: CGFloat = 300
+	private static let columnWidth: CGFloat = 270
 
 	var body: some View {
 		Group {
@@ -127,13 +127,13 @@ struct ObjectsBoardColumnView: View {
 
 	@State private var targeted = false
 
-	private static let columnWidth: CGFloat = 300
+	private static let columnWidth: CGFloat = 270
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			header
 			if cards.isEmpty {
-				Text("No \(MaskinStatus.label(for: column.value).lowercased()) items")
+				Text("Drop a card here")
 					.maskinText(.caption)
 					.foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity)

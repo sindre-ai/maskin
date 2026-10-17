@@ -13,6 +13,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	case object(workspaceId: String, id: String)
 	/// `…/<ws>/chats/<id>`.
 	case chat(workspaceId: String, id: String)
+	/// `…/<ws>/files/<id>`: a file (an HTML page, document, image or PDF) an agent made or attached.
+	case file(workspaceId: String, id: String)
 	/// `maskin://<ws>/notifications` (or the web's workspace home): open the inbox.
 	case notifications(workspaceId: String)
 	/// `…/<ws>/agents`: the Agents screen ("See all" on the agents Live Activity).
@@ -27,7 +29,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 
 	public var workspaceId: String {
 		switch self {
-		case .object(let ws, _), .chat(let ws, _), .notifications(let ws), .agents(let ws), .agent(let ws, _): ws
+		case .object(let ws, _), .chat(let ws, _), .file(let ws, _), .notifications(let ws), .agents(let ws),
+			.agent(let ws, _): ws
 		}
 	}
 
@@ -39,6 +42,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		switch self {
 		case .object(_, let id): c.path = "/objects/\(id)"
 		case .chat(_, let id): c.path = "/chats/\(id)"
+		case .file(_, let id): c.path = "/files/\(id)"
 		case .notifications: c.path = "/notifications"
 		case .agents: c.path = "/agents"
 		case .agent(_, let id): c.path = "/agents/\(id)"
@@ -54,6 +58,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		switch self {
 		case .object(let ws, let id): c.path = "/\(ws)/objects/\(id)"
 		case .chat(let ws, let id): c.path = "/\(ws)/chats/\(id)"
+		case .file(let ws, let id): c.path = "/\(ws)/files/\(id)"
 		case .notifications(let ws): c.path = "/\(ws)"
 		case .agents(let ws): c.path = "/\(ws)/agents"
 		case .agent(let ws, let id): c.path = "/\(ws)/agents/\(id)"
@@ -101,6 +106,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 			switch rest[0] {
 			case "objects": self = .object(workspaceId: workspace, id: rest[1])
 			case "chats": self = .chat(workspaceId: workspace, id: rest[1])
+			case "files": self = .file(workspaceId: workspace, id: rest[1])
 			case "agents": self = .agent(workspaceId: workspace, id: rest[1])
 			default: return nil
 			}

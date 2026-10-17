@@ -28,8 +28,13 @@ struct ChatThreadView: View {
 	@Environment(\.liveMeeting) private var liveMeeting
 	/// Present in the app; absent in previews and snapshots, where `@` falls back to the thread's people.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	/// The shell's live call; nil in previews and snapshots.
+	@Environment(LiveCallCenter.self) private var liveCalls: LiveCallCenter?
 	/// How far the reader is from the newest message, in points (0 at the bottom).
 	@State private var distanceFromBottom: CGFloat = 0
+	/// Quick replies step aside while the reader scrolls up through the thread (they would sit over
+	/// the text being read). Tapping the field, reaching the bottom or a new message brings them back.
+	@State private var quickRepliesHidden = false
 	@State private var viewportHeight: CGFloat = 0
 	/// Messages that arrived while the reader was scrolled up; the jump button says how many.
 	@State private var unseenCount = 0
@@ -66,6 +71,9 @@ struct ChatThreadView: View {
 	private static let unreadOpenOffset: CGFloat = 150
 	private static let matchOffset: CGFloat = 170
 	private static let skeletonAfter: Duration = .milliseconds(300)
+	/// How long a thread stays hidden after it appears, while its rows measure and the scroll pins.
+	/// Held back too long it reads as a blank screen on open (it was 320ms).
+	private static let revealDelay = 120
 
 	private var isNearBottom: Bool { distanceFromBottom <= JumpToLatest.showAfterDistance }
 	private var flow: ChatFlowContext? { store.flowContext }
@@ -101,14 +109,17 @@ struct ChatThreadView: View {
 	}
 
 	private var quickReplies: [String] {
-		guard !searching else { return [] }
+		// Never while a reply is owed: you have already answered, and a chip for the old question
+		// would send a stale answer to a question the conversation has moved past.
+		guard !searching, store.awaitingReplySince == nil else { return [] }
 		return QuickReplyRules.suggestions(
 			latest: store.messages.last, currentActorID: store.currentActorID,
 			composerEmpty: composer.text.isEmpty && composer.attachments.isEmpty, somebodyTyping: busy)
 	}
 
-	/// A flow channel or a group: the Team room. Its composer has Go live in place of the mic.
-	private var isRoom: Bool { flow != nil || store.participants.count >= 3 }
+	/// A flow's conversation: the Team room. Its composer has Go live in place of the mic. Groups use
+	/// the ordinary composer (mic, no Go live).
+	private var isRoom: Bool { flow != nil }
 
 	/// Who a live call from this thread is with: its first agent. Nil (no Live button) without one.
 	private var liveLead: ChatParticipant? { store.participants.first { $0.kind == .agent } }
@@ -128,6 +139,7 @@ struct ChatThreadView: View {
 				// Arrow-only back button (user decision). The thread pushes the flow and the agent page.
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
+				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
 					if composer.boundConversationID == nil { composer.bind(conversationID: store.conversationID) }
@@ -137,8 +149,10 @@ struct ChatThreadView: View {
 				}
 				.onDisappear {
 					store.isActive = false
-					SpeechReader.shared.stop()
+					// A call keeps speaking when you leave the thread.
+					if liveCalls?.current == nil { SpeechReader.shared.stop() }
 					store.stop()
+					if liveCalls?.visibleConversationID == store.conversationID { liveCalls?.visibleConversationID = nil }
 				}
 				.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
 				.alert(
@@ -218,6 +232,14 @@ struct ChatThreadView: View {
 				} label: {
 					Label("Rename", systemImage: "pencil")
 				}
+				if !store.idleSessions().isEmpty {
+					Button(role: .destructive) {
+						let ids = store.idleSessions().map(\.id)
+						Task { for id in ids { await store.stopSession(id) } }
+					} label: {
+						Label("End background session", systemImage: "stop.circle")
+					}
+				}
 				Toggle(isOn: $handsFree) {
 					Label("Read replies aloud", systemImage: "speaker.wave.2")
 				}
@@ -232,7 +254,7 @@ struct ChatThreadView: View {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
 			}
-			if let lead = liveLead, !isRoom {
+			if let lead = liveLead, !isRoom, call == nil {
 				Button {
 					liveMeeting.present(.thread(chat: store, lead: lead))
 				} label: {
@@ -342,15 +364,18 @@ struct ChatThreadView: View {
 				// spinner can flash into view, and loading history then ends with a jump.
 				.onAppear { if !followingOpen { loadEarlier(proxy) } }
 		}
-		topicHeading
+		// The heading and the typing hint make way for the call's own empty state.
+		if (call == nil || !store.messages.isEmpty) && !repeatsNavTitle { topicHeading }
 		if let pinned = store.pinnedMessage {
 			PinnedMessageStrip(message: pinned, onOpen: { scroll(to: pinned.id, proxy: proxy) }, onUnpin: { store.unpin() })
 				.padding(.bottom, MaskinSpace.s9)
 		}
-		if store.messages.isEmpty { emptyHint }
+		if store.messages.isEmpty {
+			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
+		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), matchIDs: matchSet,
-			currentMatchID: currentMatchID)
+			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
 			.onAppear { if !usesGeometryTracking { reachedBottom() } }
 			.onDisappear { if !usesGeometryTracking { distanceFromBottom = JumpToLatest.showAfterDistance + 1 } }
@@ -378,15 +403,19 @@ struct ChatThreadView: View {
 				settleOpen(proxy)
 			}
 			.onChange(of: geometry.size.height) { _, height in viewportHeight = height }
-			.simultaneousGesture(
-				DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in
-					followingOpen = false
-					revealed = true
-				})
+			.onUserScroll {
+				if followingOpen { followingOpen = false }
+				if !revealed { revealed = true }
+			}
 			.trackingDistanceFromBottom { distance in
 				distanceFromBottom = distance
-				if distance < MaskinSpace.touchMin { unseenCount = 0 }
+				if distance < MaskinSpace.touchMin {
+					unseenCount = 0
+					quickRepliesHidden = false
+				}
 			}
+			.onUserScrollUp { quickRepliesHidden = true }
+			.onChange(of: store.messages.last?.id) { _, _ in quickRepliesHidden = false }
 			.refreshable { await store.refresh() }
 			.scrollDismissesKeyboard(.interactively)
 			.onChange(of: store.messages.last?.id) { _, _ in
@@ -397,9 +426,47 @@ struct ChatThreadView: View {
 					newestIsMine: store.messages.last?.actorID == store.currentActorID)
 				{
 				case .jump: jumpToBottom(proxy)
-				case .follow: scrollToBottom(proxy)
+				case .follow:
+					let last = store.messages.last
+					// Next turn, once the lazy stack has measured the new row: scrolling in the same
+					// pass animates toward an estimated bottom that then moves, which reads as a jerk.
+					Task { @MainActor in
+						await Task.yield()
+						if let last, last.actorID != store.currentActorID, last.author == .agent {
+							// A reply is read from its first line: bring its top into view. A short one still
+							// ends at the bottom (the scroll view clamps), a long one doesn't start mid-way.
+							unseenCount = 0
+							withAnimation(MaskinMotion.standard) {
+								proxy.scrollTo(last.id, anchor: topAnchor(Self.matchOffset))
+							}
+						} else {
+							scrollToBottom(proxy)
+						}
+					}
 				case .countUnseen: unseenCount += 1
 				}
+			}
+			// The live activity card grows a line per step: keep it in view while the reader is at the bottom.
+			.onChange(of: liveStepCount) { _, _ in
+				guard isNearBottom, !followingOpen else { return }
+				Task { @MainActor in
+					await Task.yield()
+					scrollToBottom(proxy)
+				}
+			}
+			// The working card appears under your message a moment after the send (once the agent has
+			// the message). The send already scrolled to the bubble; without this the card lands below
+			// the composer, out of sight, until the first step arrives.
+			.onChange(of: store.presences().count) { _, _ in
+				guard !followingOpen, isNearBottom || store.awaitingReplySince != nil else { return }
+				Task { @MainActor in
+					await Task.yield()
+					scrollToBottom(proxy)
+				}
+			}
+			// The "speaking…" bubble appears at the bottom: keep it in view while you are following.
+			.onChange(of: call?.voice.transcript.isEmpty) { _, _ in
+				if isNearBottom { scrollToBottom(proxy) }
 			}
 			.onChange(of: currentMatchID) { _, id in
 				guard let id else { return }
@@ -407,6 +474,10 @@ struct ChatThreadView: View {
 			}
 		}
 	}
+
+	/// A direct chat's heading is the nav bar's title again (and the "WITH …" link opens what the
+	/// tappable nav title already opens), so it is left out; a topic or flow title still shows.
+	private var repeatsNavTitle: Bool { (flow?.name ?? store.title) == navTitle }
 
 	/// The conversation's title as the 24pt heading at the top of the scrolling content.
 	private var topicHeading: some View {
@@ -475,14 +546,16 @@ struct ChatThreadView: View {
 					.padding(.bottom, MaskinSpace.s1)
 					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 			}
-			let replies = quickReplies
+			let replies = call == nil && !quickRepliesHidden ? quickReplies : []
 			if !replies.isEmpty {
 				QuickReplyChips(replies: replies) { reply in
 					if store.send(reply) == nil { composer.text = reply }
 				}
 				.transition(.opacity.combined(with: .move(edge: .bottom)))
 			}
-			if searching {
+			if let call {
+				callPanel(call)
+			} else if searching {
 				ThreadSearchBar(
 					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
 					onStep: { matchIndex = ThreadSearch.step(from: matchIndex, by: $0, count: matchIDs.count) },
@@ -499,7 +572,20 @@ struct ChatThreadView: View {
 		.padding(.bottom, MaskinSpace.s3)
 		.frame(maxWidth: .infinity)
 		.animation(MaskinMotion.standard, value: isNearBottom)
-		.animation(MaskinMotion.quick, value: quickReplies)
+		.animation(MaskinMotion.quick, value: quickRepliesHidden ? [] : quickReplies)
+	}
+
+	/// The call running in this thread, if any.
+	private var call: LiveMeetingSession? { liveCalls?.session(for: store.conversationID) }
+
+	private func callPanel(_ call: LiveMeetingSession) -> some View {
+		LiveCallPanel(
+			session: call,
+			mentioned: CallMentions.objects(
+				in: store.messages.filter { ($0.createdAt ?? .distantFuture) >= call.startedAt ?? .distantPast }),
+			onInvite: onInvite,
+			onOpenObject: { runtime?.openObject($0.id) },
+			onEnd: { liveCalls?.end() })
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
@@ -516,7 +602,8 @@ struct ChatThreadView: View {
 						selfID: store.currentActorID, excluding: Set(composer.mentions.map(\.id)))
 				},
 				inConversation: Set(store.participants.map(\.id)),
-				roster: runtime?.mentionRoster()?.roster),
+				roster: runtime?.mentionRoster()?.roster,
+				onFocusChange: { focused in if focused { quickRepliesHidden = false } }),
 			busy: busy,
 			onStop: { Task { await store.stopLiveSessions() } },
 			onSend: send
@@ -525,13 +612,12 @@ struct ChatThreadView: View {
 
 	/// Send, or — while the composer holds an edit — save the new text over the original message.
 	private func send() {
-		let editingID = composer.editing?.messageID
-		guard let (text, metadata) = composer.take() else { return }
-		if let editingID {
+		if let edit = composer.takeEdit() {
 			MaskinHaptics.play(.light)
-			Task { await store.edit(editingID, to: text) }
+			Task { await store.edit(edit.messageID, to: edit.text) }
 			return
 		}
+		guard let (text, metadata) = composer.take() else { return }
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
 			composer.text = text
@@ -546,7 +632,7 @@ struct ChatThreadView: View {
 
 	/// Edit loads the text into the composer under the "Editing message" quote; sending replaces it.
 	private func beginEdit(_ message: ChatMessage) {
-		composer.beginEdit(messageID: message.id, originalText: message.content)
+		composer.beginEdit(messageID: message.id, text: message.content)
 	}
 
 	// MARK: Search, speech
@@ -571,7 +657,8 @@ struct ChatThreadView: View {
 		let fresh = handsFreeTracker.newReplies(in: store.messages, currentActorID: store.currentActorID)
 		// A quiet tap when an agent's reply lands while you're looking at the thread.
 		if !fresh.isEmpty, scenePhase == .active { MaskinHaptics.play(.light) }
-		guard handsFree else { return }
+		// A call reads its own replies.
+		guard handsFree, call == nil else { return }
 		for message in fresh { SpeechReader.shared.enqueue(markdown: message.content, id: message.id) }
 	}
 
@@ -605,7 +692,7 @@ struct ChatThreadView: View {
 			followingOpen = false
 			proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 			Task {
-				try? await Task.sleep(for: .milliseconds(320))
+				try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 				proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 				revealed = true
 			}
@@ -613,7 +700,7 @@ struct ChatThreadView: View {
 		}
 		jumpToBottom(proxy)
 		Task {
-			try? await Task.sleep(for: .milliseconds(320))
+			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 			revealed = true
 		}
@@ -627,6 +714,11 @@ struct ChatThreadView: View {
 			try? await Task.sleep(for: .milliseconds(200))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 		}
+	}
+
+	/// Live steps across running sessions: changes whenever the activity card gains a line.
+	private var liveStepCount: Int {
+		store.liveSessions().reduce(0) { $0 + (store.trace?.liveTurn(sessionID: $1.id)?.steps.count ?? 0) }
 	}
 
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -660,6 +752,8 @@ struct ThreadTranscript: View {
 	var onReply: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
+	/// The call running in this thread: its card shows what you are saying as you say it.
+	var call: LiveMeetingSession?
 
 	/// Each tagged person under your message with where they stand (Working, Replied, Waiting for X).
 	private func mentionChips(for message: ChatMessage) -> [MentionStateChip] {
@@ -695,7 +789,8 @@ struct ThreadTranscript: View {
 		let anchors =
 			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
 		let items = ThreadLayout.items(
-			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID)
+			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
+			calls: LiveCallLog.shared.records(for: store.conversationID))
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
 			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn)
@@ -712,8 +807,8 @@ struct ThreadTranscript: View {
 		var id: String { agent.id }
 	}
 
-	/// The agents' live state under the newest message: a typing bubble (or the streaming reply)
-	/// for one composing an answer, the live activity card for one working, `Stopped` for one the
+	/// The agents' live state under the newest message: the live activity card (the one indicator,
+	/// whether the agent is thinking or running tools) or the streaming reply, `Stopped` for one the
 	/// user cut short, and a Resume banner for one that paused.
 	@ViewBuilder
 	private func activity(at date: Date) -> some View {
@@ -721,18 +816,14 @@ struct ThreadTranscript: View {
 		let sessions = store.liveSessions(at: date)
 		ForEach(live) { row in
 			Group {
-				switch row.presence {
-				case .typing, .replying:
-					if let draft = store.liveReplyDraft(for: row.agent.id) {
-						StreamingReplyBubble(agent: row.agent, text: draft)
-					} else {
-						TypingIndicator(agent: row.agent)
-					}
-				case .working:
-					let session = sessions.first { $0.actorID == row.agent.id }
+				let session = sessions.first { $0.actorID == row.agent.id }
+				if let draft = store.liveReplyDraft(for: row.agent.id) {
+					StreamingReplyBubble(agent: row.agent, text: draft)
+				} else {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
-						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) }, startedAt: session?.startedAt)
+						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) },
+						sentAt: store.awaitingReplySince, startedAt: session?.startedAt)
 				}
 			}
 			.padding(.top, Self.listGap)
@@ -806,6 +897,8 @@ struct ThreadTranscript: View {
 			ThreadDivider(label: message.content, ruled: false)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
+		case .liveCall(let card):
+			LiveCallCardView(card: card, partial: call?.voice.transcript ?? "")
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
@@ -857,7 +950,12 @@ extension View {
 			return AnyView(
 				onScrollGeometryChange(for: CGFloat.self) { geometry in
 					// The visible rect is in content coordinates, so insets (the composer bar) can't skew it.
-					max(geometry.contentSize.height - geometry.visibleRect.maxY, 0)
+					// Bucketed: the action only fires when the bucket changes, not on every scroll frame.
+					// Writing the raw offset into @State re-rendered the whole thread each frame.
+					let distance = max(geometry.contentSize.height - geometry.visibleRect.maxY, 0)
+					if distance < MaskinSpace.touchMin { return 0 }
+					if distance <= JumpToLatest.showAfterDistance { return MaskinSpace.touchMin }
+					return JumpToLatest.showAfterDistance + 1
 				} action: { _, distance in
 					action(distance)
 				})
@@ -943,5 +1041,42 @@ struct ThreadSkeleton: View {
 			.padding(.horizontal, BubbleShape.horizontal)
 			.background(MaskinSurface.inverse.opacity(0.08), in: BubbleShape.mine)
 			.frame(maxWidth: .infinity, alignment: .trailing)
+	}
+}
+
+/// Fires when the reader drags or flings the thread towards older messages. Programmatic scrolls
+/// and keyboard inset changes move the offset too, so only motion during a user scroll phase counts.
+/// iOS 17 has no scroll phase and never fires.
+private struct UserScrollUpModifier: ViewModifier {
+	let action: () -> Void
+	@State private var userScrolling = false
+
+	func body(content: Content) -> some View {
+		if #available(iOS 18, macOS 15, *) {
+			content
+				.onScrollPhaseChange { _, phase in userScrolling = phase == .interacting || phase == .decelerating }
+				.onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { old, new in
+					if userScrolling, new < old - 1 { action() }
+				}
+		} else {
+			content
+		}
+	}
+}
+
+extension View {
+	fileprivate func onUserScrollUp(_ action: @escaping () -> Void) -> some View {
+		modifier(UserScrollUpModifier(action: action))
+	}
+
+	/// Runs `action` when the reader starts scrolling. Observes the scroll phase on iOS 18+ so no
+	/// gesture competes with the scroll view's own pan; earlier systems fall back to a passive drag.
+	@ViewBuilder
+	fileprivate func onUserScroll(_ action: @escaping () -> Void) -> some View {
+		if #available(iOS 18.0, macOS 15.0, *) {
+			onScrollPhaseChange { _, phase in if phase == .interacting { action() } }
+		} else {
+			simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in action() })
+		}
 	}
 }

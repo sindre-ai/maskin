@@ -194,9 +194,11 @@ public struct TeamLayout: Equatable, Sendable {
 		public var showsMarkAllRead = false
 		/// "All 9 flows" when the section is capped and the rest can be shown.
 		public var moreLabel: String?
+		/// The section is open past its cap, so the footer reads "Show fewer".
+		public var canCollapse = false
 		public init(
 			id: String, kind: Kind, label: String, count: Int, rows: [Row], showsMarkAllRead: Bool = false,
-			moreLabel: String? = nil
+			moreLabel: String? = nil, canCollapse: Bool = false
 		) {
 			self.id = id
 			self.kind = kind
@@ -205,6 +207,7 @@ public struct TeamLayout: Equatable, Sendable {
 			self.rows = rows
 			self.showsMarkAllRead = showsMarkAllRead
 			self.moreLabel = moreLabel
+			self.canCollapse = canCollapse
 		}
 		/// The conversations behind the section, for "Mark all read".
 		public var unreadConversationIDs: [String] {
@@ -318,7 +321,8 @@ public struct TeamLayout: Equatable, Sendable {
 
 		let unpinned = active.filter { !$0.pinned }
 		let flows = input.flowRooms.filter { !pinnedFlowKeys.contains($0.pinKey) }
-		let totalUnread = active.reduce(0) { $0 + $1.unreadCount } + input.flowRooms.reduce(0) { $0 + $1.unreadCount }
+		// The Unread chip counts unread rows, not messages, and never the pinned tiles (they have their own badge).
+		let totalUnread = unpinned.filter { $0.unreadCount > 0 }.count + flows.filter { $0.unreadCount > 0 }.count
 
 		var sections: [Section]
 		switch input.chip {
@@ -407,7 +411,8 @@ public struct TeamLayout: Equatable, Sendable {
 			sections.append(
 				Section(
 					id: "flows", kind: .flows, label: "Flows", count: restFlows.count, rows: capped,
-					moreLabel: capped.count < restFlows.count ? "All \(restFlows.count) flows" : nil))
+					moreLabel: capped.count < restFlows.count ? "All \(restFlows.count) flows" : nil,
+					canCollapse: !isFiltering && open && restFlows.count > sectionCap))
 		}
 
 		// Everything read, by the chosen grouping.
@@ -423,12 +428,19 @@ public struct TeamLayout: Equatable, Sendable {
 				sections.append(
 					Section(
 						id: "people", kind: .people, label: "People", count: rows.count, rows: capped,
-						moreLabel: capped.count < rows.count ? "All \(rows.count) people" : nil))
+						moreLabel: capped.count < rows.count ? "All \(rows.count) people & agents" : nil,
+						canCollapse: !isFiltering && open && rows.count > sectionCap))
 			}
 		case .newestFirst:
 			let rows = byRecency(read.map(conversationRow))
 			if !rows.isEmpty {
-				sections.append(Section(id: "people", kind: .people, label: "People", count: rows.count, rows: rows))
+				let open = isFiltering || input.expandedSectionIDs.contains("people")
+				let capped = open ? rows : Array(rows.prefix(sectionCap))
+				sections.append(
+					Section(
+						id: "people", kind: .people, label: "People", count: rows.count, rows: capped,
+						moreLabel: capped.count < rows.count ? "All \(rows.count) conversations" : nil,
+						canCollapse: !isFiltering && open && rows.count > sectionCap))
 			}
 		}
 		return sections
@@ -547,14 +559,13 @@ public struct TeamLayout: Equatable, Sendable {
 // MARK: - New conversation copy
 
 public enum NewConversationCopy {
-	/// "Message Sam, Chief of Staff +2": first names for people, full names for agents, "+n"
-	/// after two. "Message" alone with nobody picked.
+	/// "Message Sam and Chief of Staff", "Message Sam, Chief of Staff +2": first names for people,
+	/// full names for agents, "A and B" for two, "+n" after two. "Pick someone first" with nobody.
 	public static func placeholder(for recipients: [ChatParticipant]) -> String {
-		guard !recipients.isEmpty else { return "Message" }
+		guard !recipients.isEmpty else { return "Pick someone first" }
 		let names = recipients.map { $0.kind == .agent ? $0.name : TeamLayout.firstName($0.name) }
-		let shown = names.prefix(2).joined(separator: ", ")
-		let extra = names.count - min(names.count, 2)
-		return "Message \(shown)" + (extra > 0 ? " +\(extra)" : "")
+		if names.count <= 2 { return "Message " + names.joined(separator: " and ") }
+		return "Message \(names.prefix(2).joined(separator: ", ")) +\(names.count - 2)"
 	}
 
 	/// Shown with two or more recipients.
@@ -562,12 +573,6 @@ public enum NewConversationCopy {
 		guard recipientCount >= 2 else { return nil }
 		return "\(recipientCount + 1) in this conversation, including you. Everyone sees the whole thread."
 	}
-
-	public static let starters = [
-		"Brief me on what changed today",
-		"What's blocked and who can unblock it?",
-		"Draft a follow-up to the latest customer thread",
-	]
 
 	/// Candidates for the To field, matched on name and role.
 	public static func matches(_ query: String, in actors: [ChatActor], excluding: Set<String>) -> [ChatActor] {

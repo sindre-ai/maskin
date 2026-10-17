@@ -32,17 +32,32 @@ public struct StoryCard: Identifiable, Equatable, Sendable {
 }
 
 extension StoryCard {
-	/// The mono line under the headline. A text briefing reads in `words / 200` minutes (at least
-	/// one); a loop's page is an HTML outcome, which has no length the app knows, so it is just
-	/// labelled a page. A deck's "N CARDS" needs a card count the data does not carry.
+	/// The mono line under the headline ("1 MIN READ"). A text briefing reads in `words / 200`
+	/// minutes (at least one); a loop's page is an HTML outcome, which has no length the app
+	/// knows, so it is just labelled a page. A deck's "N CARDS \u{00B7} 0:30" needs a card count and
+	/// duration the data does not carry.
 	public var formatLabel: String {
 		switch content {
 		case .briefing(_, let script):
 			let words = script.split(whereSeparator: \.isWhitespace).count
-			return "READ \u{00B7} \(max(1, Int((Double(words) / 200).rounded(.up)))) MIN"
+			return "\(max(1, Int((Double(words) / 200).rounded(.up)))) MIN READ"
 		case .page:
 			return "PAGE"
 		}
+	}
+
+	/// Who the card is from, under the progress bar: the Chief of Staff for the daily briefing,
+	/// else the flow the page came from.
+	public var byline: String {
+		switch content {
+		case .briefing: "Chief of Staff"
+		case .page: unit
+		}
+	}
+
+	public var isBriefing: Bool {
+		if case .briefing = content { return true }
+		return false
 	}
 }
 
@@ -190,6 +205,12 @@ public final class StoriesStore {
 	}
 
 	public func isSeen(_ card: StoryCard) -> Bool { seenIDs.contains(card.id) }
+
+	/// The row's order: unseen cards first, seen ones after, each in their own order. Opening a card
+	/// moves it to the end instead of leaving a white card at the front.
+	public var rowCards: [StoryCard] {
+		cards.filter { !seenIDs.contains($0.id) } + cards.filter { seenIDs.contains($0.id) }
+	}
 
 	/// The pages one loop produced, newest first (a loop's own page shows only its own cards).
 	public func cards(forLoop loopID: String) -> [StoryCard] { cards.filter { $0.loopID == loopID } }

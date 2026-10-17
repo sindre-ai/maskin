@@ -101,12 +101,12 @@ private struct LoopsContainer: View {
 	private var sidebar: some View {
 		LoopsListView(
 			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
-			onNew: { buildLoopInChat() }, onBrowse: { showMarketplace = true }
+			onNew: { buildLoopInChat() }
 		)
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search flows")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
+		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
 		.shellToolbar(
 			environment: environment, title: "Flows",

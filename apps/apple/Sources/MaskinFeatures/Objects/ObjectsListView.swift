@@ -62,7 +62,7 @@ struct ObjectsListView: View {
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
+		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		.task(id: search) {
 			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
 			if !Task.isCancelled { await store.setSearch(search) }
@@ -303,7 +303,7 @@ struct ObjectsListView: View {
 				message: "Agents are working. Asks for you land here."
 			) {
 				Button("See all objects") { Task { await store.setScope(.all) } }
-					.buttonStyle(.secondaryAction)
+					.buttonStyle(.primaryAction)
 			}
 		case .favourites where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
@@ -312,10 +312,11 @@ struct ObjectsListView: View {
 		default:
 			if store.isFiltered || store.display.needsYouOnly {
 				EmptyState(
-					symbol: "magnifyingglass", title: "No matches",
+					symbol: "magnifyingglass",
+					title: store.searchText.isEmpty ? "Nothing in this status" : "Nothing matches \u{201C}\(store.searchText.trimmingCharacters(in: .whitespaces))\u{201D}",
 					message: "Nothing fits these filters. Try a different type, status or word."
 				) {
-					Button("Clear filters") {
+					Button("Clear filter") {
 						search = ""
 						store.setNeedsYouOnly(false)
 						Task {
@@ -323,7 +324,7 @@ struct ObjectsListView: View {
 							await store.setScope(.all)
 						}
 					}
-					.buttonStyle(.secondaryAction)
+					.buttonStyle(.primaryAction)
 				}
 			} else {
 				EmptyState(

@@ -56,7 +56,7 @@ struct TeamLayoutTests {
 		#expect(layout.section("unread")?.count == 1)
 		#expect(layout.sections.map(\.kind) == [.unread, .time, .time])
 		#expect(layout.sections.dropFirst().flatMap { $0.rows.map(\.id) } == ["read", "old"])
-		#expect(layout.unreadCount == 3, "the chip count includes the pinned unread")
+		#expect(layout.unreadCount == 1, "the chip counts unread rows that are not pinned")
 		#expect(layout.empty == nil)
 		#expect(layout.showsArchived == false)
 	}
@@ -105,7 +105,20 @@ struct TeamLayoutTests {
 		}
 		let layout = build(rows, options: TeamDisplayOptions(grouping: .byPerson))
 		#expect(layout.section("people")?.rows.count == 5)
-		#expect(layout.section("people")?.moreLabel == "All 6 people")
+		#expect(layout.section("people")?.moreLabel == "All 6 people & agents")
+	}
+
+	@Test("newest first caps at five with an All-n conversations row, and shows fewer once opened")
+	func newestFirstCap() {
+		let rows = (1...7).map { chatConvo("c\($0)", last: ago(hours: Double($0))) }
+		let options = TeamDisplayOptions(grouping: .newestFirst)
+		let capped = build(rows, options: options)
+		#expect(capped.section("people")?.rows.count == 5)
+		#expect(capped.section("people")?.moreLabel == "All 7 conversations")
+		#expect(capped.section("people")?.canCollapse == false)
+		let open = build(rows, options: options, expanded: ["people"])
+		#expect(open.section("people")?.rows.count == 7)
+		#expect(open.section("people")?.canCollapse == true)
 	}
 
 	@Test("newest first: every read conversation on its own row, in one section")
@@ -289,9 +302,9 @@ struct NewConversationCopyTests {
 
 	@Test("placeholder: first names for people, full names for agents, +n after two")
 	func placeholder() {
-		#expect(NewConversationCopy.placeholder(for: []) == "Message")
+		#expect(NewConversationCopy.placeholder(for: []) == "Pick someone first")
 		#expect(NewConversationCopy.placeholder(for: [sam]) == "Message Sam")
-		#expect(NewConversationCopy.placeholder(for: [sam, chief]) == "Message Sam, Chief of Staff")
+		#expect(NewConversationCopy.placeholder(for: [sam, chief]) == "Message Sam and Chief of Staff")
 		#expect(NewConversationCopy.placeholder(for: [sam, chief, ida, forge]) == "Message Sam, Chief of Staff +2")
 	}
 

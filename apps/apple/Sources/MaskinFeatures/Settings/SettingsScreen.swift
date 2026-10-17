@@ -70,8 +70,11 @@ public struct SettingsScreen: View {
 				}
 				Section("About") {
 					LabeledContent("Version", value: Self.versionString)
+				}
+				// Its own centred red card, as the mockup draws it.
+				Section {
 					Button("Log out", role: .destructive) { confirmSignOut = true }
-						.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+						.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 				}
 			}
 			.settingsListStyle()

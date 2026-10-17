@@ -13,6 +13,8 @@ struct TVForYou: View {
 	@Binding var chromeHidden: Bool
 	/// A flow the briefing player asked to open; Flows picks it up.
 	@Binding var openFlow: String?
+	/// Today's briefing was asked for (Top Shelf); it plays once the cards are in.
+	@Binding var playBriefing: Bool
 	@State private var path = NavigationPath()
 	@State private var playing: BriefSequence?
 	@State private var askFailed = false
@@ -59,11 +61,11 @@ struct TVForYou: View {
 		}
 		#endif
 		.onChange(of: path.count) { _, count in chromeHidden = count > 0 }
-		.onChange(of: openDecision) { _, id in
-			guard let id else { return }
-			path = NavigationPath([id])
-			openDecision = nil
-		}
+		.onChange(of: openDecision) { _, _ in openRequestedDecision() }
+		.onAppear { openRequestedDecision() }
+		.onChange(of: playBriefing) { _, _ in playRequestedBriefing() }
+		.onChange(of: stories?.cards.first?.id) { _, _ in playRequestedBriefing() }
+		.task { playRequestedBriefing() }
 		.fullScreenCover(item: Binding(get: { playing.map(PlayingSequence.init) }, set: { if $0 == nil { playing = nil } })) { item in
 			if let stories {
 				TVBriefingPlayer(
@@ -72,6 +74,18 @@ struct TVForYou: View {
 				) { playing = nil }
 			}
 		}
+	}
+
+	private func openRequestedDecision() {
+		guard let id = openDecision else { return }
+		path = NavigationPath([id])
+		openDecision = nil
+	}
+
+	private func playRequestedBriefing() {
+		guard playBriefing, playing == nil, let stories, let card = stories.cards.first else { return }
+		playBriefing = false
+		playing = BriefSequence.make(cards: stories.cards, opening: card)
 	}
 
 	/// What the last briefing slide offers: review the first thing that needs you, or open the flow
@@ -174,7 +188,7 @@ struct TVDecisionCard: View {
 			if let when = card.latestActivityAt {
 				if entry.record == nil, let held = TVDecisionAge.heldTag(since: when) {
 					Text(held).font(.system(size: 24, weight: .semibold, design: .monospaced))
-						.foregroundStyle(MaskinColor.ink4)
+						.foregroundStyle(MaskinColor.sigInk)
 				}
 				Text(when.formatted(date: .omitted, time: .shortened))
 					.font(.system(size: 26)).foregroundStyle(MaskinColor.ink4)
@@ -193,13 +207,17 @@ struct TVDecisionCard: View {
 				}
 			}
 		} else if let options = card.decision?.options {
-			// Every option, wrapping onto a second line rather than clipping.
-			TVWrapLayout(spacing: 14) {
-				ForEach(options) { option in
-					Text(option.label).font(.system(size: 28, weight: .semibold)).lineLimit(1)
+			// Mockup: the recommended option as a light capsule, the rest as "+ n more".
+			let summary = TVCardOptions.summary(labels: options.map(\.label), recommended: options.first(where: \.recommended)?.label)
+			HStack(spacing: 14) {
+				if let primary = summary.primary {
+					Text(primary).font(.system(size: 28, weight: .semibold)).lineLimit(1).fixedSize()
 						.padding(.horizontal, 26).frame(height: 64)
-						.foregroundStyle(option.recommended ? MaskinSurface.onInverse : MaskinColor.ink)
-						.background(option.recommended ? MaskinSurface.inverse : MaskinSurface.fillStrong, in: Capsule())
+						.foregroundStyle(MaskinSurface.onInverse)
+						.background(MaskinSurface.inverse, in: Capsule())
+				}
+				if summary.more > 0 {
+					Text("+ \(summary.more) more").font(.system(size: 26, weight: .medium)).foregroundStyle(MaskinColor.ink4)
 				}
 			}
 		}
