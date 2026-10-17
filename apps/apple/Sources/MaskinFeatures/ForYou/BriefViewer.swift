@@ -18,6 +18,9 @@ struct BriefViewer: View {
 	@State private var fullPage: LoopOutput?
 	/// Cards parsed from each loaded page, by story card id; drives the PRESENTATION block.
 	@State private var presentations: [String: [PresentationSlide]] = [:]
+	@State private var presentationTotals: [String: Int] = [:]
+	/// Pages fetched ahead of the reader, by file id, so the next slide opens without a spinner.
+	@State private var preloaded: [String: FileDetail] = [:]
 	@State private var playingPresentation: StoryCard?
 	@State private var dragY: CGFloat = 0
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -74,6 +77,7 @@ struct BriefViewer: View {
 		.accessibilityElement(children: .contain)
 		.accessibilityAction(.escape, close)
 		.task(id: autoAdvances) { await runClock() }
+		.task(id: playback.index) { await prefetchNext() }
 		.onChange(of: playback.index, initial: true) { _, _ in
 			guard let card else { return }
 			stories.markSeen(card)
@@ -112,6 +116,15 @@ struct BriefViewer: View {
 			let elapsed = last.duration(to: now)
 			last = now
 			playback.tick(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
+		}
+	}
+
+	/// Fetches the next pages in the background. A failure is ignored: that slide just loads when reached.
+	private func prefetchNext() async {
+		let remote = APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)
+		for output in sequence.pagesToPrefetch(after: playback.index) where preloaded[output.id] == nil {
+			guard let file = try? await remote.file(id: output.id), !Task.isCancelled else { return }
+			preloaded[output.id] = file
 		}
 	}
 
@@ -223,10 +236,13 @@ struct BriefViewer: View {
 	private func slide(_ card: StoryCard) -> some View {
 		switch card.content {
 		case .briefing(let headline, let script):
+			let text = BriefSequence.briefingText(headline: headline, script: script)
 			ScrollView {
 				VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-					Text(headline).maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
-					Text(script).maskinText(.body).foregroundStyle(MaskinColor.patina100)
+					Text(text.title).maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
+					if !text.body.isEmpty {
+						Text(text.body).maskinText(.body).foregroundStyle(MaskinColor.patina100)
+					}
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.padding(.vertical, MaskinSpace.s9)
@@ -235,11 +251,14 @@ struct BriefViewer: View {
 			.id(card.id)
 		case .page(let output):
 			BriefPageSlide(
-				environment: environment, output: output,
+				environment: environment, output: output, preload: preloaded[output.id] ?? stories.preloadedFile(for: output.id),
 				loading: { loading in playback.setWaiting(loading) },
 				loaded: { html in
 					let slides = PresentationParser.parse(html: html)
-					if slides.count >= 2 { presentations[card.id] = slides }
+					if slides.count >= 2 {
+						presentations[card.id] = slides
+						presentationTotals[card.id] = PresentationParser.totalCount(html: html)
+					}
 				})
 			.id(card.id)
 		}
@@ -249,7 +268,7 @@ struct BriefViewer: View {
 	private func actions(_ card: StoryCard) -> some View {
 		VStack(spacing: MaskinSpace.s5) {
 			if let slides = presentations[card.id] {
-				PresentationBlock(title: card.headline, slides: slides) {
+				PresentationBlock(title: card.headline, slides: slides, total: presentationTotals[card.id]) {
 					playback.hold()
 					playingPresentation = card
 				}
@@ -331,7 +350,7 @@ private struct BriefPageSlide: View {
 	@State private var store: FileStore
 
 	init(
-		environment: AppEnvironment, output: LoopOutput, loading: @escaping (Bool) -> Void,
+		environment: AppEnvironment, output: LoopOutput, preload: FileDetail?, loading: @escaping (Bool) -> Void,
 		loaded: @escaping (String) -> Void
 	) {
 		self.output = output
@@ -341,7 +360,8 @@ private struct BriefPageSlide: View {
 			initialValue: FileStore(
 				fileId: output.id,
 				remote: APIFilesRemote(
-					client: environment.client, credentials: environment.auth.credentialsProvider)))
+					client: environment.client, credentials: environment.auth.credentialsProvider),
+				preload: preload))
 	}
 
 	var body: some View {
@@ -356,8 +376,26 @@ private struct BriefPageSlide: View {
 					.frame(maxWidth: .infinity, maxHeight: .infinity)
 			case .loaded:
 				if let file = store.file, file.kind == .html {
-					PresentedHTMLView(
-						html: store.text ?? file.text ?? "", revision: store.contentRevision, isInteractive: false)
+					let html = store.text ?? file.text ?? ""
+					if MiniAppHTML.needsNetwork(html) {
+						// The sandbox refuses the page's scripts and stylesheets, so it would show as bare markup.
+						VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+							Text(StoryDerivation.headline(html: html, fileName: output.name))
+								.maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
+							Text("This page needs a browser to show properly. Open it to see the full page.")
+								.maskinText(.body).foregroundStyle(MaskinColor.patina100)
+						}
+						.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+						.padding(.vertical, MaskinSpace.s9)
+					} else {
+						// The preview is cut off where the actions begin; fade the edge so a half-drawn
+						// tile reads as "more below" and not as a rendering fault.
+						PresentedHTMLView(html: html, revision: store.contentRevision, isInteractive: false)
+							.mask(
+								LinearGradient(
+									stops: [.init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+									startPoint: .top, endPoint: .bottom))
+					}
 				} else {
 					Text(output.name).maskinText(.subhead).foregroundStyle(MaskinColor.patina100)
 						.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -366,8 +404,11 @@ private struct BriefPageSlide: View {
 		}
 		.clipShape(shape)
 		.task {
-			loading(true)
-			await store.load()
+			// A page fetched ahead is already here: no spinner, no pause, no second request.
+			if store.phase != .loaded {
+				loading(true)
+				await store.load()
+			}
 			if let file = store.file, file.kind == .html { loaded(store.text ?? file.text ?? "") }
 			loading(false)
 		}
