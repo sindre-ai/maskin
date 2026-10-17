@@ -55,6 +55,7 @@ import {
 	actorsShareWorkspace,
 	assertActorWriterAccess,
 	assertWorkspaceWriterRole,
+	getWorkspaceRole,
 	isAdminOfSharedWorkspace,
 	isWorkspaceHumanAdminOrOwner,
 	isWorkspaceMember,
@@ -253,9 +254,20 @@ app.openapi(createActorRoute, async (c) => {
 
 		if (body.workspace_id) {
 			// Same answer as add-member gives a non-member, so existence does not leak.
-			if (!(await isWorkspaceMember(db, callerId, body.workspace_id))) {
+			const callerRole = await getWorkspaceRole(db, callerId, body.workspace_id)
+			if (callerRole === null) {
 				refuse('not_member', callerId, callerType)
 				return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+			}
+			// A viewer is read-only, and a new agent comes with its own key and the
+			// member role, so a viewer must not mint one. The gate sits after the
+			// membership check: a viewer already knows the workspace exists.
+			if (callerRole === 'viewer') {
+				refuse('viewer', callerId, callerType)
+				return c.json(
+					createApiError('FORBIDDEN', 'Viewers have read-only access to this workspace'),
+					403,
+				)
 			}
 			// tools and llm_config decide what runs in the agent's sessions and with
 			// which credentials, so they are held to the same floor as PATCH: a human

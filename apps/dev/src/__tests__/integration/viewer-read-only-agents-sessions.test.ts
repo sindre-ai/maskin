@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import { workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { actors, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import { createApiError, mapStatusToCode } from '../../lib/errors'
 import {
 	buildWorkspaceSkill,
@@ -322,6 +323,46 @@ describe('Viewer role is read-only on agents and sessions (Group C)', () => {
 				),
 			)
 			expect(res.status).toBe(200)
+		})
+	})
+
+	describe('creating an agent through the signup route', () => {
+		const createAgent = (name: string, key: string, body: Record<string, unknown>) =>
+			createApp().request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					{ type: 'agent', name, ...body },
+					{ Authorization: `Bearer ${key}` },
+				),
+			)
+		const agentsNamed = (name: string) => db.select().from(actors).where(eq(actors.name, name))
+
+		it('returns 403 to a viewer who names their workspace and writes no actor', async () => {
+			const name = `Viewer minted ${randomUUID()}`
+
+			await expectForbidden(await createAgent(name, viewerKey, { workspace_id: workspaceId }))
+
+			expect(await agentsNamed(name)).toHaveLength(0)
+		})
+
+		it('keeps the 404 for a caller who is not a member of the named workspace', async () => {
+			const stranger = await insertActor(db, { name: 'Stranger' })
+			const name = `Stranger minted ${randomUUID()}`
+
+			const res = await createAgent(name, stranger.apiKey, { workspace_id: workspaceId })
+
+			expect(res.status).toBe(404)
+			expect(await agentsNamed(name)).toHaveLength(0)
+		})
+
+		it('still lets a member create an agent in the workspace', async () => {
+			const name = `Member minted ${randomUUID()}`
+
+			const res = await createAgent(name, memberKey, { workspace_id: workspaceId })
+
+			expect(res.status).toBe(201)
+			expect(await agentsNamed(name)).toHaveLength(1)
 		})
 	})
 

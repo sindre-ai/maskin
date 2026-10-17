@@ -31,7 +31,11 @@ export type PendingRoute = readonly [method: string, path: string, group: string
 
 export const OPEN_ROUTES: OpenRoute[] = [
 	// The allowlist in app-factory.ts that skips authMiddleware: no workspace caller.
-	['POST', '/api/actors', 'signup bootstrap, the caller has no workspace yet'],
+	[
+		'POST',
+		'/api/actors',
+		'human signup stays open, the caller has no workspace yet; the agent branch is gated in the handler (a viewer naming a workspace gets 403)',
+	],
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
