@@ -530,6 +530,37 @@ describe('Integrations Routes', () => {
 			}
 		})
 
+		it('does not opt a new api_key connection into exposure to every agent session', async () => {
+			// Exposure is decided per agent at session launch (the agent's own tools
+			// config has to reference the token), so a new connection must not write
+			// an expose_to_agent_sessions value of its own.
+			const originalFrontendUrl = process.env.FRONTEND_URL
+			process.env.FRONTEND_URL = 'http://localhost:5173'
+			try {
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/posthog/connect',
+						{ api_key: 'phx_test_personal_key' },
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(200)
+				const integrationInsert = calls.inserts[0] as { config?: Record<string, unknown> }
+				expect(integrationInsert.config?.expose_to_agent_sessions).toBeUndefined()
+			} finally {
+				if (originalFrontendUrl === undefined) {
+					Reflect.deleteProperty(process.env, 'FRONTEND_URL')
+				} else {
+					process.env.FRONTEND_URL = originalFrontendUrl
+				}
+			}
+		})
+
 		it('refreshes an existing active api_key integration instead of inserting a duplicate', async () => {
 			try {
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
@@ -887,6 +918,42 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(302)
 			const location = res.headers.get('Location')
 			expect(location).toContain('/settings/integrations')
+		})
+
+		it('does not opt a newly activated oauth connection into exposure to every agent session', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'no-expose-nonce'
+			const state = encrypt(
+				JSON.stringify({ workspaceId: wsId, actorId: 'test-actor-id', ts: Date.now(), nonce }),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+			]
+
+			const res = await app.request(
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=42`,
+					nonce,
+				),
+			)
+
+			expect(res.status).toBe(302)
+			const activation = calls.updates.find(
+				(u) => (u as { status?: string }).status === 'active',
+			) as { config: Record<string, unknown> }
+			expect(activation.config.system_actor_id).toBe(systemActor.id)
+			expect(activation.config.expose_to_agent_sessions).toBeUndefined()
 		})
 
 		it('creates system actor when none exists and adds as workspace member', async () => {
