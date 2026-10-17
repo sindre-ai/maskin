@@ -7,6 +7,7 @@ import {
 	webhookConfigSchema,
 } from '@maskin/shared'
 import { and, desc, eq, gt, isNotNull, like, sql } from 'drizzle-orm'
+import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import {
@@ -48,6 +49,23 @@ const DELIVERY_WINDOW_DAYS = 14
 const DELIVERY_PAGE_SIZE = 50
 
 type ExtensionRow = typeof extensions.$inferSelect
+
+const hasConfig = (row: Pick<ExtensionRow, 'mcpConfig' | 'webhookConfig'>) =>
+	!!(row.mcpConfig || row.webhookConfig)
+
+/**
+ * Fire the built-in integration_connected event for an extension. Called after
+ * the database commit; best-effort, never throws. The provider is the same
+ * 'extension:{slug}' string the extension's integrations row carries.
+ */
+function trackExtensionConnected(workspaceId: string, actorId: string, row: ExtensionRow) {
+	void trackIntegrationConnected({
+		provider: extensionProvider(row.slug),
+		workspaceId,
+		actorId,
+		integrationId: row.id,
+	})
+}
 
 const extensionResponseSchema = z.object({
 	id: z.string().uuid(),
@@ -387,6 +405,8 @@ app.openapi(createExtensionRoute, async (c) => {
 		},
 	})
 
+	if (hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
+
 	return c.json(await respond(c, db, row), 201)
 })
 
@@ -509,6 +529,9 @@ app.openapi(updateExtensionRoute, async (c) => {
 			secret_replaced: !!body.signing_secret,
 		},
 	})
+
+	// Only the save that first gives the extension a config counts as connecting it.
+	if (!hasConfig(existing) && hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
 
 	return c.json(await respond(c, db, row), 200)
 })

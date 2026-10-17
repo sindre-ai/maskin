@@ -21,6 +21,12 @@ import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
+vi.mock('../../lib/analytics/integration-events', () => ({
+	trackIntegrationConnected: vi.fn().mockResolvedValue(undefined),
+}))
+
+const { trackIntegrationConnected } = await import('../../lib/analytics/integration-events')
+
 // Tech spec section 6 steps 1 to 5 against real Postgres: a workspace owner
 // creates a Fireflies extension through the API, a signed delivery commits one
 // delivery row and one events row, a trigger on that event starts a session,
@@ -511,5 +517,95 @@ describe('POST /api/webhooks/x/:token (integration)', () => {
 		expect(res.status).toBe(200)
 		const [evt] = await eventRows(workspaceId, 'calcom.booking')
 		expect(evt?.action).toBe('BOOKING_CREATED')
+	})
+})
+
+describe('integration_connected for extensions (integration)', () => {
+	let workspaceId: string
+	const headers = () => ({ 'x-workspace-id': workspaceId })
+	const mcpConfig = () => ({
+		envKey: 'X_TOKEN',
+		server: fireflies?.mcpConfig?.server,
+		credentialProvider: 'extension:mcp-ext',
+		tools: [{ name: 'get_thing', kind: 'read' }],
+	})
+
+	beforeEach(async () => {
+		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+		vi.mocked(trackIntegrationConnected).mockClear()
+	})
+
+	it('fires once on the first save of an extension with a webhook, and not on a later edit', async () => {
+		const app = buildApp()
+		const { res, json } = await createExtension(app, workspaceId)
+		expect(res.status).toBe(201)
+		expect(trackIntegrationConnected).toHaveBeenCalledTimes(1)
+		expect(trackIntegrationConnected).toHaveBeenCalledWith({
+			provider: 'extension:fireflies',
+			workspaceId,
+			actorId: getTestActorId(),
+			integrationId: json.id,
+		})
+
+		const edit = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${json.id}`, { name: 'Fireflies renamed' }, headers()),
+		)
+		expect(edit.status).toBe(200)
+		const reSecret = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${json.id}`, { signing_secret: SECRET }, headers()),
+		)
+		expect(reSecret.status).toBe(200)
+		expect(trackIntegrationConnected).toHaveBeenCalledTimes(1)
+	})
+
+	it('fires on the first save of an MCP-only extension', async () => {
+		const app = buildApp()
+		const { res, json } = await createExtension(app, workspaceId, {
+			slug: 'mcp-ext',
+			name: 'MCP ext',
+			mcp_config: mcpConfig(),
+		})
+		expect(res.status).toBe(201)
+		expect(trackIntegrationConnected).toHaveBeenCalledTimes(1)
+		expect(trackIntegrationConnected).toHaveBeenCalledWith(
+			expect.objectContaining({ provider: 'extension:mcp-ext', integrationId: json.id }),
+		)
+	})
+
+	it('waits for the save that first adds a config when the extension was created empty', async () => {
+		const app = buildApp()
+		const { json } = await createExtension(app, workspaceId, { slug: 'mcp-ext', name: 'Empty' })
+		expect(trackIntegrationConnected).not.toHaveBeenCalled()
+
+		const rename = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${json.id}`, { name: 'Still empty' }, headers()),
+		)
+		expect(rename.status).toBe(200)
+		expect(trackIntegrationConnected).not.toHaveBeenCalled()
+
+		const addMcp = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${json.id}`, { mcp_config: mcpConfig() }, headers()),
+		)
+		expect(addMcp.status).toBe(200)
+		expect(trackIntegrationConnected).toHaveBeenCalledTimes(1)
+		expect(trackIntegrationConnected).toHaveBeenCalledWith(
+			expect.objectContaining({ provider: 'extension:mcp-ext', integrationId: json.id }),
+		)
+
+		const edit = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${json.id}`, { name: 'Renamed' }, headers()),
+		)
+		expect(edit.status).toBe(200)
+		expect(trackIntegrationConnected).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not fire when the save is refused', async () => {
+		const app = buildApp()
+		const { res } = await createExtension(app, workspaceId, firefliesBody({ signing_secret: undefined }))
+		expect(res.status).toBe(400)
+		await createExtension(app, workspaceId)
+		const dup = await createExtension(app, workspaceId)
+		expect(dup.res.status).toBe(409)
+		expect(trackIntegrationConnected).toHaveBeenCalledTimes(1)
 	})
 })
