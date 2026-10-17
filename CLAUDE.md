@@ -42,6 +42,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `observability/coolify-host/README.md` — for a host running `docker-compose.prod.yml` under Coolify: Docker logs, host metrics, SeaweedFS metrics, disk-headroom alerts. Both configs read every deployment-specific value from the environment — keep it that way.
 
 ## Runbooks
+- `docs/runbooks/agent-base-image-rollback.md` — retag the previous agent-base sha image as latest and restart maskin-agent-server; how far back it reaches and how to confirm it on a real session
 - `docs/runbooks/github-agent-merge-reliability.md` — diagnostic + recovery guide for GitHub write-path failures (approve, merge, push, PR open) in autonomous agent sessions; includes the first-move pattern for late-run 401s (token-mint delta, installation-ID churn) and the failure-tag glossary set by the tool-call layer
 
 ## Architecture
