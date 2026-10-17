@@ -95,6 +95,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -120,6 +121,7 @@ import {
 	registerMcpInit,
 } from '../lib/mcp-health'
 import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -2343,7 +2345,12 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
 				oauthExpiresAtTaken = resolved.oauthExpiresAt
-				routeModelName = resolved.modelName
+				// maskin_plan names its model on the result; a BYO endpoint's model is
+				// the ANTHROPIC_MODEL it was configured with.
+				routeModelName =
+					resolved.route === LLM_ROUTE_CUSTOM
+						? resolved.envVars.ANTHROPIC_MODEL
+						: resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -2404,11 +2411,11 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
-		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
-		// OpenRouter model that will actually run: the follow-on local cost
-		// resolver keys OpenRouter's pricing table on that value, and without
+		// On the maskin_plan and workspace_custom routes we ALSO stamp
+		// `sessions.model_name` with the model that will actually run: the local
+		// cost resolver keys OpenRouter's pricing table on that value, and without
 		// it every non-Anthropic session reads as an Opus-priced number.
-		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// claude_oauth and the API-key routes leave `model_name` null on purpose —
 		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
@@ -2420,7 +2427,7 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
 			)
 			const modelNameToPersist =
-				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				(routeTaken === LLM_ROUTE_MASKIN_PLAN || routeTaken === LLM_ROUTE_CUSTOM) &&
 				routeModelName &&
 				routeModelName !== session.modelName
 					? routeModelName
@@ -2715,6 +2722,8 @@ ${HUMAN_MESSAGE_STYLE}`
 			'ANTHROPIC_MODEL',
 			'ANTHROPIC_SMALL_FAST_MODEL',
 			'MASKIN_CLAUDE_EFFORT',
+			'MAX_THINKING_TOKENS',
+			'MASKIN_DISABLE_WEB_SEARCH',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -3200,6 +3209,12 @@ ${HUMAN_MESSAGE_STYLE}`
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
+						if (
+							chunk.stream === 'stdout' &&
+							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
+						) {
+							continue
+						}
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
 							await this.emitUnhealthyMcpWarningIfAny(sessionId, chunk.data)
@@ -5504,6 +5519,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// paths (queue-drain rejection, remote sessions) that have no
 		// activeSessions entry to key off.
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 	}
 
 	/**
@@ -5520,6 +5536,9 @@ ${HUMAN_MESSAGE_STYLE}`
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, line.content)) {
+				continue
+			}
 			if (line.stream === 'stdout') {
 				await this.emitGithubCauseTagIfAny(sessionId, line.content)
 				await this.emitUnhealthyMcpWarningIfAny(sessionId, line.content)
@@ -6151,6 +6170,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
