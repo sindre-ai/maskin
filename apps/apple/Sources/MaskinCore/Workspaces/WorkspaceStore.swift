@@ -150,6 +150,16 @@ public final class WorkspaceStore {
 		auth.selectWorkspace(id)
 	}
 
+	/// A workspace was deleted: drop it now rather than waiting for a refresh that may fail, and
+	/// move the selection to the first one left, or to none.
+	public func removed(_ id: String) {
+		workspaces.removeAll { $0.id == id }
+		disk?.clear(workspaceId: id)
+		if let disk, let key = cacheKey { disk.write(workspaces, key: key, version: 1) }
+		guard selectedID == id else { return }
+		if let first = workspaces.first { auth.selectWorkspace(first.id) } else { auth.clearWorkspace() }
+	}
+
 	/// Forget everything (sign-out).
 	public func reset() {
 		generation += 1
