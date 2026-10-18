@@ -148,6 +148,7 @@ const ROWS: Record<string, Row> = {
 	stop_session: row('Stop session', { destructive: true }),
 	pause_session: row('Pause session', { idempotent: true }),
 	resume_session: row('Resume session', { idempotent: true }),
+	ask_user_question: row('Ask user question'),
 	// Integrations
 	list_integrations: row('List integrations', { openWorld: true }),
 	list_integration_providers: row('List integration providers', { openWorld: true }),
