@@ -3,12 +3,15 @@ import type { Database, Transaction } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
 	actors,
+	extensions,
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, eq, isNull } from 'drizzle-orm'
+import type { McpConfig } from '@maskin/shared'
+import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from '../analytics/posthog'
 import { decrypt, encrypt } from '../crypto'
-import { extensionProvider } from './extensions'
+import { MAX_EXTENSION_TOOLS, extensionProvider } from './extensions'
 
 const EXTENSION_SYSTEM_ACTOR_NAME = 'Custom extension'
 
@@ -126,4 +129,106 @@ export async function readExtensionSecret(
 		.limit(1)
 	if (!row?.credentials) return null
 	return decrypt(row.credentials)
+}
+
+// ── MCP runtime shim ────────────────────────────────────────────────────────
+
+export type ExtensionMcpEntry = {
+	slug: string
+	extensionId: string
+	config: McpConfig
+	/** The extension's integrations row, when one exists. Never its credentials. */
+	credentialIntegrationId: string | null
+}
+
+/**
+ * Active extensions in a workspace that want their MCP server attached to
+ * sessions: status active, an mcp_config, autoInject true. Ordered by slug so
+ * the attach order is stable.
+ */
+export async function resolveMcpFromExtension(
+	db: Database | Transaction,
+	workspaceId: string,
+): Promise<ExtensionMcpEntry[]> {
+	const rows = await db
+		.select({
+			id: extensions.id,
+			slug: extensions.slug,
+			mcpConfig: extensions.mcpConfig,
+			credentialIntegrationId: integrations.id,
+		})
+		.from(extensions)
+		.leftJoin(
+			integrations,
+			and(
+				eq(integrations.workspaceId, extensions.workspaceId),
+				eq(integrations.provider, sql`'extension:' || ${extensions.slug}`),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+				isNull(integrations.actorId),
+			),
+		)
+		.where(
+			and(
+				eq(extensions.workspaceId, workspaceId),
+				eq(extensions.status, 'active'),
+				isNotNull(extensions.mcpConfig),
+				sql`(${extensions.mcpConfig}->>'autoInject')::boolean = true`,
+			),
+		)
+		.orderBy(asc(extensions.slug))
+	return rows.flatMap((r) =>
+		r.mcpConfig
+			? [
+					{
+						slug: r.slug,
+						extensionId: r.id,
+						config: r.mcpConfig,
+						credentialIntegrationId: r.credentialIntegrationId,
+					},
+				]
+			: [],
+	)
+}
+
+/**
+ * Turn a workspace's extension MCPs into session entries, keyed extension-{slug}
+ * so they never collide with integration-{provider}. An extension over the tool
+ * cap is not attached: its mcp_last_error says so and a PostHog event fires.
+ * Only stdio attaches in V1. readCredential returns the plain key for an
+ * extension's integrations row; it is passed as a Bearer value through the
+ * env var the config names.
+ */
+export async function buildExtensionMcpServers(
+	db: Database | Transaction,
+	workspaceId: string,
+	readCredential: (entry: ExtensionMcpEntry) => Promise<string | null>,
+): Promise<{ servers: Record<string, unknown>; env: Record<string, string> }> {
+	const servers: Record<string, unknown> = {}
+	const env: Record<string, string> = {}
+	for (const entry of await resolveMcpFromExtension(db, workspaceId)) {
+		const { server, tools } = entry.config
+		if (server.type !== 'stdio') continue
+		if (tools.length > MAX_EXTENSION_TOOLS) {
+			await db
+				.update(extensions)
+				.set({ mcpLastError: `tool cap exceeded: ${tools.length}/${MAX_EXTENSION_TOOLS}` })
+				.where(eq(extensions.id, entry.extensionId))
+			void capturePosthogEvent('extension_mcp_tool_cap_exceeded', workspaceId, {
+				extension_id: entry.extensionId,
+				slug: entry.slug,
+				tool_count: tools.length,
+			})
+			continue
+		}
+		if (server.envFromCredential) {
+			const key = await readCredential(entry)
+			if (key) env[server.envFromCredential] = `Bearer ${key}`
+		}
+		servers[`extension-${entry.slug}`] = {
+			type: 'stdio',
+			command: server.command,
+			args: server.args,
+		}
+	}
+	return { servers, env }
 }
