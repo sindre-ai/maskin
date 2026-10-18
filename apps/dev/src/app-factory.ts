@@ -36,6 +36,7 @@ import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
 import filesRoutes from './routes/files'
+import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
@@ -414,6 +415,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/conversations', conversationsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
+	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)

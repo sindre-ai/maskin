@@ -135,7 +135,7 @@ type LatestMention = NonNullable<z.infer<typeof unreadItemSchema>['latest_mentio
  * block that no longer parses degrades to `null`, and the card falls back to
  * rendering the comment body.
  */
-function toLatestMention(event: typeof events.$inferSelect): LatestMention {
+export function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 	const data = (event.data ?? {}) as Record<string, unknown>
 	const rawContent = typeof data.content === 'string' ? data.content : ''
 	const attention = Number(data.attention)
