@@ -2760,6 +2760,7 @@ describe('tool handlers', () => {
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(okJson({ id: 'sess-w1', status: 'pending' }))
 					.mockResolvedValueOnce(okJson({ id: 'sess-w1', status: 'waiting_for_input' }))
+					.mockResolvedValueOnce(okJson({ notify_on_complete: 'registered' }))
 					.mockResolvedValueOnce(okJson([{ message: 'first line' }]))
 
 				const resultPromise = getHandler('create_session')({
@@ -2778,11 +2779,12 @@ describe('tool handlers', () => {
 				expect(parsed.message).toContain('sess-w1')
 				expect(parsed.message).toContain('not finished')
 				expect(parsed.message).toContain('get_session_logs')
-				expect(parsed.message).not.toContain('Its result will come back')
-				expect(parsed).not.toHaveProperty('notify_on_complete')
-				expect(patchCalls(fetchSpy)).toHaveLength(0)
-				// create + one poll + logs: it did not keep polling.
-				expect(fetchSpy).toHaveBeenCalledTimes(3)
+				// The session is not finished, so its result is registered to come back.
+				expect(parsed.notify_on_complete).toBe('registered')
+				expect(parsed.message).toContain('Its result will come back')
+				expect(patchCalls(fetchSpy)).toHaveLength(1)
+				// create + one poll + registration + logs: it did not keep polling.
+				expect(fetchSpy).toHaveBeenCalledTimes(4)
 			})
 
 			it('registers notify_on_complete on the waiting_for_input stop and says the result will come back', async () => {
