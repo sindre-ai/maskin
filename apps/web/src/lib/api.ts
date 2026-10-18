@@ -32,6 +32,30 @@ export type {
 	TriggerResponse,
 	UpdateFileCommentInput,
 }
+// INTERIM: these mirror packages/shared/src/schemas/account.ts, which lands with the backend PR for
+// account/workspace deletion. Once that is merged, delete this block and import the two types from
+// '@maskin/shared' (add them to the import/export lists above).
+export type AccountDeletionPreview = {
+	can_delete: boolean
+	blockers: {
+		code: 'transfer_ownership' | 'cancel_plan'
+		workspace_id: string
+		workspace_name: string
+	}[]
+	leaving: {
+		workspace_id: string
+		workspace_name: string
+		other_members: number
+		will_delete: boolean
+	}[]
+}
+export type WorkspaceDeletionPreview = {
+	workspace_id: string
+	workspace_name: string
+	can_delete: boolean
+	blockers: { code: 'not_billing_owner' | 'cancel_plan'; message: string }[]
+	other_members: number
+}
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
@@ -304,6 +328,15 @@ export const api = {
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
+	account: {
+		deletionPreview: (deleteSoleWorkspaces = false) =>
+			request<AccountDeletionPreview>(
+				`/account/deletion-preview${deleteSoleWorkspaces ? '?delete_sole_workspaces=true' : ''}`,
+			),
+		delete: (data: { password: string; delete_sole_workspaces?: boolean }) =>
+			request<{ deleted: true }>('/account/delete', { method: 'POST', body: data }),
+	},
+
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
@@ -428,6 +461,13 @@ export const api = {
 					method: 'DELETE',
 				}),
 		},
+		deletionPreview: (workspaceId: string) =>
+			request<WorkspaceDeletionPreview>(`/workspaces/${workspaceId}/deletion-preview`),
+		delete: (workspaceId: string, confirmName: string) =>
+			request<{ deleted: true }>(`/workspaces/${workspaceId}/delete`, {
+				method: 'POST',
+				body: { confirm_name: confirmName },
+			}),
 		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
 			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
 				method: 'POST',
