@@ -68,7 +68,7 @@ paste in Cal.com.
    **BOOKING_CREATED** and attach the agent that should react.
 2. Make a test booking on one of your Cal.com event types.
 3. Back on the Maskin extension page the setup card changes from Waiting for first
-   delivery to Receiving, and the delivery shows up under delivery history as
+   delivery to Receiving, and the delivery shows up under Recent deliveries as
    Committed. Your agent starts a session from the trigger.
 
 If the card stays on Waiting, open the webhook in Cal.com and check its recent
