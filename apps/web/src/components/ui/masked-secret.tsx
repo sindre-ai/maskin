@@ -4,7 +4,7 @@ const DOTS = '••••••••'
 
 /**
  * Masks a token as first 6 characters, dot fill, last 4 (for example
- * ff_key_••••••••ab3f). Values too short to hide anything behind a prefix and
+ * ff_key••••••••ab3f). Values too short to hide anything behind a prefix and
  * suffix are shown as dots only.
  */
 export function maskSecret(value: string): string {

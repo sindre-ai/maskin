@@ -62,7 +62,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 
 			// Dry run writes nothing but names the event the sample would create.
 			await page
-				.getByLabel('Sample payload')
+				.getByRole('textbox', { name: 'Sample payload' })
 				.fill(JSON.stringify({ event: 'meeting.transcribed', meeting_id: 'sample-1' }))
 			await page.getByRole('button', { name: 'Run sample' }).click()
 			await expect(page.getByText('This delivery would create an event')).toBeVisible()

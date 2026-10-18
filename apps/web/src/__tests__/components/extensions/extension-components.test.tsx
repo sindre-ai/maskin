@@ -38,7 +38,7 @@ function buildExtension(overrides: Partial<ExtensionResponse> = {}): ExtensionRe
 
 describe('maskSecret / MaskedSecret', () => {
 	it('keeps the first 6 and last 4 characters of a long value', () => {
-		expect(maskSecret('ff_key_abcdefghij1234')).toBe('ff_key_••••••••1234')
+		expect(maskSecret('ff_key_abcdefghij1234')).toBe('ff_key••••••••1234')
 	})
 
 	it('shows dots only for a short value', () => {

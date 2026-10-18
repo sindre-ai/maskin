@@ -51,7 +51,9 @@ export async function ensureExtensionSystemActor(
 		)
 		.limit(1)
 	if (!member) {
-		await db.insert(workspaceMembers).values({ workspaceId, actorId: systemActor.id, role: 'system' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId, actorId: systemActor.id, role: 'system' })
 	}
 	return systemActor.id
 }
