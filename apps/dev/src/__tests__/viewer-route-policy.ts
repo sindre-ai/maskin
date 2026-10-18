@@ -106,6 +106,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
 	['POST', '/api/briefing/spoken', 'Group E, generates a briefing and changes no workspace data'],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
+	[
+		'POST',
+		'/api/account/delete',
+		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
+	],
 	// Group D leftovers: the two routes that are not gated on a human admin or owner.
 	[
 		'POST',

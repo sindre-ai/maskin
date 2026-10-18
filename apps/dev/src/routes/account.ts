@@ -22,6 +22,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { loadMembershipFacts } from '../lib/membership-facts'
 import { errorSchema } from '../lib/openapi-schemas'
+import { lockActorForOwnershipClaim } from '../lib/workspace-capacity'
 import {
 	type WorkspacePurgeResult,
 	evictPurgedWorkspace,
@@ -141,6 +142,12 @@ app.openapi(deleteRoute, async (c) => {
 	}
 
 	const result = await db.transaction(async (tx) => {
+		// Same advisory lock transfer-ownership takes on the NEW owner before it reads their
+		// membership. Without it a transfer that already read this person as a member could commit
+		// after the memberships are deleted below, leaving the workspace billed to an erased account
+		// that nobody can transfer away from. With it, a transfer either lands first (and this
+		// request is then refused with 409) or finds no membership (404).
+		await lockActorForOwnershipClaim(tx, actorId)
 		// Lock the person's row so two deletions, or a deletion racing a transfer, can't interleave.
 		const [locked] = await tx
 			.select({ id: actors.id, apiKey: actors.apiKey })
@@ -211,6 +218,7 @@ app.openapi(deleteRoute, async (c) => {
 				memory: null,
 				llmProvider: null,
 				llmConfig: null,
+				defaultWorkspaceId: null,
 				metadata: { deleted_at: new Date().toISOString() },
 				updatedAt: new Date(),
 			})

@@ -54,9 +54,9 @@ import {
 	seatCapErrorBody,
 	seatCapForPlan,
 } from '../lib/workspace-capacity'
-import { workspaceForCaller } from '../lib/workspace-redaction'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import { evictPurgedWorkspace, purgeWorkspace, purgeWorkspaceStorage } from '../lib/workspace-purge'
+import { workspaceForCaller } from '../lib/workspace-redaction'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
@@ -1434,6 +1434,7 @@ app.openapi(workspaceDeletionPreviewRoute, (async (c) => {
 const deleteWorkspaceRoute = createRoute({
 	method: 'post',
 	path: '/{id}/delete',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Permanently delete a workspace and everything in it',
 	description:
@@ -1473,7 +1474,9 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 	const { id: workspaceId } = c.req.valid('param')
 	const { confirm_name: confirmName } = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	// isWorkspaceWriter throws a 403 for a viewer: the billing-owner check below ignores the role,
+	// so a viewer who holds billing ownership would otherwise pass it (same as transfer-ownership).
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 

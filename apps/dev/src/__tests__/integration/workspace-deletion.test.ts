@@ -22,7 +22,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WORKSPACE_PURGE_CASCADE, WORKSPACE_PURGE_EXPLICIT } from '../../lib/workspace-purge'
 import {
@@ -240,11 +240,15 @@ describe('workspace deletion (integration)', () => {
 				JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
 				WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace`
 
-			// Everything reachable from workspaces by foreign keys.
+			// Everything reachable from workspaces by foreign keys that OWN the child. A SET NULL edge
+			// (actors.default_workspace_id, slack_user_links.default_workspace_id) only unlinks a row
+			// that outlives the workspace, so it must not drag that row's own children in: following
+			// it would make every table that references actors look like workspace data.
 			const reach = new Set(['workspaces'])
 			for (let grew = true; grew; ) {
 				grew = false
 				for (const f of fks) {
+					if (f.action === 'n') continue
 					if (reach.has(f.parent) && !reach.has(f.child)) {
 						reach.add(f.child)
 						grew = true
@@ -430,6 +434,23 @@ describe('workspace deletion (integration)', () => {
 			.values({ workspaceId: ws.id, actorId: member.id, role: 'admin' })
 
 		const res = await del(ws.id, 'Not yours', appFor(member.id))
+		expect(res.status).toBe(403)
+		expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(1)
+	})
+
+	it('refuses a viewer even when they hold billing ownership', async () => {
+		const { ws } = await seedWorkspace(me, { name: 'Read only' })
+		await db
+			.update(workspaceMembers)
+			.set({ role: 'viewer' })
+			.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, me.id)))
+
+		// The route throws ViewerReadOnlyError; app.onError turns it into a 403 in the real app.
+		const withOnError = appFor(me.id)
+		withOnError.onError((err, c) =>
+			c.json({ error: err.message }, (err as { status?: number }).status === 403 ? 403 : 500),
+		)
+		const res = await del(ws.id, 'Read only', withOnError)
 		expect(res.status).toBe(403)
 		expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(1)
 	})

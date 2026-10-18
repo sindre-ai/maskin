@@ -14,7 +14,7 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { db } from './global-setup'
+import { db, sql } from './global-setup'
 
 const { default: accountRoutes } = await import('../../routes/account')
 
@@ -54,6 +54,7 @@ describe('account deletion (integration)', () => {
 
 	it('erases the person but keeps what they made, attributed to a deleted user', async () => {
 		const ws = await insertWorkspace(db, me.id)
+		await db.update(actors).set({ defaultWorkspaceId: ws.id }).where(eq(actors.id, me.id))
 		const obj = await insertObject(db, ws.id, me.id, {
 			title: 'My bet',
 			type: 'bet',
@@ -85,6 +86,7 @@ describe('account deletion (integration)', () => {
 		expect(after?.passwordHash).toBeNull()
 		expect(after?.apiKey).not.toBe(me.apiKey)
 		expect(after?.apiKey.startsWith('deleted_')).toBe(true)
+		expect(after?.defaultWorkspaceId).toBeNull()
 		expect((after?.metadata as { deleted_at?: string } | null)?.deleted_at).toBeTruthy()
 
 		// Their work stays, still pointing at the (now anonymous) actor row.
@@ -103,6 +105,46 @@ describe('account deletion (integration)', () => {
 		expect(
 			await db.select().from(notifications).where(eq(notifications.targetActorId, me.id)),
 		).toEqual([])
+	})
+
+	it('lets a viewer delete their own account', async () => {
+		const owner = await insertActor(db, { type: 'human' })
+		const ws = await insertWorkspace(db, owner.id)
+		await db.insert(workspaceMembers).values({ workspaceId: ws.id, actorId: me.id, role: 'viewer' })
+		const res = await del()
+		expect(res.status).toBe(200)
+	})
+
+	it('waits for the ownership-claim lock a concurrent transfer-ownership holds', async () => {
+		// transfer-ownership takes this advisory lock on the NEW owner before it reads their
+		// membership. If deletion did not take it too, a transfer could commit after the person's
+		// memberships were deleted and leave a workspace billed to an erased account.
+		let release: () => void = () => {}
+		const held = new Promise<void>((r) => {
+			release = r
+		})
+		let locked: () => void = () => {}
+		const lockTaken = new Promise<void>((r) => {
+			locked = r
+		})
+		const holder = sql.begin(async (tx) => {
+			await tx`SELECT pg_advisory_xact_lock(hashtextextended(${me.id}::text, 0))`
+			locked()
+			await held
+		})
+		await lockTaken
+
+		let settled = false
+		const pending = del().then((r) => {
+			settled = true
+			return r
+		})
+		await new Promise((r) => setTimeout(r, 4000))
+		expect(settled).toBe(false)
+
+		release()
+		await holder
+		expect((await pending).status).toBe(200)
 	})
 
 	it('records that the person left each workspace, for the audit trail', async () => {
