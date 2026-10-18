@@ -68,7 +68,7 @@ describe('Actors Routes', () => {
 			) {
 				mockResults.selectQueue = [
 					[{ id: CALLER_ID, type: callerType }],
-					[{ actorId: CALLER_ID }],
+					[{ actorId: CALLER_ID, role: 'member' }],
 					...(role ? [[{ role, type: callerType }]] : []),
 				]
 			}

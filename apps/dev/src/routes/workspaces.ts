@@ -765,6 +765,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 const addMemberRoute = createRoute({
 	method: 'post',
 	path: '/{id}/members',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Add member to workspace',
 	request: {
@@ -956,6 +957,7 @@ app.openapi(listMembersRoute, (async (c) => {
 const transferOwnershipRoute = createRoute({
 	method: 'post',
 	path: '/{id}/transfer-ownership',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Transfer billing ownership to another existing human member',
 	request: {
@@ -997,6 +999,10 @@ app.openapi(transferOwnershipRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
 	const { new_owner_actor_id: newOwnerActorId } = c.req.valid('json')
+
+	// The billing owner check below ignores the role, so a viewer who holds billing ownership
+	// would pass it. A non-member falls through to the existing 403/404 answers.
+	await isWorkspaceWriter(db, callerId, workspaceId)
 
 	if (newOwnerActorId === callerId) {
 		return c.json(createApiError('BAD_REQUEST', 'Already the billing owner'), 400)
@@ -1108,15 +1114,17 @@ const updateMemberParamsSchema = idParamSchema.extend({ actorId: z.string().uuid
 // POST /{id}/transfer-ownership, which locks the actor row and enforces the
 // plan's ownership cap; accepting 'owner' here would be a second, unguarded
 // path to the same state and would let a workspace exceed that cap.
+// 'viewer' makes the member read-only: authMiddleware reads the role on every request.
 const updateMemberBodySchema = z.object({
-	role: z.enum(['admin', 'member']),
+	role: z.enum(['admin', 'member', 'viewer']),
 })
 
 const updateMemberRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/members/{actorId}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
-	summary: "Change a workspace member's role (admin/member; owner via transfer-ownership)",
+	summary: "Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)",
 	request: {
 		params: updateMemberParamsSchema,
 		body: {
@@ -1209,7 +1217,7 @@ app.openapi(updateMemberRoute, (async (c) => {
 			.limit(1)
 		if (!locked) return { kind: 'not_found' } as const
 
-		// `role` is admin|member here, so reaching this branch is always a demotion.
+		// `role` is never owner here, so reaching this branch is always a demotion.
 		// The workspace-row lock above already serializes concurrent demotions, so
 		// this count is evaluated after any competing demotion has committed and
 		// reflects the reduced owner set rather than a stale one.

@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 
 /**
  * Check if an actor is a member of a workspace.
@@ -75,6 +75,34 @@ export async function isWorkspaceWriter(
  */
 export function assertWorkspaceWriterRole(role: string | undefined): void {
 	if (role === 'viewer') throw new ViewerReadOnlyError()
+}
+
+/**
+ * Write check for actor routes whose X-Workspace-Id header is optional. With the
+ * header, the role authMiddleware put on the context decides. Without it, a
+ * viewer could skip the gate by leaving the header off, so look at every
+ * workspace the caller shares with the target (all of the caller's own when the
+ * target is the caller): refuse when the caller is a viewer in each of them.
+ * No shared workspace falls through, so the route keeps its own 404 or 403.
+ */
+export async function assertActorWriterAccess(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId: string | undefined,
+	contextRole: string | undefined,
+): Promise<void> {
+	if (workspaceId) return assertWorkspaceWriterRole(contextRole)
+	const roles = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, callerId),
+				sql`workspace_members.workspace_id in (select workspace_id from workspace_members where actor_id = ${targetId})`,
+			),
+		)
+	if (roles.length > 0 && roles.every((r) => r.role === 'viewer')) throw new ViewerReadOnlyError()
 }
 
 /**
