@@ -145,8 +145,7 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/admin/linkedin-unipile/refresh-identities', 'refreshes stored credentials'],
 ]
 
-export const PENDING_ROUTES: PendingRoute[] = [
-]
+export const PENDING_ROUTES: PendingRoute[] = []
 
 export interface WriteRoute {
 	method: string
