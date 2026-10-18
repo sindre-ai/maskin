@@ -14,7 +14,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 vi.mock('../../lib/workspace-auth', () => ({
-	isWorkspaceMember: vi.fn().mockResolvedValue(true),
+	isWorkspaceWriter: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('../../lib/integrations/providers/linkedin-unipile/enumeration', () => ({

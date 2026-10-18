@@ -2,8 +2,9 @@
 // Local HTTP proxy between the Claude CLI and the model endpoint that swaps
 // every image block in a /v1/messages request for a short text note.
 //
-// Started by agent-run.sh only when MASKIN_STRIP_IMAGES=1, which llm-routing.ts
-// sets only for models that cannot read images. Without it, a screenshot tool
+// Started by agent-run.sh only when MASKIN_STRIP_IMAGES=1 (set by llm-routing.ts
+// only for models that cannot read images) or MASKIN_PROVIDER_PREFS is set (the
+// OpenRouter provider exclusions, injected into every request). Without it, a screenshot tool
 // result sent to such a model dies with "400 No endpoints found that support
 // image input" and the whole turn is lost. Images are found in user messages
 // and inside tool_result content (screenshots, the get_file tool, attachments).
@@ -55,16 +56,31 @@ function stripImages(payload) {
 	return count === 0 ? { payload, count: 0 } : { payload: { ...payload, messages }, count }
 }
 
-// Body to send upstream: rewritten JSON when it holds images, else the
-// original bytes untouched.
-function rewriteBody(req, bytes) {
+// OpenRouter "provider" preferences (e.g. { ignore: ['CoreWeave'] }) from
+// MASKIN_PROVIDER_PREFS, merged into each request body because the Claude CLI
+// has no way to send them. Anything unparseable is ignored (fail open).
+function readProviderPrefs(raw) {
+	if (!raw) return null
+	try {
+		const parsed = JSON.parse(raw)
+		return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+	} catch {
+		console.error('strip-images-proxy: MASKIN_PROVIDER_PREFS is not valid JSON, ignoring')
+		return null
+	}
+}
+
+// Body to send upstream: rewritten JSON when it holds images or provider
+// preferences are configured, else the original bytes untouched.
+function rewriteBody(req, bytes, providerPrefs = null) {
 	const pathname = (req.url || '').split('?')[0]
 	if (req.method !== 'POST' || !MESSAGES_PATH.test(pathname)) return bytes
 	if (req.headers['content-encoding'] || bytes.length > MAX_PARSE_BYTES) return bytes
 	try {
-		const { payload, count } = stripImages(JSON.parse(bytes.toString('utf8')))
-		if (count === 0) return bytes
-		console.log(`strip-images-proxy: stripped ${count} image(s)`)
+		let { payload, count } = stripImages(JSON.parse(bytes.toString('utf8')))
+		if (count === 0 && !providerPrefs) return bytes
+		if (providerPrefs) payload = { ...payload, provider: { ...payload.provider, ...providerPrefs } }
+		if (count > 0) console.log(`strip-images-proxy: stripped ${count} image(s)`)
 		return Buffer.from(JSON.stringify(payload))
 	} catch (err) {
 		console.error(`strip-images-proxy: could not parse body, forwarding unchanged: ${err.message}`)
@@ -103,7 +119,10 @@ function forward(req, res, bytes, target) {
 	upstream.end(bytes)
 }
 
-function createProxyServer(upstreamBaseUrl) {
+function createProxyServer(
+	upstreamBaseUrl,
+	providerPrefs = readProviderPrefs(process.env.MASKIN_PROVIDER_PREFS),
+) {
 	const target = new URL(upstreamBaseUrl)
 	return http.createServer((req, res) => {
 		const chunks = []
@@ -111,7 +130,7 @@ function createProxyServer(upstreamBaseUrl) {
 		req.on('error', () => res.destroy())
 		req.on('end', () => {
 			try {
-				forward(req, res, rewriteBody(req, Buffer.concat(chunks)), target)
+				forward(req, res, rewriteBody(req, Buffer.concat(chunks), providerPrefs), target)
 			} catch (err) {
 				console.error(`strip-images-proxy: request failed: ${err.message}`)
 				if (res.headersSent) res.destroy()

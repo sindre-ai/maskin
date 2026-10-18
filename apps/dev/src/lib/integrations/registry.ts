@@ -20,6 +20,9 @@ import {
 	meetWebhookVerifier,
 	resolveMeetInstallationId,
 } from './providers/google-meet/webhooks'
+import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
+import { revokeGoogleSearchConsoleGrant } from './providers/google-search-console/disconnect'
+import { startGscBackfill } from './providers/google-search-console/sync'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -128,6 +131,14 @@ providers.set('google-meet', {
 	postInstall: setupMeetWatch,
 	webhookFanOut: fanOutMeetEvent,
 	preDisconnect: stopMeetWatch,
+})
+
+// google-search-console — `postInstall` starts the detached 16-month backfill; the
+// daily delta sync runs from services/gsc-sync-scheduler.ts.
+providers.set('google-search-console', {
+	config: googleSearchConsoleConfig,
+	postInstall: startGscBackfill,
+	preDisconnect: revokeGoogleSearchConsoleGrant,
 })
 
 providers.set('posthog', {

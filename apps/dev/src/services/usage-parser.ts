@@ -2,7 +2,11 @@ import type { Database } from '@maskin/db'
 import { sessionLogs } from '@maskin/db/schema'
 import { parseResultLine } from '@maskin/shared'
 import { and, desc, eq, sql } from 'drizzle-orm'
-import { LEGACY_TOKENS_PER_USD_CENT, LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import {
+	LEGACY_TOKENS_PER_USD_CENT,
+	LLM_ROUTE_CUSTOM,
+	LLM_ROUTE_MASKIN_PLAN,
+} from '../lib/llm-routing'
 import { getModelPricing } from '../lib/openrouter-pricing'
 
 export type SessionUsage = {
@@ -269,13 +273,19 @@ export interface SessionCostInput {
  * price (or no model name was recorded), it bills the tokens at the legacy
  * blended rate instead — conservative, and never Anthropic-scale for a
  * DeepSeek-priced session.
+ *
+ * `workspace_custom` (a BYO endpoint) is priced the same way, but only when its
+ * model has a published price. The CLI cannot price a non-Anthropic model id
+ * and reports a made-up figure (`costBasis: "unknown"`); an endpoint serving a
+ * model OpenRouter does not list keeps the CLI figure, as there is nothing
+ * better to bill against.
  */
 export async function resolveSessionCostUsd({
 	route,
 	modelName,
 	usage,
 }: SessionCostInput): Promise<number | null> {
-	if (route !== LLM_ROUTE_MASKIN_PLAN) return usage.totalCostUsd
+	if (route !== LLM_ROUTE_MASKIN_PLAN && route !== LLM_ROUTE_CUSTOM) return usage.totalCostUsd
 
 	const inputTokens = usage.inputTokens ?? 0
 	const outputTokens = usage.outputTokens ?? 0
@@ -293,6 +303,8 @@ export async function resolveSessionCostUsd({
 			)
 		}
 	}
+
+	if (route === LLM_ROUTE_CUSTOM) return usage.totalCostUsd
 
 	// No priced model to bill against — fall back to the legacy blended rate.
 	// Input + output tokens only, mirroring `getWorkspacePlanUsdCentsUsage`'s
