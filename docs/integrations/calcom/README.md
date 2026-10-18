@@ -65,7 +65,8 @@ paste in Cal.com.
 ### 5. Trigger on calcom.booking and verify with a test booking
 
 1. In Maskin, create a trigger on entity type **calcom.booking** with action
-   **BOOKING_CREATED** and attach the agent that should react.
+   **BOOKING_CREATED** (or **BOOKING_CANCELLED** to react to cancellations) and
+   attach the agent that should react.
 2. Make a test booking on one of your Cal.com event types.
 3. Back on the Maskin extension page the setup card changes from Waiting for first
    delivery to Receiving, and the delivery shows up under Recent deliveries as
@@ -79,25 +80,13 @@ saved. A 404 means the URL is wrong or the token was regenerated.
 
 - Header: **x-cal-signature-256**, the HMAC-SHA256 of the raw request body in hex.
 - Algorithm: HMAC-SHA256 over the raw body with your secret, no prefix.
-- Id: **$.payload.uid**, the booking id. Cal.com may retry a delivery; a repeat of
-  the same id is acknowledged and ignored.
+- Id: **$.payload.uid**, the booking id. Maskin dedups on the id plus the action
+  (for example **bk_7Hn2xQ:BOOKING_CANCELLED**), so Cal.com retrying the same event
+  is acknowledged and ignored, while a cancellation after a creation for the same
+  booking is a new delivery.
 - Action: **$.triggerEvent**, for example BOOKING_CREATED.
 - Entity type: **calcom.booking**.
 
-## Known limits
+## Seated event types are not supported
 
-**One event per booking.** Maskin treats the External ID as the dedup key for the
-whole extension. Cal.com uses the same booking id (**$.payload.uid**) for every
-event about a booking, so only the first event Maskin sees for a booking is
-processed. In practice a BOOKING_CREATED is delivered and a later
-BOOKING_CANCELLED for that same booking is acknowledged as a duplicate and does
-not start anything. A cancellation for a booking Maskin never saw created does
-come through. A reschedule is not affected: Cal.com gives a rescheduled booking a
-new id, so it arrives as a new booking.
-
-Until the dedup key can include the action, build triggers on BOOKING_CREATED
-only.
-
-**Seated events are not supported.** On a seated event type every seat shares one
-booking id, so a second person booking the same slot is acknowledged as a
-duplicate and does not start anything.
+Every seat on a seated event type shares one booking id, so a second person booking the same slot is dropped as a duplicate.
