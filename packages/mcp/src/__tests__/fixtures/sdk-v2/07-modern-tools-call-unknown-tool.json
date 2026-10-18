@@ -1,0 +1,22 @@
+{
+	"name": "modern-tools-call-unknown-tool",
+	"description": "tools/call for a tool that is not registered. Modern leg: 2026-07-28 envelope in params._meta plus the standard MCP headers.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa",
+			"MCP-Protocol-Version": "2026-07-28",
+			"Mcp-Method": "tools/call",
+			"Mcp-Name": "no_such_tool"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"no_such_tool\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"fixture-client\",\"version\":\"1.0.0\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Tool no_such_tool not found\"}}"
+	}
+}

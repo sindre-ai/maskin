@@ -1,0 +1,19 @@
+{
+	"name": "legacy-tools-call-handler-throw",
+	"description": "tools/call for a tool whose handler throws. Legacy leg: no per-request envelope, 2025-era JSON-RPC.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"explode\",\"arguments\":{}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"handler exploded: upstream API returned 500\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":4}"
+	}
+}
