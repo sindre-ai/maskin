@@ -1409,6 +1409,8 @@ app.openapi(connectRoute, (async (c) => {
 			nonce,
 			installUrl,
 			ts: Date.now(),
+			workspaceId,
+			nativeReturn,
 		})
 		const origin = resolvePublicOrigin(c.req.url, c.req.header())
 		return c.json({
@@ -1431,20 +1433,49 @@ app.get('/:provider/native-launch', async (c) => {
 			400,
 		)
 	}
-	// The pending row minted by /connect must still be there: a launch link for a
-	// flow that already completed (or was never persisted) goes nowhere.
-	const [pending] = await db
-		.select({ id: integrations.id })
-		.from(integrations)
+	// Single-use: claim the pending row with one compare-and-set UPDATE. The
+	// marker lives in the row's (otherwise unused on pending rows) metadata, so
+	// concurrent opens race on the row lock and exactly one sees the marker unset.
+	// A launch link for a flow that already completed (or was never persisted)
+	// matches no pending row at all.
+	const [claimed] = await db
+		.update(integrations)
+		.set({
+			metadata: sql`coalesce(${integrations.metadata}, '{}'::jsonb) || jsonb_build_object('native_launched_at', now()::text)`,
+		})
 		.where(
 			and(
 				eq(integrations.provider, providerName),
 				eq(integrations.externalId, ticket.nonce),
 				eq(integrations.status, 'pending'),
+				sql`${integrations.metadata} ->> 'native_launched_at' IS NULL`,
 			),
 		)
-		.limit(1)
-	if (!pending) {
+		.returning({ id: integrations.id })
+	if (!claimed) {
+		const [stillPending] = await db
+			.select({ id: integrations.id })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.provider, providerName),
+					eq(integrations.externalId, ticket.nonce),
+					eq(integrations.status, 'pending'),
+				),
+			)
+			.limit(1)
+		// Already opened: end the web-auth session in the app rather than on a bare error.
+		if (stillPending && ticket.workspaceId && parseNativeOAuthReturnUrl(ticket.nativeReturn)) {
+			c.header('Cache-Control', 'no-store')
+			return c.redirect(
+				buildNativeOAuthReturnUrl(ticket.nativeReturn as string, {
+					provider: providerName,
+					workspaceId: ticket.workspaceId,
+					status: 'error',
+					reason: 'state_expired',
+				}),
+			)
+		}
 		return c.json(
 			createApiError('BAD_REQUEST', 'Invalid or expired launch link — please start again'),
 			400,

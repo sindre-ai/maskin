@@ -181,6 +181,60 @@ describe('GET /api/integrations/:provider/native-launch', () => {
 		expect(res.status).toBe(400)
 	})
 
+	async function mintTicketUrl(app: ReturnType<typeof buildApp>, provider: string, wsId: string) {
+		const res = await connect(app, provider, wsId, { native_return_url: NATIVE })
+		const { install_url } = (await res.json()) as { install_url: string }
+		const u = new URL(install_url)
+		return u.pathname + u.search
+	}
+
+	it('is single-use: a second open sets no cookie and ends in the app with state_expired', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const provider = registerProvider()
+		const app = buildApp()
+		const path = await mintTicketUrl(app, provider, ws.id)
+		const first = await app.request(path)
+		expect(first.status).toBe(302)
+		expect(first.headers.get('location')).toMatch(/^http:\/\/example\.test\/auth\?state=/)
+		const second = await app.request(path)
+		expect(second.status).toBe(302)
+		expect(second.headers.get('set-cookie')).toBeNull()
+		const loc = new URL(second.headers.get('location') ?? '')
+		expect(`${loc.protocol}//${loc.host}${loc.pathname}`).toBe(NATIVE)
+		expect(loc.searchParams.get('status')).toBe('error')
+		expect(loc.searchParams.get('reason')).toBe('state_expired')
+		expect(loc.searchParams.get('workspace_id')).toBe(ws.id)
+	})
+
+	it('lets exactly one of several concurrent opens win', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const provider = registerProvider()
+		const app = buildApp()
+		const path = await mintTicketUrl(app, provider, ws.id)
+		const results = await Promise.all(Array.from({ length: 8 }, () => app.request(path)))
+		const winners = results.filter((r) =>
+			(r.headers.get('location') ?? '').startsWith('http://example.test/'),
+		)
+		expect(winners).toHaveLength(1)
+		expect(winners[0]?.headers.get('set-cookie')).toContain('maskin_oauth_nonce_')
+		for (const r of results.filter((x) => x !== winners[0])) {
+			expect(r.headers.get('set-cookie')).toBeNull()
+			expect(r.headers.get('location')).toContain('reason=state_expired')
+		}
+	})
+
+	it('still completes the callback after the single launch', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const provider = registerProvider()
+		const { launchRes, cookie, state } = await startNative(buildApp(), provider, ws.id)
+		expect(launchRes.status).toBe(302)
+		const res = await buildApp().request(
+			`/api/integrations/${provider}/callback?code=abc&state=${state}`,
+			{ headers: { cookie } },
+		)
+		expect(res.headers.get('location')).toContain('status=connected')
+	})
+
 	it('rejects a ticket once the pending row is gone', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		const provider = registerProvider()

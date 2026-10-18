@@ -14,7 +14,8 @@ import { AUTH_TAG_LENGTH, IV_LENGTH, open, seal } from '../../crypto'
  * session sets the binding cookie in THAT browser and 302s to the provider. The
  * ticket seals the provider authorize URL (built server-side, never taken from
  * the client) together with the nonce, so the launch endpoint redirects only to
- * a URL this server minted for this nonce. It is short-lived: it is a bearer
+ * a URL this server minted for this nonce. It is single-use (the launch route
+ * claims the pending row atomically) and short-lived: it is a bearer
  * link, and the shorter it lives the smaller the window in which it could be
  * handed to a different browser.
  */
@@ -27,6 +28,10 @@ export interface NativeLaunchTicket {
 	nonce: string
 	installUrl: string
 	ts: number
+	/** Workspace of the flow; only used to build the error redirect on a re-open. */
+	workspaceId?: string
+	/** Allowlisted app return target, re-checked before it reaches a 302. */
+	nativeReturn?: string
 }
 
 export function encodeLaunchTicket(ticket: NativeLaunchTicket): string {
@@ -56,7 +61,11 @@ export function decodeLaunchTicket(raw: string, now = Date.now()): NativeLaunchT
 			return null
 		}
 		if (now - parsed.ts > NATIVE_LAUNCH_TTL_MS || parsed.ts > now + 5_000) return null
-		return parsed as NativeLaunchTicket
+		return {
+			...(parsed as NativeLaunchTicket),
+			workspaceId: typeof parsed.workspaceId === 'string' ? parsed.workspaceId : undefined,
+			nativeReturn: typeof parsed.nativeReturn === 'string' ? parsed.nativeReturn : undefined,
+		}
 	} catch {
 		return null
 	}
