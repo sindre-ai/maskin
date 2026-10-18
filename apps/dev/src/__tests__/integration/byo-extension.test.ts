@@ -494,29 +494,190 @@ describe('POST /api/webhooks/x/:token (integration)', () => {
 			200,
 		)
 	})
+})
 
-	it('verifies a Cal.com style delivery configured through the API (second vendor, config only)', async () => {
-		const app = buildApp()
-		const { json } = await createExtension(app, workspaceId, {
-			slug: 'cal-com',
-			name: 'Cal.com',
-			webhook_config: {
-				signatureScheme: 'hmac-sha256',
-				signatureHeader: 'x-cal-signature-256',
-				eventMap: {
-					externalIdPath: '$.payload.uid',
-					entityType: { literal: 'calcom.booking' },
-					action: { path: '$.triggerEvent' },
-				},
+// Second-vendor smoke (bet ca2a, Falsified if / Lost). The Fireflies path above
+// repeated for Cal.com. The only differences are the fixture payload and the
+// extension config row: the verifier, route and shim are the ones Fireflies uses.
+describe('Cal.com second-vendor smoke (integration)', () => {
+	let workspaceId: string
+	const CAL_SECRET = 'c'.repeat(64)
+
+	beforeEach(async () => {
+		resetWebhookRateLimits()
+		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+	})
+
+	// Data only: this is what the Wire Cal.com bookings to Maskin docs page tells
+	// the owner to enter in the extension form.
+	const calcomBody = () => ({
+		slug: 'cal-com',
+		name: 'Cal.com',
+		webhook_config: {
+			signatureScheme: 'hmac-sha256',
+			signatureHeader: 'x-cal-signature-256',
+			secretSource: 'credential',
+			eventMap: {
+				externalIdPath: '$.payload.uid',
+				entityType: { literal: 'calcom.booking' },
+				action: { path: '$.triggerEvent' },
 			},
-			signing_secret: SECRET,
-		})
+		},
+		signing_secret: CAL_SECRET,
+	})
+
+	async function setup() {
+		const app = buildApp()
+		const { res, json } = await createExtension(app, workspaceId, calcomBody())
+		expect(res.status).toBe(201)
+		return { app, ext: json, token: json.webhookToken as string }
+	}
+
+	it('stores the secret encrypted under extension:cal-com and never returns it', async () => {
+		const { ext } = await setup()
+		expect(ext.hasSigningSecret).toBe(true)
+		expect(JSON.stringify(ext)).not.toContain(CAL_SECRET)
+		const [row] = await db
+			.select()
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					eq(integrations.provider, 'extension:cal-com'),
+				),
+			)
+		expect(row?.actorId).toBeNull()
+		expect(decrypt(row?.credentials ?? '')).toBe(CAL_SECRET)
+	})
+
+	it('answers 401 for a bad signature and writes nothing', async () => {
+		const { app, token } = await setup()
 		const res = await app.request(
-			deliveryRequest(json.webhookToken as string, buildCalcomDelivery({ secret: SECRET, uid: 'bk_9' })),
+			deliveryRequest(token, buildCalcomDelivery({ secret: 'wrong'.repeat(13) })),
+		)
+		expect(res.status).toBe(401)
+		expect(await ledgerRows(workspaceId, 'cal-com')).toHaveLength(0)
+		expect(await eventRows(workspaceId, 'calcom.booking')).toHaveLength(0)
+	})
+
+	it('answers 401 for a Fireflies style prefixed signature (Cal.com sends raw hex)', async () => {
+		const { app, token } = await setup()
+		const delivery = buildCalcomDelivery({ secret: CAL_SECRET })
+		const res = await app.request(
+			deliveryRequest(token, {
+				...delivery,
+				headers: {
+					...delivery.headers,
+					'x-cal-signature-256': `sha256=${delivery.headers['x-cal-signature-256']}`,
+				},
+			}),
+		)
+		expect(res.status).toBe(401)
+		expect(await ledgerRows(workspaceId, 'cal-com')).toHaveLength(0)
+	})
+
+	it('commits one delivery row and one events row for a booking, then ignores a repeat', async () => {
+		const { app, ext, token } = await setup()
+		const delivery = buildCalcomDelivery({ secret: CAL_SECRET, uid: 'bk_7Hn2xQ' })
+
+		const first = await app.request(deliveryRequest(token, delivery))
+		expect(first.status).toBe(200)
+		expect(await first.json()).toMatchObject({ status: 'committed' })
+
+		const ledger = await ledgerRows(workspaceId, 'cal-com')
+		expect(ledger).toHaveLength(1)
+		expect(ledger[0]?.externalId).toBe('bk_7Hn2xQ')
+		expect(ledger[0]?.processedAt).not.toBeNull()
+
+		const evts = await eventRows(workspaceId, 'calcom.booking')
+		expect(evts).toHaveLength(1)
+		expect(evts[0]?.action).toBe('BOOKING_CREATED')
+		expect(evts[0]?.entityId).toBe(deliveryEntityId(ext.id, 'bk_7Hn2xQ'))
+		expect(evts[0]?.data).toMatchObject({
+			triggerEvent: 'BOOKING_CREATED',
+			payload: { uid: 'bk_7Hn2xQ' },
+		})
+
+		const repeat = await app.request(deliveryRequest(token, delivery))
+		expect(repeat.status).toBe(200)
+		expect(await repeat.json()).toMatchObject({ status: 'duplicate' })
+		expect(await ledgerRows(workspaceId, 'cal-com')).toHaveLength(1)
+		expect(await eventRows(workspaceId, 'calcom.booking')).toHaveLength(1)
+	})
+
+	it('reads the action from the payload, so a cancelled booking carries BOOKING_CANCELLED', async () => {
+		const { app, token } = await setup()
+		const res = await app.request(
+			deliveryRequest(
+				token,
+				buildCalcomDelivery({
+					secret: CAL_SECRET,
+					triggerEvent: 'BOOKING_CANCELLED',
+					uid: 'bk_cancel',
+				}),
+			),
 		)
 		expect(res.status).toBe(200)
 		const [evt] = await eventRows(workspaceId, 'calcom.booking')
-		expect(evt?.action).toBe('BOOKING_CREATED')
+		expect(evt?.action).toBe('BOOKING_CANCELLED')
+	})
+
+	it('answers 422 when the booking uid is missing', async () => {
+		const { app, token } = await setup()
+		const { createHmac } = await import('node:crypto')
+		const body = JSON.stringify({ triggerEvent: 'BOOKING_CREATED', payload: {} })
+		const res = await app.request(
+			deliveryRequest(token, {
+				body,
+				headers: {
+					'content-type': 'application/json',
+					'x-cal-signature-256': createHmac('sha256', CAL_SECRET).update(body).digest('hex'),
+				},
+			}),
+		)
+		expect(res.status).toBe(422)
+		expect(await ledgerRows(workspaceId, 'cal-com')).toHaveLength(0)
+	})
+
+	it('starts a session through a trigger on a committed booking', async () => {
+		const { app, token } = await setup()
+		const agent = await insertActor(db, { type: 'agent', name: 'Booking agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId, actorId: agent?.id as string, role: 'member' })
+		await insertTrigger(db, workspaceId, getTestActorId(), agent?.id as string, {
+			config: { entity_type: 'calcom.booking', action: 'BOOKING_CREATED' },
+		})
+
+		const bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+		const sessionManager = { createSession } as unknown as SessionManager
+		configureSessionLifecycle({ db, sessionManager })
+		const runner = new TriggerRunner(db, bridge, sessionManager)
+		await runner.start()
+		try {
+			const res = await app.request(
+				deliveryRequest(token, buildCalcomDelivery({ secret: CAL_SECRET, uid: 'trigger-me' })),
+			)
+			expect(res.status).toBe(200)
+			const [evt] = await eventRows(workspaceId, 'calcom.booking')
+			// Same PG NOTIFY emulation as the Fireflies trigger test above.
+			bridge.emit('event', {
+				workspace_id: workspaceId,
+				entity_type: 'calcom.booking',
+				entity_id: evt?.entityId,
+				action: 'BOOKING_CREATED',
+				actor_id: evt?.actorId,
+				event_id: String(evt?.id),
+			})
+			const deadline = Date.now() + 5000
+			while (createSession.mock.calls.length < 1 && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 50))
+			}
+		} finally {
+			await runner.stop()
+		}
+		expect(createSession).toHaveBeenCalledTimes(1)
 	})
 })
 
