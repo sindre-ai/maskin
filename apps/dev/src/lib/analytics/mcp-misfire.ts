@@ -25,6 +25,12 @@ export interface JsonRpcErrorLike {
 	message?: string
 }
 
+// The text the SDK puts on a bad-argument tool result. SDK v1 prefixed it with
+// "MCP error -32602: "; SDK v2 sends it bare ("Input validation error: Invalid
+// arguments for tool X: ..."), so the prefix cannot be what we key on.
+export const ARGUMENT_VALIDATION_TEXT =
+	/input\s+validation\s+error|invalid\s+arguments\s+for\s+tool/i
+
 // Classify a JSON-RPC error into one of the three named misfire kinds. Returns
 // null for anything we cannot confidently bucket — we deliberately drop those
 // on the floor rather than diluting the three named PostHog events.
@@ -40,7 +46,13 @@ export function classifyMcpError(error: JsonRpcErrorLike | undefined): McpMisfir
 	if (/unknown\s+tool/i.test(msg)) return 'tool_not_found'
 	// -32602 InvalidParams covers both unknown-param and schema-validation
 	// failures. Anything else we don't classify.
-	if (error.code !== -32602 && !/invalid.*param/i.test(msg)) return null
+	if (
+		error.code !== -32602 &&
+		!/invalid.*param/i.test(msg) &&
+		!ARGUMENT_VALIDATION_TEXT.test(msg)
+	) {
+		return null
+	}
 	if (/unrecognized\s+key|unknown\s+(?:field|argument|property)/i.test(msg)) {
 		return 'unknown_param'
 	}
