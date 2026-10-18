@@ -191,7 +191,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ] &&
             git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
-              docker/agent-base \
+              docker/agent-base turbo.json .github/workflows/ci.yml \
               apps/dev/src/lib/integrations/mcp-guard.ts \
               apps/dev/src/routes/mcp-guard.ts \
               apps/dev/src/services/extension-guard-launch.ts \
