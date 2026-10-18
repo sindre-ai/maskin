@@ -358,6 +358,96 @@ struct WorkspaceRemovedTests {
 		#expect(disk.read([String].self, key: kept, version: 1)?.value == ["y"])
 	}
 
+	@Test("the last workspace is detected; with two, neither is last")
+	func detectsLast() async {
+		let (one, _) = await make([a])
+		#expect(one.isLast("a"))
+		#expect(!one.isLast("zzz"))
+		let (two, _) = await make([a, b])
+		#expect(!two.isLast("a"))
+	}
+
+	@Test("deleting the last workspace raises the account-deletion offer and the no-workspaces state")
+	func offerAfterLast() async {
+		let (store, _) = await make([a])
+		#expect(!store.hasNoWorkspaces)
+		#expect(!store.offersAccountDeletion)
+		store.removed("a")
+		#expect(store.offersAccountDeletion)
+		#expect(store.hasNoWorkspaces)
+	}
+
+	@Test("deleting one of two raises no offer")
+	func noOfferWithOthersLeft() async {
+		let (store, _) = await make([a, b])
+		store.removed("a")
+		#expect(!store.offersAccountDeletion)
+		#expect(!store.hasNoWorkspaces)
+	}
+
+	@Test("Not now clears the offer but the person still lands on the no-workspaces state")
+	func notNow() async {
+		let (store, _) = await make([a])
+		store.removed("a")
+		store.dismissAccountDeletionOffer()
+		#expect(!store.offersAccountDeletion)
+		#expect(store.hasNoWorkspaces)
+	}
+
+	@Test("a cold launch whose server answer is an empty list lands on no-workspaces, without an offer")
+	func coldLaunchEmpty() async {
+		let (store, auth) = await make([])
+		#expect(auth.session != nil)
+		#expect(store.hasNoWorkspaces)
+		#expect(!store.offersAccountDeletion)
+	}
+
+	@Test("a failed load is never the no-workspaces state")
+	func failureIsNotEmpty() async {
+		let secrets = InMemorySecretStore()
+		try? secrets.write(try! JSONEncoder().encode(
+			StoredSession(apiKey: "ank_x", actorId: "a1", name: "A", email: nil, workspaceId: nil)))
+		let auth = AuthSession(authenticator: NoLogin(), store: secrets)
+		auth.restore()
+		let store = WorkspaceStore(source: StaticWorkspaceSource(failure: .init("offline")), auth: auth)
+		await store.refresh()
+		#expect(!store.hasNoWorkspaces)
+	}
+
+	@Test("a cache-only empty list does not count until the server confirms")
+	func cacheOnlyEmpty() throws {
+		let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+		defer { try? FileManager.default.removeItem(at: dir) }
+		let disk = DiskCache(directory: dir)
+		disk.write([WorkspaceSummary](), key: DiskCache.Key(actorId: "a1", name: "workspaces.list"), version: 1)
+		let secrets = InMemorySecretStore()
+		try secrets.write(try JSONEncoder().encode(
+			StoredSession(apiKey: "ank_x", actorId: "a1", name: "A", email: nil, workspaceId: nil)))
+		let auth = AuthSession(authenticator: NoLogin(), store: secrets)
+		auth.restore()
+		let store = WorkspaceStore(source: StaticWorkspaceSource([a]), auth: auth, disk: disk)
+		#expect(store.phase == .loaded)
+		#expect(store.workspaces.isEmpty)
+		#expect(!store.hasNoWorkspaces)
+	}
+
+	@Test("sign-out forgets a pending offer")
+	func resetClearsOffer() async {
+		let (store, _) = await make([a])
+		store.removed("a")
+		store.reset()
+		#expect(!store.offersAccountDeletion)
+		#expect(!store.hasNoWorkspaces)
+	}
+
+	@Test("the deletion store knows when it is deleting the last workspace")
+	func deletionStoreFlag() {
+		let store = WorkspaceDeletionStore(
+			api: FakeDeletion(), workspaceId: "a", isLastWorkspace: true, didDelete: {})
+		#expect(store.isLastWorkspace)
+		#expect(!WorkspaceDeletionStore(api: FakeDeletion(), workspaceId: "a", didDelete: {}).isLastWorkspace)
+	}
+
 	@Test("a deliberate sign-out is never reported as an expired session")
 	func signOutNotExpiry() async {
 		let (_, auth) = await make([a])

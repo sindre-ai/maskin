@@ -51,6 +51,8 @@ private let onRuntimeReady: (AppRuntime) -> Void
 			if let session = auth.session {
 				if firstUseActorId == session.actorId {
 					firstUse(session: session, auth: auth)
+				} else if environment.workspaces.hasNoWorkspaces {
+					NoWorkspacesView(environment: environment, runtime: runtime)
 				} else {
 					MainShell(environment: environment, runtime: runtime)
 				}

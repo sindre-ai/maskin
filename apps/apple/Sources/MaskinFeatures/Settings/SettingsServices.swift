@@ -105,6 +105,7 @@ struct SettingsServices {
 		let workspaces = environment.workspaces
 		return WorkspaceDeletionStore(
 			api: deletionSource, workspaceId: workspaceId,
+			isLastWorkspace: workspaces.isLast(workspaceId),
 			didDelete: {
 				workspaces.removed(workspaceId)
 				await workspaces.refresh()

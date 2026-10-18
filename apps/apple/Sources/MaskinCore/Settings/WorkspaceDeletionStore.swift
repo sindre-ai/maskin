@@ -20,15 +20,19 @@ public final class WorkspaceDeletionStore {
 
 	@ObservationIgnored private let api: any DeletionAPI
 	@ObservationIgnored private let workspaceId: String
+	/// Deleting this workspace leaves the person with none; the confirmation says so up front.
+	public let isLastWorkspace: Bool
 	@ObservationIgnored private let didDelete: @MainActor () async -> Void
 
 	/// - Parameter didDelete: refreshes the workspace list and moves the selection off the
 	///   deleted workspace (to another one, or to none).
 	public init(
-		api: any DeletionAPI, workspaceId: String, didDelete: @escaping @MainActor () async -> Void
+		api: any DeletionAPI, workspaceId: String, isLastWorkspace: Bool = false,
+		didDelete: @escaping @MainActor () async -> Void
 	) {
 		self.api = api
 		self.workspaceId = workspaceId
+		self.isLastWorkspace = isLastWorkspace
 		self.didDelete = didDelete
 	}
 

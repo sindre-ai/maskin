@@ -29,7 +29,11 @@ exists as a switch, default `true`, and `false` hides sign-up again if it is eve
 
 Settings › Setup › **Delete workspace** deletes the current workspace: preview, blockers (not the
 billing owner, live plan), the workspace name typed back, then a final confirmation. Afterwards
-the app switches to another workspace, or to the no-workspace state.
+the app switches to another workspace. If it was the person's last one, the confirmation says so
+beforehand, and afterwards the app asks "You have no workspaces left. Delete your account too?"
+(**Delete account** opens the same password flow; **Not now** leaves them on the no-workspaces
+screen). That screen (also shown on a cold launch with no workspaces) offers only **Delete
+account** and **Sign out**; creating a workspace is not offered in the app.
 
 ### App Review notes (paste into App Store Connect)
 

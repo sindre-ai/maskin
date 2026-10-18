@@ -32,7 +32,9 @@ struct DeleteWorkspaceView: View {
 				}
 			case .loaded(let preview):
 				Section {
-					Text(Self.warning(name: preview.workspaceName, otherMembers: preview.otherMembers))
+					Text(Self.warning(
+						name: preview.workspaceName, otherMembers: preview.otherMembers,
+						isLastWorkspace: store.isLastWorkspace))
 						.foregroundStyle(MaskinColor.ink)
 				}
 				if preview.canDelete { confirmation(preview) } else { blockers(preview) }
@@ -56,7 +58,7 @@ struct DeleteWorkspaceView: View {
 				Task { if await store.delete() { dismiss() } }
 			}
 		} message: {
-			Text("Everything in it is deleted for good. This can't be undone.")
+			Text(Self.finalWarning(isLastWorkspace: store.isLastWorkspace))
 		}
 	}
 
@@ -97,13 +99,21 @@ struct DeleteWorkspaceView: View {
 		}
 	}
 
-	static func warning(name: String, otherMembers: Int) -> String {
+	static func finalWarning(isLastWorkspace: Bool) -> String {
+		let base = "Everything in it is deleted for good. This can't be undone."
+		return isLastWorkspace
+			? base + " This is your last workspace, so you will have none left. You can then choose to delete your account too."
+			: base
+	}
+
+	static func warning(name: String, otherMembers: Int, isLastWorkspace: Bool = false) -> String {
 		var text = "Deleting “\(name)” permanently removes its objects, files, agents and history."
 		switch otherMembers {
 		case 0: break
 		case 1: text += " 1 other person loses access."
 		default: text += " \(otherMembers) other people lose access."
 		}
+		if isLastWorkspace { text += " It is your last workspace: you will have none left." }
 		return text
 	}
 }
