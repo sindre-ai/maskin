@@ -53,6 +53,9 @@ import { resolveClientSourceTag } from '../lib/sentry'
 import { serialize, serializeArray } from '../lib/serialize'
 import {
 	actorsShareWorkspace,
+	assertActorWriterAccess,
+	assertWorkspaceWriterRole,
+	getWorkspaceRole,
 	isAdminOfSharedWorkspace,
 	isWorkspaceHumanAdminOrOwner,
 	isWorkspaceMember,
@@ -71,6 +74,7 @@ type Env = {
 		actorType: string
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		workspaceRole?: string
 	}
 }
 
@@ -250,9 +254,20 @@ app.openapi(createActorRoute, async (c) => {
 
 		if (body.workspace_id) {
 			// Same answer as add-member gives a non-member, so existence does not leak.
-			if (!(await isWorkspaceMember(db, callerId, body.workspace_id))) {
+			const callerRole = await getWorkspaceRole(db, callerId, body.workspace_id)
+			if (callerRole === null) {
 				refuse('not_member', callerId, callerType)
 				return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+			}
+			// A viewer is read-only, and a new agent comes with its own key and the
+			// member role, so a viewer must not mint one. The gate sits after the
+			// membership check: a viewer already knows the workspace exists.
+			if (callerRole === 'viewer') {
+				refuse('viewer', callerId, callerType)
+				return c.json(
+					createApiError('FORBIDDEN', 'Viewers have read-only access to this workspace'),
+					403,
+				)
 			}
 			// tools and llm_config decide what runs in the agent's sessions and with
 			// which credentials, so they are held to the same floor as PATCH: a human
@@ -891,6 +906,7 @@ app.openapi(getActorRoute, (async (c) => {
 const updateActorRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Update actor',
 	request: {
@@ -1008,6 +1024,12 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	// A viewer is read-only, but the default workspace is the caller's own preference
+	// (the settings toggle), not workspace data, so a body of only that key stays open.
+	if (Object.keys(body).some((key) => key !== 'default_workspace_id')) {
+		await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1076,10 +1098,14 @@ app.openapi(updateActorRoute, (async (c) => {
 const regenerateApiKeyRoute = createRoute({
 	method: 'post',
 	path: '/{id}/api-keys',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Regenerate API key',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z.string().uuid().optional(),
+		}),
 	},
 	responses: {
 		200: {
@@ -1101,10 +1127,13 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	if (id !== actorId) {
 		return c.json(createApiError('FORBIDDEN', 'Not allowed'), 403)
 	}
+
+	await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
 
 	const { key } = generateApiKey()
 
@@ -1128,6 +1157,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 const resetActorRoute = createRoute({
 	method: 'post',
 	path: '/{id}/reset',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Reset system actor to factory defaults',
 	request: {
@@ -1151,6 +1181,7 @@ const resetActorRoute = createRoute({
 })
 
 app.openapi(resetActorRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -1224,6 +1255,7 @@ app.openapi(resetActorRoute, (async (c) => {
 const deleteActorRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Delete actor (agents only)',
 	request: {
@@ -1251,6 +1283,7 @@ const deleteActorRoute = createRoute({
 })
 
 app.openapi(deleteActorRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -1419,6 +1452,7 @@ const actorReturningCols = {
 const pauseAgentRoute = createRoute({
 	method: 'post',
 	path: '/{id}/pause',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Pause an agent and any in-flight session',
 	description:
@@ -1444,6 +1478,7 @@ const pauseAgentRoute = createRoute({
 })
 
 app.openapi(pauseAgentRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
@@ -1541,6 +1576,7 @@ const runAgentBodySchema = z
 const runAgentRoute = createRoute({
 	method: 'post',
 	path: '/{id}/run',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Run an agent — resume paused session or start a fresh one',
 	description:
@@ -1570,6 +1606,7 @@ const runAgentRoute = createRoute({
 })
 
 app.openapi(runAgentRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')

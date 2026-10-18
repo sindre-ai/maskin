@@ -33,7 +33,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
-import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -79,6 +79,7 @@ async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId:
 const createSessionRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Create and optionally start a session',
 	request: {
@@ -100,6 +101,7 @@ const createSessionRoute = createRoute({
 })
 
 app.openapi(createSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
@@ -592,6 +594,7 @@ const updateSessionSchema = z
 const patchSessionRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Update mutable session fields',
 	request: {
@@ -618,6 +621,7 @@ const patchSessionRoute = createRoute({
 })
 
 app.openapi(patchSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -695,6 +699,7 @@ app.openapi(patchSessionRoute, (async (c) => {
 const stopSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/stop',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Stop a running session',
 	request: {
@@ -722,6 +727,7 @@ const stopSessionRoute = createRoute({
 })
 
 app.openapi(stopSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -750,6 +756,7 @@ app.openapi(stopSessionRoute, (async (c) => {
 const pauseSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/pause',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Pause a running session and save snapshot',
 	request: {
@@ -777,6 +784,7 @@ const pauseSessionRoute = createRoute({
 })
 
 app.openapi(pauseSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -805,6 +813,7 @@ app.openapi(pauseSessionRoute, (async (c) => {
 const resumeSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/resume',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Resume a paused session from snapshot',
 	request: {
@@ -832,6 +841,7 @@ const resumeSessionRoute = createRoute({
 })
 
 app.openapi(resumeSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -860,6 +870,7 @@ app.openapi(resumeSessionRoute, (async (c) => {
 const inputSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/input',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Send a user input turn to an interactive session',
 	request: {
@@ -894,6 +905,7 @@ const inputSessionRoute = createRoute({
 })
 
 app.openapi(inputSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const sessionManager = c.get('sessionManager')
@@ -990,6 +1002,7 @@ app.openapi(inputSessionRoute, (async (c) => {
 const askSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/ask',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: "Post an agent's question into its chat conversation",
 	request: {
@@ -1026,6 +1039,7 @@ const askSessionRoute = createRoute({
 })
 
 app.openapi(askSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
