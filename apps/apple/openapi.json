@@ -38255,6 +38255,15 @@
 										],
 										"maxLength": 1000
 									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -38305,6 +38314,15 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
 											]
 										},
 										"mimeType": {
@@ -38420,6 +38438,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -38576,6 +38595,17 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"enum": [
+								"briefing"
+							]
+						},
+						"required": false,
+						"name": "kind",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -38672,6 +38702,15 @@
 													"null"
 												]
 											},
+											"kind": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"briefing"
+												]
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -38698,6 +38737,7 @@
 											"workspaceId",
 											"name",
 											"description",
+											"kind",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -38810,6 +38850,15 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
 											]
 										},
 										"mimeType": {
@@ -38925,6 +38974,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -39032,6 +39082,15 @@
 											"null"
 										],
 										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
 									},
 									"mime_type": {
 										"type": "string",
@@ -39148,6 +39207,15 @@
 												"null"
 											]
 										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -39261,6 +39329,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
