@@ -2,14 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Drives the real get_file handler registered by createMcpServer, with fetch
 // stubbed to return a file row shaped like GET /api/files/:id.
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -37,7 +36,7 @@ describe('get_file response blocks', () => {
 	beforeEach(async () => {
 		vi.clearAllMocks()
 		vi.resetModules()
-		const { registerAppTool } = await import('@modelcontextprotocol/ext-apps/server')
+		const { registerAppTool } = await import('../sdk')
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, h) => {
 			if (name === 'get_file') handler = h as typeof handler
 		})

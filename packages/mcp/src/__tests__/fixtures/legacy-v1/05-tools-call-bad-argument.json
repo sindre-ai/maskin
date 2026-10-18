@@ -1,0 +1,19 @@
+{
+	"name": "tools-call-bad-argument",
+	"description": "tools/call with an argument of the wrong type.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"list_workspaces\",\"arguments\":{\"limit\":\"ten\"}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Input validation error: Invalid arguments for tool list_workspaces: [\\n  {\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"expected\\\": \\\"number\\\",\\n    \\\"received\\\": \\\"string\\\",\\n    \\\"path\\\": [\\n      \\\"limit\\\"\\n    ],\\n    \\\"message\\\": \\\"Expected number, received string\\\"\\n  }\\n]\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":5}"
+	}
+}

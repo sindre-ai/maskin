@@ -5,14 +5,13 @@ import { tools } from '../tools'
 
 // Hoisted mocks so the create_workspace_skill → get_workspace_skill round-trip
 // can register handlers through the real server.ts wiring.
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -1480,7 +1479,7 @@ describe('workspace skill tools — end-to-end round-trip', () => {
 		vi.clearAllMocks()
 		handlers = new Map()
 
-		const { registerAppTool } = await import('@modelcontextprotocol/ext-apps/server')
+		const { registerAppTool } = await import('../sdk')
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
 		})

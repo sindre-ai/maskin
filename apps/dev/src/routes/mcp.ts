@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
+import { StreamableHTTPServerTransport } from '@maskin/mcp/sdk'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
 import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
+	ARGUMENT_VALIDATION_TEXT,
 	type JsonRpcErrorLike,
 	type McpMisfire,
 	classifyMcpError,
@@ -32,7 +33,7 @@ type Env = {
 
 const app = new Hono<Env>()
 
-interface JsonRpcMessage {
+export interface JsonRpcMessage {
 	jsonrpc?: string
 	id?: string | number | null
 	method?: string
@@ -628,15 +629,21 @@ function listRequests(body: unknown): JsonRpcMessage[] {
 //   - Top-level JSON-RPC `error` (e.g. transport-level failures).
 //   - `result.isError: true` with `content[0].text = "MCP error -32602: ..."`,
 //     which is how `tools/call` returns bad-input / tool-not-found errors
-//     on `@modelcontextprotocol/sdk` >= 1.29.
-function extractError(message: JsonRpcMessage): JsonRpcErrorLike | undefined {
+//     on `@modelcontextprotocol/sdk` >= 1.29. SDK v2 drops the "MCP error
+//     -32602: " prefix from that text, so a bad-argument message with no code
+//     in it is read as -32602 (InvalidParams), which is what it is.
+export function extractError(message: JsonRpcMessage): JsonRpcErrorLike | undefined {
 	if (message.error) return message.error
 	const result = message.result
 	if (!result || result.isError !== true) return undefined
 	const text = result.content?.[0]?.text
 	if (typeof text !== 'string' || text.length === 0) return undefined
 	const codeMatch = text.match(/-3\d{4}\b/)
-	const code = codeMatch ? Number(codeMatch[0]) : undefined
+	const code = codeMatch
+		? Number(codeMatch[0])
+		: ARGUMENT_VALIDATION_TEXT.test(text)
+			? -32602
+			: undefined
 	return { code, message: text }
 }
 

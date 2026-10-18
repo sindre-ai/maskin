@@ -29,6 +29,25 @@ describe('classifyMcpError', () => {
 		).toBe('schema_validation_error')
 	})
 
+	it('classifies SDK v2 bad-argument text that carries no error code', () => {
+		expect(
+			classifyMcpError({
+				message:
+					'Input validation error: Invalid arguments for tool list_workspaces: limit: Expected number, received string',
+			}),
+		).toBe('schema_validation_error')
+		expect(
+			classifyMcpError({
+				message:
+					"Input validation error: Invalid arguments for tool create_loop: steps.0.when: Unrecognized key(s) in object: 'x'",
+			}),
+		).toBe('unknown_param')
+	})
+
+	it('does not classify an unrelated message that has no code', () => {
+		expect(classifyMcpError({ message: 'handler exploded: upstream API returned 500' })).toBeNull()
+	})
+
 	it('returns null for InternalError (-32603) and other codes', () => {
 		expect(classifyMcpError({ code: -32603, message: 'boom' })).toBeNull()
 		expect(classifyMcpError({ code: -32000, message: 'anything' })).toBeNull()

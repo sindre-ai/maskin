@@ -1,6 +1,6 @@
-import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js'
 import { describe, expect, it } from 'vitest'
 import type { z } from 'zod'
+import { toJsonSchemaCompat } from '../sdk'
 import { tools } from '../tools'
 
 // The Claude CLI hands every tool's input schema to the model provider. Some

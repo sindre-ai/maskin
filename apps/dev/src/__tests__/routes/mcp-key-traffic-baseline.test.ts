@@ -15,7 +15,7 @@ const { mockHandleRequest, MockTransport, mockCreateMcpServer } = vi.hoisted(() 
 })
 
 vi.mock('@maskin/mcp', () => ({ createMcpServer: mockCreateMcpServer }))
-vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
+vi.mock('@maskin/mcp/sdk', () => ({
 	StreamableHTTPServerTransport: MockTransport,
 }))
 

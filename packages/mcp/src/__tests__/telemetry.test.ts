@@ -4,14 +4,13 @@ import type { TelemetryEvent, TelemetrySink } from '../telemetry'
 // Hoisted mocks for ext-apps + sdk + node:fs so we can spin up the real
 // createMcpServer wiring without any side effects, then drive the registered
 // handlers directly to verify the telemetry wrapper.
-vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+vi.mock('../sdk', () => ({
 	registerAppTool: vi.fn(),
 	registerAppResource: vi.fn(),
 	RESOURCE_MIME_TYPE: 'text/html',
-}))
-vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
 	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	StdioServerTransport: vi.fn(),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -31,7 +30,7 @@ describe('MCP telemetry wrapper', () => {
 		handlers = new Map()
 		definitions = new Map()
 
-		const { registerAppTool } = await import('@modelcontextprotocol/ext-apps/server')
+		const { registerAppTool } = await import('../sdk')
 		vi.mocked(registerAppTool).mockImplementation((_server, name, def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
 			definitions.set(name as string, def as { _meta?: { ui?: unknown } })

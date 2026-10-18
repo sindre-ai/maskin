@@ -1,0 +1,19 @@
+{
+	"name": "tools-call-unknown-tool",
+	"description": "tools/call for a tool that is not registered.",
+	"request": {
+		"method": "POST",
+		"headers": {
+			"Content-Type": "application/json",
+			"Accept": "application/json, text/event-stream",
+			"Authorization": "Bearer ank_fixture",
+			"X-Workspace-Id": "00000000-0000-4000-8000-0000000000aa"
+		},
+		"body": "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"no_such_tool\",\"arguments\":{}}}"
+	},
+	"response": {
+		"status": 200,
+		"contentType": "application/json",
+		"body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Tool no_such_tool not found\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":4}"
+	}
+}

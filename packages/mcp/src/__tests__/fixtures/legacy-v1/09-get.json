@@ -1,0 +1,15 @@
+{
+	"name": "get",
+	"description": "GET on the route.",
+	"request": {
+		"method": "GET",
+		"headers": {
+			"Authorization": "Bearer ank_fixture"
+		}
+	},
+	"response": {
+		"status": 405,
+		"contentType": "text/plain; charset=UTF-8",
+		"body": "Method Not Allowed"
+	}
+}
