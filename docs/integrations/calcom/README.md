@@ -87,26 +87,6 @@ saved. A 404 means the URL is wrong or the token was regenerated.
 - Action: **$.triggerEvent**, for example BOOKING_CREATED.
 - Entity type: **calcom.booking**.
 
-<<<<<<< HEAD
-## Known limits
-
-**One event per booking.** Maskin treats the External ID as the dedup key for the
-whole extension. Cal.com uses the same booking id (**$.payload.uid**) for every
-event about a booking, so only the first event Maskin sees for a booking is
-processed. In practice a BOOKING_CREATED is delivered and a later
-BOOKING_CANCELLED for that same booking is acknowledged as a duplicate and does
-not start anything. A cancellation for a booking Maskin never saw created does
-come through. A reschedule is not affected: Cal.com gives a rescheduled booking a
-new id, so it arrives as a new booking.
-
-Until the dedup key can include the action, build triggers on BOOKING_CREATED
-only.
-
-**Seated events are not supported.** On a seated event type every seat shares one
-booking id, so a second person booking the same slot is acknowledged as a
-duplicate and does not start anything.
-=======
 ## Seated event types are not supported
 
 Every seat on a seated event type shares one booking id, so a second person booking the same slot is dropped as a duplicate.
->>>>>>> 8bd430c (Claim extension webhook deliveries under external id plus action)
