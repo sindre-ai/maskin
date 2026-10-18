@@ -62,7 +62,7 @@ public struct ForYouScreen: View {
 		)
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()
-			async let stories: Void = appRuntime.storiesStore()?.load() ?? ()
+			async let stories: Void = appRuntime.storiesStore()?.loadCompletely() ?? ()
 			async let names: Void = loadTypeNames()
 			_ = await (feed, stories, names)
 		}
@@ -174,7 +174,11 @@ struct ForYouFeedView: View {
 						Color.clear.onChange(of: geometry.size.width, initial: true) { _, width in feedWidth = width }
 					}
 				)
-				.refreshable { await store.refresh() }
+				.refreshable {
+					async let feed: Void = store.refresh()
+					async let rail: Void = stories?.load() ?? ()
+					_ = await (feed, rail)
+				}
 				.overlay(alignment: .top) { newAsksPill(proxy: proxy) }
 			}
 			.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
