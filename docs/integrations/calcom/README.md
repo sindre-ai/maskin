@@ -65,7 +65,8 @@ paste in Cal.com.
 ### 5. Trigger on calcom.booking and verify with a test booking
 
 1. In Maskin, create a trigger on entity type **calcom.booking** with action
-   **BOOKING_CREATED** and attach the agent that should react.
+   **BOOKING_CREATED** (or **BOOKING_CANCELLED** to react to cancellations) and
+   attach the agent that should react.
 2. Make a test booking on one of your Cal.com event types.
 3. Back on the Maskin extension page the setup card changes from Waiting for first
    delivery to Receiving, and the delivery shows up under Recent deliveries as
@@ -79,11 +80,14 @@ saved. A 404 means the URL is wrong or the token was regenerated.
 
 - Header: **x-cal-signature-256**, the HMAC-SHA256 of the raw request body in hex.
 - Algorithm: HMAC-SHA256 over the raw body with your secret, no prefix.
-- Id: **$.payload.uid**, the booking id. Cal.com may retry a delivery; a repeat of
-  the same id is acknowledged and ignored.
+- Id: **$.payload.uid**, the booking id. Maskin dedups on the id plus the action
+  (for example **bk_7Hn2xQ:BOOKING_CANCELLED**), so Cal.com retrying the same event
+  is acknowledged and ignored, while a cancellation after a creation for the same
+  booking is a new delivery.
 - Action: **$.triggerEvent**, for example BOOKING_CREATED.
 - Entity type: **calcom.booking**.
 
+<<<<<<< HEAD
 ## Known limits
 
 **One event per booking.** Maskin treats the External ID as the dedup key for the
@@ -101,3 +105,8 @@ only.
 **Seated events are not supported.** On a seated event type every seat shares one
 booking id, so a second person booking the same slot is acknowledged as a
 duplicate and does not start anything.
+=======
+## Seated event types are not supported
+
+Every seat on a seated event type shares one booking id, so a second person booking the same slot is dropped as a duplicate.
+>>>>>>> 8bd430c (Claim extension webhook deliveries under external id plus action)

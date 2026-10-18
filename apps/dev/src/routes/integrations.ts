@@ -3509,11 +3509,15 @@ webhookApp.post('/x/:token', async (c) => {
 	const { externalId, entityType, action, data } = mapped.event
 
 	const provider = extensionProvider(ext.slug)
+	// The claim key is external id + action, so a cancel after a create for the same
+	// booking is a new delivery while a retry of the same event is still a duplicate.
+	// The event entity id below stays on the bare external id.
+	const claimKey = `${externalId}:${action}`
 	let claimRowId: string | null
 	try {
 		const rows = await db
 			.insert(webhookDeliveries)
-			.values({ provider, externalId, workspaceId: ext.workspaceId })
+			.values({ provider, externalId: claimKey, workspaceId: ext.workspaceId })
 			.onConflictDoNothing({
 				target: [
 					webhookDeliveries.provider,

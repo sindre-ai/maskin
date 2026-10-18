@@ -414,7 +414,7 @@ describe('POST /api/webhooks/x/:token (integration)', () => {
 
 		const ledger = await ledgerRows(workspaceId, 'fireflies')
 		expect(ledger).toHaveLength(1)
-		expect(ledger[0]?.externalId).toBe('ASxwZxCstx')
+		expect(ledger[0]?.externalId).toBe('ASxwZxCstx:ready')
 		expect(ledger[0]?.processedAt).not.toBeNull()
 
 		const evts = await eventRows(workspaceId, 'fireflies.transcript')
@@ -637,7 +637,7 @@ describe('Cal.com second-vendor smoke (integration)', () => {
 
 		const ledger = await ledgerRows(workspaceId, 'cal-com')
 		expect(ledger).toHaveLength(1)
-		expect(ledger[0]?.externalId).toBe('bk_7Hn2xQ')
+		expect(ledger[0]?.externalId).toBe('bk_7Hn2xQ:BOOKING_CREATED')
 		expect(ledger[0]?.processedAt).not.toBeNull()
 
 		const evts = await eventRows(workspaceId, 'calcom.booking')
@@ -671,6 +671,89 @@ describe('Cal.com second-vendor smoke (integration)', () => {
 		expect(res.status).toBe(200)
 		const [evt] = await eventRows(workspaceId, 'calcom.booking')
 		expect(evt?.action).toBe('BOOKING_CANCELLED')
+	})
+
+	it('commits a cancel after a create for the same booking, and ignores a repeated cancel', async () => {
+		const { app, ext, token } = await setup()
+		const created = buildCalcomDelivery({ secret: CAL_SECRET, uid: 'bk_7Hn2xQ' })
+		const cancelled = buildCalcomDelivery({
+			secret: CAL_SECRET,
+			triggerEvent: 'BOOKING_CANCELLED',
+			uid: 'bk_7Hn2xQ',
+		})
+
+		const first = await app.request(deliveryRequest(token, created))
+		expect(await first.json()).toMatchObject({ status: 'committed' })
+		const cancel = await app.request(deliveryRequest(token, cancelled))
+		expect(cancel.status).toBe(200)
+		expect(await cancel.json()).toMatchObject({ status: 'committed' })
+
+		const ledger = await ledgerRows(workspaceId, 'cal-com')
+		expect(ledger.map((r) => r.externalId).sort()).toEqual([
+			'bk_7Hn2xQ:BOOKING_CANCELLED',
+			'bk_7Hn2xQ:BOOKING_CREATED',
+		])
+		const evts = await eventRows(workspaceId, 'calcom.booking')
+		expect(evts.map((e) => e.action).sort()).toEqual(['BOOKING_CANCELLED', 'BOOKING_CREATED'])
+		// Both events stay on one entity, built from the bare booking id.
+		for (const evt of evts) {
+			expect(evt.entityId).toBe(deliveryEntityId(ext.id, 'bk_7Hn2xQ'))
+		}
+
+		const repeat = await app.request(deliveryRequest(token, cancelled))
+		expect(repeat.status).toBe(200)
+		expect(await repeat.json()).toMatchObject({ status: 'duplicate' })
+		expect(await ledgerRows(workspaceId, 'cal-com')).toHaveLength(2)
+		expect(await eventRows(workspaceId, 'calcom.booking')).toHaveLength(2)
+	})
+
+	it('starts a session for the create and another for the cancel of the same booking', async () => {
+		const { app, token } = await setup()
+		const agent = await insertActor(db, { type: 'agent', name: 'Booking agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId, actorId: agent?.id as string, role: 'member' })
+		for (const action of ['BOOKING_CREATED', 'BOOKING_CANCELLED']) {
+			await insertTrigger(db, workspaceId, getTestActorId(), agent?.id as string, {
+				config: { entity_type: 'calcom.booking', action },
+			})
+		}
+
+		const bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+		const sessionManager = { createSession } as unknown as SessionManager
+		configureSessionLifecycle({ db, sessionManager })
+		const runner = new TriggerRunner(db, bridge, sessionManager)
+		await runner.start()
+		try {
+			for (const triggerEvent of ['BOOKING_CREATED', 'BOOKING_CANCELLED'] as const) {
+				const res = await app.request(
+					deliveryRequest(
+						token,
+						buildCalcomDelivery({ secret: CAL_SECRET, triggerEvent, uid: 'bk_both' }),
+					),
+				)
+				expect(await res.json()).toMatchObject({ status: 'committed' })
+			}
+			// Same PG NOTIFY emulation as the trigger test above.
+			for (const evt of await eventRows(workspaceId, 'calcom.booking')) {
+				bridge.emit('event', {
+					workspace_id: workspaceId,
+					entity_type: 'calcom.booking',
+					entity_id: evt.entityId,
+					action: evt.action,
+					actor_id: evt.actorId,
+					event_id: String(evt.id),
+				})
+			}
+			const deadline = Date.now() + 5000
+			while (createSession.mock.calls.length < 2 && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 50))
+			}
+		} finally {
+			await runner.stop()
+		}
+		expect(createSession).toHaveBeenCalledTimes(2)
 	})
 
 	it('answers 422 when the booking uid is missing', async () => {
