@@ -96,6 +96,7 @@ describe('session keys', () => {
 		expect(parseGuardKey('nope')).toBeNull()
 		expect(parseGuardKey(`mgk2.${S}.${E}.x`)).toBeNull()
 		expect(parseGuardKey(`mgk1.${S}.${E}.`)).toBeNull()
+		expect(parseGuardKey('mgk1.a.b.c')).toBeNull()
 	})
 })
 
