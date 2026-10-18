@@ -81,6 +81,8 @@ public enum ToolLabel {
 				return .init(
 					label: str("description").map { "Delegated: \(shorten($0, 60))" } ?? "Delegated a task",
 					detail: str("prompt").map { cap($0) }, category: .delegate)
+			case "ToolSearch":
+				return .init(label: "Looked for a tool", detail: str("query"), category: .search)
 			case "TodoWrite":
 				return .init(label: "Updated the to-do list", detail: nil, category: .other)
 			default: break
@@ -126,6 +128,8 @@ public enum ToolLabel {
 					.map { cap($0) }, category: .create)
 		case "get_comments", "get_events":
 			return .init(label: "Read the activity", detail: nil, category: .read)
+		case "list_integrations", "list_integration_providers":
+			return .init(label: "Checked connected integrations", detail: nil, category: .read)
 		case "create_session", "run_agent":
 			return .init(label: "Started an agent", detail: nil, category: .delegate)
 		case "get_session", "get_session_logs", "list_sessions":

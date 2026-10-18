@@ -62,7 +62,7 @@ struct ObjectsListView: View {
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
 		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
+		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		.task(id: search) {
 			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
 			if !Task.isCancelled { await store.setSearch(search) }

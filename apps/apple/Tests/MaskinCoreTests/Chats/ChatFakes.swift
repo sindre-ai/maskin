@@ -55,6 +55,8 @@ actor FakeChatAPI: ChatAPI {
 	/// Runs inside `messages` before it answers: lets a test look at the store mid-request.
 	var messagesGate: (@Sendable () async -> Void)?
 	var persistedByKey: [String: ChatMessage] = [:]
+	/// Make the send response name another conversation (the stored row keeps the real one).
+	var responseConversationID: String?
 
 	init(server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1")) {
 		self.server = server
@@ -73,6 +75,7 @@ actor FakeChatAPI: ChatAPI {
 	func setSessions(_ s: [ChatAgentSession]) { sessionList = s }
 	func setActors(_ a: [ChatActor]) { actorList = a }
 	func setMessagesGate(_ f: (@Sendable () async -> Void)?) { messagesGate = f }
+	func setResponseConversationID(_ id: String?) { responseConversationID = id }
 	func setAfterSend(_ f: (@Sendable () async -> Void)?) { afterSend = f }
 
 	func detail(conversationID: String) async throws -> ConversationSummary {
@@ -111,7 +114,10 @@ actor FakeChatAPI: ChatAPI {
 			throw URLError(.networkConnectionLost)
 		}
 		if let afterSend { await afterSend() }
-		return saved
+		guard let responseConversationID else { return saved }
+		var response = saved
+		response.conversationID = responseConversationID
+		return response
 	}
 
 	func sessions(conversationID: String) async throws -> [ChatAgentSession] { sessionList }
@@ -258,7 +264,7 @@ final class ChatHarness {
 	init(
 		server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1"), online: Bool = true,
 		events: EventHub? = nil, file: URL? = nil, pageSize: Int = 50, failedFile: URL? = nil,
-		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [],
+		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [], pollInterval: Duration? = nil,
 		pinStore: any ChatPinStoring = MemoryChatPinStore()
 	) {
 		let api = existing ?? FakeChatAPI(server: server, detail: detail)
@@ -280,7 +286,7 @@ final class ChatHarness {
 		outbox.start()
 		store = ChatStore(
 			conversationID: "c1", currentActorID: "me", currentActorName: "Me", api: api, queue: queue,
-			events: events, pageSize: pageSize, pollInterval: nil, retryDelays: retryDelays, pinStore: pinStore,
+			events: events, pageSize: pageSize, pollInterval: pollInterval, retryDelays: retryDelays, pinStore: pinStore,
 			now: { chatT0 })
 	}
 

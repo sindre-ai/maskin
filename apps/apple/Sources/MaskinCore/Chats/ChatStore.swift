@@ -115,9 +115,17 @@ public final class ChatStore {
 	@ObservationIgnored private var readSent = 0
 	/// A delivered message keeps the row id of the optimistic bubble, so SwiftUI never swaps it.
 	@ObservationIgnored private var aliases: [Int: String] = [:]
-	@ObservationIgnored private var deliveredClientIDs: Set<String> = [] {
+	/// The server id each delivered send got, by client id.
+	@ObservationIgnored private var deliveredServerIDs: [String: Int] = [:] {
 		didSet { invalidateMessages() }
 	}
+	/// What this store sent, by client id, until the server's copy is in `confirmed`. The queue only
+	/// knows a send until the outbox drops it, which can be a moment before the confirmed copy is in
+	/// the thread (or, if the delivery hand-off is skipped, long before): in that window the bubble
+	/// would be in neither list and blink out. This keeps it on screen until its twin is here.
+	private var sentRows: [String: PendingChatSend] = [:]
+	/// A send nobody has confirmed after this long stops being drawn as "sending".
+	private static let sentRowLifetime: TimeInterval = 90
 
 	public init(
 		conversationID: String, currentActorID: String, currentActorName: String,
@@ -173,7 +181,7 @@ public final class ChatStore {
 	/// hundreds of times per render (the transcript, every row's mention chips, presence, read-by).
 	public var messages: [ChatMessage] {
 		_ = messagesRevision  // so a reader is told when the memo is invalidated
-		if let memo = messagesMemo { return memo }
+		if let memo = messagesMemo, messagesMemoExpiry.map({ now() < $0 }) ?? true { return memo }
 		messageBuilds += 1
 		var built: [ChatMessage] = []
 		// Tracks everything the build reads (the confirmed rows, the send queue, the outbox's state)
@@ -189,17 +197,30 @@ public final class ChatStore {
 
 	private var messagesRevision = 0
 	@ObservationIgnored private var messagesMemo: [ChatMessage]?
+	/// When the memo stops being valid on its own: the earliest sent bubble's lifetime running out.
+	@ObservationIgnored private var messagesMemoExpiry: Date?
 	/// How many times `messages` has been built (tests assert reads are served from the memo).
 	@ObservationIgnored private(set) var messageBuilds = 0
 
 	private func invalidateMessages() {
 		guard messagesMemo != nil else { return }
 		messagesMemo = nil
+		messagesMemoExpiry = nil
 		messagesRevision &+= 1
 	}
 
 	private func buildMessages() -> [ChatMessage] {
-		let rows = queue.pending(in: conversationID)
+		var rows = queue.pending(in: conversationID)
+		let queued = Set(rows.map(\.id))
+		let current = now()
+		let live = sentRows.values.filter {
+			!queued.contains($0.id) && current.timeIntervalSince($0.createdAt) < Self.sentRowLifetime
+		}
+		rows += live
+		// A sent bubble stops being drawn once its lifetime is up, so the memo must not outlive the
+		// earliest one: nothing mutates when time merely passes, and nothing would rebuild it.
+		messagesMemoExpiry = live.map { $0.createdAt.addingTimeInterval(Self.sentRowLifetime) }.min()
+		rows.sort { $0.createdAt < $1.createdAt }
 		var consumed: Set<Int> = []
 		var shown: [ChatMessage] = []
 		for row in rows {
@@ -207,7 +228,9 @@ public final class ChatStore {
 				shown.append(row.asMessage(actorID: currentActorID, actorName: currentActorName))
 				continue
 			}
-			if deliveredClientIDs.contains(row.id) { continue }
+			// Hidden only once the server's copy is actually in the list (under this row's id, or as
+			// a twin), never merely because a delivery was announced.
+			if isConfirmed(row) { continue }
 			if let twin = confirmedTwin(of: row, excluding: consumed) {
 				consumed.insert(twin)
 				continue
@@ -526,8 +549,13 @@ public final class ChatStore {
 				while !Task.isCancelled {
 					try? await Task.sleep(for: interval)
 					guard let self, !Task.isCancelled else { return }
-					if self.isActive, self.needsSessionPoll {
-						if self.hasLiveSpawnedSession { await self.sync(full: true) }
+					// Not gated on `isActive`: the app is "inactive" (not backgrounded) behind Control
+					// Center, a screen recording or a system sheet, and the thread is still on screen.
+					if self.needsSessionPoll {
+						// Messages normally arrive on the event stream. While a reply is owed, also ask for
+						// what is newer than the last row held (cheap, `after_id`), so a stream that
+						// dropped or stalled can't leave the reader looking at a frozen thread.
+						await self.sync(full: self.hasLiveSpawnedSession)
 						await self.refreshSessions()
 					}
 				}
@@ -805,6 +833,7 @@ public final class ChatStore {
 			let pending = try queue.send(
 				conversationID: conversationID, content: content, metadata: metadata,
 				afterServerID: lastServerID)
+			sentRows[pending.id] = pending
 			awaitingReplySince = now()
 			// Asking again lifts the "Stopped" marker: a new answer is on its way.
 			stoppedAgentIDs = []
@@ -823,6 +852,7 @@ public final class ChatStore {
 
 	/// Drop a message that never reached the server.
 	public func discard(_ id: String) {
+		sentRows[Self.clientID(of: id)] = nil
 		if !queue.discard(Self.clientID(of: id)) {
 			notice = "That message is already being sent."
 		}
@@ -837,7 +867,8 @@ public final class ChatStore {
 		case .delivered(let clientID, let message):
 			guard message.conversationID == conversationID, let serverID = message.serverID else { return }
 			// Already applied inline by the delivery observer; the stream repeats it.
-			guard deliveredClientIDs.insert(clientID).inserted else { return }
+			guard deliveredServerIDs[clientID] == nil else { return }
+			deliveredServerIDs[clientID] = serverID
 			aliases[serverID] = "local-\(clientID)"
 			merge([message])
 			awaitingReplySince = now()
@@ -1032,6 +1063,28 @@ public final class ChatStore {
 	private func publish(_ result: (rows: [ChatMessage], clearsReply: Bool)) {
 		if result.clearsReply { awaitingReplySince = nil }
 		if result.rows != confirmed { confirmed = result.rows }
+		pruneSentRows()
+	}
+
+	/// The server's copy of this send is in the list: under the bubble's own id, or by the server id
+	/// the delivery reported.
+	private func isConfirmed(_ row: PendingChatSend) -> Bool {
+		let delivered = deliveredServerIDs[row.id]
+		return confirmed.contains { $0.id == "local-\(row.id)" || (delivered != nil && $0.serverID == delivered) }
+	}
+
+	/// Forget sends whose confirmed copy has arrived.
+	private func pruneSentRows() {
+		guard !sentRows.isEmpty else { return }
+		var consumed: Set<Int> = []
+		for (id, row) in sentRows.sorted(by: { $0.value.createdAt < $1.value.createdAt }) {
+			if isConfirmed(row) {
+				sentRows[id] = nil
+			} else if let twin = confirmedTwin(of: row, excluding: consumed) {
+				consumed.insert(twin)
+				sentRows[id] = nil
+			}
+		}
 	}
 
 	private func merged(_ incoming: [ChatMessage], into base: [ChatMessage]) -> (rows: [ChatMessage], clearsReply: Bool) {

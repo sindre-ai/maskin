@@ -69,4 +69,14 @@ struct ToolLabelTests {
 		let idOnly = ToolLabel.describe(name: "mcp__x__get_thing", input: input(#"{"id":"7d444840-9dc0-11d1-b245-5ffdce74fad2"}"#))
 		#expect(idOnly.detail == "via x")
 	}
+
+	@Test("tool search and the integration lookups read as plain actions, not raw tool names")
+	func plainNames() {
+		let search = ToolLabel.describe(name: "ToolSearch", input: input(#"{"query":"gmail"}"#))
+		#expect(search.label == "Looked for a tool")
+		#expect(search.detail == "gmail")
+		let providers = ToolLabel.describe(name: "mcp__maskin__list_integration_providers", input: input("{}"))
+		#expect(providers.label == "Checked connected integrations")
+		#expect(providers.category == .read)
+	}
 }

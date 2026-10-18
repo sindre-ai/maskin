@@ -43,7 +43,6 @@ final class LiveAudioSession {
 
 	/// `activate` with the usual wiring: interruptions pause `voice`, headphone buttons mute it.
 	func activate(title: String, voice: LiveVoiceController) throws {
-		SpeechReader.shared.usesExternalAudioSession = true
 		try activate(
 			title: title,
 			handlers: Handlers(
@@ -53,6 +52,8 @@ final class LiveAudioSession {
 				mediaServicesReset: { voice.audioReset() },
 				setMuted: { muted in if voice.isMuted != muted { voice.toggleMute() } },
 				toggleMuted: { voice.toggleMute() }))
+		// Only once the session is ours: a failed activation has no `deactivate()` to hand it back.
+		SpeechReader.shared.usesExternalAudioSession = true
 	}
 
 	/// Bring the session back after an interruption or a media-services reset.

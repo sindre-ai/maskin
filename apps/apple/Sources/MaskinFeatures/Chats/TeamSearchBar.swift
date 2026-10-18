@@ -12,7 +12,7 @@ extension View {
 		searchable(text: text, isPresented: isPresented, prompt: "Search Team")
 			.searchMinimized()
 			// Closing the field collapses it back to the icon; a leftover query would keep it open.
-			.onChange(of: isPresented.wrappedValue) { if !isPresented.wrappedValue { text.wrappedValue = "" } }
+			.onChange(of: isPresented.wrappedValue) { if !isPresented.wrappedValue, !text.wrappedValue.isEmpty { text.wrappedValue = "" } }
 	}
 }
 

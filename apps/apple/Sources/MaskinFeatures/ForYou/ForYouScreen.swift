@@ -52,8 +52,15 @@ public struct ForYouScreen: View {
 		.shellToolbar(
 			environment: environment, title: "For you",
 			actions: ShellActions(
-				live: true, display: ShellDisplayMenu { displayMenu },
-				displaySymbol: ShellActions.slidersSymbol)
+				live: true, displayActive: runtime.store.options.filterBarOn,
+				displayToggle: {
+					// The button only shows or hides the filter pills; turning them off clears the pick.
+					let store = runtime.store
+					withAnimation(MaskinMotion.standard) {
+						store.options.filterBarOn.toggle()
+						if !store.options.filterBarOn { store.options.intent = nil }
+					}
+				})
 		)
 		.task(id: environment.workspaceId) {
 			// Runs on every appearance, not only a workspace change: fetch only what is not already
@@ -77,43 +84,6 @@ public struct ForYouScreen: View {
 			workspaceId: { auth.session?.workspaceId })
 		await directory.load()
 		runtime.store.typeDisplayNames = directory.schema.displayNames
-	}
-
-	/// The one For you menu: take every suggested option, filter by kind of ask, show what has been
-	/// handled. Taking acts on the store's per-card path, so each card stays individually
-	/// undoable, and one Undo takes the whole batch back.
-	@ViewBuilder private var displayMenu: some View {
-		let store = runtime.store
-		let take = store.suggestedOptionCount
-		let skip = store.suggestedSkipCount
-		Button {
-			let batch = store.takeSuggestedOptions()
-			MaskinHaptics.play(.success)
-			undoOffer = UndoOffer(message: batch.summary + ".") {
-				withAnimation(MaskinMotion.standard) { store.undo(batch) }
-			}
-		} label: {
-			Text("Take every suggested")
-			Text(
-				skip > 0
-					? "\(take) now \u{00B7} skips \(skip) that need\(skip == 1 ? "s" : "") a confirmation or a call from you"
-					: "\(take) now \u{00B7} Undo for a few seconds after")
-			Image(systemName: "checkmark.circle")
-		}
-		.disabled(take == 0)
-		Divider()
-		Toggle(
-			"Filter",
-			isOn: Binding(
-				get: { store.options.filterBarOn },
-				set: {
-					store.options.filterBarOn = $0
-					if !$0 { store.options.intent = nil }
-				}))
-		Toggle(
-			"Show handled",
-			isOn: Binding(
-				get: { store.options.showsHandled }, set: { store.options.showsHandled = $0 }))
 	}
 }
 

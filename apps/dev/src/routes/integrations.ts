@@ -24,6 +24,7 @@ import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
+import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
@@ -848,7 +849,10 @@ app.openapi(connectRoute, (async (c) => {
 	// so we activate the integration synchronously from the configured env var
 	// and return a redirect back to the same settings page.
 	if (resolved.config.auth.type === 'api_key') {
-		const body = (await c.req.json().catch(() => ({}))) as { api_key?: string }
+		const body = (await c.req.json().catch(() => ({}))) as {
+			api_key?: string
+			return_to?: unknown
+		}
 		const apiKey = body.api_key
 		if (!apiKey) {
 			logger.warn(`api_key provider ${providerName} missing request body api_key`)
@@ -939,8 +943,14 @@ app.openapi(connectRoute, (async (c) => {
 			authType: 'api_key',
 		})
 
-		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+		// The client navigates to this URL once the key is saved. A caller that
+		// started from a chat passes `return_to` so the user stays in that chat.
+		return c.json({
+			install_url: frontendUrlForReturn(
+				workspaceId,
+				sanitizeReturnPath(body.return_to, workspaceId),
+			),
+		})
 	}
 
 	// manual providers have no OAuth redirect and no outbound-callable API key —
@@ -1243,6 +1253,11 @@ app.openapi(connectRoute, (async (c) => {
 		return c.json({ webhook_url: webhookUrl, integration_id: row.id })
 	}
 
+	const oauthBody = (await c.req.json().catch(() => ({}))) as {
+		install_new_org?: boolean
+		return_to?: unknown
+	}
+
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
 	const statePayload: OAuthStatePayload = {
@@ -1250,6 +1265,7 @@ app.openapi(connectRoute, (async (c) => {
 		actorId,
 		ts: Date.now(),
 		nonce,
+		returnTo: sanitizeReturnPath(oauthBody.return_to, workspaceId),
 	}
 
 	// If provider uses PKCE, generate and include code verifier in state
@@ -1264,10 +1280,7 @@ app.openapi(connectRoute, (async (c) => {
 	// appear there. This sends them to the App's install page instead, carrying
 	// the same signed state, so the post-install callback matches the pending row
 	// minted below and handleCallback binds the new installation directly.
-	const installNewOrg =
-		providerName === 'github' &&
-		((await c.req.json().catch(() => ({}))) as { install_new_org?: boolean }).install_new_org ===
-			true
+	const installNewOrg = providerName === 'github' && oauthBody.install_new_org === true
 
 	// Bind the state to *this* browser. `state` is a sealed envelope with no
 	// session binding, so on its own it authorizes whoever presents it — and the
@@ -1575,8 +1588,14 @@ app.openapi(callbackRoute, (async (c) => {
 		// POST /github/select-installation, which carries its own `createdBy` check,
 		// so the binding cookie has no further job.
 		clearOAuthNonceCookie(c, providerName)
+		// The org picker lives on the settings page, so this one stops there; it
+		// carries the return path so the page can send the user on to the chat
+		// once they have picked.
+		const selectReturnTo = sanitizeReturnPath(stateData.returnTo, stateData.workspaceId)
 		return c.redirect(
-			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}`,
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}${
+				selectReturnTo ? `&return_to=${encodeURIComponent(selectReturnTo)}` : ''
+			}`,
 		)
 	}
 
@@ -1807,10 +1826,16 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	// Redirect to frontend settings/integrations page
-	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+	// Back to where the user started the connect (an agent's Connect card in a
+	// chat), or the settings page when the flow began there. Re-checked even
+	// though the state is sealed: this value ends up in a 302.
 	clearOAuthNonceCookie(c, providerName)
-	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
+	return c.redirect(
+		frontendUrlForReturn(
+			stateData.workspaceId,
+			sanitizeReturnPath(stateData.returnTo, stateData.workspaceId),
+		),
+	)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 // ── DELETE /api/integrations/:id ──────────────────────────────────────
