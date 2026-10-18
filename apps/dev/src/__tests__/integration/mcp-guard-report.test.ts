@@ -19,6 +19,11 @@ const WRAPPER = fileURLToPath(
 	new URL('../../../../../docker/agent-base/maskin-mcp-guard.js', import.meta.url),
 )
 const API = 'http://localhost:3000'
+const GUARD_TEST_IMAGE = process.env.GUARD_TEST_IMAGE
+
+function guardedCommand(servers: Record<string, unknown>): string {
+	return (servers['extension-fireflies'] as { command: string }).command
+}
 
 function buildApp() {
 	const app = new Hono<{ Variables: { db: typeof db } }>()
@@ -235,8 +240,8 @@ describe('POST /api/internal/mcp-guard/report (integration)', () => {
 })
 
 // Real wrapper process, real launch output, real endpoint and database. This is the
-// launch -> wrapper -> report -> row path without Docker; the built image is covered by
-// the image smoke on the agent-base build job.
+// launch -> wrapper -> report -> row path. It runs on the host everywhere, and again with
+// the wrapper inside the built agent-base image when GUARD_TEST_IMAGE is set (CI).
 const FAKE_SERVER = `
 const readline = require('node:readline')
 const rl = readline.createInterface({ input: process.stdin })
@@ -291,7 +296,7 @@ describe('wrapper to endpoint round trip (integration)', () => {
 		)
 	}
 
-	it('an agent with no grant calling a write tool gets forbidden and exactly one row exists', async () => {
+	async function roundTrip(inContainer: boolean) {
 		const app = buildApp()
 		api = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }) as unknown as Server
 		await new Promise<void>((resolve) => api?.once('listening', () => resolve()))
@@ -304,12 +309,28 @@ describe('wrapper to endpoint round trip (integration)', () => {
 			args: string[]
 			env: Record<string, string>
 		}
-		// Same wrapper, same env and args the launch produced; only the binary path and the
-		// real server (a stub that answers any tools/call) differ.
-		child = spawn('node', [WRAPPER, '--', 'node', serverPath], {
-			env: { ...process.env, ...guarded.env },
-		})
 		expect(guarded.args[0]).toBe('--')
+		if (inContainer) {
+			// The wrapper as installed in the agent-base image built from this branch
+			// (GUARD_TEST_IMAGE), at the binary path the launch rewrite points at, with the
+			// env the launch produced. Host networking reaches the API listening above.
+			const envFlags = Object.entries(guarded.env).flatMap(([k, v]) => ['-e', `${k}=${v}`])
+			child = spawn(
+				'docker',
+				[
+					...['run', '-i', '--rm', '--network', 'host', '-v', `${dir}:/fake:ro`, ...envFlags],
+					...['--entrypoint', guardedCommand(l.servers), GUARD_TEST_IMAGE as string],
+					...['--', 'node', '/fake/fake.js'],
+				],
+				{ env: process.env },
+			)
+		} else {
+			// Same wrapper, same env and args the launch produced; only the binary path and the
+			// real server (a stub that answers any tools/call) differ.
+			child = spawn('node', [WRAPPER, '--', 'node', serverPath], {
+				env: { ...process.env, ...guarded.env },
+			})
+		}
 
 		const denied = await call(child, 1, 'delete_transcript')
 		expect(denied.error?.message).toBe('ACL: tool not granted')
@@ -322,5 +343,19 @@ describe('wrapper to endpoint round trip (integration)', () => {
 		}
 		expect(rows).toHaveLength(1)
 		expect(rows[0]).toMatchObject({ toolName: 'delete_transcript', sessionId: l.sessionId })
-	}, 20_000)
+	}
+
+	it(
+		'an agent with no grant calling a write tool gets forbidden and exactly one row exists',
+		() => roundTrip(false),
+		20_000,
+	)
+
+	// The real-container check. Runs only where an image built from this branch is named in
+	// GUARD_TEST_IMAGE (the integration-tests job in CI builds it); skipped elsewhere.
+	it.skipIf(!GUARD_TEST_IMAGE)(
+		'the same round trip holds with the wrapper running inside the agent-base image',
+		() => roundTrip(true),
+		60_000,
+	)
 })
