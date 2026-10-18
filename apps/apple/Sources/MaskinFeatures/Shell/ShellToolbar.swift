@@ -68,10 +68,16 @@ extension View {
 	/// Account, workspace, settings and sign-out live in the profile sheet the avatar opens. Apply to
 	/// a screen's root content, inside its `NavigationStack`, and don't also set `.navigationTitle`
 	/// on it.
+	///
+	/// With `header`, iPhone swaps the system bar for the v4 header (kicker, large title, one
+	/// sentence, the buttons on a dark teal gradient). iPad and Mac keep the system bar.
 	public func shellToolbar(
-		environment: AppEnvironment, title: String? = nil, actions: ShellActions = ShellActions()
+		environment: AppEnvironment, title: String? = nil, actions: ShellActions = ShellActions(),
+		header: ShellHeaderContent? = nil
 	) -> some View {
-		modifier(ShellToolbarModifier(environment: environment, title: title, actions: actions))
+		modifier(
+			ShellToolbarModifier(
+				environment: environment, title: title, actions: actions, header: header))
 	}
 }
 
@@ -79,6 +85,8 @@ private struct ShellToolbarModifier: ViewModifier {
 	var environment: AppEnvironment
 	var title: String?
 	var actions: ShellActions
+	var header: ShellHeaderContent?
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
 	@Environment(\.shellShowsAvatar) private var avatarAllowed
@@ -90,7 +98,40 @@ private struct ShellToolbarModifier: ViewModifier {
 		runtime != nil && avatarAllowed && environment.auth.session != nil
 	}
 
+	/// The v4 header replaces the system bar on iPhone only.
+	private var headerContent: ShellHeaderContent? {
+		#if os(iOS)
+			sizeClass == .compact ? header : nil
+		#else
+			nil
+		#endif
+	}
+
 	func body(content: Content) -> some View {
+		if let headerContent, let title {
+			VStack(spacing: -MaskinScreenHeader.overlap) {
+				ShellHeaderView(
+					environment: environment, title: title, content: headerContent, actions: actions,
+					showsAvatar: showsAvatar,
+					openSearch: { runtime?.selectedTab = .search },
+					openProfile: { runtime?.showProfile = true },
+					openLive: { liveMeeting.present(.dailyBriefing) })
+				content
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
+					.background(MaskinScreenHeader.sheet)
+					.clipShape(
+						UnevenRoundedRectangle(
+							topLeadingRadius: MaskinScreenHeader.sheetRadius,
+							topTrailingRadius: MaskinScreenHeader.sheetRadius)
+					)
+			}
+			.hiddenNavigationBar()
+		} else {
+			barContent(content)
+		}
+	}
+
+	private func barContent(_ content: Content) -> some View {
 		content
 			.shellTitle(title)
 			// Every push from a root screen gets the arrow-only back button (user decision).
@@ -253,5 +294,16 @@ extension View {
 				})
 		}
 		return AnyView(self)
+	}
+}
+
+extension View {
+	/// iOS: hides the system bar (the v4 header replaces it). A no-op on macOS, which never shows it.
+	fileprivate func hiddenNavigationBar() -> some View {
+		#if os(iOS)
+			return toolbar(.hidden, for: .navigationBar)
+		#else
+			return self
+		#endif
 	}
 }

@@ -16,6 +16,9 @@ public struct ObjectsScreen: View {
 	@State private var path: [ObjectRoute] = []
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.horizontalSizeClass) private var sizeClass
+	/// iPhone shows the v4 header, which carries the title; elsewhere the bar stays untitled.
+	private var usesHeader: Bool { sizeClass == .compact }
 
 	public init(environment: AppEnvironment) {
 		self.environment = environment
@@ -101,7 +104,10 @@ public struct ObjectsScreen: View {
 			ObjectsListView(
 				store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking, intents: intents,
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
-				.shellToolbar(environment: environment, title: nil, actions: shellActions)
+				.shellToolbar(
+					environment: environment, title: usesHeader ? "Objects" : nil, actions: shellActions,
+					header: ShellHeaderContent(
+						kicker: "OBJECTS", summary: ShellHeaderSummary.objects(needingYou: store.needsYouCount)))
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)

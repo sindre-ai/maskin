@@ -110,7 +110,11 @@ private struct LoopsContainer: View {
 		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
 		.shellToolbar(
 			environment: environment, title: "Flows",
-			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
+			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }),
+			header: ShellHeaderContent(
+				kicker: "FLOWS",
+				summary: ShellHeaderSummary.flows(
+					running: loops.loops.filter { $0.status.isLive }.count, needingYou: loops.needYouCount)))
 	}
 
 	@ViewBuilder

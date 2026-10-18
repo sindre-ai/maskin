@@ -131,6 +131,7 @@ private struct AdaptiveTabs: View {
 			}
 		}
 		.tabViewStyle(.sidebarAdaptable)
+		.tint(MaskinScreenHeader.tabTint)
 		// The sidebar opens with the workspace and a Switch button (4-iPad.md).
 		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
 		// The profile lives at the foot of the sidebar too (4-iPad.md).
