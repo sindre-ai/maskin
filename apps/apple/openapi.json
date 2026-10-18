@@ -18716,7 +18716,11 @@
 								"type": "object",
 								"properties": {
 									"native_return_url": {
-										"type": "string"
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
 									}
 								}
 							}
@@ -19832,7 +19836,11 @@
 								"type": "object",
 								"properties": {
 									"native_return_url": {
-										"type": "string"
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
 									}
 								}
 							}
