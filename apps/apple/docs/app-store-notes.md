@@ -32,8 +32,9 @@ billing owner, live plan), the workspace name typed back, then a final confirmat
 the app switches to another workspace. If it was the person's last one, the confirmation says so
 beforehand, and afterwards the app asks "You have no workspaces left. Delete your account too?"
 (**Delete account** opens the same password flow; **Not now** leaves them on the no-workspaces
-screen). That screen (also shown on a cold launch with no workspaces) offers only **Delete
-account** and **Sign out**; creating a workspace is not offered in the app.
+screen). That screen (also shown on a cold launch with no workspaces) offers **Create
+workspace** (a name field and a primary button; the app switches to the new workspace), with
+**Delete account** and **Sign out** as secondary actions.
 
 ### App Review notes (paste into App Store Connect)
 
