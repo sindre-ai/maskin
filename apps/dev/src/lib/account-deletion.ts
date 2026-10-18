@@ -17,7 +17,9 @@ export function hasLiveSubscription(billing: MembershipFacts['billing']): boolea
 	if (!billing) return false
 	const id = billing.stripe_subscription_id
 	if (typeof id !== 'string' || id.length === 0) return false
-	return billing.status !== 'canceled'
+	// `canceled` and `incomplete_expired` are Stripe's terminal states: nothing more will be billed.
+	// Every other status (including `unpaid`, which can still be revived) keeps blocking.
+	return billing.status !== 'canceled' && billing.status !== 'incomplete_expired'
 }
 
 /** Nobody else human is in the workspace, so it is the one the person can take with them. */

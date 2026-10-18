@@ -6,13 +6,14 @@ import {
 	notifications,
 	objects,
 	readState,
+	sessions,
 	subscriptions,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it } from 'vitest'
-import { insertActor, insertObject, insertWorkspace } from '../factories'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, sql } from './global-setup'
 
@@ -25,7 +26,7 @@ describe('account deletion (integration)', () => {
 	let me: { id: string; apiKey: string }
 	let app: OpenAPIHono
 
-	function appFor(actorId: string, actorType = 'human') {
+	function appFor(actorId: string, actorType = 'human', sessionManager?: unknown) {
 		const a = new OpenAPIHono()
 		a.use('*', async (c, next) => {
 			// biome-ignore lint/suspicious/noExplicitAny: minimal context for the route under test
@@ -33,6 +34,7 @@ describe('account deletion (integration)', () => {
 			ctx.set('db', db)
 			ctx.set('actorId', actorId)
 			ctx.set('actorType', actorType)
+			if (sessionManager) ctx.set('sessionManager', sessionManager)
 			await next()
 		})
 		a.route('/api/account', accountRoutes)
@@ -288,6 +290,37 @@ describe('account deletion (integration)', () => {
 			expect(await db.select().from(objects).where(eq(objects.id, sharedObj.id))).toHaveLength(1)
 			const [after] = await db.select().from(actors).where(eq(actors.id, me.id))
 			expect(after?.name).toBe('Deleted user')
+		})
+
+		it('stops live sessions of the workspaces it erases, and leaves shared-workspace sessions alone', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const solo = await insertWorkspace(db, me.id, { name: 'Solo' })
+			const soloLive = await insertSession(db, solo.id, agent.id, me.id, { status: 'running' })
+			await db.update(sessions).set({ containerId: 'c-solo' }).where(eq(sessions.id, soloLive.id))
+
+			const colleague = await insertActor(db, { type: 'human' })
+			const shared = await insertWorkspace(db, colleague.id, { name: 'Shared' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: shared.id, actorId: me.id, role: 'member' })
+			const sharedLive = await insertSession(db, shared.id, agent.id, me.id, {
+				status: 'running',
+			})
+			await db
+				.update(sessions)
+				.set({ containerId: 'c-shared' })
+				.where(eq(sessions.id, sharedLive.id))
+
+			const stopped: string[] = []
+			const stopper = {
+				stopSandboxesForPurge: vi.fn(async (rows: { id: string }[]) => {
+					stopped.push(...rows.map((r) => r.id))
+				}),
+			}
+			const res = await delAll(appFor(me.id, 'human', stopper))
+			expect(res.status).toBe(200)
+			expect(stopped).toEqual([soloLive.id])
+			expect(await db.select().from(sessions).where(eq(sessions.id, sharedLive.id))).toHaveLength(1)
 		})
 
 		it('keeps a sole workspace when the flag is not set', async () => {

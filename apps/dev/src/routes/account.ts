@@ -28,7 +28,9 @@ import {
 	evictPurgedWorkspace,
 	purgeWorkspace,
 	purgeWorkspaceStorage,
+	stopPurgedSessions,
 } from '../lib/workspace-purge'
+import type { SessionManager } from '../services/session-manager'
 
 // Deleting your own account (App Store guideline 5.1.1(v): an app that offers sign-up must let the
 // person delete the account from inside the app).
@@ -51,6 +53,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		storageProvider?: StorageProvider
+		sessionManager?: SessionManager
 	}
 }
 
@@ -251,6 +254,7 @@ app.openapi(deleteRoute, async (c) => {
 	for (const p of result.purged) {
 		evictPurgedWorkspace(p.workspaceId, p.result)
 		logger.info('account: workspace deleted with account', { actorId, workspaceId: p.workspaceId })
+		await stopPurgedSessions(c.get('sessionManager'), p.result)
 		await purgeWorkspaceStorage(c.get('storageProvider'), p.workspaceId, p.result)
 	}
 	logger.info('account: deleted', {

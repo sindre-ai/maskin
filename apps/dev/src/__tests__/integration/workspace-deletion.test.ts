@@ -59,7 +59,12 @@ function fakeStorage(keys: string[] = []): StorageProvider & { deleted: string[]
 	}
 }
 
-function appFor(actorId: string, actorType = 'human', storageProvider?: StorageProvider) {
+function appFor(
+	actorId: string,
+	actorType = 'human',
+	storageProvider?: StorageProvider,
+	sessionManager?: unknown,
+) {
 	const a = new OpenAPIHono()
 	a.use('*', async (c, next) => {
 		// biome-ignore lint/suspicious/noExplicitAny: minimal context for the route under test
@@ -68,6 +73,7 @@ function appFor(actorId: string, actorType = 'human', storageProvider?: StorageP
 		ctx.set('actorId', actorId)
 		ctx.set('actorType', actorType)
 		if (storageProvider) ctx.set('storageProvider', storageProvider)
+		if (sessionManager) ctx.set('sessionManager', sessionManager)
 		await next()
 	})
 	a.route('/api/workspaces', workspaceRoutes)
@@ -490,6 +496,68 @@ describe('workspace deletion (integration)', () => {
 			})
 			.where(eq(workspaces.id, ws.id))
 		expect((await del(ws.id, 'Paid')).status).toBe(200)
+	})
+
+	it('treats a dead incomplete_expired subscription as not blocking, and unpaid as blocking', async () => {
+		const billing = (status: string) => ({
+			billing: { plan: 'pro', stripe_subscription_id: 'sub_1', status },
+		})
+		const { ws } = await seedWorkspace(me, { name: 'Dead plan', settings: billing('unpaid') })
+		expect((await del(ws.id, 'Dead plan')).status).toBe(409)
+		await db
+			.update(workspaces)
+			.set({ settings: billing('incomplete_expired') })
+			.where(eq(workspaces.id, ws.id))
+		expect((await del(ws.id, 'Dead plan')).status).toBe(200)
+	})
+
+	it('stops the sandboxes of unfinished sessions after commit, and only those', async () => {
+		const { ws, agent } = await seedWorkspace(me, { name: 'Live sessions' })
+		const live = await insertSession(db, ws.id, agent.id, me.id, { status: 'running' })
+		await db.update(sessions).set({ containerId: 'container-live' }).where(eq(sessions.id, live.id))
+		const noSandbox = await insertSession(db, ws.id, agent.id, me.id, { status: 'running' })
+		await db.update(sessions).set({ containerId: null }).where(eq(sessions.id, noSandbox.id))
+		const done = await insertSession(db, ws.id, agent.id, me.id, { status: 'completed' })
+		await db.update(sessions).set({ containerId: 'container-done' }).where(eq(sessions.id, done.id))
+
+		// A session in another workspace must never be touched.
+		const other = await seedWorkspace(me, { name: 'Other' })
+		const otherLive = await insertSession(db, other.ws.id, other.agent.id, me.id, {
+			status: 'running',
+		})
+		await db
+			.update(sessions)
+			.set({ containerId: 'container-other' })
+			.where(eq(sessions.id, otherLive.id))
+
+		const stopped: { id: string; containerId: string | null }[] = []
+		const stopper = {
+			stopSandboxesForPurge: vi.fn(async (rows: typeof stopped) => {
+				// The rows are already gone when this runs: the purge committed first.
+				expect(await db.select().from(sessions).where(eq(sessions.id, live.id))).toEqual([])
+				stopped.push(...rows)
+			}),
+		}
+		const res = await del(ws.id, 'Live sessions', appFor(me.id, 'human', undefined, stopper))
+		expect(res.status).toBe(200)
+		expect(stopped.map((r) => r.id)).toEqual([live.id])
+		expect(stopped[0]?.containerId).toBe('container-live')
+		expect(stopped.some((r) => r.id === noSandbox.id || r.id === otherLive.id)).toBe(false)
+		expect(await db.select().from(sessions).where(eq(sessions.id, otherLive.id))).toHaveLength(1)
+	})
+
+	it('still answers 200 when stopping the sandboxes throws', async () => {
+		const { ws, agent } = await seedWorkspace(me, { name: 'Stop fails' })
+		const live = await insertSession(db, ws.id, agent.id, me.id, { status: 'running' })
+		await db.update(sessions).set({ containerId: 'c' }).where(eq(sessions.id, live.id))
+		const stopper = {
+			stopSandboxesForPurge: vi.fn(async () => {
+				throw new Error('docker down')
+			}),
+		}
+		const res = await del(ws.id, 'Stop fails', appFor(me.id, 'human', undefined, stopper))
+		expect(res.status).toBe(200)
+		expect(stopper.stopSandboxesForPurge).toHaveBeenCalled()
 	})
 
 	it('previews who loses access and what blocks deletion', async () => {

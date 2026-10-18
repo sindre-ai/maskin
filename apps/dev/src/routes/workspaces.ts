@@ -55,7 +55,12 @@ import {
 	seatCapForPlan,
 } from '../lib/workspace-capacity'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
-import { evictPurgedWorkspace, purgeWorkspace, purgeWorkspaceStorage } from '../lib/workspace-purge'
+import {
+	evictPurgedWorkspace,
+	purgeWorkspace,
+	purgeWorkspaceStorage,
+	stopPurgedSessions,
+} from '../lib/workspace-purge'
 import { workspaceForCaller } from '../lib/workspace-redaction'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
@@ -1528,6 +1533,7 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 				members: outcome.result.memberActorIds.length,
 			})
 			evictPurgedWorkspace(workspaceId, outcome.result)
+			await stopPurgedSessions(c.get('sessionManager'), outcome.result)
 			await purgeWorkspaceStorage(c.get('storageProvider'), workspaceId, outcome.result)
 			return c.json({ deleted: true as const }, 200)
 	}

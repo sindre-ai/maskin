@@ -31,6 +31,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, notInArray, or } from 'drizzle-orm'
+import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { evictBillingUsage } from './billing-usage-cache'
 import { logger } from './logger'
 
@@ -121,6 +122,15 @@ export interface WorkspacePurgeResult {
 	memberActorIds: string[]
 	/** API keys of agents that were scrubbed, to evict from the auth cache after commit. */
 	scrubbedAgentApiKeys: string[]
+	/** Unfinished sessions that own a sandbox, to stop after commit. */
+	liveSessions: LivePurgedSession[]
+}
+
+export interface LivePurgedSession {
+	id: string
+	workspaceId: string
+	containerId: string | null
+	agentServerId: string | null
 }
 
 const DELETED_AGENT_NAME = 'Deleted agent'
@@ -178,6 +188,23 @@ export async function purgeWorkspace(
 			.from(sessions)
 			.where(eq(sessions.workspaceId, workspaceId)),
 	)
+
+	// Unfinished sessions that own a sandbox. Read now: the rows are deleted below, and stopping
+	// needs the container / agent-server id.
+	const liveSessions = await tx
+		.select({
+			id: sessions.id,
+			workspaceId: sessions.workspaceId,
+			containerId: sessions.containerId,
+			agentServerId: sessions.agentServerId,
+		})
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.workspaceId, workspaceId),
+				notInArray(sessions.status, [...TERMINAL_STATUSES]),
+			),
+		)
 
 	const members = await tx
 		.select({ actorId: workspaceMembers.actorId, type: actors.type })
@@ -266,6 +293,7 @@ export async function purgeWorkspace(
 		storageKeys: [...storageKeys],
 		memberActorIds: members.map((m) => m.actorId),
 		scrubbedAgentApiKeys,
+		liveSessions: liveSessions.filter((x) => x.containerId || x.agentServerId),
 	}
 }
 
@@ -305,4 +333,20 @@ export async function purgeWorkspaceStorage(
 		}
 	}
 	logger.info('workspace purge: storage cleared', { workspaceId, objects: keys.size, failed })
+}
+
+/**
+ * Stops the sandboxes of the purged workspace's unfinished sessions. Runs after commit and never
+ * throws, like the storage purge: the rows are already gone.
+ */
+export async function stopPurgedSessions(
+	stopper: { stopSandboxesForPurge(rows: LivePurgedSession[]): Promise<void> } | undefined,
+	result: WorkspacePurgeResult,
+): Promise<void> {
+	if (!stopper || result.liveSessions.length === 0) return
+	try {
+		await stopper.stopSandboxesForPurge(result.liveSessions)
+	} catch (err) {
+		logger.error('workspace purge: stopping sessions failed', { err })
+	}
 }

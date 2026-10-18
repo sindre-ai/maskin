@@ -32,6 +32,16 @@ describe('hasLiveSubscription', () => {
 		expect(hasLiveSubscription({ stripe_subscription_id: 'sub_1', status: 'past_due' })).toBe(true)
 		expect(hasLiveSubscription({ stripe_subscription_id: 'sub_1', status: 'canceled' })).toBe(false)
 	})
+
+	it("treats Stripe's terminal incomplete_expired as dead, but keeps unpaid blocking", () => {
+		expect(
+			hasLiveSubscription({ stripe_subscription_id: 'sub_1', status: 'incomplete_expired' }),
+		).toBe(false)
+		expect(hasLiveSubscription({ stripe_subscription_id: 'sub_1', status: 'unpaid' })).toBe(true)
+		expect(hasLiveSubscription({ stripe_subscription_id: 'sub_1', status: 'incomplete' })).toBe(
+			true,
+		)
+	})
 })
 
 describe('accountDeletionPreview', () => {
