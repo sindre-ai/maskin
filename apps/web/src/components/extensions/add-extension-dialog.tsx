@@ -16,6 +16,8 @@ import { ApiError, type ExtensionResponse } from '@/lib/api'
 import { useState } from 'react'
 
 const MAX_SLUG_ATTEMPTS = 5
+const CALCOM_DOCS_URL =
+	'https://github.com/sindre-ai/maskin/blob/main/docs/integrations/calcom/README.md'
 
 /**
  * Names a new extension and creates it as a draft. The slug is derived from the
@@ -87,6 +89,14 @@ export function AddExtensionDialog({
 						<p className="text-xs text-muted-foreground">
 							A short label, e.g. Fireflies, Cal.com, Loops.so.
 						</p>
+						<a
+							href={CALCOM_DOCS_URL}
+							target="_blank"
+							rel="noreferrer"
+							className="text-xs text-primary underline underline-offset-2"
+						>
+							Wire Cal.com bookings to Maskin
+						</a>
 						<FormError error={nameError ?? error ?? undefined} />
 					</div>
 					<DialogFooter className="gap-2 sm:gap-0">
