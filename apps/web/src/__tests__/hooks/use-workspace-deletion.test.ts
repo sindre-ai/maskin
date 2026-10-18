@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,6 +10,7 @@ vi.mock('@/lib/api', () => ({
 
 import { useDeleteWorkspace, useWorkspaceDeletionPreview } from '@/hooks/use-workspaces'
 import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { TestWrapper } from '../setup'
 
 beforeEach(() => vi.clearAllMocks())
@@ -43,5 +45,32 @@ describe('useDeleteWorkspace', () => {
 		result.current.mutate('Acme')
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.workspaces.delete).toHaveBeenCalledWith('ws-1', 'Acme')
+	})
+
+	it('keeps the workspace caches when cleanup is deferred', async () => {
+		vi.mocked(api.workspaces.delete).mockResolvedValue({ deleted: true })
+		const { result } = renderHook(
+			() => ({
+				del: useDeleteWorkspace('ws-1', { deferCleanup: true }),
+				qc: useQueryClient(),
+			}),
+			{ wrapper: TestWrapper },
+		)
+		const remove = vi.spyOn(result.current.qc, 'removeQueries')
+		result.current.del.mutate('Acme')
+		await waitFor(() => expect(result.current.del.isSuccess).toBe(true))
+		expect(remove).not.toHaveBeenCalled()
+	})
+
+	it('drops the workspace caches on success by default', async () => {
+		vi.mocked(api.workspaces.delete).mockResolvedValue({ deleted: true })
+		const { result } = renderHook(
+			() => ({ del: useDeleteWorkspace('ws-1'), qc: useQueryClient() }),
+			{ wrapper: TestWrapper },
+		)
+		const remove = vi.spyOn(result.current.qc, 'removeQueries')
+		result.current.del.mutate('Acme')
+		await waitFor(() => expect(result.current.del.isSuccess).toBe(true))
+		expect(remove).toHaveBeenCalledWith({ queryKey: queryKeys.workspaces.detail('ws-1') })
 	})
 })

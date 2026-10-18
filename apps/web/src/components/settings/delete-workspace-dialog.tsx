@@ -1,3 +1,4 @@
+import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,7 +12,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
-import { useDeleteWorkspace, useWorkspaceDeletionPreview } from '@/hooks/use-workspaces'
+import {
+	removeDeletedWorkspaceQueries,
+	useDeleteWorkspace,
+	useWorkspaceDeletionPreview,
+	useWorkspaces,
+} from '@/hooks/use-workspaces'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -28,20 +35,40 @@ export function DeleteWorkspaceDialog({
 	onOpenChange: (open: boolean) => void
 }) {
 	const navigate = useNavigate()
+	const queryClient = useQueryClient()
+	const { data: workspaces } = useWorkspaces()
+	// Deleting the only workspace leaves the person with nothing to open, so we offer to delete the
+	// account too. Caches stay alive until that prompt is done: this page is still mounted behind it.
+	const isLastWorkspace = workspaces?.length === 1 && workspaces[0].id === workspaceId
 	const preview = useWorkspaceDeletionPreview(workspaceId, open)
-	const deleteWorkspace = useDeleteWorkspace(workspaceId)
+	const deleteWorkspace = useDeleteWorkspace(workspaceId, { deferCleanup: isLastWorkspace })
 	const [confirmName, setConfirmName] = useState('')
+	const [step, setStep] = useState<'confirm' | 'no-workspaces-left'>('confirm')
+	const [accountOpen, setAccountOpen] = useState(false)
 
 	const canDelete = preview.data?.can_delete === true
 	const nameMatches = confirmName === workspaceName
 
 	const handleOpenChange = (next: boolean) => {
 		if (deleteWorkspace.isPending) return
+		if (step === 'no-workspaces-left') {
+			if (!next) finishWithoutAccountDeletion()
+			return
+		}
 		if (!next) {
 			setConfirmName('')
 			deleteWorkspace.reset()
 		}
 		onOpenChange(next)
+	}
+
+	const finishWithoutAccountDeletion = () => {
+		removeDeletedWorkspaceQueries(queryClient, workspaceId)
+		setStep('confirm')
+		setAccountOpen(false)
+		onOpenChange(false)
+		// Lands on the index route, which has no workspace to open (see report).
+		navigate({ to: '/' })
 	}
 
 	const handleDelete = (e?: React.FormEvent) => {
@@ -50,10 +77,48 @@ export function DeleteWorkspaceDialog({
 		deleteWorkspace.mutate(confirmName, {
 			onSuccess: () => {
 				toast.success(`Deleted ${workspaceName}`)
-				// The index route lands on the one remaining workspace, or the picker.
+				if (isLastWorkspace) {
+					setStep('no-workspaces-left')
+					return
+				}
+				// The index route lands on the last-opened remaining workspace.
 				navigate({ to: '/' })
 			},
 		})
+	}
+
+	if (accountOpen) {
+		return (
+			<DeleteAccountDialog
+				open
+				onOpenChange={(next) => {
+					if (!next) finishWithoutAccountDeletion()
+				}}
+			/>
+		)
+	}
+
+	if (step === 'no-workspaces-left') {
+		return (
+			<Dialog open={open} onOpenChange={handleOpenChange}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>You have no workspaces left</DialogTitle>
+						<DialogDescription>
+							Delete your account too? You can also keep it and create a new workspace later.
+						</DialogDescription>
+					</DialogHeader>
+					<DialogFooter>
+						<Button variant="outline" onClick={finishWithoutAccountDeletion}>
+							Not now
+						</Button>
+						<Button variant="destructive" onClick={() => setAccountOpen(true)}>
+							Delete account
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		)
 	}
 
 	return (
@@ -67,6 +132,13 @@ export function DeleteWorkspaceDialog({
 							agents, chats and files. It cannot be undone.
 						</DialogDescription>
 					</DialogHeader>
+
+					{isLastWorkspace && (
+						<p className="text-sm text-muted-foreground">
+							This is your only workspace. You will have no workspaces left, and we will ask whether
+							you also want to delete your account.
+						</p>
+					)}
 
 					{preview.isLoading && (
 						<div className="flex justify-center py-4">

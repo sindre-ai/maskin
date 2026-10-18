@@ -46,6 +46,59 @@ test.describe('Delete workspace', () => {
 		}
 	}
 
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		for (const theme of ['light', 'dark'] as const) {
+			test(`asks to delete the account after the last workspace goes at ${viewport.label} (${theme})`, async ({
+				page,
+				account,
+			}) => {
+				await page.setViewportSize({ width: viewport.width, height: viewport.height })
+				await setTheme(page, theme)
+				// The fixture's workspace is the actor's only one.
+				const workspaces = await account.api.listWorkspaces()
+				expect(workspaces).toHaveLength(1)
+
+				await page.goto(`/${account.workspaceId}/settings`)
+				await page.getByRole('button', { name: 'Delete workspace' }).click()
+
+				const dialog = page.getByRole('dialog')
+				await expect(dialog.getByText(/This is your only workspace/)).toBeVisible({
+					timeout: 10_000,
+				})
+				await dialog.getByLabel(/Type .* to confirm/).fill(workspaces[0].name)
+				await dialog.getByRole('button', { name: 'Delete workspace' }).click()
+
+				await expect(dialog.getByText('You have no workspaces left')).toBeVisible({
+					timeout: 15_000,
+				})
+				await expect(dialog.getByText(/Delete your account too\?/)).toBeVisible()
+				await expect(dialog.getByRole('button', { name: 'Not now' })).toBeVisible()
+
+				// Primary action opens the existing password dialog.
+				await dialog.getByRole('button', { name: 'Delete account' }).click()
+				await expect(page.getByLabel('Enter your password to confirm')).toBeVisible()
+			})
+		}
+	}
+
+	test('"Not now" after the last workspace closes the prompt and leaves the deleted workspace', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 667 })
+		const [only] = await account.api.listWorkspaces()
+		await page.goto(`/${account.workspaceId}/settings`)
+		await page.getByRole('button', { name: 'Delete workspace' }).click()
+		const dialog = page.getByRole('dialog')
+		await dialog.getByLabel(/Type .* to confirm/).fill(only.name)
+		await dialog.getByRole('button', { name: 'Delete workspace' }).click()
+		await dialog.getByRole('button', { name: 'Not now' }).click()
+
+		await expect(page.getByRole('dialog')).toHaveCount(0)
+		await expect(page).not.toHaveURL(new RegExp(account.workspaceId), { timeout: 15_000 })
+		expect(await account.api.listWorkspaces()).toHaveLength(0)
+	})
+
 	test('is not offered to a member who is not the billing owner', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.addInitScript(() => {

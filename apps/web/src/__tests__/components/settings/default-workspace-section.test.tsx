@@ -18,6 +18,8 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: vi.fn(), isPending: false }),
+	useWorkspaces: () => ({ data: [] }),
+	removeDeletedWorkspaceQueries: vi.fn(),
 	useWorkspaceDeletionPreview: () => ({ data: undefined, isLoading: false, isError: false }),
 	useDeleteWorkspace: () => ({ mutate: vi.fn(), isPending: false, isError: false, reset: vi.fn() }),
 }))
