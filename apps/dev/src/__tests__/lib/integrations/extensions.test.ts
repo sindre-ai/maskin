@@ -70,7 +70,7 @@ describe('mcpConfigSchema', () => {
 	const base = {
 		envKey: 'FIREFLIES_TOKEN',
 		server: fireflies?.mcpConfig?.server,
-		credentialProvider: 'extension:fireflies',
+		credentialProvider: 'extension-mcp:fireflies',
 	}
 	const tool = (i: number) => ({ name: `get_thing_${i}`, kind: 'read' as const })
 

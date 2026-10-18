@@ -46,7 +46,7 @@ export const VENDOR_RECIPES: VendorRecipe[] = [
 				args: ['mcp-remote', 'https://api.fireflies.ai/mcp'],
 				envFromCredential: 'AUTHORIZATION',
 			},
-			credentialProvider: 'extension:fireflies',
+			credentialProvider: 'extension-mcp:fireflies',
 			autoInject: true,
 		},
 		// Fireflies V2 signs the raw body with HMAC-SHA256, no timestamp. The

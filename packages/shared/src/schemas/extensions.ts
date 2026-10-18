@@ -32,7 +32,7 @@ export const mcpConfigSchema = z.object({
 		z.object({ type: z.literal('http'), url: z.string().url() }),
 	]),
 	autoInject: z.boolean().default(true),
-	/** The integrations.provider slug holding the credential: 'extension:{slug}'. */
+	/** The integrations.provider slug holding the MCP API key: 'extension-mcp:{slug}'. */
 	credentialProvider: z.string(),
 	tools: z
 		.array(

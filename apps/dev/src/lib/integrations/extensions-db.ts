@@ -137,7 +137,7 @@ export type ExtensionMcpEntry = {
 	slug: string
 	extensionId: string
 	config: McpConfig
-	/** The extension's integrations row, when one exists. Never its credentials. */
+	/** The extension's MCP key row (provider extension-mcp:{slug}), when one exists. Never its credentials. */
 	credentialIntegrationId: string | null
 }
 
@@ -162,7 +162,7 @@ export async function resolveMcpFromExtension(
 			integrations,
 			and(
 				eq(integrations.workspaceId, extensions.workspaceId),
-				eq(integrations.provider, sql`'extension:' || ${extensions.slug}`),
+				eq(integrations.provider, sql`'extension-mcp:' || ${extensions.slug}`),
 				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
 				isNull(integrations.actorId),
 			),
@@ -190,21 +190,32 @@ export async function resolveMcpFromExtension(
 	)
 }
 
+export type ExtensionMcpKeyReader = (entry: ExtensionMcpEntry) => Promise<string | null>
+
+/**
+ * The Keychain-backed read of an extension's MCP key (row extension-mcp:{slug}).
+ * Stays null until Keychain getCredential is on main; while it is null no
+ * extension MCP server attaches to any session.
+ */
+export const extensionMcpKeyReader: ExtensionMcpKeyReader | null = null
+
 /**
  * Turn a workspace's extension MCPs into session entries, keyed extension-{slug}
  * so they never collide with integration-{provider}. An extension over the tool
  * cap is not attached: its mcp_last_error says so and a PostHog event fires.
- * Only stdio attaches in V1. readCredential returns the plain key for an
- * extension's integrations row; it is passed as a Bearer value through the
- * env var the config names.
+ * Only stdio attaches in V1. readKey is the injected Keychain read for the
+ * extension's key row; its value is passed as a Bearer value through the env
+ * var the config names. If the key cannot be read the server does not attach
+ * and mcp_last_error says so. With no reader nothing attaches.
  */
 export async function buildExtensionMcpServers(
 	db: Database | Transaction,
 	workspaceId: string,
-	readCredential: (entry: ExtensionMcpEntry) => Promise<string | null>,
+	readKey: ExtensionMcpKeyReader | null,
 ): Promise<{ servers: Record<string, unknown>; env: Record<string, string> }> {
 	const servers: Record<string, unknown> = {}
 	const env: Record<string, string> = {}
+	if (!readKey) return { servers, env }
 	for (const entry of await resolveMcpFromExtension(db, workspaceId)) {
 		const { server, tools } = entry.config
 		if (server.type !== 'stdio') continue
@@ -221,8 +232,15 @@ export async function buildExtensionMcpServers(
 			continue
 		}
 		if (server.envFromCredential) {
-			const key = await readCredential(entry)
-			if (key) env[server.envFromCredential] = `Bearer ${key}`
+			const key = await readKey(entry)
+			if (!key) {
+				await db
+					.update(extensions)
+					.set({ mcpLastError: 'key not readable' })
+					.where(eq(extensions.id, entry.extensionId))
+				continue
+			}
+			env[server.envFromCredential] = `Bearer ${key}`
 		}
 		servers[`extension-${entry.slug}`] = {
 			type: 'stdio',

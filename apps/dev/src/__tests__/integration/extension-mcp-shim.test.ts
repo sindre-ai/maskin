@@ -29,7 +29,7 @@ function mcpConfig(toolCount: number, overrides: Record<string, unknown> = {}) {
 			envFromCredential: 'AUTHORIZATION',
 		},
 		autoInject: true,
-		credentialProvider: 'extension:example',
+		credentialProvider: 'extension-mcp:example',
 		tools: Array.from({ length: toolCount }, (_, i) => ({
 			name: `get_item_${String(i).padStart(2, '0')}`,
 			kind: 'read' as const,
@@ -92,7 +92,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 			.insert(integrations)
 			.values({
 				workspaceId,
-				provider: 'extension:example',
+				provider: 'extension-mcp:example',
 				status: 'active',
 				credentials: encrypt('secret-key'),
 				config: {},
@@ -153,6 +153,42 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 			workspaceId,
 			{ extension_id: row.id, slug: 'twenty-one', tool_count: 21 },
 		)
+	})
+
+	it('does not attach anything when no key reader is wired', async () => {
+		const row = await addExtension('example')
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, null)
+		expect(servers).toEqual({})
+		expect(env).toEqual({})
+		const [after] = await db.select().from(extensions).where(eq(extensions.id, row.id))
+		expect(after?.mcpLastError).toBeNull()
+	})
+
+	it('does not attach when the key cannot be read, and records why', async () => {
+		const row = await addExtension('example')
+		readCredential.mockResolvedValue(null)
+
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, readCredential)
+
+		expect(servers).toEqual({})
+		expect(env).toEqual({})
+		const [after] = await db.select().from(extensions).where(eq(extensions.id, row.id))
+		expect(after?.mcpLastError).toBe('key not readable')
+	})
+
+	it('does not pick up the webhook signing-secret row as the key row', async () => {
+		await addExtension('example')
+		await db.insert(integrations).values({
+			workspaceId,
+			provider: 'extension:example',
+			status: 'active',
+			credentials: encrypt('signing-secret'),
+			config: {},
+			actorId: null,
+			createdBy: getTestActorId(),
+		})
+		const [entry] = await resolveMcpFromExtension(db, workspaceId)
+		expect(entry?.credentialIntegrationId).toBeNull()
 	})
 
 	it('does not attach the http variant', async () => {
