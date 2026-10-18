@@ -64,13 +64,15 @@ struct PresentationSlideView: View {
 struct PresentationBlock: View {
 	let title: String
 	let slides: [PresentationSlide]
+	/// Cards on the page before the cap; shown as "8 of 18" when the deck was trimmed.
+	var total: Int?
 	let play: () -> Void
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-					Text("PRESENTATION \u{00B7} \(PresentationParser.summary(of: slides).uppercased())")
+					Text("PRESENTATION \u{00B7} \(PresentationParser.summary(of: slides, total: total).uppercased())")
 						.font(MaskinTypeface.mono(MaskinFontSize.t10, weight: .semibold))
 						.maskinMonoLabelScale().tracking(0.7)
 						.foregroundStyle(MaskinColor.patina100.opacity(0.7)).lineLimit(1)

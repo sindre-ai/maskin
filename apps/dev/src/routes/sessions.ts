@@ -32,7 +32,8 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
+import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -51,6 +52,7 @@ type Env = {
 		actorType: string
 		sessionManager: SessionManager
 		maskinSessionId?: string
+		workspaceRole?: string
 	}
 }
 
@@ -77,6 +79,7 @@ async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId:
 const createSessionRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Create and optionally start a session',
 	request: {
@@ -98,6 +101,7 @@ const createSessionRoute = createRoute({
 })
 
 app.openapi(createSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
@@ -198,13 +202,6 @@ app.openapi(createSessionRoute, (async (c) => {
 	}
 	return c.json(created, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
-
-/** Where a helper session (started by another agent in a chat) asks its questions. */
-function helperAskConversationId(session: { conversationId: string | null; config: unknown }) {
-	if (session.conversationId) return null
-	const id = (session.config as { ask_conversation_id?: unknown } | null)?.ask_conversation_id
-	return typeof id === 'string' ? id : null
-}
 
 /**
  * Trim `actionPrompt` down to a scannable title for the lean-row shape.
@@ -502,6 +499,10 @@ const getSessionRoute = createRoute({
 			content: { 'application/json': { schema: getSessionResponseSchema } },
 			description: 'Session details',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is private to the person who started it',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -517,6 +518,9 @@ app.openapi(getSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const serialized = serialize(session) as z.infer<typeof sessionResponseSchema>
 
@@ -590,6 +594,7 @@ const updateSessionSchema = z
 const patchSessionRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Update mutable session fields',
 	request: {
@@ -616,6 +621,7 @@ const patchSessionRoute = createRoute({
 })
 
 app.openapi(patchSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -693,6 +699,7 @@ app.openapi(patchSessionRoute, (async (c) => {
 const stopSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/stop',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Stop a running session',
 	request: {
@@ -708,6 +715,10 @@ const stopSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Cannot stop session',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session and is not a workspace admin',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -716,6 +727,7 @@ const stopSessionRoute = createRoute({
 })
 
 app.openapi(stopSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -723,6 +735,9 @@ app.openapi(stopSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canControlSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	try {
 		await sessionManager.stopSession(id)
@@ -741,6 +756,7 @@ app.openapi(stopSessionRoute, (async (c) => {
 const pauseSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/pause',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Pause a running session and save snapshot',
 	request: {
@@ -756,6 +772,10 @@ const pauseSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Cannot pause session',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session and is not a workspace admin',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -764,6 +784,7 @@ const pauseSessionRoute = createRoute({
 })
 
 app.openapi(pauseSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -771,6 +792,9 @@ app.openapi(pauseSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canControlSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	try {
 		await sessionManager.pauseSession(id)
@@ -789,6 +813,7 @@ app.openapi(pauseSessionRoute, (async (c) => {
 const resumeSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/resume',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Resume a paused session from snapshot',
 	request: {
@@ -804,6 +829,10 @@ const resumeSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Cannot resume session',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session and is not a workspace admin',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -812,6 +841,7 @@ const resumeSessionRoute = createRoute({
 })
 
 app.openapi(resumeSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -819,6 +849,9 @@ app.openapi(resumeSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canControlSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	try {
 		await sessionManager.resumeSession(id)
@@ -837,6 +870,7 @@ app.openapi(resumeSessionRoute, (async (c) => {
 const inputSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/input',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Send a user input turn to an interactive session',
 	request: {
@@ -871,6 +905,7 @@ const inputSessionRoute = createRoute({
 })
 
 app.openapi(inputSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const sessionManager = c.get('sessionManager')
@@ -967,6 +1002,7 @@ app.openapi(inputSessionRoute, (async (c) => {
 const askSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/ask',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: "Post an agent's question into its chat conversation",
 	request: {
@@ -1003,6 +1039,7 @@ const askSessionRoute = createRoute({
 })
 
 app.openapi(askSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -1244,6 +1281,10 @@ const getSessionLogsRoute = createRoute({
 			content: { 'application/json': { schema: z.array(sessionLogResponseSchema) } },
 			description: 'Session logs',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is private to the person who started it',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -1259,6 +1300,9 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.since) conditions.push(gt(sessionLogs.id, query.since))
@@ -1306,6 +1350,10 @@ const getSessionLogsDeepRoute = createRoute({
 			content: { 'application/json': { schema: z.array(sessionLogResponseSchema) } },
 			description: 'Session logs in the requested direction',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is private to the person who started it',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -1321,6 +1369,9 @@ app.openapi(getSessionLogsDeepRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.before_id !== undefined) conditions.push(lt(sessionLogs.id, query.before_id))
@@ -1379,6 +1430,9 @@ app.get('/:id/logs/stream', async (c) => {
 	const authSession = await loadSessionWithAuth(db, sessionId, workspaceId)
 	if (!authSession) {
 		return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	}
+	if (!(await canReadSession(db, authSession, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 	}
 
 	// Include 'paused' so a client subscribing to an already-paused session
