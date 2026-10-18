@@ -21,6 +21,7 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
+import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -195,6 +196,10 @@ logger.info('Meet transcript reconciler started')
 const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
+
+const blockedToolCallsCleaner = new BlockedToolCallsCleaner(db)
+blockedToolCallsCleaner.start()
+logger.info('Blocked tool calls cleaner started')
 
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
