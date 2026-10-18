@@ -130,6 +130,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { returnToSender } from './helper-return'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
@@ -2781,6 +2782,16 @@ ${HUMAN_MESSAGE_STYLE}`
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: envVars.MASKIN_API_URL,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {

@@ -1154,6 +1154,41 @@ export const extensions = pgTable(
 export type Extension = typeof extensions.$inferSelect
 export type NewExtension = typeof extensions.$inferInsert
 
+// ── Blocked tool calls ──────────────────────────────────────────────────────
+// One row per tool call the guard wrapper refused on a custom extension. Rows
+// older than 30 days are dropped by BlockedToolCallsCleaner. session_id is
+// nullable and set null on session delete so the audit row outlives the
+// session. See drizzle/0093_blocked_tool_calls.sql.
+
+export const blockedToolCalls = pgTable(
+	'blocked_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		extensionId: uuid('extension_id')
+			.references(() => extensions.id, { onDelete: 'cascade' })
+			.notNull(),
+		agentId: uuid('agent_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		toolName: text('tool_name').notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		blockedAt: timestamp('blocked_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('blocked_tool_calls_ext_agent_idx').on(
+			t.extensionId,
+			t.agentId,
+			sql`${t.blockedAt} DESC`,
+		),
+		index('blocked_tool_calls_ws_time_idx').on(t.workspaceId, sql`${t.blockedAt} DESC`),
+	],
+)
+export type BlockedToolCall = typeof blockedToolCalls.$inferSelect
+export type NewBlockedToolCall = typeof blockedToolCalls.$inferInsert
+
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
 // (provider, external_id, workspace_id) tuple so that retries (which reuse the
