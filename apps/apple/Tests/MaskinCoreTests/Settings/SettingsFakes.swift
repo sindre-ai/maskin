@@ -24,6 +24,8 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 		set { keyProvider = { newValue } }
 	}
 	var skillBodies: [String: String] = [:]
+	/// When set, `regenerate` parks (after recording its call) until the test releases the gate.
+	var regenerateGate: Gate?
 	var billingUsage = BillingUsage(
 		plan: "pro", status: .active, usedCents: 2_500, capCents: 10_000, creditBalanceCents: 0,
 		resetsInMs: 3 * 86_400_000)
@@ -95,6 +97,7 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 	}
 	func regenerate(actorId: String) async throws -> SecretValue {
 		try record("regenerate")
+		await regenerateGate?.wait()
 		return SecretValue(regeneratedKey)
 	}
 	func list(workspaceId: String) async throws -> [WorkspaceSkill] {
