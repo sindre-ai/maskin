@@ -27,6 +27,7 @@ import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integration
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
+import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
@@ -1420,6 +1421,7 @@ app.openapi(connectRoute, (async (c) => {
 
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
+declareNativeConnectBody(connectRoute)
 
 // ── GET /api/integrations/:provider/native-launch ────────────────────────
 

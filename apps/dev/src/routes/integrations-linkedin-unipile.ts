@@ -15,6 +15,7 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
@@ -407,6 +408,7 @@ app.openapi(connectRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start LinkedIn connect flow'), 500)
 	}
 }) as RouteHandler<typeof connectRoute, Env>)
+declareNativeConnectBody(connectRoute)
 
 // ── GET /callback ──────────────────────────────────────────────────────────
 // v2 replaces the v1 HMAC-signed POST body with a browser redirect carrying
