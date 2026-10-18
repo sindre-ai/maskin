@@ -80,7 +80,10 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
-import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
+import {
+	mcpServersReferenceEnvKey,
+	serverSpecReferencesEnvKey,
+} from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
@@ -2496,6 +2499,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const integrationTokens: Record<string, string> = {}
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2638,7 +2642,26 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (accessToken !== null) {
 				const envVarName =
 					mcp?.envKey ?? `${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
-				envVars[envVarName] = accessToken
+				// Server-side copy, for code in this process that needs a provider
+				// token without the container ever seeing it (the preflight Slack alert).
+				integrationTokens[envVarName] = accessToken
+				// The container only gets the token if the agent is meant to use it:
+				// its own tools config (or the session's MCP list) references the
+				// token variable, or the MCP server auto-injected below needs it to
+				// sign in. Anything else would hand every shell-capable agent in the
+				// workspace a credential it has no use for.
+				const agentUsesToken =
+					mcpServersReferenceEnvKey(agentToolsMcpServers, envVarName) ||
+					mcpServersReferenceEnvKey(sessionConfig.mcps, envVarName)
+				if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
+					envVars[envVarName] = accessToken
+				} else {
+					logger.debug('Integration token not injected; agent config does not reference it', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						provider: integration.provider,
+					})
+				}
 			}
 			if (autoInjectServer) {
 				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
@@ -2846,7 +2869,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						statusSnippet: v.statusSnippet,
 					})),
 				})
-				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
 						botToken: slackBotToken,
