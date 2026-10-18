@@ -1,10 +1,20 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { events, extensions, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	extensions,
+	integrations,
+	webhookDeliveries,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+	buildCalcomDelivery,
+	buildFirefliesDelivery,
+} from '../../../tests/integrations/fixtures/signed-deliveries'
 import { decrypt } from '../../lib/crypto'
 import { deliveryEntityId, resetWebhookRateLimits } from '../../lib/integrations/extensions'
 import { VENDOR_RECIPES } from '../../lib/integrations/vendor-recipes'
@@ -13,10 +23,6 @@ import { webhookApp } from '../../routes/integrations'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
-import {
-	buildCalcomDelivery,
-	buildFirefliesDelivery,
-} from '../../../tests/integrations/fixtures/signed-deliveries'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -81,7 +87,10 @@ async function createExtension(
 	return { res, json: (await res.json()) as ExtensionJson }
 }
 
-function deliveryRequest(token: string, delivery: { body: string; headers: Record<string, string> }) {
+function deliveryRequest(
+	token: string,
+	delivery: { body: string; headers: Record<string, string> },
+) {
 	return new Request(`http://localhost/api/webhooks/x/${token}`, {
 		method: 'POST',
 		headers: delivery.headers,
@@ -146,7 +155,9 @@ describe('extensions API (integration)', () => {
 		expect(await get.text()).not.toContain(SECRET)
 
 		const list = await app.request(
-			new Request('http://localhost/api/extensions', { headers: { 'x-workspace-id': workspaceId } }),
+			new Request('http://localhost/api/extensions', {
+				headers: { 'x-workspace-id': workspaceId },
+			}),
 		)
 		const listed = (await list.json()) as ExtensionJson[]
 		expect(listed.map((e) => e.slug)).toEqual(['fireflies'])
@@ -155,9 +166,15 @@ describe('extensions API (integration)', () => {
 
 	it('refuses a webhook config with no signing secret', async () => {
 		const app = buildApp()
-		const { res } = await createExtension(app, workspaceId, firefliesBody({ signing_secret: undefined }))
+		const { res } = await createExtension(
+			app,
+			workspaceId,
+			firefliesBody({ signing_secret: undefined }),
+		)
 		expect(res.status).toBe(400)
-		expect(await db.select().from(extensions).where(eq(extensions.workspaceId, workspaceId))).toHaveLength(0)
+		expect(
+			await db.select().from(extensions).where(eq(extensions.workspaceId, workspaceId)),
+		).toHaveLength(0)
 	})
 
 	it('refuses to add a webhook later without a secret, and accepts one once supplied', async () => {
@@ -168,7 +185,12 @@ describe('extensions API (integration)', () => {
 		})
 		const headers = { 'x-workspace-id': workspaceId }
 		const noSecret = await app.request(
-			jsonRequest('PATCH', `/api/extensions/${json.id}`, { webhook_config: fireflies?.webhookConfig }, headers),
+			jsonRequest(
+				'PATCH',
+				`/api/extensions/${json.id}`,
+				{ webhook_config: fireflies?.webhookConfig },
+				headers,
+			),
 		)
 		expect(noSecret.status).toBe(400)
 		const withSecret = await app.request(
@@ -195,7 +217,12 @@ describe('extensions API (integration)', () => {
 		const app = buildApp()
 		const { json } = await createExtension(app, workspaceId)
 		const res = await app.request(
-			jsonRequest('PATCH', `/api/extensions/${json.id}`, { slug: 'renamed' }, { 'x-workspace-id': workspaceId }),
+			jsonRequest(
+				'PATCH',
+				`/api/extensions/${json.id}`,
+				{ slug: 'renamed' },
+				{ 'x-workspace-id': workspaceId },
+			),
 		)
 		expect(res.status).toBe(400)
 		const [row] = await db.select().from(extensions).where(eq(extensions.id, json.id))
@@ -207,13 +234,23 @@ describe('extensions API (integration)', () => {
 		const { json } = await createExtension(app, workspaceId)
 		const next = 'e'.repeat(64)
 		const res = await app.request(
-			jsonRequest('PATCH', `/api/extensions/${json.id}`, { signing_secret: next }, { 'x-workspace-id': workspaceId }),
+			jsonRequest(
+				'PATCH',
+				`/api/extensions/${json.id}`,
+				{ signing_secret: next },
+				{ 'x-workspace-id': workspaceId },
+			),
 		)
 		expect(res.status).toBe(200)
 		const rows = await db
 			.select()
 			.from(integrations)
-			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'extension:fireflies')))
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					eq(integrations.provider, 'extension:fireflies'),
+				),
+			)
 		expect(rows).toHaveLength(1)
 		expect(decrypt(rows[0]?.credentials ?? '')).toBe(next)
 	})
@@ -238,18 +275,24 @@ describe('extensions API (integration)', () => {
 		const memberApp = buildApp('member')
 		expect((await createExtension(memberApp, workspaceId)).res.status).toBe(403)
 		const gen = await memberApp.request(
-			jsonRequest('POST', '/api/extensions/generate-secret', undefined, { 'x-workspace-id': workspaceId }),
+			jsonRequest('POST', '/api/extensions/generate-secret', undefined, {
+				'x-workspace-id': workspaceId,
+			}),
 		)
 		expect(gen.status).toBe(403)
 	})
 
 	it('generates a 32-byte hex secret without storing anything', async () => {
 		const res = await buildApp().request(
-			jsonRequest('POST', '/api/extensions/generate-secret', undefined, { 'x-workspace-id': workspaceId }),
+			jsonRequest('POST', '/api/extensions/generate-secret', undefined, {
+				'x-workspace-id': workspaceId,
+			}),
 		)
 		expect(res.status).toBe(200)
 		expect(((await res.json()) as { secret: string }).secret).toMatch(/^[0-9a-f]{64}$/)
-		expect(await db.select().from(integrations).where(eq(integrations.workspaceId, workspaceId))).toHaveLength(0)
+		expect(
+			await db.select().from(integrations).where(eq(integrations.workspaceId, workspaceId)),
+		).toHaveLength(0)
 	})
 
 	it('does not show one workspace another workspace extension', async () => {
@@ -257,7 +300,9 @@ describe('extensions API (integration)', () => {
 		const { json } = await createExtension(app, workspaceId)
 		const otherWs = (await insertWorkspace(db, getTestActorId())).id
 		const res = await app.request(
-			new Request(`http://localhost/api/extensions/${json.id}`, { headers: { 'x-workspace-id': otherWs } }),
+			new Request(`http://localhost/api/extensions/${json.id}`, {
+				headers: { 'x-workspace-id': otherWs },
+			}),
 		)
 		expect(res.status).toBe(404)
 	})
@@ -317,14 +362,18 @@ describe('POST /api/webhooks/x/:token (integration)', () => {
 
 	it('answers 404 for an unknown token', async () => {
 		const { app } = await setup()
-		const res = await app.request(deliveryRequest('nope', buildFirefliesDelivery({ secret: SECRET })))
+		const res = await app.request(
+			deliveryRequest('nope', buildFirefliesDelivery({ secret: SECRET })),
+		)
 		expect(res.status).toBe(404)
 	})
 
 	it('answers 404 for a disabled extension', async () => {
 		const { app, ext, token } = await setup()
 		await db.update(extensions).set({ status: 'disabled' }).where(eq(extensions.id, ext.id))
-		const res = await app.request(deliveryRequest(token, buildFirefliesDelivery({ secret: SECRET })))
+		const res = await app.request(
+			deliveryRequest(token, buildFirefliesDelivery({ secret: SECRET })),
+		)
 		expect(res.status).toBe(404)
 	})
 
@@ -428,7 +477,9 @@ describe('POST /api/webhooks/x/:token (integration)', () => {
 		const [row] = await db.select().from(extensions).where(eq(extensions.id, ext.id))
 		await db
 			.update(extensions)
-			.set({ webhookConfig: { ...(row?.webhookConfig as object), rateLimit: { perMinute: 2 } } as never })
+			.set({
+				webhookConfig: { ...(row?.webhookConfig as object), rateLimit: { perMinute: 2 } } as never,
+			})
 			.where(eq(extensions.id, ext.id))
 		const statuses: number[] = []
 		for (const id of ['r1', 'r2', 'r3']) {
@@ -762,7 +813,11 @@ describe('integration_connected for extensions (integration)', () => {
 
 	it('does not fire when the save is refused', async () => {
 		const app = buildApp()
-		const { res } = await createExtension(app, workspaceId, firefliesBody({ signing_secret: undefined }))
+		const { res } = await createExtension(
+			app,
+			workspaceId,
+			firefliesBody({ signing_secret: undefined }),
+		)
 		expect(res.status).toBe(400)
 		await createExtension(app, workspaceId)
 		const dup = await createExtension(app, workspaceId)

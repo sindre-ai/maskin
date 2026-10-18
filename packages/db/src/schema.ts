@@ -1,10 +1,10 @@
 import type {
 	AgentState,
+	WebhookConfig as ExtensionWebhookConfig,
 	FileAnnotation,
 	McpConfig,
 	SessionResult,
 	ToolGrants,
-	WebhookConfig as ExtensionWebhookConfig,
 } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {

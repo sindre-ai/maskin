@@ -29,6 +29,7 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { getEnvOrThrow } from '../lib/integrations/env'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
+import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import {
 	allowWebhookRequest,
 	deliveryEntityId,
@@ -37,11 +38,7 @@ import {
 	mapWebhookEvent,
 	verifyExtensionSignature,
 } from '../lib/integrations/extensions'
-import {
-	ensureExtensionSystemActor,
-	readExtensionSecret,
-} from '../lib/integrations/extensions-db'
-import { normalizeEvent } from '../lib/integrations/events/normalizer'
+import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrations/extensions-db'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'

@@ -9,6 +9,10 @@ import {
 } from '@maskin/shared'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+	buildCalcomDelivery,
+	buildFirefliesDelivery,
+} from '../../../../tests/integrations/fixtures/signed-deliveries'
+import {
 	allowWebhookRequest,
 	deliveryEntityId,
 	evalJsonPath,
@@ -22,10 +26,6 @@ import {
 } from '../../../lib/integrations/extensions'
 import { VENDOR_RECIPES } from '../../../lib/integrations/vendor-recipes'
 import { WebhookHandler } from '../../../lib/integrations/webhooks/handler'
-import {
-	buildCalcomDelivery,
-	buildFirefliesDelivery,
-} from '../../../../tests/integrations/fixtures/signed-deliveries'
 
 const fireflies = VENDOR_RECIPES.find((r) => r.slug === 'fireflies')
 
