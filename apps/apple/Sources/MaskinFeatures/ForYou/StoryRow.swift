@@ -81,7 +81,7 @@ struct StoryCardView: View {
 						.fill(isSeen ? MaskinColor.inkPlaceholder : MaskinColor.stLab.opacity(0.4))
 						.frame(height: 3)
 					HStack(spacing: MaskinSpace.s3) {
-						if card.isBriefing {
+						if card.isFromChiefOfStaff {
 							ChiefOfStaffTile(size: 22)
 						} else {
 							Text(String(card.byline.prefix(1)).uppercased())

@@ -969,6 +969,12 @@ export const tools = {
 				.max(1000)
 				.optional()
 				.describe('Optional one-line summary surfaced in the file list.'),
+			kind: z
+				.enum(['briefing'])
+				.optional()
+				.describe(
+					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.',
+				),
 			mime_type: z
 				.string()
 				.describe(
@@ -989,10 +995,11 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring, or `kind: "briefing"` to list only the briefings shown in For you. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
+			kind: z.enum(['briefing']).optional().describe('Only files of this kind.'),
 			limit: z
 				.number()
 				.int()
@@ -1018,12 +1025,20 @@ export const tools = {
 	},
 	update_file: {
 		description:
-			'Update a file. Pass any subset of name, description, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided.',
+			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
 			name: z.string().min(1).max(255).optional(),
 			description: z.string().max(1000).nullable().optional(),
+			kind: z
+				.enum(['briefing'])
+				.nullable()
+				.optional()
+				.describe(
+					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.' +
+						' Pass null to clear.',
+				),
 			mime_type: z.string().optional(),
 			content: z
 				.string()

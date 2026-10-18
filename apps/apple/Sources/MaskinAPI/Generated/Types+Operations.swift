@@ -36520,6 +36520,31 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect`.
+                        public struct integration_connectPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/provider`.
+                            public var provider: Swift.String
+                            /// Creates a new `integration_connectPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - provider:
+                            public init(
+                                session_id: Swift.String,
+                                provider: Swift.String
+                            ) {
+                                self.session_id = session_id
+                                self.provider = provider
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case provider
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect`.
+                        public var integration_connect: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_connectPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// Creates a new `initial_message_metadataPayload`.
@@ -36533,6 +36558,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - integration_connect:
                         ///   - helper_return:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.attachmentsPayload? = nil,
@@ -36543,6 +36569,7 @@ public enum Operations {
                             final_output: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil,
+                            integration_connect: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_connectPayload? = nil,
                             helper_return: Swift.String? = nil
                         ) {
                             self.attachments = attachments
@@ -36553,6 +36580,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.integration_connect = integration_connect
                             self.helper_return = helper_return
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -36564,6 +36592,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case integration_connect
                             case helper_return
                         }
                     }
@@ -39652,6 +39681,31 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question_answer`.
                         public var question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect`.
+                        public struct integration_connectPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/provider`.
+                            public var provider: Swift.String
+                            /// Creates a new `integration_connectPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - provider:
+                            public init(
+                                session_id: Swift.String,
+                                provider: Swift.String
+                            ) {
+                                self.session_id = session_id
+                                self.provider = provider
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case provider
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect`.
+                        public var integration_connect: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_connectPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// Creates a new `metadataPayload`.
@@ -39665,6 +39719,7 @@ public enum Operations {
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
+                        ///   - integration_connect:
                         ///   - helper_return:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.attachmentsPayload? = nil,
@@ -39675,6 +39730,7 @@ public enum Operations {
                             final_output: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil,
+                            integration_connect: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_connectPayload? = nil,
                             helper_return: Swift.String? = nil
                         ) {
                             self.attachments = attachments
@@ -39685,6 +39741,7 @@ public enum Operations {
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
+                            self.integration_connect = integration_connect
                             self.helper_return = helper_return
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -39696,6 +39753,7 @@ public enum Operations {
                             case final_output
                             case question
                             case question_answer
+                            case integration_connect
                             case helper_return
                         }
                     }
@@ -54152,6 +54210,12 @@ public enum Operations {
                 public var q: Swift.String?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/ids`.
                 public var ids: Swift.String?
+                /// - Remark: Generated from `#/paths/api/files/GET/query/kind`.
+                @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case briefing = "briefing"
+                }
+                /// - Remark: Generated from `#/paths/api/files/GET/query/kind`.
+                public var kind: Operations.get_sol_api_sol_files.Input.Query.kindPayload?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/offset`.
@@ -54174,6 +54238,7 @@ public enum Operations {
                 /// - Parameters:
                 ///   - q:
                 ///   - ids:
+                ///   - kind:
                 ///   - limit:
                 ///   - offset:
                 ///   - order:
@@ -54183,6 +54248,7 @@ public enum Operations {
                 public init(
                     q: Swift.String? = nil,
                     ids: Swift.String? = nil,
+                    kind: Operations.get_sol_api_sol_files.Input.Query.kindPayload? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil,
                     order: Operations.get_sol_api_sol_files.Input.Query.orderPayload? = nil,
@@ -54192,6 +54258,7 @@ public enum Operations {
                 ) {
                     self.q = q
                     self.ids = ids
+                    self.kind = kind
                     self.limit = limit
                     self.offset = offset
                     self.order = order
@@ -54247,6 +54314,12 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/description`.
                         public var description: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/kind`.
+                        @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case briefing = "briefing"
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/kind`.
+                        public var kind: Operations.get_sol_api_sol_files.Output.Ok.Body.jsonPayloadPayload.kindPayload?
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/sizeBytes`.
@@ -54266,6 +54339,7 @@ public enum Operations {
                         ///   - workspaceId:
                         ///   - name:
                         ///   - description:
+                        ///   - kind:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -54277,6 +54351,7 @@ public enum Operations {
                             workspaceId: Swift.String,
                             name: Swift.String,
                             description: Swift.String? = nil,
+                            kind: Operations.get_sol_api_sol_files.Output.Ok.Body.jsonPayloadPayload.kindPayload? = nil,
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -54288,6 +54363,7 @@ public enum Operations {
                             self.workspaceId = workspaceId
                             self.name = name
                             self.description = description
+                            self.kind = kind
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -54300,6 +54376,7 @@ public enum Operations {
                             case workspaceId
                             case name
                             case description
+                            case kind
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -54561,6 +54638,12 @@ public enum Operations {
                     public var name: Swift.String
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/description`.
                     public var description: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/kind`.
+                    @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                        case briefing = "briefing"
+                    }
+                    /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/kind`.
+                    public var kind: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.kindPayload?
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/mime_type`.
                     public var mime_type: Swift.String
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/content`.
@@ -54577,18 +54660,21 @@ public enum Operations {
                     /// - Parameters:
                     ///   - name:
                     ///   - description:
+                    ///   - kind:
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
                     public init(
                         name: Swift.String,
                         description: Swift.String? = nil,
+                        kind: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.kindPayload? = nil,
                         mime_type: Swift.String,
                         content: Swift.String,
                         encoding: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.encodingPayload? = nil
                     ) {
                         self.name = name
                         self.description = description
+                        self.kind = kind
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
@@ -54596,6 +54682,7 @@ public enum Operations {
                     public enum CodingKeys: String, CodingKey {
                         case name
                         case description
+                        case kind
                         case mime_type
                         case content
                         case encoding
@@ -54632,6 +54719,12 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/description`.
                         public var description: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/kind`.
+                        @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case briefing = "briefing"
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/kind`.
+                        public var kind: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.kindPayload?
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/sizeBytes`.
@@ -54773,6 +54866,7 @@ public enum Operations {
                         ///   - workspaceId:
                         ///   - name:
                         ///   - description:
+                        ///   - kind:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -54789,6 +54883,7 @@ public enum Operations {
                             workspaceId: Swift.String,
                             name: Swift.String,
                             description: Swift.String? = nil,
+                            kind: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.kindPayload? = nil,
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -54805,6 +54900,7 @@ public enum Operations {
                             self.workspaceId = workspaceId
                             self.name = name
                             self.description = description
+                            self.kind = kind
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -54822,6 +54918,7 @@ public enum Operations {
                             case workspaceId
                             case name
                             case description
+                            case kind
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -55249,6 +55346,12 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/description`.
                         public var description: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/kind`.
+                        @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case briefing = "briefing"
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/kind`.
+                        public var kind: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload?
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/sizeBytes`.
@@ -55390,6 +55493,7 @@ public enum Operations {
                         ///   - workspaceId:
                         ///   - name:
                         ///   - description:
+                        ///   - kind:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -55406,6 +55510,7 @@ public enum Operations {
                             workspaceId: Swift.String,
                             name: Swift.String,
                             description: Swift.String? = nil,
+                            kind: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload? = nil,
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -55422,6 +55527,7 @@ public enum Operations {
                             self.workspaceId = workspaceId
                             self.name = name
                             self.description = description
+                            self.kind = kind
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -55439,6 +55545,7 @@ public enum Operations {
                             case workspaceId
                             case name
                             case description
+                            case kind
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -55709,6 +55816,12 @@ public enum Operations {
                     public var name: Swift.String?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/description`.
                     public var description: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/kind`.
+                    @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                        case briefing = "briefing"
+                    }
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/kind`.
+                    public var kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.kindPayload?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/mime_type`.
                     public var mime_type: Swift.String?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/content`.
@@ -55834,6 +55947,7 @@ public enum Operations {
                     /// - Parameters:
                     ///   - name:
                     ///   - description:
+                    ///   - kind:
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
@@ -55841,6 +55955,7 @@ public enum Operations {
                     public init(
                         name: Swift.String? = nil,
                         description: Swift.String? = nil,
+                        kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.kindPayload? = nil,
                         mime_type: Swift.String? = nil,
                         content: Swift.String? = nil,
                         encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.encodingPayload? = nil,
@@ -55848,6 +55963,7 @@ public enum Operations {
                     ) {
                         self.name = name
                         self.description = description
+                        self.kind = kind
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
@@ -55856,6 +55972,7 @@ public enum Operations {
                     public enum CodingKeys: String, CodingKey {
                         case name
                         case description
+                        case kind
                         case mime_type
                         case content
                         case encoding
@@ -55896,6 +56013,12 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/description`.
                         public var description: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/kind`.
+                        @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case briefing = "briefing"
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/kind`.
+                        public var kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload?
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/sizeBytes`.
@@ -56037,6 +56160,7 @@ public enum Operations {
                         ///   - workspaceId:
                         ///   - name:
                         ///   - description:
+                        ///   - kind:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -56053,6 +56177,7 @@ public enum Operations {
                             workspaceId: Swift.String,
                             name: Swift.String,
                             description: Swift.String? = nil,
+                            kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload? = nil,
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -56069,6 +56194,7 @@ public enum Operations {
                             self.workspaceId = workspaceId
                             self.name = name
                             self.description = description
+                            self.kind = kind
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -56086,6 +56212,7 @@ public enum Operations {
                             case workspaceId
                             case name
                             case description
+                            case kind
                             case mimeType
                             case sizeBytes
                             case storageKey
