@@ -27,6 +27,7 @@ import {
 	generateSigningSecret,
 	generateWebhookToken,
 	mapWebhookEvent,
+	mcpConfigWriteError,
 } from '../lib/integrations/extensions'
 import {
 	ensureExtensionSystemActor,
@@ -356,6 +357,14 @@ app.openapi(createExtensionRoute, async (c) => {
 	if (!isOwnerOrAdmin(c.get('workspaceRole'))) return c.json(forbidden(), 403)
 	const body = c.req.valid('json')
 
+	const mcpError = mcpConfigWriteError(body.mcp_config)
+	if (mcpError) {
+		return c.json(
+			createApiError('BAD_REQUEST', mcpError, [{ field: 'mcp_config', message: mcpError }]),
+			400,
+		)
+	}
+
 	// Ruling R2: no unsigned webhooks.
 	if (body.webhook_config && !body.signing_secret) {
 		return c.json(
@@ -483,6 +492,14 @@ app.openapi(updateExtensionRoute, async (c) => {
 
 	const existing = await loadOne(db, workspaceId, id)
 	if (!existing) return c.json(notFound, 404)
+
+	const mcpError = mcpConfigWriteError(body.mcp_config)
+	if (mcpError) {
+		return c.json(
+			createApiError('BAD_REQUEST', mcpError, [{ field: 'mcp_config', message: mcpError }]),
+			400,
+		)
+	}
 
 	// A webhook config must end up with a stored secret (ruling R2).
 	const nextWebhook =
