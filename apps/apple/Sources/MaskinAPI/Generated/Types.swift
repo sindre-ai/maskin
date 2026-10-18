@@ -223,6 +223,20 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `DELETE /api/workspaces/{workspaceId}/skills/{name}`.
     /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/delete`.
     func delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_(_ input: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Input) async throws -> Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output
+    /// Accept an invite by token (public path; reads Authorization itself)
+    ///
+    /// Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.
+    ///
+    /// - Remark: HTTP `POST /api/invites/{token}/accept`.
+    /// - Remark: Generated from `#/paths//api/invites/{token}/accept/post(acceptInvite)`.
+    func acceptInvite(_ input: Operations.acceptInvite.Input) async throws -> Operations.acceptInvite.Output
+    /// Preview an invite by token (unauthenticated, IP-rate-limited)
+    ///
+    /// Unauthenticated preview so the /invite accept page can render workspace + inviter context before the invitee has an account. IP-rate-limited (token-bucket). Response omits workspace metadata on 404/410 to prevent token-space enumeration.
+    ///
+    /// - Remark: HTTP `GET /api/invites/preview`.
+    /// - Remark: Generated from `#/paths//api/invites/preview/get`.
+    func get_sol_api_sol_invites_sol_preview(_ input: Operations.get_sol_api_sol_invites_sol_preview.Input) async throws -> Operations.get_sol_api_sol_invites_sol_preview.Output
     /// List relationships with filters
     ///
     /// - Remark: HTTP `GET /api/relationships`.
@@ -1108,6 +1122,38 @@ extension APIProtocol {
     ) async throws -> Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output {
         try await delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_(Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Input(
             path: path,
+            headers: headers
+        ))
+    }
+    /// Accept an invite by token (public path; reads Authorization itself)
+    ///
+    /// Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.
+    ///
+    /// - Remark: HTTP `POST /api/invites/{token}/accept`.
+    /// - Remark: Generated from `#/paths//api/invites/{token}/accept/post(acceptInvite)`.
+    public func acceptInvite(
+        path: Operations.acceptInvite.Input.Path,
+        headers: Operations.acceptInvite.Input.Headers = .init(),
+        body: Operations.acceptInvite.Input.Body? = nil
+    ) async throws -> Operations.acceptInvite.Output {
+        try await acceptInvite(Operations.acceptInvite.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Preview an invite by token (unauthenticated, IP-rate-limited)
+    ///
+    /// Unauthenticated preview so the /invite accept page can render workspace + inviter context before the invitee has an account. IP-rate-limited (token-bucket). Response omits workspace metadata on 404/410 to prevent token-space enumeration.
+    ///
+    /// - Remark: HTTP `GET /api/invites/preview`.
+    /// - Remark: Generated from `#/paths//api/invites/preview/get`.
+    public func get_sol_api_sol_invites_sol_preview(
+        query: Operations.get_sol_api_sol_invites_sol_preview.Input.Query,
+        headers: Operations.get_sol_api_sol_invites_sol_preview.Input.Headers = .init()
+    ) async throws -> Operations.get_sol_api_sol_invites_sol_preview.Output {
+        try await get_sol_api_sol_invites_sol_preview(Operations.get_sol_api_sol_invites_sol_preview.Input(
+            query: query,
             headers: headers
         ))
     }
