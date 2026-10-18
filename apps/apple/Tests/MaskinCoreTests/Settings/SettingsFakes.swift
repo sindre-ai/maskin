@@ -93,6 +93,22 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 	func disconnect(id: String, idempotencyKey: String) async throws {
 		try record("disconnect", key: idempotencyKey)
 	}
+	var connectStart = IntegrationConnectStart(
+		installURL: URL(string: "https://maskin.example/api/integrations/slack/native-launch?ticket=t")!)
+	var installations: [GitHubInstallationChoice] = []
+	func startConnect(provider: String, idempotencyKey: String) async throws -> IntegrationConnectStart {
+		try record("start-connect:\(provider)", key: idempotencyKey)
+		return connectStart
+	}
+	func pendingInstallations(integrationId: String) async throws -> [GitHubInstallationChoice] {
+		try record("pending-installations:\(integrationId)")
+		return installations
+	}
+	func selectInstallation(integrationId: String, installationId: String, idempotencyKey: String)
+		async throws
+	{
+		try record("select-installation:\(integrationId):\(installationId)", key: idempotencyKey)
+	}
 	func regenerate(actorId: String) async throws -> SecretValue {
 		try record("regenerate")
 		return SecretValue(regeneratedKey)
@@ -163,4 +179,23 @@ func member(
 	_ id: String, _ name: String, _ role: MemberRole = .member, agent: Bool = false
 ) -> WorkspaceMember {
 	WorkspaceMember(actorId: id, name: name, isAgent: agent, role: role)
+}
+
+
+/// Stands in for the system sign-in sheet: returns a scripted URL, throws a scripted error, or
+/// parks until released so a test can tap again mid-flight.
+@MainActor
+final class FakeWebAuth: WebAuthenticating {
+	var result: Result<URL, WebAuthenticationError> = .failure(.cancelled)
+	private(set) var opened: [(url: URL, scheme: String)] = []
+	private var gate: CheckedContinuation<Void, Never>?
+	var holds = false
+
+	func authenticate(url: URL, callbackScheme: String) async throws -> URL {
+		opened.append((url, callbackScheme))
+		if holds { await withCheckedContinuation { gate = $0 } }
+		return try result.get()
+	}
+
+	func release() { gate?.resume(); gate = nil }
 }
