@@ -174,8 +174,9 @@ export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
 
 /**
  * A funded request that has produced no token after this long is cancelled and
- * retried once, then sent to the other allowed provider (two tries there), then
- * fails with a try-again error. Measured first tokens on the allowed providers:
+ * retried once, then sent to the other allowed provider (two tries there). The
+ * last try has no timeout, so a request that is slow everywhere is still served.
+ * Measured first tokens on the allowed providers:
  * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
  * 8s leaves headroom for both and still catches the stalls.
  */

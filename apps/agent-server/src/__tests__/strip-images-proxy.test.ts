@@ -290,13 +290,46 @@ describe('time-to-first-token guard over HTTP', () => {
 		expect(providers[2]).not.toBe(providers[0])
 	})
 
-	it('answers 504 with x-should-retry: false after four slow attempts', async () => {
-		const { seen, post } = await setup((_n, res) => sse(res))
+	it('tries providers in order A, A, B, B, with the last try untimed', async () => {
+		const { seen, post } = await setup((n, res) => {
+			sse(res)
+			// The fourth try is slower than the timeout and must still be served.
+			if (n === 4) setTimeout(() => res.end(FIRST), ttft.timeoutMs * 2)
+		})
 		const res = await post()
-		expect(res.status).toBe(504)
-		expect(res.headers.get('x-should-retry')).toBe('false')
-		expect((await res.json()).error.message).toMatch(/try again/i)
-		expect(seen).toHaveLength(4)
+		expect(res.status).toBe(200)
+		expect(await res.text()).toBe(FIRST)
+		const providers = seen.map((p) => p.only?.[0])
+		expect(providers).toHaveLength(4)
+		expect(providers[0]).toBe(providers[1])
+		expect(providers[2]).toBe(providers[3])
+		expect(providers[2]).not.toBe(providers[0])
+	})
+
+	it('retries when the stream errors before the first token', async () => {
+		const { seen, post } = await setup((n, res) => {
+			sse(res)
+			if (n === 1) {
+				res.write(': keepalive\n\n')
+				setTimeout(() => res.destroy(), 20)
+				return
+			}
+			res.end(FIRST)
+		})
+		const res = await post()
+		expect(await res.text()).toBe(FIRST)
+		expect(seen).toHaveLength(2)
+	})
+
+	it('passes through a stream that ends without any token event', async () => {
+		const { seen, post } = await setup((_n, res) => {
+			sse(res)
+			res.end(': done\n\n')
+		})
+		const res = await post()
+		expect(res.status).toBe(200)
+		expect(await res.text()).toBe(': done\n\n')
+		expect(seen).toHaveLength(1)
 	})
 
 	it('retries when the provider holds the response headers back too', async () => {

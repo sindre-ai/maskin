@@ -165,13 +165,14 @@ function forward(req, res, bytes, target) {
 	upstream.end(bytes)
 }
 
-const TTFT_FAILED_MESSAGE =
-	'The model provider is too slow to respond right now. Please try again in a moment.'
 const FIRST_TOKEN_EVENT = /event: content_block_(start|delta)/
 const ERROR_EVENT = /event: error/
 
 // forward() plus the time-to-first-token guard. bodyFor(prefs) is the request
-// body to send for one attempt's provider preferences.
+// body to send for one attempt's provider preferences. Every attempt but the last
+// is timed; the last is a plain forward(), so a request that is slow on every
+// provider (a huge prompt after compaction) is served as it was before the guard
+// instead of failing the same way each time.
 function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
 	const lib = target.protocol === 'https:' ? https : http
 	let current = null
@@ -185,20 +186,14 @@ function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
 		}
 	})
 
-	function giveUp() {
-		finished = true
-		console.error(`strip-images-proxy: no first token after ${plan.length} attempts, giving up`)
-		// x-should-retry: false keeps the CLI from stacking its own retries on top.
-		res.writeHead(504, { 'content-type': 'application/json', 'x-should-retry': 'false' })
-		res.end(
-			JSON.stringify({ type: 'error', error: { type: 'api_error', message: TTFT_FAILED_MESSAGE } }),
-		)
-	}
-
 	function attempt(index) {
 		if (finished) return
 		const prefs = plan[index]
 		const bytes = bodyFor(prefs)
+		if (index === plan.length - 1) {
+			console.error('strip-images-proxy: last attempt, no first-token timeout')
+			return forward(req, res, bytes, target)
+		}
 		const label = prefs?.only ? ` (provider only=${prefs.only.join(',')})` : ''
 		let settled = false
 		let upstreamRes = null
@@ -222,10 +217,8 @@ function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
 			}
 			r.on('data', onData)
 			r.on('end', () => release(Buffer.concat(held), onData))
-			r.on('error', () => {
-				if (settled) res.destroy()
-				else retry('stream error before first token')
-			})
+			// A no-op once settled: release() installs its own error handler.
+			r.on('error', () => retry('stream error before first token'))
 		})
 
 		function release(head, onData) {
@@ -245,12 +238,10 @@ function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
 			clearTimeout(timer)
 			upstream.destroy()
 			upstreamRes?.destroy()
-			const left = plan.length - index - 1
 			console.error(
-				`strip-images-proxy: ${reason} on attempt ${index + 1}/${plan.length}${label}, ${left ? 'retrying' : 'out of attempts'}`,
+				`strip-images-proxy: ${reason} on attempt ${index + 1}/${plan.length}${label}, retrying`,
 			)
-			if (left) attempt(index + 1)
-			else giveUp()
+			attempt(index + 1)
 		}
 
 		current = {
