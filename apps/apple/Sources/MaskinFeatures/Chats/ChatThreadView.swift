@@ -126,10 +126,12 @@ struct ChatThreadView: View {
 
 	var body: some View {
 		ScrollViewReader { proxy in
-			observedContent(proxy)
-				.ambientBackground()
-				.safeAreaInset(edge: .bottom, spacing: 0) { composerStack(proxy) }
-				.navigationTitle(navTitle)
+			framed(
+				observedContent(proxy)
+					.ambientBackground()
+					.safeAreaInset(edge: .bottom, spacing: 0) { composerStack(proxy) }
+			)
+				.navigationTitle(usesHeader ? "" : navTitle)
 				#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
 				// The tab bar would sit on top of the composer. iPad keeps it: the split view has room.
@@ -171,6 +173,56 @@ struct ChatThreadView: View {
 		}
 	}
 
+	// MARK: Header
+
+	/// iPhone: the chat's name and state ride on the v4 gradient; the messages are on the sheet. The
+	/// system bar stays (back, members, options), clear over the gradient.
+	private var usesHeader: Bool {
+		#if os(iOS)
+			sizeClass == .compact
+		#else
+			false
+		#endif
+	}
+
+	@ViewBuilder private func framed<Content: View>(_ content: Content) -> some View {
+		if usesHeader {
+			ScreenHeaderSheet {
+				threadHeader
+			} content: {
+				content
+			}
+			.onHeaderGradientBar()
+		} else {
+			content
+		}
+	}
+
+	private var threadHeader: some View {
+		let status = ThreadNav.status(presences: presences, flow: flow)
+		return Button {
+			titleAction?()
+		} label: {
+			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+				Text(navTitle)
+					.maskinText(.title)
+					.foregroundStyle(.white)
+					.lineLimit(2)
+					.accessibilityAddTraits(.isHeader)
+				if let status {
+					Text(status.text)
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinScreenHeader.kicker)
+				}
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+		.disabled(titleAction == nil)
+		.padding(.horizontal, MaskinSpace.s9)
+	}
+
 	// MARK: Nav bar
 
 	/// Tapping the title of a flow channel opens the flow; of a direct agent chat, the agent's page.
@@ -182,9 +234,11 @@ struct ChatThreadView: View {
 
 	@ToolbarContentBuilder
 	private var toolbarContent: some ToolbarContent {
-		ToolbarItem(placement: .principal) {
-			ThreadNavTitle(
-				title: navTitle, status: ThreadNav.status(presences: presences, flow: flow), onTap: titleAction)
+		if !usesHeader {
+			ToolbarItem(placement: .principal) {
+				ThreadNavTitle(
+					title: navTitle, status: ThreadNav.status(presences: presences, flow: flow), onTap: titleAction)
+			}
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {

@@ -205,3 +205,18 @@ private struct HeaderButton: View {
 		.accessibilityLabel(label)
 	}
 }
+
+extension View {
+	/// A pushed screen whose top is the v4 gradient: the system bar keeps its buttons, clear over the
+	/// gradient, with light content.
+	func onHeaderGradientBar() -> some View {
+		#if os(iOS)
+			return
+				self
+				.toolbarBackground(.hidden, for: .navigationBar)
+				.toolbarColorScheme(.dark, for: .navigationBar)
+		#else
+			return self
+		#endif
+	}
+}

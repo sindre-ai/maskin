@@ -170,6 +170,10 @@ public final class AppRuntime {
 			if let id = ProcessInfo.processInfo.environment["MASKIN_DEMO_OBJECT"] {
 				presentation = .object(id)
 			}
+			if let id = ProcessInfo.processInfo.environment["MASKIN_DEMO_CHAT"] {
+				selectedTab = .chats
+				requestedConversationId = id
+			}
 		#endif
 	}
 

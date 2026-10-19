@@ -192,10 +192,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			} content: {
 				mainContent.environment(\.objectTitleInHeader, true)
 			}
-			#if os(iOS)
-				.toolbarBackground(.hidden, for: .navigationBar)
-				.toolbarColorScheme(.dark, for: .navigationBar)
-			#endif
+			.onHeaderGradientBar()
 		} else {
 			mainContent
 		}

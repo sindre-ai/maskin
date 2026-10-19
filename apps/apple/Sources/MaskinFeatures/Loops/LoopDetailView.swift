@@ -48,10 +48,7 @@ struct LoopDetailView: View {
 			} content: {
 				page
 			}
-			#if os(iOS)
-				.toolbarBackground(.hidden, for: .navigationBar)
-				.toolbarColorScheme(.dark, for: .navigationBar)
-			#endif
+			.onHeaderGradientBar()
 		} else {
 			page
 		}
