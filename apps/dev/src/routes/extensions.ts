@@ -1,16 +1,28 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { extensions, webhookDeliveries } from '@maskin/db/schema'
 import {
+	actors,
+	blockedToolCalls,
+	extensions,
+	webhookDeliveries,
+	workspaceMembers,
+} from '@maskin/db/schema'
+import {
+	type ToolGrants,
 	createExtensionBodySchema,
+	mcpConfigSchema,
+	setAgentGrantBodySchema,
+	setToolGrantBodySchema,
+	toolGrantsSchema,
 	updateExtensionBodySchema,
 	webhookConfigSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, isNotNull, like, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, isNotNull, like, max, sql } from 'drizzle-orm'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import {
+	defaultToolGrants,
 	extensionProvider,
 	generateSigningSecret,
 	generateWebhookToken,
@@ -730,6 +742,373 @@ app.openapi(sampleRoute, async (c) => {
 
 	const result = mapWebhookEvent(config.eventMap, payload)
 	return c.json(result, 200)
+})
+
+// ── Tool grants ─────────────────────────────────────────────────────────────
+// Per-agent, per-tool access to a custom extension's MCP tools (tech spec
+// section 5). An agent with no entry is denied every tool. Granting writes the
+// declared tools' defaults (read allow, write deny) in full, then applies the
+// owner's explicit choices on top. Built-in integrations have no row in this
+// table, so none of these routes can reach them.
+
+/** Attempted-tool signal looks back this far (matches blocked_tool_calls retention). */
+const ATTEMPTED_WINDOW_DAYS = 30
+
+const agentIdParamSchema = z.object({
+	id: z.string().uuid(),
+	agentId: z.string().uuid(),
+})
+
+const toolParamSchema = agentIdParamSchema.extend({ toolName: z.string().min(1).max(256) })
+
+const declaredToolSchema = z.object({
+	name: z.string(),
+	kind: z.enum(['read', 'write']),
+	description: z.string().optional(),
+})
+
+const grantsResponseSchema = z.object({
+	/** agentId -> toolName -> grant, exactly as stored. */
+	toolGrants: z.record(z.string(), z.unknown()),
+	/** The tools mcp_config declares, with the kind that drives the grant defaults. */
+	tools: z.array(declaredToolSchema),
+})
+
+type GrantsResponse = z.infer<typeof grantsResponseSchema>
+
+function declaredTools(row: Pick<ExtensionRow, 'mcpConfig'>): z.infer<typeof declaredToolSchema>[] {
+	const parsed = mcpConfigSchema.shape.tools.safeParse(
+		(row.mcpConfig as { tools?: unknown } | null)?.tools ?? [],
+	)
+	return parsed.success ? parsed.data : []
+}
+
+function storedGrants(row: Pick<ExtensionRow, 'toolGrants'>): ToolGrants {
+	const parsed = toolGrantsSchema.safeParse(row.toolGrants ?? {})
+	return parsed.success ? parsed.data : {}
+}
+
+function grantsResponse(row: ExtensionRow): GrantsResponse {
+	return { toolGrants: storedGrants(row), tools: declaredTools(row) }
+}
+
+const notAnAgent = createApiError('BAD_REQUEST', 'Only an agent in this workspace can be granted')
+
+/** True when the actor is an agent that belongs to the workspace. */
+async function isWorkspaceAgent(
+	db: Database,
+	workspaceId: string,
+	agentId: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ id: actors.id })
+		.from(actors)
+		.innerJoin(
+			workspaceMembers,
+			and(eq(workspaceMembers.actorId, actors.id), eq(workspaceMembers.workspaceId, workspaceId)),
+		)
+		.where(and(eq(actors.id, agentId), eq(actors.type, 'agent')))
+		.limit(1)
+	return !!row
+}
+
+type GrantChange = (
+	current: ToolGrants,
+	tools: ReturnType<typeof declaredTools>,
+) => ToolGrants | string
+
+/**
+ * Read-modify-write on the grants column under a row lock, so two owners
+ * flipping different tools at once cannot overwrite each other. A string
+ * returned by `change` is a validation message and nothing is written.
+ */
+async function writeGrants(
+	db: Database,
+	args: { workspaceId: string; id: string; actorId: string; agentId: string; change: GrantChange },
+): Promise<
+	{ ok: true; row: ExtensionRow } | { ok: false; reason: 'not_found' | 'invalid'; message?: string }
+> {
+	const { workspaceId, id, actorId, agentId, change } = args
+	const result = await db.transaction(async (tx) => {
+		const [locked] = await tx
+			.select()
+			.from(extensions)
+			.where(and(eq(extensions.id, id), eq(extensions.workspaceId, workspaceId)))
+			.for('update')
+			.limit(1)
+		if (!locked) return { ok: false as const, reason: 'not_found' as const }
+
+		const next = change(storedGrants(locked), declaredTools(locked))
+		if (typeof next === 'string') {
+			return { ok: false as const, reason: 'invalid' as const, message: next }
+		}
+		const [updated] = await tx
+			.update(extensions)
+			.set({ toolGrants: next, updatedAt: new Date() })
+			.where(eq(extensions.id, id))
+			.returning()
+		if (!updated) throw new Error('Failed to update extension grants')
+		await recordEvent(tx, {
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'extension',
+			entityId: id,
+			data: { slug: updated.slug, fields: ['tool_grants'], agent_id: agentId },
+		})
+		return { ok: true as const, row: updated }
+	})
+	return result
+}
+
+const getGrantsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/grants',
+	tags: ['extensions'],
+	summary: "Read the extension's tool grants and the tools they apply to",
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Stored grants and declared tools',
+			content: { 'application/json': { schema: grantsResponseSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(getGrantsRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const row = await loadOne(db, workspaceId, id)
+	if (!row) return c.json(notFound, 404)
+	return c.json(grantsResponse(row), 200)
+})
+
+const grantsFailureResponses = {
+	400: { description: 'Invalid request', content: { 'application/json': { schema: errorSchema } } },
+	403: { description: 'Not an owner', content: { 'application/json': { schema: errorSchema } } },
+	404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+}
+
+const setAgentGrantRoute = createRoute({
+	method: 'put',
+	path: '/{id}/grants/{agentId}',
+	'x-viewer-policy': 'writer',
+	tags: ['extensions'],
+	summary:
+		'Grant an agent access. Each declared tool starts from its default (read allow, write deny); tools in the body override that. Replaces any earlier entry for the agent.',
+	request: {
+		headers: workspaceIdHeader,
+		params: agentIdParamSchema,
+		body: { content: { 'application/json': { schema: setAgentGrantBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Grants after the change',
+			content: { 'application/json': { schema: grantsResponseSchema } },
+		},
+		...grantsFailureResponses,
+	},
+})
+
+app.openapi(setAgentGrantRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, agentId } = c.req.valid('param')
+	if (!isOwnerOrAdmin(c.get('workspaceRole'))) return c.json(forbidden(), 403)
+	const body = c.req.valid('json')
+
+	if (!(await isWorkspaceAgent(db, workspaceId, agentId))) {
+		return c.json(notAnAgent, 400)
+	}
+
+	const result = await writeGrants(db, {
+		workspaceId,
+		id,
+		actorId,
+		agentId,
+		change: (current, tools) => {
+			if (tools.length === 0) {
+				return 'This extension declares no tools yet, so there is nothing to grant'
+			}
+			const names = new Set(tools.map((t) => t.name))
+			const unknown = Object.keys(body.tools ?? {}).find((name) => !names.has(name))
+			if (unknown) return `Tool ${unknown} is not declared by this extension`
+			return { ...current, [agentId]: { ...defaultToolGrants(tools), ...(body.tools ?? {}) } }
+		},
+	})
+	if (!result.ok) {
+		return result.reason === 'not_found'
+			? c.json(notFound, 404)
+			: c.json(createApiError('BAD_REQUEST', result.message ?? 'Invalid grant'), 400)
+	}
+	return c.json(grantsResponse(result.row), 200)
+})
+
+const setToolGrantRoute = createRoute({
+	method: 'put',
+	path: '/{id}/grants/{agentId}/tools/{toolName}',
+	'x-viewer-policy': 'writer',
+	tags: ['extensions'],
+	summary:
+		'Flip one tool for one agent. Touches only that tool; an agent with no entry gets an entry holding just this tool.',
+	request: {
+		headers: workspaceIdHeader,
+		params: toolParamSchema,
+		body: { content: { 'application/json': { schema: setToolGrantBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Grants after the change',
+			content: { 'application/json': { schema: grantsResponseSchema } },
+		},
+		...grantsFailureResponses,
+	},
+})
+
+app.openapi(setToolGrantRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, agentId, toolName } = c.req.valid('param')
+	if (!isOwnerOrAdmin(c.get('workspaceRole'))) return c.json(forbidden(), 403)
+	const { effect } = c.req.valid('json')
+
+	if (!(await isWorkspaceAgent(db, workspaceId, agentId))) {
+		return c.json(notAnAgent, 400)
+	}
+
+	const result = await writeGrants(db, {
+		workspaceId,
+		id,
+		actorId,
+		agentId,
+		change: (current, tools) => {
+			if (!tools.some((t) => t.name === toolName)) {
+				return `Tool ${toolName} is not declared by this extension`
+			}
+			return { ...current, [agentId]: { ...(current[agentId] ?? {}), [toolName]: effect } }
+		},
+	})
+	if (!result.ok) {
+		return result.reason === 'not_found'
+			? c.json(notFound, 404)
+			: c.json(createApiError('BAD_REQUEST', result.message ?? 'Invalid grant'), 400)
+	}
+	return c.json(grantsResponse(result.row), 200)
+})
+
+const revokeAgentGrantRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/grants/{agentId}',
+	'x-viewer-policy': 'writer',
+	tags: ['extensions'],
+	summary: "Remove an agent's entry, which denies it every tool again",
+	request: { headers: workspaceIdHeader, params: agentIdParamSchema },
+	responses: {
+		200: {
+			description: 'Grants after the change',
+			content: { 'application/json': { schema: grantsResponseSchema } },
+		},
+		403: grantsFailureResponses[403],
+		404: grantsFailureResponses[404],
+	},
+})
+
+app.openapi(revokeAgentGrantRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, agentId } = c.req.valid('param')
+	if (!isOwnerOrAdmin(c.get('workspaceRole'))) return c.json(forbidden(), 403)
+
+	const result = await writeGrants(db, {
+		workspaceId,
+		id,
+		actorId,
+		agentId,
+		change: (current) => {
+			const { [agentId]: _removed, ...rest } = current
+			return rest
+		},
+	})
+	if (!result.ok) return c.json(notFound, 404)
+	return c.json(grantsResponse(result.row), 200)
+})
+
+const attemptedRoute = createRoute({
+	method: 'get',
+	path: '/{id}/attempted',
+	tags: ['extensions'],
+	summary: 'Tools each agent tried to call and was refused, over the last 30 days',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Distinct refused tool names per agent, from blocked_tool_calls',
+			content: {
+				'application/json': {
+					schema: z.object({
+						windowDays: z.number().int(),
+						agents: z.array(
+							z.object({
+								agentId: z.string().uuid(),
+								tools: z.array(z.string()),
+								lastAttemptedAt: z.string(),
+							}),
+						),
+					}),
+				},
+			},
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(attemptedRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const ext = await loadOne(db, workspaceId, id)
+	if (!ext) return c.json(notFound, 404)
+
+	const since = new Date(Date.now() - ATTEMPTED_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+	const rows = await db
+		.select({
+			agentId: blockedToolCalls.agentId,
+			toolName: blockedToolCalls.toolName,
+			last: max(blockedToolCalls.blockedAt),
+		})
+		.from(blockedToolCalls)
+		.where(
+			and(
+				eq(blockedToolCalls.workspaceId, workspaceId),
+				eq(blockedToolCalls.extensionId, id),
+				gt(blockedToolCalls.blockedAt, since),
+			),
+		)
+		.groupBy(blockedToolCalls.agentId, blockedToolCalls.toolName)
+
+	const byAgent = new Map<string, { tools: string[]; last: Date }>()
+	for (const r of rows) {
+		const last = r.last ? new Date(r.last) : since
+		const entry = byAgent.get(r.agentId) ?? { tools: [], last }
+		entry.tools.push(r.toolName)
+		if (last > entry.last) entry.last = last
+		byAgent.set(r.agentId, entry)
+	}
+	return c.json(
+		{
+			windowDays: ATTEMPTED_WINDOW_DAYS,
+			agents: [...byAgent.entries()].map(([agentId, v]) => ({
+				agentId,
+				tools: v.tools.sort(),
+				lastAttemptedAt: v.last.toISOString(),
+			})),
+		},
+		200,
+	)
 })
 
 export default app
