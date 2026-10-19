@@ -984,6 +984,10 @@ export function MarkdownContent({
 export const READ_ONLY_DESCRIPTION_BANNER =
 	"This description is read-only here. Editing it could change parts you didn't touch."
 
+// Same wording as the file editor's refused-rewrite banner, for a description.
+export const REFUSED_DESCRIPTION_BANNER =
+	"Part of this description can't be written back without losing something, so that part was left as it was. Your other changes are saved."
+
 // Flag-on: dynamic-imported Tiptap surface. Blur-emit is delegated to the
 // editor itself (spec §9). While the chunk is fetching, render the raw
 // markdown so nothing flashes empty. `surface` / `objectId` ride on the editor
@@ -1006,6 +1010,7 @@ function EditorAdapter({
 	objectId?: string
 }) {
 	const [readOnly, setReadOnly] = useState(false)
+	const [rewriteRefused, setRewriteRefused] = useState(false)
 	// The editor reads `value` once, at mount. With preserveSource it also builds
 	// its block map from that text, so a change that did not come from this editor
 	// (an agent edit landing over SSE) has to remount it, or the next blur would
@@ -1024,10 +1029,14 @@ function EditorAdapter({
 	const handleChange = useCallback(
 		(markdown: string) => {
 			dirtyRef.current = false
+			// A save that comes out identical to what is stored (every rewrite was
+			// refused, or the edit was undone) is not sent: it would only stamp an
+			// edit on the object that nobody made.
+			if (preserveSource && markdown === settledTextRef.current) return
 			settledTextRef.current = markdown
 			onChange?.(markdown)
 		},
-		[onChange],
+		[onChange, preserveSource],
 	)
 
 	const handleEdit = useCallback(() => {
@@ -1037,6 +1046,7 @@ function EditorAdapter({
 	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
 		captureEditorParseError(info)
 		if (info.reason === 'read_only_fallback') setReadOnly(true)
+		if (info.reason === 'loss_check') setRewriteRefused(true)
 	}, [])
 
 	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
@@ -1069,6 +1079,11 @@ function EditorAdapter({
 			{readOnly && surface === 'description' && (
 				<EditorBanner tone="info" className="mb-3">
 					{READ_ONLY_DESCRIPTION_BANNER}
+				</EditorBanner>
+			)}
+			{rewriteRefused && surface === 'description' && (
+				<EditorBanner tone="danger" heading="Couldn't save your changes" className="mb-3">
+					{REFUSED_DESCRIPTION_BANNER}
 				</EditorBanner>
 			)}
 			<Suspense
