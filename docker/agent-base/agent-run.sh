@@ -351,7 +351,9 @@ log_mcp_guard_version() {
   local version
   if command -v "$MCP_GUARD_NAME" > /dev/null 2>&1 \
     && version=$(timeout 10 "$MCP_GUARD_NAME" --version 2>&1); then
-    echo "[system] ${MCP_GUARD_NAME} version: ${version//$'\n'/ }"
+    # --version prints "maskin-mcp-guard 0.1.0"; log "version: 0.1.0", not the name twice.
+    version="${version//$'\n'/ }"
+    echo "[system] ${MCP_GUARD_NAME} version: ${version#"${MCP_GUARD_NAME}" }"
   else
     echo "[system] ${MCP_GUARD_NAME} not available in this image: guarded MCP servers will be dropped"
   fi
