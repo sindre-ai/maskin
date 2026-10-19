@@ -223,6 +223,20 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `DELETE /api/workspaces/{workspaceId}/skills/{name}`.
     /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/delete`.
     func delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_(_ input: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Input) async throws -> Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output
+    /// Accept an invite by token (public path; reads Authorization itself)
+    ///
+    /// Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.
+    ///
+    /// - Remark: HTTP `POST /api/invites/{token}/accept`.
+    /// - Remark: Generated from `#/paths//api/invites/{token}/accept/post(acceptInvite)`.
+    func acceptInvite(_ input: Operations.acceptInvite.Input) async throws -> Operations.acceptInvite.Output
+    /// Preview an invite by token (unauthenticated, IP-rate-limited)
+    ///
+    /// Unauthenticated preview so the /invite accept page can render workspace + inviter context before the invitee has an account. IP-rate-limited (token-bucket). Response omits workspace metadata on 404/410 to prevent token-space enumeration.
+    ///
+    /// - Remark: HTTP `GET /api/invites/preview`.
+    /// - Remark: Generated from `#/paths//api/invites/preview/get`.
+    func get_sol_api_sol_invites_sol_preview(_ input: Operations.get_sol_api_sol_invites_sol_preview.Input) async throws -> Operations.get_sol_api_sol_invites_sol_preview.Output
     /// List relationships with filters
     ///
     /// - Remark: HTTP `GET /api/relationships`.
@@ -279,6 +293,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/loops/{id}/steps`.
     /// - Remark: Generated from `#/paths//api/loops/{id}/steps/get`.
     func get_sol_api_sol_loops_sol__lcub_id_rcub__sol_steps(_ input: Operations.get_sol_api_sol_loops_sol__lcub_id_rcub__sol_steps.Input) async throws -> Operations.get_sol_api_sol_loops_sol__lcub_id_rcub__sol_steps.Output
+    /// Start LinkedIn Hosted Auth Wizard connect flow
+    ///
+    /// - Remark: HTTP `POST /api/integrations/linkedin-unipile/connect`.
+    /// - Remark: Generated from `#/paths//api/integrations/linkedin-unipile/connect/post`.
+    func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(_ input: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -289,6 +308,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/integrations/providers`.
     /// - Remark: Generated from `#/paths//api/integrations/providers/get`.
     func get_sol_api_sol_integrations_sol_providers(_ input: Operations.get_sol_api_sol_integrations_sol_providers.Input) async throws -> Operations.get_sol_api_sol_integrations_sol_providers.Output
+    /// Read the installations awaiting selection on a pending GitHub connect
+    ///
+    /// - Remark: HTTP `GET /api/integrations/github/pending-selection/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/github/pending-selection/{id}/get`.
+    func get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_.Output
+    /// Finalize a GitHub connect by choosing one of the authorized installations
+    ///
+    /// - Remark: HTTP `POST /api/integrations/github/select-installation`.
+    /// - Remark: Generated from `#/paths//api/integrations/github/select-installation/post`.
+    func post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation(_ input: Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Input) async throws -> Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Output
     /// Start integration connection flow
     ///
     /// - Remark: HTTP `POST /api/integrations/{provider}/connect`.
@@ -1111,6 +1140,38 @@ extension APIProtocol {
             headers: headers
         ))
     }
+    /// Accept an invite by token (public path; reads Authorization itself)
+    ///
+    /// Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.
+    ///
+    /// - Remark: HTTP `POST /api/invites/{token}/accept`.
+    /// - Remark: Generated from `#/paths//api/invites/{token}/accept/post(acceptInvite)`.
+    public func acceptInvite(
+        path: Operations.acceptInvite.Input.Path,
+        headers: Operations.acceptInvite.Input.Headers = .init(),
+        body: Operations.acceptInvite.Input.Body? = nil
+    ) async throws -> Operations.acceptInvite.Output {
+        try await acceptInvite(Operations.acceptInvite.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Preview an invite by token (unauthenticated, IP-rate-limited)
+    ///
+    /// Unauthenticated preview so the /invite accept page can render workspace + inviter context before the invitee has an account. IP-rate-limited (token-bucket). Response omits workspace metadata on 404/410 to prevent token-space enumeration.
+    ///
+    /// - Remark: HTTP `GET /api/invites/preview`.
+    /// - Remark: Generated from `#/paths//api/invites/preview/get`.
+    public func get_sol_api_sol_invites_sol_preview(
+        query: Operations.get_sol_api_sol_invites_sol_preview.Input.Query,
+        headers: Operations.get_sol_api_sol_invites_sol_preview.Input.Headers = .init()
+    ) async throws -> Operations.get_sol_api_sol_invites_sol_preview.Output {
+        try await get_sol_api_sol_invites_sol_preview(Operations.get_sol_api_sol_invites_sol_preview.Input(
+            query: query,
+            headers: headers
+        ))
+    }
     /// List relationships with filters
     ///
     /// - Remark: HTTP `GET /api/relationships`.
@@ -1249,6 +1310,19 @@ extension APIProtocol {
             headers: headers
         ))
     }
+    /// Start LinkedIn Hosted Auth Wizard connect flow
+    ///
+    /// - Remark: HTTP `POST /api/integrations/linkedin-unipile/connect`.
+    /// - Remark: Generated from `#/paths//api/integrations/linkedin-unipile/connect/post`.
+    public func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
+        headers: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output {
+        try await post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input(
+            headers: headers,
+            body: body
+        ))
+    }
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -1263,17 +1337,45 @@ extension APIProtocol {
     public func get_sol_api_sol_integrations_sol_providers(headers: Operations.get_sol_api_sol_integrations_sol_providers.Input.Headers = .init()) async throws -> Operations.get_sol_api_sol_integrations_sol_providers.Output {
         try await get_sol_api_sol_integrations_sol_providers(Operations.get_sol_api_sol_integrations_sol_providers.Input(headers: headers))
     }
+    /// Read the installations awaiting selection on a pending GitHub connect
+    ///
+    /// - Remark: HTTP `GET /api/integrations/github/pending-selection/{id}`.
+    /// - Remark: Generated from `#/paths//api/integrations/github/pending-selection/{id}/get`.
+    public func get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_(
+        path: Operations.get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_.Output {
+        try await get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_(Operations.get_sol_api_sol_integrations_sol_github_sol_pending_hyphen_selection_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Finalize a GitHub connect by choosing one of the authorized installations
+    ///
+    /// - Remark: HTTP `POST /api/integrations/github/select-installation`.
+    /// - Remark: Generated from `#/paths//api/integrations/github/select-installation/post`.
+    public func post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation(
+        headers: Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Output {
+        try await post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation(Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Input(
+            headers: headers,
+            body: body
+        ))
+    }
     /// Start integration connection flow
     ///
     /// - Remark: HTTP `POST /api/integrations/{provider}/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/{provider}/connect/post`.
     public func post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
         path: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Path,
-        headers: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Headers
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Body? = nil
     ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output {
         try await post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input(
             path: path,
-            headers: headers
+            headers: headers,
+            body: body
         ))
     }
     /// Update integration settings
