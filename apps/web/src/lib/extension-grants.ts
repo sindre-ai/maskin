@@ -33,7 +33,10 @@ export function allowedToolNames(
 	if (!grants) return []
 	return declaredTools(ext)
 		.map((t) => t.name)
-		.filter((name) => grants[name] !== undefined && grantEffect(grants[name]) === 'allow')
+		.filter((name) => {
+			const grant = grants[name]
+			return grant !== undefined && grantEffect(grant) === 'allow'
+		})
 }
 
 /** Tools the agent tried in the last 30 days that it still cannot call. */

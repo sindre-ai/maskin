@@ -15,7 +15,7 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 // entry is denied everything, granting writes each tool's kind default, explicit
 // entries override either default, and built-in integrations are never touched.
 
-const TOOLS = [
+const TOOLS: { name: string; kind: 'read' | 'write' }[] = [
 	{ name: 'get_transcript', kind: 'read' },
 	{ name: 'list_transcripts', kind: 'read' },
 	{ name: 'bookmark_meeting', kind: 'write' },

@@ -14,8 +14,10 @@ const TOOLS = [
 	{ name: 'bookmark_meeting', kind: 'write' },
 ]
 
-function ext(toolGrants: ExtensionResponse['toolGrants'] = {}): ExtensionResponse {
-	return { mcpConfig: { tools: TOOLS }, toolGrants } as ExtensionResponse
+type GrantsRow = Pick<ExtensionResponse, 'mcpConfig' | 'toolGrants'>
+
+function ext(toolGrants: ExtensionResponse['toolGrants'] = {}): GrantsRow {
+	return { mcpConfig: { tools: TOOLS }, toolGrants }
 }
 
 describe('grantEffect', () => {
