@@ -461,10 +461,12 @@ export function buildSave(session: SourceSession, input: SaveInput): SaveResult 
 
 	const blank = model.eol + model.eol
 	let out = model.lead
-	items.forEach((item, k) => {
-		if (k > 0) out += separator(model, items[k - 1], item, blank)
+	let previous: OutputItem | undefined
+	for (const item of items) {
+		if (previous) out += separator(model, previous, item, blank)
 		out += item.text
-	})
+		previous = item
+	}
 	out += model.trail || (model.blocks.length === 0 ? model.eol : '')
 	return { text: out, refused }
 }
