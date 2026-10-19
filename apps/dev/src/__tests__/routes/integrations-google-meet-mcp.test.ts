@@ -6,7 +6,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 vi.mock('../../lib/workspace-auth', () => ({
-	isWorkspaceMember: vi.fn(async () => true),
+	isWorkspaceWriter: vi.fn(async () => true),
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
@@ -26,7 +26,7 @@ vi.mock('../../lib/integrations/providers/google-meet/mcp-server', () => ({
 	})),
 }))
 
-import { isWorkspaceMember } from '../../lib/workspace-auth'
+import { isWorkspaceWriter } from '../../lib/workspace-auth'
 
 import googleMeetMcpRoutes from '../../routes/integrations-google-meet-mcp'
 
@@ -43,7 +43,7 @@ function mountedApp() {
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	;(isWorkspaceMember as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true)
+	;(isWorkspaceWriter as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true)
 })
 
 describe('POST /api/integrations/google-meet/mcp', () => {
@@ -60,7 +60,7 @@ describe('POST /api/integrations/google-meet/mcp', () => {
 	})
 
 	it('403s when the actor is not a member of the workspace', async () => {
-		;(isWorkspaceMember as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+		;(isWorkspaceWriter as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
 		const app = mountedApp()
 		const res = await app.request('/api/integrations/google-meet/mcp', {
 			method: 'POST',

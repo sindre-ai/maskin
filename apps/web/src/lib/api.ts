@@ -1203,6 +1203,9 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// False when the credit top-up Price isn't configured on the server; the
+	// "Buy usage credits" entry points are hidden in that case.
+	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
 	// `linkedin-addon-visible` flag is off OR the workspace has no connected
@@ -1428,6 +1431,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {
@@ -1439,6 +1445,8 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	/** Your own default workspace; null clears it. */
+	default_workspace_id?: string | null
 }
 
 export interface RunAgentInput {
@@ -1462,6 +1470,8 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	role: string
 	/** People in the workspace, including the caller — the workspace menu's sub-line. */
 	memberCount: number
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault: boolean
 }
 
 export interface UpdateWorkspaceInput {
@@ -1838,7 +1848,7 @@ export interface UpdateFileInput {
 export interface ConversationParticipantResponse {
 	actorId: string
 	actorName: string
-	actorType: 'human' | 'agent'
+	actorType: 'human' | 'agent' | 'system'
 	joinedAt: string | null
 	addedBy: string | null
 }
@@ -1951,6 +1961,14 @@ export interface MessageQuestionItem {
 export interface MessageQuestion {
 	session_id: string
 	questions: MessageQuestionItem[]
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+}
+
+/** An agent's request to connect an integration, surfaced into chat as a Connect card. */
+export interface MessageIntegrationConnect {
+	session_id: string
+	provider: string
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -1978,6 +1996,13 @@ export interface MessageMetadata {
 	question?: MessageQuestion
 	/** Client-supplied: pairs a human's reply back to the question it answers. */
 	question_answer?: MessageQuestionAnswer
+	/**
+	 * Backend-owned; stripped from anything a client sends. An agent's request to
+	 * connect an integration, rendered as a Connect card.
+	 */
+	integration_connect?: MessageIntegrationConnect
+	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
+	helper_return?: string
 }
 
 export interface MessageResponse {
@@ -2011,12 +2036,16 @@ export interface SpawnedSession {
 	actorId: string
 	actorName: string
 	actionPrompt: string
+	/** When the session was created: where its card sits in the chat's timeline. */
+	createdAt: string | null
 	startedAt: string | null
 	completedAt: string | null
 	durationMs: number | null
 	result: unknown
 	currentActivity: string | null
 	depends_on_session_ids: string[]
+	/** What the session is waiting on the person for; null when it is not waiting. */
+	awaiting: { message_id: number; question: MessageQuestion } | null
 }
 
 /**
@@ -2040,6 +2069,8 @@ export interface EditMessageInput {
 export interface MessagesListResponse {
 	messages: MessageResponse[]
 	has_more: boolean
+	/** Handoffs no message carries yet; present on the newest page only. */
+	pending_handoffs?: SpawnedSession[]
 }
 
 export interface CreateConversationInput {
@@ -2104,6 +2135,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {
@@ -2117,6 +2150,7 @@ export interface SessionInputAttachment {
 export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface SessionLogResponse {

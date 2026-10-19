@@ -6,6 +6,8 @@ export { generateCodeVerifier } from './oauth/pkce'
 export { WebhookHandler } from './webhooks/handler'
 export { normalizeEvent } from './events/normalizer'
 export { createMcpSession } from './mcp/bridge'
+export { runIntegrationSync } from './sync/runner'
+export type { RunIntegrationSyncContext, IntegrationSyncOutcome } from './sync/runner'
 export type {
 	ProviderConfig,
 	OAuth2Config,

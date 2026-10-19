@@ -19,6 +19,7 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
+import type { z } from 'zod'
 import {
 	type CursorState,
 	decodeCursor,
@@ -313,6 +314,8 @@ type ApiCallOptions = {
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT'])
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /**
  * Derive a deterministic Idempotency-Key from the host session id + the call
  * shape. When the MCP server runs inside an agent container, `SESSION_ID` is
@@ -378,10 +381,7 @@ async function apiFetch(
 	// sent. Read-only calls carry the header too — cheap and harmless, and
 	// keeps the header contract uniform per request rather than per method.
 	const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
-	if (
-		sessionId &&
-		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
-	) {
+	if (sessionId && UUID_RE.test(sessionId)) {
 		headers['X-Maskin-Session-Id'] = sessionId
 	}
 	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
@@ -1042,6 +1042,186 @@ async function enrichSessionActorName<T extends SessionRow>(
 	return session
 }
 
+// A waiting create_session checks every few seconds until the session ends. The
+// limit is kept short enough to finish before MCP clients give up on the tool
+// call, so the notify_on_complete fallback below is actually reachable. A session
+// still running at the limit is left running and reported as not settled.
+const WAIT_POLL_MS = 5_000
+const WAIT_LIMIT_MS = 660_000
+// Consecutive failed status checks tolerated before the wait gives up. A blip
+// (deploy restart, 502, dropped socket) must not orphan a session that is
+// already running.
+const MAX_POLL_FAILURES = 5
+
+/**
+ * The `wait: true` path of `create_session`: start the session, poll until it
+ * reaches a terminal state (or the wait runs out), and return `{ session, logs }`.
+ */
+async function createSessionAndWait(
+	config: McpConfig,
+	args: z.infer<typeof tools.create_session.inputSchema>,
+) {
+	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
+	// ignored, and it is never sent on this create call (registered below instead).
+	const {
+		workspace_id,
+		wait: _wait,
+		notify_on_complete: _ignored,
+		...createBody
+	} = args as typeof args & { notify_on_complete?: unknown }
+	const wsOpts = { workspaceId: workspace_id }
+
+	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
+	// call returns the result inline, so it is only registered (below) if the
+	// wait runs out.
+	const session = (await apiCall(config, 'POST', '/api/sessions', createBody, wsOpts)) as {
+		id: string
+		status: string
+	}
+
+	let sessionId = session.id
+	const deadline = Date.now() + WAIT_LIMIT_MS
+	const terminalStatuses = ['completed', 'failed', 'timeout']
+	// §17.6: when a session hits a subscription limit its terminal report
+	// carries retried_session_id — the id of the retry the scheduler
+	// enqueued. Follow the redirect so a caller waiting here sees the retry's
+	// outcome instead of an intermediate "failed", with the same cap (5) the
+	// scheduler enforces so a broken chain can't hold the polling loop for the
+	// full timeout.
+	const MAX_RETRY_FOLLOWS = 5
+	let retryFollows = 0
+
+	// 2. Poll until terminal, following retried_session_id redirects
+	let current = session as typeof session & { retriedSessionId?: string | null }
+	let settled = false
+	let pollFailures = 0
+	let pollError: string | undefined
+	while (Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS))
+		try {
+			current = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${sessionId}`,
+				undefined,
+				wsOpts,
+			)) as typeof current
+			pollFailures = 0
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) {
+				console.error(`create_session: gave up polling session ${sessionId}`, err)
+				break
+			}
+			continue
+		}
+		pollError = undefined
+		if (terminalStatuses.includes(current.status)) {
+			const retryId = current.retriedSessionId
+			if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
+				retryFollows += 1
+				sessionId = retryId
+				continue
+			}
+			settled = true
+			break
+		}
+	}
+
+	// The wait ran out with the helper still going: ask for its result to be sent
+	// back later. Never on the settled path, where the caller gets it inline.
+	// If the helper ended in the gap, the PATCH sends the return itself.
+	// The server says what became of it: 'registered' (still running, it will
+	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
+	// could not be sent, with the reason) or 'failed' (not registered at all).
+	let notifyOnComplete:
+		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
+		| undefined
+	if (!settled) {
+		try {
+			const patched = (await apiCall(
+				config,
+				'PATCH',
+				`/api/sessions/${sessionId}`,
+				{ notify_on_complete: true },
+				wsOpts,
+			)) as {
+				notify_on_complete?: 'registered' | 'delivered' | 'skipped'
+				notify_skip_reason?: string
+			}
+			notifyOnComplete = {
+				state: patched.notify_on_complete ?? 'registered',
+				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
+			}
+		} catch (err) {
+			console.error('create_session: could not register notify_on_complete', err)
+			notifyOnComplete = {
+				state: 'failed',
+				reason: err instanceof Error ? err.message : String(err),
+			}
+		}
+	}
+
+	// 3. Fetch logs. A failure here must not discard the session outcome.
+	let logs: unknown = null
+	let logsError: string | undefined
+	try {
+		logs = await apiCall(
+			config,
+			'GET',
+			`/api/sessions/${sessionId}/logs?limit=500`,
+			undefined,
+			wsOpts,
+		)
+	} catch (err) {
+		logsError = err instanceof Error ? err.message : String(err)
+	}
+
+	const wsId = workspace_id ?? config.defaultWorkspaceId
+	const currentWithUrl = wsId
+		? addUrl(current as Record<string, unknown>, config, wsId, {
+				kind: 'session',
+				id: (current as { id?: string }).id ?? sessionId,
+				actorId: (current as { actorId?: string }).actorId,
+			})
+		: current
+	// Surface how many retry redirects the poll followed so callers can
+	// distinguish a straight-through completion from one that rode the
+	// subscription-limit retry chain.
+	const currentWithRetryMeta =
+		retryFollows > 0
+			? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
+			: currentWithUrl
+
+	return {
+		_meta: meta('create_session', config, workspace_id),
+		content: [
+			{
+				type: 'text' as const,
+				text: JSON.stringify({
+					session: currentWithRetryMeta,
+					logs,
+					// Lets the caller find the session again, and says whether the result
+					// above is final or just where the wait stopped.
+					session_id: sessionId,
+					settled,
+					...(pollError ? { poll_error: pollError } : {}),
+					...(logsError ? { logs_error: logsError } : {}),
+					...(notifyOnComplete
+						? {
+								notify_on_complete: notifyOnComplete.state,
+								...(notifyOnComplete.reason
+									? { notify_on_complete_reason: notifyOnComplete.reason }
+									: {}),
+							}
+						: {}),
+				}),
+			},
+		],
+	}
+}
+
 /**
  * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
  * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
@@ -1683,6 +1863,8 @@ interface RawWorkspace {
 	id: string
 	name?: string | null
 	role?: string | null
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault?: boolean
 	createdAt?: string | null
 	updatedAt?: string | null
 }
@@ -1797,6 +1979,7 @@ export function redactWorkspaceSettings<T>(workspace: T): T {
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
 	const age = ageLabel(workspace.updatedAt ?? workspace.createdAt)
 	const parts = ['workspace']
+	if (workspace.isDefault) parts.push('default')
 	if (age) parts.push(age)
 	return parts.join(' · ')
 }
@@ -3329,12 +3512,21 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
+			// An agent is created by an authenticated caller and born as a member of
+			// workspace_id in the same request (the server rejects an agent create with
+			// no key). Humans sign up without a key and are added in a second call below.
+			const isAgent = createBody.type === 'agent'
+			const bornInWorkspace = isAgent && !willAutoCreateWorkspace ? resolvedWorkspace : undefined
 			const rawResult = (await apiCall(
 				config,
 				'POST',
 				'/api/actors',
-				{ ...createBody, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
-				{ skipAuth: true, skipWorkspace: true },
+				{
+					...createBody,
+					...splitLlmConfig(llm_config as Record<string, unknown> | undefined),
+					...(bornInWorkspace ? { workspace_id: bornInWorkspace } : {}),
+				},
+				{ skipAuth: !isAgent, skipWorkspace: true },
 			)) as { id: string; [key: string]: unknown }
 			const result = mergeLlmConfig(rawResult) as { id: string; [key: string]: unknown }
 			// These fields can't be meaningful on a just-created actor: installedLoopId
@@ -3348,9 +3540,13 @@ export function createMcpServer(config: McpConfig) {
 			result.agentState = undefined
 			result.agentStateUpdatedAt = undefined
 
-			// If workspace_id provided, add the new actor as a member
 			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
-			if (targetWorkspace && !createBody.auto_create_workspace) {
+			if (bornInWorkspace) {
+				// Already a member (role member) from the create call above.
+				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
+				;(result as Record<string, unknown>).role = 'member'
+			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
+				// Humans only: add the new actor as a member
 				try {
 					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
 						actor_id: result.id,
@@ -4758,14 +4954,16 @@ export function createMcpServer(config: McpConfig) {
 			// SESSION_ID is injected by session-manager into every agent
 			// container's env — stamping it here lets the conversations route
 			// attribute this message back to the session that produced it
-			// (messages.session_id), for cost/token drill-down. Undefined
+			// (messages.session_id), for cost/token drill-down. Over HTTP the
+			// server runs inside apps/dev, so that env is the host process's;
+			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: process.env.SESSION_ID },
+				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
 				{ workspaceId: workspace_id },
 			)
 			return {
@@ -5790,8 +5988,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
+			if (args.wait) return createSessionAndWait(config, args)
+
+			// `wait` never goes to the create route. The result is always sent back to
+			// the caller, with no opt-out: not waiting means not holding the call open,
+			// not never finding out how it went.
+			const { workspace_id, wait, ...rest } = args
+			const createBody = { ...rest, notify_on_complete: true }
+
+			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
 				workspaceId: workspace_id,
 			})) as SessionRow
 			const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -5807,6 +6012,47 @@ export function createMcpServer(config: McpConfig) {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'ask_user_question',
+		{
+			description: tools.ask_user_question.description,
+			inputSchema: tools.ask_user_question.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string) => ({
+				_meta: meta('ask_user_question', config, undefined),
+				content: [{ type: 'text' as const, text }],
+			})
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId) {
+				return reply(
+					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
+				)
+			}
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+					questions: args.questions.map((q) => ({
+						question: q.question,
+						header: q.header,
+						multi_select: q.multi_select ?? false,
+						options: q.options,
+					})),
+				})
+			} catch (err) {
+				// 409 is the normal answer for a session with no chat to ask in.
+				console.error('ask_user_question: could not post the question', err)
+				return reply(
+					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			return reply(
+				'Your question has been posted and the person is being shown the options. Do not call this tool again and do not repeat the question in your own words. End your turn now, without a closing message; their answer will arrive as your next turn.',
+			)
 		},
 	)
 
@@ -5855,6 +6101,13 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: { sessions: withUrls },
+				// If the token cap trims this page, the walk resumes after the last row that
+				// ships. list_sessions pages on `before` (updated_at), so the cursor is that value.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as { updated_at?: unknown; updatedAt?: unknown }
+					const updatedAt = row.updated_at ?? row.updatedAt
+					return typeof updatedAt === 'string' ? updatedAt : null
+				},
 			}
 		},
 	)
@@ -6051,107 +6304,6 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
-		server,
-		'run_agent',
-		{
-			description: tools.run_agent.description,
-			inputSchema: tools.run_agent.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-		},
-		async (args) => {
-			const { workspace_id } = args
-			const wsOpts = { workspaceId: workspace_id }
-
-			// 1. Create session
-			const session = (await apiCall(
-				config,
-				'POST',
-				'/api/sessions',
-				{
-					actor_id: args.actor_id,
-					action_prompt: args.action_prompt,
-					config: args.config,
-					auto_start: true,
-					spawned_by_message_id: args.spawned_by_message_id,
-					depends_on_session_ids: args.depends_on_session_ids,
-				},
-				wsOpts,
-			)) as { id: string; status: string }
-
-			let sessionId = session.id
-			const pollMs = (args.poll_interval_seconds ?? 5) * 1000
-			const timeoutMs = (args.timeout_seconds ?? 660) * 1000
-			const deadline = Date.now() + timeoutMs
-			const terminalStatuses = ['completed', 'failed', 'timeout']
-			// §17.6: when a session hits a subscription limit its terminal report
-			// carries retried_session_id — the id of the retry the scheduler
-			// enqueued. Follow the redirect so a caller waiting on run_agent
-			// sees the retry's outcome instead of an intermediate "failed",
-			// with the same cap (5) the scheduler enforces so a broken chain
-			// can't hold the polling loop for the full timeout.
-			const MAX_RETRY_FOLLOWS = 5
-			let retryFollows = 0
-
-			// 2. Poll until terminal, following retried_session_id redirects
-			let current = session as typeof session & { retriedSessionId?: string | null }
-			while (Date.now() < deadline) {
-				await new Promise((resolve) => setTimeout(resolve, pollMs))
-				current = (await apiCall(
-					config,
-					'GET',
-					`/api/sessions/${sessionId}`,
-					undefined,
-					wsOpts,
-				)) as typeof current
-				if (terminalStatuses.includes(current.status)) {
-					const retryId = current.retriedSessionId
-					if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
-						retryFollows += 1
-						sessionId = retryId
-						continue
-					}
-					break
-				}
-			}
-
-			// 3. Fetch logs
-			const logs = await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${sessionId}/logs?limit=500`,
-				undefined,
-				wsOpts,
-			)
-
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const currentWithUrl = wsId
-				? addUrl(current as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: (current as { id?: string }).id ?? sessionId,
-						actorId: (current as { actorId?: string }).actorId,
-					})
-				: current
-			// Surface how many retry redirects the poll followed so callers can
-			// distinguish a straight-through completion from one that rode the
-			// subscription-limit retry chain.
-			const currentWithRetryMeta =
-				retryFollows > 0
-					? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
-					: currentWithUrl
-
-			return {
-				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithRetryMeta, logs }),
-					},
-				],
-			}
-		},
-	)
-
 	// ─── Integrations ─────────────────────────────────────────
 	registerAppTool(
 		server,
@@ -6237,6 +6389,37 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			// Inside a chat session the human connects through a card in the chat:
+			// an OAuth button, or an input for an API key. The credential never
+			// passes through the model, and no URL has to be pasted. A 409 means
+			// the session has no human on the other end (autonomous run, or not an
+			// agent session at all) — fall through to the URL flow below.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (sessionId && UUID_RE.test(sessionId)) {
+				try {
+					const card = (await apiCall(
+						config,
+						'POST',
+						`/api/sessions/${sessionId}/connect-card`,
+						{ provider: args.provider },
+						{ workspaceId: args.workspace_id },
+					)) as { posted: boolean; already_connected?: boolean }
+					const text = card.already_connected
+						? `${args.provider} is already connected in this workspace — nothing to do, carry on.`
+						: `A Connect card for ${args.provider} is now in the chat. The user completes the connection there (they sign in, or paste their own API key into the card). Do not ask the user for an API key and do not paste a link. End your turn now without a closing message; they will tell you when it is connected.`
+					return {
+						_meta: meta(
+							'connect_integration',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
+						content: [{ type: 'text' as const, text }],
+					}
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 409) throw err
+				}
+			}
+
 			const result = (await apiCall(
 				config,
 				'POST',

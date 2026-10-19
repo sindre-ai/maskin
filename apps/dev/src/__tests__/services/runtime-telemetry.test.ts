@@ -230,4 +230,78 @@ describe('RuntimeTelemetry', () => {
 			},
 		})
 	})
+
+	describe('runtime_session_ended duplicate guard', () => {
+		const ended = (sessionId: string) => ({
+			sessionId,
+			endReason: 'failed' as const,
+			durationMs: 1,
+		})
+
+		it('sends one event per session however many times the end is recorded', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client })
+
+			for (let i = 0; i < 1000; i++) telemetry.recordSessionEnded(ended('sess-loop'))
+
+			expect(capture).toHaveBeenCalledTimes(1)
+		})
+
+		it('still sends one event for each distinct session', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client })
+
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-b'))
+			telemetry.recordSessionEnded(ended('sess-a'))
+
+			expect(capture.mock.calls.map(([p]) => p.distinctId)).toEqual(['sess-a', 'sess-b'])
+		})
+
+		it('does not suppress other events for the same session', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client })
+
+			telemetry.recordSessionStarted({
+				sessionId: 'sess-a',
+				agentServerUrl: 'local-docker',
+				sessionStartLatencyMs: 1,
+			})
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-a'))
+
+			expect(capture.mock.calls.map(([p]) => p.event)).toEqual([
+				'runtime_session_started',
+				'runtime_session_ended',
+			])
+		})
+
+		it('forgets the oldest session once the limit is reached, so memory stays bounded', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDedupLimit: 2 })
+
+			telemetry.recordSessionEnded(ended('sess-1'))
+			telemetry.recordSessionEnded(ended('sess-2'))
+			telemetry.recordSessionEnded(ended('sess-3')) // evicts sess-1
+			telemetry.recordSessionEnded(ended('sess-3')) // still remembered
+			telemetry.recordSessionEnded(ended('sess-1')) // forgotten, sends again
+
+			expect(capture.mock.calls.map(([p]) => p.distinctId)).toEqual([
+				'sess-1',
+				'sess-2',
+				'sess-3',
+				'sess-1',
+			])
+		})
+
+		it('sends every call when the limit is 0', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDedupLimit: 0 })
+
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-a'))
+
+			expect(capture).toHaveBeenCalledTimes(2)
+		})
+	})
 })

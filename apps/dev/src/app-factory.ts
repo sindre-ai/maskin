@@ -246,7 +246,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use(
 		'*',
-		honoLogger((line, ...rest) => console.log(redactLogLine(line), ...rest)),
+		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
 	)
 
 	app.use('*', async (c, next) => {

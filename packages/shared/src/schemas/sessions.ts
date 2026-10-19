@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { messageQuestionAnswerSchema } from './conversations'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
@@ -185,18 +186,26 @@ export const createSessionSchema = z.object({
 	// Object this session is being started for (bet, task, insight, or any
 	// first-class object). Optional on the wire — a missing value means
 	// "no originating object known" and lands as NULL on the row. When set
-	// the pair is threaded into `sessions.initiated_from_object_{id,type}`,
+	// the id is threaded into `sessions.initiated_from_object_id`,
 	// carried onto the `session_failed` event's `data.initiated_from` block
-	// and onto the PostHog `runtime_session_ended` event as
-	// `context_object_id` / `context_object_type` (parent bet Criterion 3).
+	// (with the object's type looked up from it) and onto the PostHog
+	// `runtime_session_ended` event as `context_object_id` (parent bet
+	// Criterion 3).
 	initiated_from_object_id: z.string().uuid().optional(),
-	initiated_from_object_type: z.string().max(64).optional(),
 	// Handed-off strip anchors. `spawned_by_message_id` is the assistant message
 	// that triggered this sub-agent spawn (bigint to match `messages.id`);
 	// `depends_on_session_ids` names the sessions this one is blocked behind.
 	// Both optional — a spawn without them reads as "no strip".
 	spawned_by_message_id: z.number().int().positive().optional(),
 	depends_on_session_ids: z.array(z.string().uuid()).optional(),
+	// A session started from inside a chat is interactive by default: it can ask
+	// the person a question and ends when it returns its result. Pass `false` to
+	// run it as a plain one-shot job instead.
+	interactive: z.boolean().optional(),
+	// Ask for the helper's final message to be sent back to the session that
+	// started it when this one ends. Stored in config only when the spawn link
+	// is accepted; unset keeps the return exactly as it is without the flag.
+	notify_on_complete: z.boolean().optional(),
 })
 
 export const sessionQuerySchema = z.object({
@@ -426,6 +435,8 @@ export const sessionInputAttachmentSchema = z.object({
 export const sessionInputSchema = z.object({
 	content: z.string().min(1),
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
+	/** Set when this input answers a question the session asked in a chat. */
+	question_answer: messageQuestionAnswerSchema.optional(),
 })
 
 export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])

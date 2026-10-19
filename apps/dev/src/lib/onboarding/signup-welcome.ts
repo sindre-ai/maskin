@@ -182,7 +182,6 @@ export async function postSignupWelcomeComment(
 		// created for the signup: pass it as the originating object so a failure
 		// links back to the knowledge row.
 		initiatedFromObjectId: knowledgeObjectId,
-		initiatedFromObjectType: 'knowledge',
 		await: 'none',
 	}).catch((err) =>
 		logger.error('Failed to create Researcher session for signup welcome', {
