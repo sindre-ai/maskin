@@ -91,16 +91,30 @@ describe('IntegrationConnectCard', () => {
 
 		expect(screen.getByRole('button', { name: 'Connected' })).toBeDisabled()
 		expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
 		// Removing an integration stays in Settings; a chat card must not offer it.
 		expect(screen.queryByRole('button', { name: 'Disconnect' })).not.toBeInTheDocument()
 	})
 
-	it('does not treat a revoked integration as connected', () => {
+	it('does not treat a revoked integration as connected, and offers Reconnect', async () => {
 		providers = [provider({})]
 		integrations = [{ ...active('linear'), status: 'revoked' }]
 		renderCard('linear')
 
+		expect(screen.queryByRole('button', { name: 'Connected' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Reconnect' }))
+
+		expect(connectMutate).toHaveBeenCalledWith({ provider: 'linear', returnTo: RETURN_TO })
+	})
+
+	it('keeps the Connect label for a pending integration, which is an unfinished connect', () => {
+		providers = [provider({})]
+		integrations = [{ ...active('linear'), status: 'pending' }]
+		renderCard('linear')
+
 		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
 	})
 
 	it('takes an API key in the dialog and sends it, with the return path, to the connect call', async () => {
