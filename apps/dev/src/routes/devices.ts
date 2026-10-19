@@ -1,8 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { deviceTokens, workspaceMembers } from '@maskin/db/schema'
+import { deviceTokens, liveActivityTokens, workspaceMembers } from '@maskin/db/schema'
 import { deviceResponseSchema, registerDeviceSchema } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -130,6 +130,12 @@ app.openapi(registerDeviceRoute, async (c) => {
 	if (!row) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to register device'), 400)
 	}
+
+	// The token may have moved from another actor: their Live Activity tokens
+	// for this physical device must not keep receiving pushes.
+	await db
+		.delete(liveActivityTokens)
+		.where(and(eq(liveActivityTokens.deviceId, row.id), ne(liveActivityTokens.actorId, actorId)))
 
 	await auditDevice(
 		db,

@@ -1351,6 +1351,10 @@ const getSessionActivityRoute = createRoute({
 			content: { 'application/json': { schema: sessionActivityResponseSchema } },
 			description: 'Activity turns, oldest to newest',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session was started by a different actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -1366,6 +1370,9 @@ app.openapi(getSessionActivityRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const { turns, oldestLogId, hasOlder } = await loadSessionActivity(db, id, {
 		limitTurns: query.limit_turns,

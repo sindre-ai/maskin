@@ -1,8 +1,12 @@
-import { sessionLogs } from '@maskin/db/schema'
+import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { sessionLogs, workspaceMembers } from '@maskin/db/schema'
 import { SESSION_ACTIVITY_SCAN_ROWS, sessionActivityResponseSchema } from '@maskin/shared'
 import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { jsonGet } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
+
+type Env = { Variables: { db: Database; actorId: string; actorType: string } }
 
 const { default: sessionsRoutes } = await import('../../routes/sessions')
 
@@ -27,6 +31,24 @@ describe('GET /api/sessions/:id/activity (Integration)', () => {
 		const session = await insertSession(db, workspaceId, agentId, getTestActorId())
 		if (!session) throw new Error('no session')
 		sessionId = session.id
+	})
+
+	it('403s a plain member who did not start the person-started session', async () => {
+		const member = (await insertActor(db, { type: 'human' }))?.id as string
+		await db.insert(workspaceMembers).values({ workspaceId, actorId: member, role: 'member' })
+		const memberApp = new OpenAPIHono<Env>()
+		memberApp.use('*', async (c, next) => {
+			c.set('db', db)
+			c.set('actorId', member)
+			c.set('actorType', 'human')
+			await next()
+		})
+		memberApp.route('/api/sessions', sessionsRoutes as never)
+
+		const res = await memberApp.request(
+			jsonGet(`/api/sessions/${sessionId}/activity`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(403)
 	})
 
 	it('returns normalized turns that satisfy the response schema', async () => {

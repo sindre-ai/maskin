@@ -288,6 +288,8 @@ export class LiveActivityFanout {
 			.where(
 				and(
 					eq(liveActivityTokens.actorId, row.recipientId),
+					// The device may have changed hands since the token was registered.
+					eq(deviceTokens.actorId, row.recipientId),
 					kind === 'start'
 						? inArray(liveActivityTokens.kind, ['push_to_start', 'update'])
 						: eq(liveActivityTokens.sessionId, sessionId),

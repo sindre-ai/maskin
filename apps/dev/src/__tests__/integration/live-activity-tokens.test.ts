@@ -221,6 +221,34 @@ describe('live_activity_tokens routes (real Postgres)', () => {
 		).toHaveLength(0)
 	})
 
+	it('drops the previous owner’s Live Activity tokens when the device changes hands', async () => {
+		const token = hex()
+		const reg = (actorId: string) =>
+			appAs(actorId).request(
+				jsonRequest('POST', '/api/devices', {
+					platform: 'ios',
+					apns_token: token,
+					environment: 'sandbox',
+				}),
+			)
+		const device = (await (await reg(human)).json()) as { id: string }
+		await register(human, { kind: 'push_to_start', device_id: device.id, token: hex(100) })
+		await register(
+			human,
+			{ kind: 'update', device_id: device.id, session_id: sessionId, token: hex(100) },
+			{ 'X-Workspace-Id': workspaceId },
+		)
+		expect(
+			await db.select().from(liveActivityTokens).where(eq(liveActivityTokens.deviceId, device.id)),
+		).toHaveLength(2)
+
+		expect((await reg(stranger)).status).toBe(200)
+
+		expect(
+			await db.select().from(liveActivityTokens).where(eq(liveActivityTokens.deviceId, device.id)),
+		).toHaveLength(0)
+	})
+
 	it('deletes only the owner’s token', async () => {
 		const device = await registerDevice(human)
 		const res = await register(human, {
@@ -485,6 +513,19 @@ describe('LiveActivityFanout interactive turn lifecycle (real Postgres, fake APN
 		requests.length = 0
 		await turn({ sessionId, phase: 'finished', outcome: 'done' })
 		expect(bodies()[0]).toMatchObject({ event: 'end', 'content-state': { status: 'done' } })
+	})
+
+	it('sends nothing to a device that now belongs to someone else', async () => {
+		await registerUpdateToken()
+		const other = (await insertActor(db, { type: 'human' }))?.id as string
+		// Hand the device over without going through the route, so the old
+		// actor's token rows survive: the fan-out itself must not trust them.
+		await db.update(deviceTokens).set({ actorId: other })
+		requests.length = 0
+
+		await turn({ sessionId, phase: 'started' })
+		await turn({ sessionId, phase: 'finished', outcome: 'done' })
+		expect(requests).toHaveLength(0)
 	})
 
 	it('ends failed when the turn failed', async () => {
