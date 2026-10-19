@@ -156,6 +156,14 @@ public final class AppRuntime {
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
+		#if DEBUG
+			// Design review: open on a given tab (scripts/design-review.sh sets MASKIN_DEMO_TAB).
+			if let raw = ProcessInfo.processInfo.environment["MASKIN_DEMO_TAB"],
+				let tab = ShellTab(rawValue: raw)
+			{
+				selectedTab = tab
+			}
+		#endif
 	}
 
 	// MARK: For You

@@ -103,14 +103,15 @@ struct ObjectsListView: View {
 			} label: {
 				HStack(alignment: .center, spacing: MaskinSpace.s3) {
 					Text(store.title)
-						.maskinText(.largeTitle)
+						// iPhone's screen header already carries the big "Objects"; this stays as the Go to row.
+						.maskinText(sizeClass == .compact ? .headline : .largeTitle)
 						.foregroundStyle(MaskinColor.ink)
 						.lineLimit(1)
 						.minimumScaleFactor(0.7)
 					Image(systemName: "chevron.down")
 						.maskinSymbol(MaskinFontSize.t16, weight: .bold)
 						.foregroundStyle(MaskinColor.ink4)
-						.padding(.top, MaskinSpace.s3)
+						.padding(.top, sizeClass == .compact ? 0 : MaskinSpace.s3)
 				}
 				.frame(minHeight: MaskinSpace.touchMin)
 				.contentShape(Rectangle())
