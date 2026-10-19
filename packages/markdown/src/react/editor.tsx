@@ -85,6 +85,14 @@ function truncateErrorMessage(err: unknown): string {
 	return raw.length > MAX_ERROR_MESSAGE_LENGTH ? `${raw.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…` : raw
 }
 
+// Empty-state hint per variant. The document variant points at the slash menu;
+// the comment and notification variants have no slash items yet.
+const DEFAULT_PLACEHOLDER_BY_VARIANT: Record<EditorVariant, string> = {
+	document: 'Add a description. Type / for blocks.',
+	comment: 'Write, or press / for commands',
+	notification: 'Write, or press / for commands',
+}
+
 const HEADING_LEVELS_BY_VARIANT: Record<EditorVariant, Array<1 | 2 | 3>> = {
 	document: [1, 2, 3],
 	comment: [],
@@ -119,7 +127,7 @@ function buildExtensions(
 			HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
 		}),
 		Placeholder.configure({
-			placeholder: placeholder ?? 'Write, or press / for commands',
+			placeholder: placeholder ?? DEFAULT_PLACEHOLDER_BY_VARIANT[variant],
 		}),
 		// Round-trips markdown to a ProseMirror doc on load and back to markdown
 		// on save. Fenced code, GFM tables, task lists, strike all flow through.

@@ -28,6 +28,10 @@
 		"./react/editor": {
 			"types": "./src/react/editor.tsx",
 			"default": "./dist/react/editor.js"
+		},
+		"./react/slash-command": {
+			"types": "./src/react/slash-command.ts",
+			"default": "./dist/react/slash-command.js"
 		}
 	},
 	"scripts": {
