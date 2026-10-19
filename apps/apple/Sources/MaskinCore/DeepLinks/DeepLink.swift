@@ -92,6 +92,9 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 			return nil
 		}
 		guard Self.isSafeID(workspace) else { return nil }
+		// `invite` is a route, not a workspace: invitation links are `InviteLink`'s, and a bare
+		// `/invite` must not be read as the inbox of a workspace called "invite".
+		guard workspace.lowercased() != "invite" else { return nil }
 
 		switch rest.count {
 		case 0:

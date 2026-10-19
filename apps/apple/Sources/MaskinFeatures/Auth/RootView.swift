@@ -25,6 +25,8 @@ private let onRuntimeReady: (AppRuntime) -> Void
 	@State private var isRetryingWorkspace = false
 	/// Reloads the home/lock-screen widgets on sign-in, sign-out, workspace switch and backgrounding.
 	@State private var widgetReloader = makeWidgetReloader()
+	/// Workspace invitation links: holds the token across sign-in and relaunch, presents the screen.
+	@State private var invites: InviteCoordinator
 	/// Opt-in Face ID / Touch ID / passcode lock (Settings → Security). Off by default.
 	@State private var appLock: AppLockController
 	#if os(iOS)
@@ -49,6 +51,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 			_appLockWindow = State(initialValue: AppLockWindowPresenter(lock: lock))
 		#endif
 		_runtime = State(initialValue: AppRuntime(environment: environment, push: push))
+		_invites = State(initialValue: Self.makeInvites(environment))
 		_chatImages = State(
 			initialValue: ChatImageLoader(
 				files: APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)))
@@ -85,7 +88,17 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: firstUseActorId) {
 			welcomeChatId = firstUseActorId == nil ? nil : await welcomeConversationId?()
 		}
-		.handlesDeepLinks(runtime.router) { runtime.present($0) }
+		.handlesDeepLinks(runtime.router, intercept: { invites.open($0) }) { runtime.present($0) }
+		.onChange(of: auth.session?.actorId, initial: true) { _, id in
+			if id == nil { invites.signedOut() } else { invites.resume(isSignedIn: true) }
+		}
+		.sheet(isPresented: $invites.isPresented) {
+			if let store = invites.store {
+				InviteView(
+					store: store, onFinish: { invites.finish() },
+					onSignIn: { invites.dismiss() }, onClose: { invites.dismiss() })
+			}
+		}
 		.environment(\.markdownInternalLinkHandler, { @MainActor [runtime] url in runtime.open(url) })
 		.environment(\.markdownInternalLinkInfo, { @MainActor [links] url in links.info(for: url) })
 		.environment(
@@ -118,6 +131,23 @@ private let onRuntimeReady: (AppRuntime) -> Void
 }
 
 extension RootView {
+	fileprivate static func makeInvites(_ environment: AppEnvironment) -> InviteCoordinator {
+		let remote = APIInviteRemote(
+			baseURL: environment.baseURL, clientSource: environment.clientSource)
+		return InviteCoordinator(pending: UserDefaultsPendingInviteStore()) { token in
+			InviteStore(
+				token: token, remote: remote,
+				viewer: {
+					environment.auth.session.map { InviteViewer(apiKey: $0.apiKey, email: $0.email) }
+				},
+				joined: { workspaceId in
+					// Load the new workspace into the list first, then switch to it.
+					await environment.workspaces.refresh()
+					environment.auth.selectWorkspace(workspaceId)
+				})
+		}
+	}
+
 	@ViewBuilder
 	fileprivate func firstUse(session: StoredSession, auth: AuthSession) -> some View {
 		let workspaces = environment.workspaces
