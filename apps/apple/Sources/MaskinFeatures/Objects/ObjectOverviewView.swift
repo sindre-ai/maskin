@@ -3,9 +3,10 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The Overview page body, under the pinned header: the ask (decision card), the description,
-/// the evidence (pages and PDFs this object produced), any remaining properties, and a "Latest"
-/// row that jumps to Activity. Stateless apart from the store it reads.
+/// The Overview page body, under the pinned header: the ask (decision card), the description
+/// (always, with a quiet placeholder when empty), the evidence (pages and PDFs this object
+/// produced), the properties (always: status, driver, priority, due, dates, then any workspace
+/// fields), and a "Latest" row that jumps to Activity. Stateless apart from the store it reads.
 struct ObjectOverviewView<Decision: View>: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
@@ -17,12 +18,22 @@ struct ObjectOverviewView<Decision: View>: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s8) {
 			decision()
-			if let content = object.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-				CollapsibleDescription(content: content, initiallyExpanded: descriptionExpanded)
-					.padding(.horizontal, MaskinSpace.s9)
-					.padding(.vertical, MaskinSpace.s9)
-					.background(
-						MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				SectionHeader("Description")
+				Group {
+					if let content = object.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+						CollapsibleDescription(content: content, initiallyExpanded: descriptionExpanded)
+					} else {
+						Text("No description yet.")
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.ink4)
+					}
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding(.horizontal, MaskinSpace.s9)
+				.padding(.vertical, MaskinSpace.s9)
+				.background(
+					MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			}
 			OutcomesSection(outputs: store.outcomes, sourceName: object.displayTitle)
 			ObjectPropertiesCard(store: store, object: object)
@@ -72,23 +83,34 @@ struct LatestRow: View {
 	}
 }
 
-/// Workspace fields that have no chip of their own (effort, area…), as a quiet key/value card.
-/// Internal keys (leading underscore, bookkeeping) stay hidden, and an actor id reads as the
-/// person's or agent's name, never the id.
+/// The object's properties as a quiet key/value card: status, driver, priority, due and the
+/// dates, then the workspace fields that have no chip of their own (effort, area…). Internal
+/// keys (leading underscore, bookkeeping) stay hidden, and an actor id reads as the person's or
+/// agent's name, never the id.
 struct ObjectPropertiesCard: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let store: ObjectDetailStore
 	let object: WorkObject
 	@State private var showAll = false
 
-	private static var preview: Int { 4 }
+	private static var preview: Int { 6 }
 
 	private var rows: [(key: String, value: String)] {
 		let chipped = Set([ObjectDetailStore.priorityKey] + ObjectDetailStore.dueKeys)
-		return object.metadata
+		var core: [(key: String, value: String?)] = [
+			("status", MaskinStatus.sentenceLabel(for: object.status)),
+			("driver", store.ownerName),
+			("priority", store.priority?.capitalized),
+			("due", store.dueDate?.formatted(date: .abbreviated, time: .omitted)),
+			("created", object.createdAt?.formatted(date: .abbreviated, time: .omitted)),
+			("updated", object.updatedAt?.formatted(date: .abbreviated, time: .omitted)),
+		]
+		core.removeAll { ($0.value ?? "").isEmpty }
+		let extra = object.metadata
 			.filter { !$0.key.hasPrefix("_") && $0.key != "previous_status" && !$0.value.isEmpty && !chipped.contains($0.key) }
 			.sorted { $0.key < $1.key }
 			.map { ($0.key, store.directory.name(for: $0.value) ?? $0.value) }
+		return core.map { ($0.key, $0.value ?? "") } + extra
 	}
 
 	var body: some View {

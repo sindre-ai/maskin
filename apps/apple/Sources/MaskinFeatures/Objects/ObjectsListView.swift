@@ -37,8 +37,6 @@ struct ObjectsListView: View {
 
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
-	@State private var search = ""
-	@State private var searchPresented = false
 	@State private var showGoTo = false
 	@State private var holdTarget: ObjectAsk?
 	@State private var viewName = ""
@@ -59,14 +57,6 @@ struct ObjectsListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
 		.undoToast($undoOffer)
-		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
-		.searchMinimized()
-		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
-		.task(id: search) {
-			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
-			if !Task.isCancelled { await store.setSearch(search) }
-		}
 		.sheet(isPresented: $showGoTo) {
 			GoToSheet(
 				store: store, onSelect: { scope in Task { await store.setScope(scope) } },
@@ -317,7 +307,6 @@ struct ObjectsListView: View {
 					message: "Nothing fits these filters. Try a different type, status or word."
 				) {
 					Button("Clear filter") {
-						search = ""
 						store.setNeedsYouOnly(false)
 						Task {
 							await store.setStatus(nil)

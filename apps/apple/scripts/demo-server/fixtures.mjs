@@ -279,8 +279,33 @@ const participantRow = (id) => {
 	}
 }
 
-export function overrides({ method, path, params, query, base, item }) {
+// Comments posted to an object, kept for the life of the server so a refetch still shows them.
+const postedComments = new Map()
+let nextEventId = 9000
+
+export function overrides({ method, path, params, query, body, base, item }) {
 	if (method !== 'get' && method !== 'post') return null
+	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
+		const event = {
+			...base,
+			id: nextEventId++,
+			actorId: ME.id,
+			entityType: 'object',
+			entityId: body.entity_id,
+			action: 'commented',
+			description: 'commented',
+			data: {
+				content: body.content,
+				mentions: body.mentions ?? [],
+				parentEventId: body.parent_event_id,
+				attachmentFileIds: body.attachment_file_ids ?? [],
+				metadata: body.metadata,
+			},
+			createdAt: new Date().toISOString(),
+		}
+		postedComments.set(body.entity_id, [...(postedComments.get(body.entity_id) ?? []), event])
+		return { status: 201, body: event }
+	}
 	if (method === 'get' && path === '/api/workspaces') {
 		return {
 			body: [
@@ -318,11 +343,13 @@ export function overrides({ method, path, params, query, base, item }) {
 	// A flow's graph (its attached page) and an object's graph.
 	if (method === 'get' && /^\/api\/objects\/[^/]+\/graph$/.test(path)) {
 		const id = params[0]
+		const events = postedComments.get(id) ?? []
 		const flow = flows.find((f) => uuid(f.n) === id)
 		if (flow) {
 			return {
 				body: {
 					...base,
+					events,
 					object: {
 						...base.object,
 						id,
@@ -359,8 +386,8 @@ export function overrides({ method, path, params, query, base, item }) {
 			}
 		}
 		const d = decisions.find((x) => x.obj.id === id)
-		if (d) return { body: { ...base, object: d.obj } }
-		return null
+		if (d) return { body: { ...base, object: d.obj, events } }
+		return events.length ? { body: { ...base, events } } : null
 	}
 	if (method === 'get' && path === '/api/files') {
 		const ids = (query.get('ids') ?? '').split(',').filter(Boolean)

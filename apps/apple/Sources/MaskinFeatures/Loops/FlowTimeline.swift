@@ -85,12 +85,23 @@ struct FlowTimelineView: View {
 /// The shared composer for a flow's timeline: pin it to the bottom from the host.
 struct FlowTimelineComposer: View {
 	let model: FlowTimelineModel
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	var body: some View {
-		MaskinComposer(model: model.composer, config: model.config, onSend: { model.send() })
+		MaskinComposer(model: model.composer, config: config, onSend: { model.send() })
+			.task { await runtime?.mentionRoster()?.load() }
 			.onChange(of: model.composer.replyTo == nil) { _, cleared in
 				if cleared { model.clearReply() }
 			}
+	}
+}
+
+extension FlowTimelineComposer {
+	/// The workspace roster, with roles, like every other composer's `@` list.
+	var config: MaskinComposerConfig {
+		var config = model.config
+		config.roster = runtime?.mentionRoster()?.roster
+		return config
 	}
 }
 
