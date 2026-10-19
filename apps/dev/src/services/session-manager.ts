@@ -5864,6 +5864,42 @@ ${HUMAN_MESSAGE_STYLE}`
 		const scheduledRetryAt = pickRetryAt(failureReason)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 
+		// Add this segment's usage onto the stored totals, like handleCompletion does
+		// through accumulateSessionUsage: a session that was paused and resumed
+		// already carries the earlier segments' usage, and the result envelope in
+		// the logs only reports the last segment. stopSession()'s provisional write
+		// carries no usage: the genuine report that follows reads the same logs, so
+		// adding on both would count one envelope twice. The genuine report adds.
+		const segmentUsageSet =
+			usage && !stoppedByUser
+				? {
+						totalCostUsd:
+							resolvedCostUsd != null
+								? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
+								: undefined,
+						inputTokens:
+							usage.inputTokens != null
+								? sql`COALESCE(${sessions.inputTokens}, 0) + ${usage.inputTokens}`
+								: undefined,
+						outputTokens:
+							usage.outputTokens != null
+								? sql`COALESCE(${sessions.outputTokens}, 0) + ${usage.outputTokens}`
+								: undefined,
+						cacheCreationInputTokens:
+							usage.cacheCreationInputTokens != null
+								? sql`COALESCE(${sessions.cacheCreationInputTokens}, 0) + ${usage.cacheCreationInputTokens}`
+								: undefined,
+						cacheReadInputTokens:
+							usage.cacheReadInputTokens != null
+								? sql`COALESCE(${sessions.cacheReadInputTokens}, 0) + ${usage.cacheReadInputTokens}`
+								: undefined,
+						durationMs:
+							usage.durationMs != null
+								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
+								: undefined,
+					}
+				: {}
+
 		const result: SessionResult = stoppedByUser
 			? { exit_code: exitCode, stopped_by_user: true }
 			: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) }
@@ -5900,16 +5936,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						updatedAt: new Date(),
 						currentActivity: null,
 						...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
-						...(usage
-							? {
-									totalCostUsd: resolvedCostUsd?.toString() ?? null,
-									inputTokens: usage.inputTokens,
-									outputTokens: usage.outputTokens,
-									cacheCreationInputTokens: usage.cacheCreationInputTokens,
-									cacheReadInputTokens: usage.cacheReadInputTokens,
-									durationMs: usage.durationMs,
-								}
-							: {}),
+						...segmentUsageSet,
 					})
 					.where(
 						and(
@@ -6012,16 +6039,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
-						...(usage
-							? {
-									totalCostUsd: resolvedCostUsd?.toString() ?? null,
-									inputTokens: usage.inputTokens,
-									outputTokens: usage.outputTokens,
-									cacheCreationInputTokens: usage.cacheCreationInputTokens,
-									cacheReadInputTokens: usage.cacheReadInputTokens,
-									durationMs: usage.durationMs,
-								}
-							: {}),
+						...segmentUsageSet,
 					})
 					.where(eq(sessions.id, sessionId))
 			} catch (err) {
