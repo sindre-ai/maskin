@@ -21,14 +21,27 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useCredentialAuditLog, useIntegrations, useUpdateKeyScope } from '@/hooks/use-integrations'
+import {
+	useCredentialAuditLog,
+	useIntegrations,
+	useRemoveCredential,
+	useUpdateKeyScope,
+} from '@/hooks/use-integrations'
 import type { CredentialAuditEntry } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/$integrationId')({
@@ -87,7 +100,7 @@ function AuditEntryText({
 				</>
 			)
 		case 'undone':
-			return <>{actorName} undid this capture. The key is removed.</>
+			return <>{actorName} removed this credential. The secret is destroyed.</>
 		case 'rotated':
 			return <>{actorName} rotated this credential.</>
 		case 'sweeper_activated':
@@ -104,7 +117,10 @@ function CredentialDetailPage() {
 	const { data: actors } = useActors(workspaceId)
 	const audit = useCredentialAuditLog(workspaceId, integrationId)
 	const updateScope = useUpdateKeyScope(workspaceId, integrationId)
+	const removeCredential = useRemoveCredential(workspaceId)
+	const navigate = useNavigate()
 	const [editingAccess, setEditingAccess] = useState(false)
+	const [confirmingRemove, setConfirmingRemove] = useState(false)
 	const credential = integrations?.find((i) => i.id === integrationId)
 	useDocumentTitle(credential ? credentialName(credential) : 'Keychain')
 
@@ -135,12 +151,22 @@ function CredentialDetailPage() {
 
 	const name = credentialName(credential)
 	const viaChat = credential.source === 'chat_capture'
-	// Only an active saved API key has agents to assign. A key still in its undo window is
-	// scoped by the chat card; OAuth connections keep their workspace grant.
-	const assignable = credential.providerMode === 'byo_apikey' && credential.status === 'active'
+	// Only an active saved API key or login has agents to assign. One still in its undo window
+	// is scoped by the chat card; OAuth connections keep their workspace grant.
+	const assignable =
+		(credential.providerMode === 'byo_apikey' || credential.providerMode === 'byo_login') &&
+		credential.status === 'active'
 	const me = getStoredActor()
 	const canEditAccess =
 		assignable &&
+		me?.type === 'human' &&
+		(credential.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
+	// A saved key or login can be removed at any time, by whoever saved it or a workspace
+	// admin or owner: the secret is destroyed, not hidden. OAuth connections are
+	// disconnected on the Integrations page instead.
+	const canRemove =
+		(credential.providerMode === 'byo_apikey' || credential.providerMode === 'byo_login') &&
+		(credential.status === 'active' || credential.status === 'pending_undo') &&
 		me?.type === 'human' &&
 		(credential.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
@@ -293,8 +319,65 @@ function CredentialDetailPage() {
 							)}
 						</div>
 					)}
+					{canRemove && (
+						<div className="mt-3 border-t border-border pt-3">
+							<Button
+								variant="outline"
+								size="sm"
+								className="w-full"
+								onClick={() => {
+									removeCredential.reset()
+									setConfirmingRemove(true)
+								}}
+							>
+								Remove credential
+							</Button>
+						</div>
+					)}
 				</section>
 			</div>
+
+			{canRemove && (
+				<ResponsiveDialog open={confirmingRemove} onOpenChange={setConfirmingRemove}>
+					<ResponsiveDialogContent>
+						<ResponsiveDialogHeader>
+							<ResponsiveDialogTitle>Remove {name}?</ResponsiveDialogTitle>
+							<ResponsiveDialogDescription>
+								The secret is destroyed and can't be recovered. Agents that use it can no longer
+								start with it, and an agent that is running now keeps it until its session ends. You
+								can add it again at any time.
+							</ResponsiveDialogDescription>
+						</ResponsiveDialogHeader>
+						{removeCredential.isError && (
+							<p className="text-sm text-error" role="alert">
+								Could not remove this credential. Try again.
+							</p>
+						)}
+						<ResponsiveDialogFooter>
+							<Button variant="ghost" onClick={() => setConfirmingRemove(false)}>
+								Cancel
+							</Button>
+							<Button
+								variant="destructive"
+								disabled={removeCredential.isPending}
+								onClick={() =>
+									removeCredential.mutate(integrationId, {
+										onSuccess: () => {
+											setConfirmingRemove(false)
+											navigate({
+												to: '/$workspaceId/settings/keychain',
+												params: { workspaceId },
+											})
+										},
+									})
+								}
+							>
+								{removeCredential.isPending ? 'Removing…' : 'Remove'}
+							</Button>
+						</ResponsiveDialogFooter>
+					</ResponsiveDialogContent>
+				</ResponsiveDialog>
+			)}
 
 			{canEditAccess && (
 				<ScopeEditorSheet

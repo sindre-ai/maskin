@@ -224,7 +224,7 @@ export function SecretCaptureFlow({
 						name: displayName,
 						agentCount: grants === 'none' ? 0 : selected.size,
 						marker,
-						undoExpiresAt: new Date(res.undoExpiresAt).getTime(),
+						undoExpiresAt: res.undoExpiresAt ? new Date(res.undoExpiresAt).getTime() : 0,
 						phase: res.relaunch === 'failed' ? 'failed' : 'live',
 						sessionEnded: true,
 					},

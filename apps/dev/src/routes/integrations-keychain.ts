@@ -8,6 +8,7 @@ import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { BYO_APIKEY_PROVIDER, createByoApiKey } from '../lib/integrations/byo-apikey'
+import { BYO_LOGIN_PROVIDER, createByoLogin } from '../lib/integrations/byo-login'
 import {
 	CHAT_CAPTURE_PROVIDERS,
 	ChatCaptureError,
@@ -16,6 +17,11 @@ import {
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { CredentialNameError } from '../lib/integrations/credential-name'
 import { CredentialValueError } from '../lib/integrations/credential-value'
+import {
+	LOGIN_PASSWORD_MAX_LENGTH,
+	LOGIN_USERNAME_MAX_LENGTH,
+	LoginValueError,
+} from '../lib/integrations/login-value'
 import { rotateIntegrationDek } from '../lib/integrations/rotate-dek'
 import { grantedActorsAreInWorkspace } from '../lib/integrations/scope-grants'
 import { getKmsProvider } from '../lib/keychain-kms'
@@ -74,21 +80,38 @@ const scopeGrantSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('workspace') }).strict(),
 ])
 
-const chatCaptureBodySchema = z
-	.object({
-		sessionId: z.string().uuid(),
-		providerMode: z.literal('byo_apikey'),
-		detectedProvider: z.enum(CHAT_CAPTURE_PROVIDERS as [string, ...string[]]),
-		displayName: z.string().trim().min(1).max(80),
-		rawSecret: z.string().min(1).max(4096),
-		scopeGrants: z.array(scopeGrantSchema).max(25).optional(),
-	})
-	.strict()
+// One of two shapes: an API key (detected or typed), or a username and password. The
+// card an agent puts in the chat sends either, with fromCard set.
+const chatCaptureBodySchema = z.union([
+	z
+		.object({
+			sessionId: z.string().uuid(),
+			providerMode: z.literal('byo_apikey'),
+			detectedProvider: z.enum(CHAT_CAPTURE_PROVIDERS as [string, ...string[]]),
+			displayName: z.string().trim().min(1).max(80),
+			rawSecret: z.string().min(1).max(4096),
+			scopeGrants: z.array(scopeGrantSchema).max(25).optional(),
+			fromCard: z.boolean().optional(),
+		})
+		.strict(),
+	z
+		.object({
+			sessionId: z.string().uuid(),
+			providerMode: z.literal('byo_login'),
+			displayName: z.string().trim().min(1).max(80),
+			username: z.string().min(1).max(LOGIN_USERNAME_MAX_LENGTH),
+			password: z.string().min(1).max(LOGIN_PASSWORD_MAX_LENGTH),
+			scopeGrants: z.array(scopeGrantSchema).max(25).optional(),
+			fromCard: z.boolean().optional(),
+		})
+		.strict(),
+])
 
 const chatCaptureResponseSchema = z.object({
 	integrationId: z.string().uuid(),
-	undoExpiresAt: z.string(),
-	undoUrl: z.string(),
+	// Null for a capture from an agent's card: active straight away, nothing to undo.
+	undoExpiresAt: z.string().nullable(),
+	undoUrl: z.string().nullable(),
 	// stopped: the old session is gone, the client's marker message respawns it.
 	// failed: the key is saved and the old session may still be running without it.
 	relaunch: z.enum(['stopped', 'failed']),
@@ -106,7 +129,7 @@ const chatCaptureRoute = createRoute({
 	request: { headers: workspaceIdHeader },
 	responses: {
 		201: {
-			description: 'Captured; undoable until undoExpiresAt',
+			description: 'Captured; undoable until undoExpiresAt, or active at once from a card',
 			content: { 'application/json': { schema: chatCaptureResponseSchema } },
 		},
 		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
@@ -138,21 +161,31 @@ app.openapi(chatCaptureRoute, (async (c) => {
 	const body = parsed.data
 
 	try {
-		const result = await captureChatSecret(db, getKmsProvider(), {
+		const common = {
 			workspaceId,
 			actorId,
 			sessionId: body.sessionId,
-			detectedProvider: body.detectedProvider as (typeof CHAT_CAPTURE_PROVIDERS)[number],
 			displayName: body.displayName,
 			scopeGrants: body.scopeGrants,
-			rawSecret: body.rawSecret,
-		})
+			viaCard: body.fromCard,
+		}
+		const result = await captureChatSecret(
+			db,
+			getKmsProvider(),
+			body.providerMode === 'byo_login'
+				? { ...common, login: { username: body.username, password: body.password } }
+				: {
+						...common,
+						detectedProvider: body.detectedProvider as (typeof CHAT_CAPTURE_PROVIDERS)[number],
+						rawSecret: body.rawSecret,
+					},
+		)
 
 		void capturePosthogEvent('keychain_credential_created', actorId, {
 			workspace_id: workspaceId,
 			integration_id: result.integrationId,
 			provider: result.provider,
-			provider_mode: 'byo_apikey',
+			provider_mode: body.providerMode,
 			source: 'chat_capture',
 			trigger: result.trigger,
 		})
@@ -174,8 +207,8 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		return c.json(
 			{
 				integrationId: result.integrationId,
-				undoExpiresAt: result.undoExpiresAt.toISOString(),
-				undoUrl: `/api/integrations/${result.integrationId}/undo`,
+				undoExpiresAt: result.undoExpiresAt?.toISOString() ?? null,
+				undoUrl: result.undoExpiresAt ? `/api/integrations/${result.integrationId}/undo` : null,
 				relaunch,
 			},
 			201,
@@ -184,7 +217,11 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		if (err instanceof ChatCaptureError) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
-		if (err instanceof CredentialNameError || err instanceof CredentialValueError) {
+		if (
+			err instanceof CredentialNameError ||
+			err instanceof CredentialValueError ||
+			err instanceof LoginValueError
+		) {
 			return c.json(createApiError(err.code, err.message), err.status)
 		}
 		// Error text only, never the request: a driver error can carry bound params.
@@ -272,6 +309,88 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 		throw err
 	}
 }) as RouteHandler<typeof byoApiKeyRoute, Env>)
+
+// ── POST /api/integrations/byo-login ─────────────────────────────────────
+
+const byoLoginBodySchema = z
+	.object({
+		displayName: z.string().trim().min(1).max(80),
+		username: z.string().min(1).max(LOGIN_USERNAME_MAX_LENGTH),
+		password: z.string().min(1).max(LOGIN_PASSWORD_MAX_LENGTH),
+	})
+	.strict()
+
+// No `request.body`, same reason as chat-capture: the handler owns the raw bytes.
+const byoLoginRoute = createRoute({
+	method: 'post',
+	path: '/byo-login',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Vault a username and password added in the Keychain (humans only)',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		201: {
+			description: 'Stored, active, scoped to the member who added it',
+			content: { 'application/json': { schema: z.object({ integrationId: z.string().uuid() }) } },
+		},
+		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
+		403: { description: 'Not a human', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'NAME_TAKEN: another active or pending-undo credential has this env var name',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(byoLoginRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	// Agents never vault secrets: an agent that held one has already seen it.
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can add a login to the Keychain'), 403)
+	}
+
+	const parsed = await readSecretBody(c, byoLoginBodySchema)
+	if (!parsed.ok) return c.json(createApiError('BAD_REQUEST', parsed.message), 400)
+	const body = parsed.data
+
+	try {
+		const result = await createByoLogin(db, getKmsProvider(), {
+			workspaceId,
+			actorId,
+			displayName: body.displayName,
+			username: body.username,
+			password: body.password,
+		})
+
+		void capturePosthogEvent('keychain_credential_created', actorId, {
+			workspace_id: workspaceId,
+			integration_id: result.integrationId,
+			provider: BYO_LOGIN_PROVIDER,
+			provider_mode: 'byo_login',
+			source: 'admin_ui',
+		})
+
+		return c.json({ integrationId: result.integrationId }, 201)
+	} catch (err) {
+		if (
+			err instanceof CredentialNameError ||
+			err instanceof CredentialValueError ||
+			err instanceof LoginValueError
+		) {
+			return c.json(createApiError(err.code, err.message), err.status)
+		}
+		// Error name only, never the request: a driver error can carry bound params.
+		logger.error('Keychain login failed', {
+			workspaceId,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+		throw err
+	}
+}) as RouteHandler<typeof byoLoginRoute, Env>)
 
 // ── POST /api/integrations/:id/undo ──────────────────────────────────────
 
@@ -422,6 +541,169 @@ app.openapi(undoRoute, (async (c) => {
 	}
 	return c.json({ id, status: 'undone' as const, sessionEnded }, 200)
 }) as RouteHandler<typeof undoRoute, Env>)
+
+// ── POST /api/integrations/:id/remove ────────────────────────────────────
+
+const removeRoute = createRoute({
+	method: 'post',
+	path: '/{id}/remove',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Remove a saved API key or login at any time and destroy its secret (humans only)',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Removed: the secret is zeroised, the row is kept for the audit chain',
+			content: {
+				'application/json': {
+					schema: z.object({
+						id: z.string().uuid(),
+						status: z.literal('undone'),
+						// False when the session that held it could not be stopped. The secret is
+						// already destroyed; that session just still has it in its env until it ends.
+						sessionEnded: z.boolean(),
+					}),
+				},
+			},
+		},
+		403: {
+			description: 'Not a person, or neither its creator nor a workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'Not a removable key or login, or already removed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(removeRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+
+	// Agents never remove a credential: only a person decides what the vault holds.
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can remove a credential'), 403)
+	}
+
+	// Same rule as editing who can use it: the person who saved it, or a workspace admin
+	// or owner. Locked, so two removals queue and the second finds it already gone.
+	const outcome = await db.transaction(async (tx) => {
+		const [row] = await tx
+			.select({
+				createdBy: integrations.createdBy,
+				providerMode: integrations.providerMode,
+				status: integrations.status,
+				source: integrations.source,
+				provider: integrations.provider,
+				originSessionId: integrations.originSessionId,
+			})
+			.from(integrations)
+			.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+			.for('update')
+			.limit(1)
+		if (!row) return { kind: 'not_found' as const }
+		if (
+			row.createdBy !== callerId &&
+			!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))
+		) {
+			return { kind: 'forbidden' as const }
+		}
+		// Only a saved key or login: an OAuth connection or registered provider is
+		// disconnected on the Integrations page, which also revokes it upstream.
+		if (
+			(row.providerMode !== 'byo_apikey' && row.providerMode !== 'byo_login') ||
+			(row.status !== 'active' && row.status !== 'pending_undo')
+		) {
+			return { kind: 'not_removable' as const }
+		}
+
+		// Same end state as an undo: the secret and its wrapped key are gone, the row stays
+		// so the audit chain keeps its foreign key.
+		await tx
+			.update(integrations)
+			.set({
+				status: 'undone',
+				credentials: null,
+				dekCiphertext: null,
+				undoExpiresAt: null,
+				updatedAt: new Date(),
+			})
+			.where(eq(integrations.id, id))
+		await insertCredentialAccessLog(tx, {
+			workspaceId,
+			integrationId: id,
+			actorId: callerId,
+			sessionId: row.originSessionId,
+			action: 'undone',
+			source: row.source,
+			requestId: `remove:${id}`,
+		})
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: {
+				status: 'undone',
+				reason: 'removed',
+				provider: row.provider,
+				provider_mode: row.providerMode,
+				source: row.source,
+			},
+		})
+		return { kind: 'removed' as const, row }
+	})
+
+	if (outcome.kind === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+	}
+	if (outcome.kind === 'forbidden') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only the person who saved this, or a workspace admin or owner, can remove it',
+			),
+			403,
+		)
+	}
+	if (outcome.kind === 'not_removable') {
+		return c.json(
+			createApiError('CONFLICT', 'This is not a saved key or login, or it is already removed'),
+			409,
+		)
+	}
+
+	void capturePosthogEvent('keychain_credential_removed', callerId, {
+		workspace_id: workspaceId,
+		integration_id: id,
+		provider: outcome.row.provider,
+		provider_mode: outcome.row.providerMode,
+	})
+
+	// End the session the credential was saved from, as an undo does, so it is not left
+	// holding it. Other running sessions keep what they were launched with until they end;
+	// none starts with it again.
+	const sessionEnded = outcome.row.originSessionId
+		? await endSessionHoldingKey(
+				{ db, sessionManager: c.get('sessionManager') },
+				{ workspaceId, originSessionId: outcome.row.originSessionId },
+			).catch((err: unknown) => {
+				logger.error('Ending the session after a removal threw', {
+					workspaceId,
+					integrationId: id,
+					error: err instanceof Error ? err.name : 'unknown',
+				})
+				return false
+			})
+		: true
+	return c.json({ id, status: 'undone' as const, sessionEnded }, 200)
+}) as RouteHandler<typeof removeRoute, Env>)
 
 // ── POST /api/integrations/:id/relaunch ──────────────────────────────────
 
@@ -652,7 +934,12 @@ app.openapi(scopeRoute, (async (c) => {
 		) {
 			return 'forbidden' as const
 		}
-		if (row.providerMode !== 'byo_apikey' || row.status !== 'active') return 'not_editable' as const
+		if (
+			(row.providerMode !== 'byo_apikey' && row.providerMode !== 'byo_login') ||
+			row.status !== 'active'
+		) {
+			return 'not_editable' as const
+		}
 		if (!(await grantedActorsAreInWorkspace(tx, workspaceId, next))) return 'outside' as const
 
 		await tx

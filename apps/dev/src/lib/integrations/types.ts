@@ -372,7 +372,7 @@ export interface DecryptedCredential {
 	id: string
 	workspaceId: string
 	provider: string
-	providerMode: 'registered' | 'byo_apikey' | 'byo_oauth'
+	providerMode: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
 	source: 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
 	/** The decrypted stored value. Env injection reads this; HTTP callers use getHeaders. */
 	value: string

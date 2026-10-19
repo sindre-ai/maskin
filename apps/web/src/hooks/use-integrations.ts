@@ -201,6 +201,18 @@ export function useCreateByoApiKey(workspaceId: string) {
 	})
 }
 
+/** Keychain: add a username and password. Both go up once and are never kept in the cache. */
+export function useCreateByoLogin(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { displayName: string; username: string; password: string }) =>
+			api.integrations.createByoLogin(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 /**
  * Keychain: replace which agents may use a saved key. The error stays on the mutation so
  * the access sheet can show it inline; only the success toast lives here. The list and the
@@ -219,6 +231,23 @@ export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
 			})
+		},
+	})
+}
+
+/**
+ * Keychain: remove a saved key or login at any time. The secret is destroyed on the server,
+ * so the credential drops out of the list. The page shows the failure inline in its dialog,
+ * so the global error toast is switched off.
+ */
+export function useRemoveCredential(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (integrationId: string) => api.integrations.remove(integrationId, workspaceId),
+		onSuccess: () => {
+			toast.success('Credential removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
 	})
 }

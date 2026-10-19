@@ -30,7 +30,7 @@ export function assertValidCredentialName(name: string): void {
 }
 
 /**
- * Throws NAME_TAKEN when another bring-your-own key in the workspace is active or
+ * Throws NAME_TAKEN when another bring-your-own key or login in the workspace is active or
  * waiting out its undo window under the same env var slug. Slugs are compared, not
  * display names, because the slug is what the agent reads. An undone key has given
  * its name back; a pending_undo one still holds it.
@@ -47,7 +47,7 @@ export async function assertSlugFree(
 		.where(
 			and(
 				eq(integrations.workspaceId, workspaceId),
-				eq(integrations.providerMode, 'byo_apikey'),
+				inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
 				inArray(integrations.status, ['active', 'pending_undo']),
 			),
 		)

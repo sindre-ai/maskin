@@ -254,7 +254,7 @@ export const integrationResponseSchema = z.object({
 	originSessionId: z.string().uuid().nullable().optional(),
 	// Keychain. How the credential is held, its display name (null for the
 	// registered providers) and who may read it. Never the value.
-	providerMode: z.enum(['registered', 'byo_apikey', 'byo_oauth']).optional(),
+	providerMode: z.enum(['registered', 'byo_apikey', 'byo_login', 'byo_oauth']).optional(),
 	displayName: z.string().nullable().optional(),
 	scopeGrants: z
 		.array(

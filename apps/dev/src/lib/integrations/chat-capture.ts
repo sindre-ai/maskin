@@ -12,9 +12,11 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { BYO_APIKEY_PROVIDER } from './byo-apikey'
+import { BYO_LOGIN_PROVIDER, type LoginFields, encodeLogin } from './byo-login'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 import { assertValidCredentialValue } from './credential-value'
+import { assertValidLoginFields } from './login-value'
 import { grantedActorsAreInWorkspace } from './scope-grants'
 
 /** How long a captured key stays undoable before the sweeper activates it. */
@@ -30,8 +32,12 @@ export const CHAT_CAPTURE_PROVIDERS: readonly ChatCaptureProvider[] = [
 	MANUAL_CAPTURE,
 ]
 
-/** How the capture started: the user typed the prefix, or the scanner caught a pasted key. The client never says. */
-export type ChatCaptureTrigger = 'prefix' | 'detected'
+/**
+ * How the capture started: the user typed the prefix, the scanner caught a pasted key,
+ * or the user filled in a card an agent put in the chat. The client never says; the
+ * server derives it from what the request carries.
+ */
+export type ChatCaptureTrigger = 'prefix' | 'detected' | 'card'
 
 export function captureTrigger(provider: ChatCaptureProvider): ChatCaptureTrigger {
 	return provider === MANUAL_CAPTURE ? 'prefix' : 'detected'
@@ -48,24 +54,35 @@ export class ChatCaptureError extends Error {
 	}
 }
 
-export interface ChatCaptureInput {
+interface ChatCaptureBase {
 	workspaceId: string
 	/** The human who pasted the key. */
 	actorId: string
 	sessionId: string
-	detectedProvider: ChatCaptureProvider
 	displayName: string
 	scopeGrants?: ScopeGrant[]
-	/** Consumed here and never stored, logged or put on an event. */
-	rawSecret: string
+	/** The secret came from a card an agent asked for, not from the composer. */
+	viaCard?: boolean
 }
+
+/**
+ * What is being vaulted: one API key (with the provider the scanner detected, or
+ * manual), or one username and password. Either way it is consumed here and never
+ * stored, logged or put on an event in the clear.
+ */
+export type ChatCaptureInput = ChatCaptureBase &
+	(
+		| { detectedProvider: ChatCaptureProvider; rawSecret: string; login?: undefined }
+		| { login: LoginFields; detectedProvider?: undefined; rawSecret?: undefined }
+	)
 
 export interface ChatCaptureResult {
 	integrationId: string
 	trigger: ChatCaptureTrigger
 	/** What the row stores as its provider: the detected one, or custom for a manual capture. */
 	provider: string
-	undoExpiresAt: Date
+	/** Null for a card capture: it is active straight away and has no undo window. */
+	undoExpiresAt: Date | null
 	scopeGrants: ScopeGrant[]
 	origin: { sessionId: string }
 }
@@ -73,6 +90,10 @@ export interface ChatCaptureResult {
 /**
  * Vaults a secret pasted in chat. The row lands as pending_undo: readable through
  * getCredential during the window, flipped to active by the sweeper afterwards.
+ *
+ * A capture from a card an agent asked for (viaCard) is the exception: the person
+ * chose to type it in, there is no composer text to take back and no Undo button, so
+ * it is active straight away and has no window.
  *
  * Order matters for the invariant that no data key outlives the request: the
  * DEK is generated, used to encrypt, wrapped by the master key and zeroised inside
@@ -89,7 +110,8 @@ export async function captureChatSecret(
 	// Before anything is read or encrypted. The name rule needs no database, and its
 	// messages never repeat the name.
 	assertValidCredentialName(input.displayName)
-	assertValidCredentialValue(input.rawSecret)
+	if (input.login) assertValidLoginFields(input.login.username, input.login.password)
+	else assertValidCredentialValue(input.rawSecret)
 
 	const [session] = await db
 		.select({ id: sessions.id, actorId: sessions.actorId, conversationId: sessions.conversationId })
@@ -134,11 +156,16 @@ export async function captureChatSecret(
 	// below, because two vaults of one name can both pass this one.
 	await assertSlugFree(db, workspaceId, input.displayName)
 
-	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, input.rawSecret)
-	const undoExpiresAt = new Date(now.getTime() + UNDO_WINDOW_MS)
+	const plaintext = input.login ? encodeLogin(input.login) : input.rawSecret
+	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, plaintext)
+	const undoExpiresAt = input.viaCard ? null : new Date(now.getTime() + UNDO_WINDOW_MS)
 	const integrationId = randomUUID()
-	const provider =
-		input.detectedProvider === MANUAL_CAPTURE ? BYO_APIKEY_PROVIDER : input.detectedProvider
+	const providerMode = input.login ? 'byo_login' : 'byo_apikey'
+	const provider = input.login
+		? BYO_LOGIN_PROVIDER
+		: input.detectedProvider === MANUAL_CAPTURE
+			? BYO_APIKEY_PROVIDER
+			: input.detectedProvider
 
 	await db.transaction(async (tx) => {
 		await lockCredentialSlug(tx, workspaceId, input.displayName)
@@ -147,10 +174,10 @@ export async function captureChatSecret(
 			id: integrationId,
 			workspaceId,
 			provider,
-			status: 'pending_undo',
+			status: undoExpiresAt ? 'pending_undo' : 'active',
 			credentials,
 			dekCiphertext,
-			providerMode: 'byo_apikey',
+			providerMode,
 			displayName: input.displayName,
 			scopeGrants: grants,
 			source: 'chat_capture',
@@ -176,7 +203,7 @@ export async function captureChatSecret(
 			// Never the value, the ciphertext or the wrapped key.
 			data: {
 				provider,
-				provider_mode: 'byo_apikey',
+				provider_mode: providerMode,
 				source: 'chat_capture',
 				origin_session_id: sessionId,
 			},
@@ -185,7 +212,7 @@ export async function captureChatSecret(
 
 	return {
 		integrationId,
-		trigger: captureTrigger(input.detectedProvider),
+		trigger: input.viaCard || input.login ? 'card' : captureTrigger(input.detectedProvider),
 		provider,
 		undoExpiresAt,
 		scopeGrants: grants,

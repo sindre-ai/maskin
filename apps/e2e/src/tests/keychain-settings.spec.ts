@@ -37,7 +37,7 @@ test.describe('Keychain settings', () => {
 
 			await page.getByRole('link', { name: 'Add your first credential' }).click()
 			await expect(page.getByRole('heading', { name: 'Add a credential' })).toBeVisible()
-			// Chat capture is a link to chats; OAuth is not selectable.
+			// Chat capture is a link to chats.
 			await expect(page.getByRole('link', { name: /Capture from a chat/ })).toBeVisible()
 
 			const name = `Linear ${Date.now()}`
@@ -73,6 +73,51 @@ test.describe('Keychain settings', () => {
 				() => document.documentElement.scrollWidth > window.innerWidth,
 			)
 			expect(overflow).toBe(false)
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`add a login, then remove it and see it gone @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await page.addInitScript(() => {
+				localStorage.setItem('ff:keychain-settings-ui', 'on')
+			})
+
+			await page.goto(`/${account.workspaceId}/settings/keychain/new`)
+			await expect(page.getByRole('heading', { name: 'Add a credential' })).toBeVisible({
+				timeout: 15_000,
+			})
+			await page.getByRole('tab', { name: 'Login' }).click()
+
+			const name = `e-conomic ${Date.now()}`
+			await page.getByLabel('Name', { exact: true }).fill(name)
+			await page.getByLabel('Username or email').fill('me@example.test')
+			const password = page.getByLabel('Password')
+			await expect(password).toHaveAttribute('type', 'password')
+			await password.fill(FAKE_SECRET)
+			await page.getByRole('button', { name: 'Save' }).click()
+
+			// Lands on the new login, typed as a Login.
+			await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 })
+			await expect(page.getByRole('region', { name: 'Details' })).toContainText('Login')
+
+			// Removing asks first, and Cancel leaves it be.
+			const remove = page.getByRole('button', { name: 'Remove credential' })
+			await expect(remove).toBeVisible()
+			await remove.click()
+			const dialog = page.getByRole('dialog')
+			await expect(dialog).toContainText("can't be recovered")
+			await dialog.getByRole('button', { name: 'Cancel' }).click()
+			await expect(dialog).toHaveCount(0)
+			await expect(page.getByRole('heading', { name })).toBeVisible()
+
+			// Confirming destroys it and goes back to the list, where it is gone.
+			await remove.click()
+			await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click()
+			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings/keychain$`), {
+				timeout: 15_000,
+			})
+			await expect(page.getByRole('link', { name: new RegExp(name) })).toHaveCount(0)
 		})
 	}
 

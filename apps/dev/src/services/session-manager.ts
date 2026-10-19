@@ -79,12 +79,17 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CredentialUndoneError,
 	ScopeDeniedError,
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
-import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
+import {
+	byoApiKeyEnvName,
+	byoLoginEnvNames,
+	redactLaunchEnv,
+} from '../lib/integrations/keychain-env'
 import {
 	findUnresolvedKeychainReferences,
 	stripSessionLevelMcps,
@@ -3025,7 +3030,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys, active or still inside their undo window, whose scope grants name the
+	 * keys and logins, active or still inside their undo window, whose scope grants name the
 	 * session's actor or the whole workspace. The scope filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
@@ -3037,21 +3042,26 @@ ${HUMAN_MESSAGE_STYLE}`
 	 * A loop-kind grant matches nothing here: a session carries no loop id today, so a
 	 * loop grant stays fail-closed at launch.
 	 *
-	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
-	 * characters is skipped, and so is a later key whose slug an earlier one already took
-	 * (oldest wins), each with a warning that carries no value.
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
+	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
+	 * characters is skipped, and so is a later credential whose name an earlier one
+	 * already took (oldest wins), each with a warning that carries no value.
 	 */
 	private async buildKeychainEnv(
 		session: typeof sessions.$inferSelect,
 	): Promise<Record<string, string>> {
 		const env: Record<string, string> = {}
 		const rows = await this.db
-			.select({ id: integrations.id, displayName: integrations.displayName })
+			.select({
+				id: integrations.id,
+				displayName: integrations.displayName,
+				providerMode: integrations.providerMode,
+			})
 			.from(integrations)
 			.where(
 				and(
 					eq(integrations.workspaceId, session.workspaceId),
-					eq(integrations.providerMode, 'byo_apikey'),
+					inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
 					inArray(integrations.status, ['active', 'pending_undo']),
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
@@ -3065,7 +3075,13 @@ ${HUMAN_MESSAGE_STYLE}`
 			.orderBy(asc(integrations.createdAt))
 
 		for (const row of rows) {
-			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
+			const isLogin = row.providerMode === 'byo_login'
+			const loginNames = isLogin && row.displayName ? byoLoginEnvNames(row.displayName) : null
+			const name = isLogin
+				? (loginNames?.username ?? null)
+				: row.displayName
+					? byoApiKeyEnvName(row.displayName)
+					: null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {
 					sessionId: session.id,
@@ -3087,7 +3103,20 @@ ${HUMAN_MESSAGE_STYLE}`
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
-				env[name] = credential.value
+				if (isLogin && loginNames) {
+					const login = decodeLogin(credential.value)
+					if (!login) {
+						logger.error('Keychain login is not a well-formed login; not injected', {
+							sessionId: session.id,
+							integrationId: row.id,
+						})
+						continue
+					}
+					env[loginNames.username] = login.username
+					env[loginNames.password] = login.password
+				} else {
+					env[name] = credential.value
+				}
 			} catch (err) {
 				// Undone, or its grants changed, between the query and the read. Either way
 				// this session does not get it.

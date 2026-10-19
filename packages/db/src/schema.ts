@@ -309,7 +309,7 @@ export type IntegrationStatus =
 /** The one status meaning "connected and usable". See `IntegrationStatus`. */
 export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
 
-export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_oauth'
+export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
 
 export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
 
@@ -346,7 +346,7 @@ export const integrations = pgTable(
 		// Phase 1 rows that predate R11 carry NULL until the next
 		// `account.reconnect` webhook or the admin refresh-identities call fills it.
 		unipileAccSlug: text('unipile_acc_slug'),
-		// Keychain columns. providerMode: 'registered' | 'byo_apikey' | 'byo_oauth'.
+		// Keychain columns. providerMode: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'.
 		providerMode: text('provider_mode')
 			.$type<IntegrationProviderMode>()
 			.notNull()
@@ -372,10 +372,11 @@ export const integrations = pgTable(
 			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
 		// One per provider for registered and OAuth connections. A bring-your-own API key
-		// is a named credential, so a workspace may hold several for one provider (0089).
+		// or login is a named credential, so a workspace may hold several for one provider
+		// (0089, 0093).
 		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider)
-			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} <> 'byo_apikey'`),
+			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} NOT IN ('byo_apikey', 'byo_login')`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
 		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
 		index('integrations_undo_sweeper_idx')

@@ -15,13 +15,16 @@ import { Link } from '@tanstack/react-router'
  *  and not a key that was undone (the row is kept for the audit chain, the key is gone). */
 export function isKeychainCredential(integration: IntegrationResponse): boolean {
 	return (
-		(integration.providerMode === 'byo_apikey' || integration.providerMode === 'byo_oauth') &&
+		(integration.providerMode === 'byo_apikey' ||
+			integration.providerMode === 'byo_login' ||
+			integration.providerMode === 'byo_oauth') &&
 		integration.status !== 'undone'
 	)
 }
 
 export function credentialTypeLabel(mode: IntegrationResponse['providerMode']): string {
-	return mode === 'byo_oauth' ? 'OAuth' : 'API key'
+	if (mode === 'byo_oauth') return 'OAuth'
+	return mode === 'byo_login' ? 'Login' : 'API key'
 }
 
 const PROVIDER_LABELS: Record<string, string> = {

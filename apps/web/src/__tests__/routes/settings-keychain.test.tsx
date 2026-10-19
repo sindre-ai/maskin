@@ -42,6 +42,10 @@ vi.mock('@/hooks/use-document-title', () => ({ useDocumentTitle: () => {} }))
 
 const mockUseIntegrations = vi.fn()
 const mockCreate = vi.fn()
+const mockCreateLogin = vi.fn()
+const mockRemove = vi.fn()
+const mockRemoveReset = vi.fn()
+const removeState = vi.fn<() => Record<string, unknown>>(() => ({}))
 const mockUseAuditLog = vi.fn()
 const mockUpdateScope = vi.fn()
 const mockResetScope = vi.fn()
@@ -49,6 +53,14 @@ const scopeMutation = vi.fn<() => Record<string, unknown>>(() => ({}))
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => mockUseIntegrations(),
 	useCreateByoApiKey: () => ({ mutateAsync: mockCreate, isPending: false }),
+	useCreateByoLogin: () => ({ mutateAsync: mockCreateLogin, isPending: false }),
+	useRemoveCredential: () => ({
+		mutate: mockRemove,
+		reset: mockRemoveReset,
+		isPending: false,
+		isError: false,
+		...removeState(),
+	}),
 	useCredentialAuditLog: () => mockUseAuditLog(),
 	useUpdateKeyScope: () => ({
 		mutate: mockUpdateScope,
@@ -116,6 +128,7 @@ beforeEach(() => {
 	mockRole.mockReturnValue('member')
 	mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
 	scopeMutation.mockReturnValue({})
+	removeState.mockReturnValue({})
 })
 
 describe('Keychain layout route', () => {
@@ -213,13 +226,10 @@ describe('KeychainPage', () => {
 })
 
 describe('AddCredentialPage', () => {
-	it('shows the three entry cards, with chat capture linking to chats and OAuth not selectable', () => {
+	it('shows the two entry cards, with chat capture linking to chats', () => {
 		render(<AddCredentialPage />)
 		expect(screen.getByText('Paste a secret')).toBeInTheDocument()
-		expect(screen.getByText('Connect via OAuth').closest('li')).toHaveAttribute(
-			'aria-disabled',
-			'true',
-		)
+		expect(screen.queryByText('Connect via OAuth')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Capture from a chat/ })).toHaveAttribute(
 			'href',
 			'/$workspaceId/chats',
@@ -272,6 +282,66 @@ describe('AddCredentialPage', () => {
 			params: { workspaceId: 'ws-1', integrationId: 'new-id' },
 		})
 		expect(screen.getByLabelText('Secret')).toHaveValue('')
+	})
+
+	describe('Login type', () => {
+		// A quote, a backslash, an apostrophe and non-ASCII: all fine in a password.
+		const PASSWORD = String.raw`pw"with\odd'chars-æøå`
+
+		async function switchToLogin(user: ReturnType<typeof userEvent.setup>) {
+			await user.click(screen.getByRole('tab', { name: 'Login' }))
+		}
+
+		it('swaps the secret field for a username and a masked password', async () => {
+			const user = userEvent.setup()
+			render(<AddCredentialPage />)
+			await switchToLogin(user)
+
+			expect(screen.queryByLabelText('Secret')).not.toBeInTheDocument()
+			expect(screen.getByLabelText('Username or email')).toBeInTheDocument()
+			expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+		})
+
+		it('cannot save until a name, a username and a password are all there', async () => {
+			const user = userEvent.setup()
+			render(<AddCredentialPage />)
+			await switchToLogin(user)
+			const save = screen.getByRole('button', { name: 'Save' })
+
+			await user.type(screen.getByLabelText('Name'), 'e-conomic')
+			await user.type(screen.getByLabelText('Username or email'), 'me@example.test')
+			expect(save).toBeDisabled()
+			await user.type(screen.getByLabelText('Password'), PASSWORD)
+			expect(save).toBeEnabled()
+		})
+
+		it('sends the login to the login endpoint, not the key one, and clears the password', async () => {
+			mockCreateLogin.mockResolvedValue({ integrationId: 'login-id' })
+			const user = userEvent.setup()
+			render(<AddCredentialPage />)
+			await switchToLogin(user)
+			await user.type(screen.getByLabelText('Name'), '  e-conomic  ')
+			await user.type(screen.getByLabelText('Username or email'), '  me@example.test  ')
+			await user.type(screen.getByLabelText('Password'), PASSWORD)
+			expect(JSON.stringify({ ...localStorage })).not.toContain(PASSWORD)
+			expect(JSON.stringify({ ...sessionStorage })).not.toContain(PASSWORD)
+
+			await user.click(screen.getByRole('button', { name: 'Save' }))
+
+			await waitFor(() =>
+				expect(mockCreateLogin).toHaveBeenCalledWith({
+					displayName: 'e-conomic',
+					username: 'me@example.test',
+					password: PASSWORD,
+				}),
+			)
+			expect(mockCreate).not.toHaveBeenCalled()
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/$workspaceId/settings/keychain/$integrationId',
+				params: { workspaceId: 'ws-1', integrationId: 'login-id' },
+			})
+			expect(screen.getByLabelText('Password')).toHaveValue('')
+		})
 	})
 
 	it('saves on Enter in the name field too', async () => {
@@ -534,6 +604,104 @@ describe('CredentialDetailPage: who can use this key', () => {
 		render(<CredentialDetailPage />)
 		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
+	})
+
+	describe('Remove credential', () => {
+		it('is offered to the person who saved it and to an admin, for a key and for a login', () => {
+			const { unmount } = openPasted()
+			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+			unmount()
+
+			mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+			mockRole.mockReturnValue('admin')
+			const second = openPasted()
+			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+			second.unmount()
+
+			mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
+			mockRole.mockReturnValue('member')
+			mockParams.mockReturnValue({ integrationId: 'cred-login' })
+			mockUseIntegrations.mockReturnValue({
+				data: [pasted({ id: 'cred-login', providerMode: 'byo_login', displayName: 'e-conomic' })],
+				isLoading: false,
+			})
+			mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
+			render(<CredentialDetailPage />)
+			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+		})
+
+		it('is offered even inside the undo window, because removing is allowed at any time', () => {
+			mockParams.mockReturnValue({ integrationId: 'cred-chat' })
+			mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
+			mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
+			render(<CredentialDetailPage />)
+			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+		})
+
+		it('is hidden from a plain member who did not save it, and from an agent', () => {
+			mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+			const { unmount } = openPasted()
+			expect(screen.queryByRole('button', { name: 'Remove credential' })).not.toBeInTheDocument()
+			unmount()
+
+			mockActor.mockReturnValue({ id: 'actor-1', type: 'agent' })
+			mockRole.mockReturnValue('owner')
+			openPasted()
+			expect(screen.queryByRole('button', { name: 'Remove credential' })).not.toBeInTheDocument()
+		})
+
+		it('is hidden for an OAuth connection, which is disconnected on the Integrations page', () => {
+			mockParams.mockReturnValue({ integrationId: 'cred-oauth' })
+			mockUseIntegrations.mockReturnValue({
+				data: [pasted({ id: 'cred-oauth', providerMode: 'byo_oauth' })],
+				isLoading: false,
+			})
+			mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
+			render(<CredentialDetailPage />)
+			expect(screen.queryByRole('button', { name: 'Remove credential' })).not.toBeInTheDocument()
+		})
+
+		it('asks first, says the secret is destroyed, and removes nothing on Cancel', async () => {
+			const user = userEvent.setup()
+			openPasted()
+
+			await user.click(screen.getByRole('button', { name: 'Remove credential' }))
+
+			const dialog = await screen.findByRole('dialog')
+			expect(within(dialog).getByText(/can't be recovered/)).toBeInTheDocument()
+			await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+			expect(mockRemove).not.toHaveBeenCalled()
+		})
+
+		it('removes the credential on confirm and goes back to the list', async () => {
+			mockRemove.mockImplementation((_id: string, opts?: { onSuccess?: () => void }) =>
+				opts?.onSuccess?.(),
+			)
+			const user = userEvent.setup()
+			openPasted()
+
+			await user.click(screen.getByRole('button', { name: 'Remove credential' }))
+			await user.click(
+				within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }),
+			)
+
+			expect(mockRemove).toHaveBeenCalledWith('cred-paste', expect.any(Object))
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/$workspaceId/settings/keychain',
+				params: { workspaceId: 'ws-1' },
+			})
+		})
+
+		it('keeps the dialog open and says so when removing fails', async () => {
+			removeState.mockReturnValue({ isError: true })
+			const user = userEvent.setup()
+			openPasted()
+
+			await user.click(screen.getByRole('button', { name: 'Remove credential' }))
+
+			expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove this credential')
+			expect(mockNavigate).not.toHaveBeenCalled()
+		})
 	})
 
 	it('saves the ticked agent from the sheet', async () => {

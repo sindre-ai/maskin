@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	byoApiKeyEnvName,
+	byoLoginEnvNames,
 	isRedactedEnvKey,
 	redactLaunchEnv,
 } from '../../../lib/integrations/keychain-env'
@@ -22,6 +23,33 @@ describe('byoApiKeyEnvName', () => {
 	it('only ever produces a valid shell identifier', () => {
 		const name = byoApiKeyEnvName('a; rm -rf / $(whoami) "quoted"') as string
 		expect(name).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/)
+	})
+})
+
+describe('byoLoginEnvNames', () => {
+	it.each([
+		['e-conomic', 'KEYCHAIN_BYO_LOGIN_E_CONOMIC'],
+		['Dinero team', 'KEYCHAIN_BYO_LOGIN_DINERO_TEAM'],
+	])('%s -> %s_USERNAME and _PASSWORD', (name, base) => {
+		expect(byoLoginEnvNames(name)).toEqual({
+			username: `${base}_USERNAME`,
+			password: `${base}_PASSWORD`,
+		})
+	})
+
+	it('is null when the name has nothing usable', () => {
+		expect(byoLoginEnvNames('🔑')).toBeNull()
+	})
+
+	it('only ever produces valid shell identifiers, and both are redacted from logs', () => {
+		const names = byoLoginEnvNames('a; rm -rf / $(whoami) "quoted"') as {
+			username: string
+			password: string
+		}
+		expect(names.username).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/)
+		expect(names.password).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/)
+		expect(isRedactedEnvKey(names.username)).toBe(true)
+		expect(isRedactedEnvKey(names.password)).toBe(true)
 	})
 })
 

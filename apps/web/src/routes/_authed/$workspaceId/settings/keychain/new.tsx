@@ -1,11 +1,13 @@
 import { KeychainBreadcrumb } from '@/components/keychain/keychain-parts'
+import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useCreateByoApiKey } from '@/hooks/use-integrations'
+import { useCreateByoApiKey, useCreateByoLogin } from '@/hooks/use-integrations'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -28,27 +30,37 @@ function AddCredentialPage() {
 	useDocumentTitle('Add a credential')
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
-	const create = useCreateByoApiKey(workspaceId)
+	const createKey = useCreateByoApiKey(workspaceId)
+	const createLogin = useCreateByoLogin(workspaceId)
+	const [kind, setKind] = useState<'api_key' | 'login'>('api_key')
 	const [name, setName] = useState('')
 	const [secret, setSecret] = useState('')
-	const [reveal, setReveal] = useState(false)
+	const [username, setUsername] = useState('')
+	const [password, setPassword] = useState('')
 	const [error, setError] = useState<string | null>(null)
+	const isLogin = kind === 'login'
+	const pending = createKey.isPending || createLogin.isPending
 
 	// The same rule the server applies, so the message appears before a request.
 	const nameProblem = name.trim() ? checkCredentialName(name) : null
-	const canSave = name.trim().length > 0 && !nameProblem && secret.length > 0 && !create.isPending
+	const hasValue = isLogin ? username.trim().length > 0 && password.length > 0 : secret.length > 0
+	const canSave = name.trim().length > 0 && !nameProblem && hasValue && !pending
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
 		if (!canSave) return
 		setError(null)
 		try {
-			const { integrationId } = await create.mutateAsync({
-				displayName: name.trim(),
-				rawSecret: secret,
-			})
+			const { integrationId } = isLogin
+				? await createLogin.mutateAsync({
+						displayName: name.trim(),
+						username: username.trim(),
+						password,
+					})
+				: await createKey.mutateAsync({ displayName: name.trim(), rawSecret: secret })
 			// The value is gone from the page the moment it is saved.
 			setSecret('')
+			setPassword('')
 			navigate({
 				to: '/$workspaceId/settings/keychain/$integrationId',
 				params: { workspaceId, integrationId },
@@ -60,7 +72,9 @@ function AddCredentialPage() {
 				err instanceof ApiError &&
 					(err.code === 'NAME_TAKEN' || err.code === 'NAME_LOOKS_LIKE_SECRET')
 					? err.message
-					: 'Could not save this credential. Check the name and secret, then try again.',
+					: isLogin
+						? 'Could not save this login. Check the name, username and password, then try again.'
+						: 'Could not save this credential. Check the name and secret, then try again.',
 			)
 		}
 	}
@@ -74,20 +88,13 @@ function AddCredentialPage() {
 				page.
 			</p>
 
-			<ul className="mb-4 grid gap-3 sm:grid-cols-3">
+			<ul className="mb-4 grid gap-3 sm:grid-cols-2">
 				<li className={cn(CARD, 'border-primary ring-2 ring-ring')} aria-current="true">
 					<div aria-hidden>📋</div>
 					<div className="mt-1 text-sm font-semibold">Paste a secret</div>
 					<p className="mt-1 text-xs text-muted-foreground">
 						API key, Bearer token, or Basic Auth. Fastest for services you already have credentials
 						for.
-					</p>
-				</li>
-				<li className={cn(CARD, 'opacity-60')} aria-disabled="true">
-					<div aria-hidden>🔗</div>
-					<div className="mt-1 text-sm font-semibold">Connect via OAuth</div>
-					<p className="mt-1 text-xs text-muted-foreground">
-						Bring your own OAuth app; Maskin runs the auth dance and stores the resulting tokens.
 					</p>
 				</li>
 				<li>
@@ -106,13 +113,19 @@ function AddCredentialPage() {
 			</ul>
 
 			<form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-border p-4">
+				<Tabs value={kind} onValueChange={(v) => setKind(v as 'api_key' | 'login')}>
+					<TabsList variant="segmented" aria-label="Credential type">
+						<TabsTrigger value="api_key">API key</TabsTrigger>
+						<TabsTrigger value="login">Login</TabsTrigger>
+					</TabsList>
+				</Tabs>
 				<div className="space-y-1.5">
 					<Label htmlFor="keychain-name">Name</Label>
 					<Input
 						id="keychain-name"
 						value={name}
 						onChange={(e) => setName(e.target.value)}
-						placeholder='e.g. "Stripe · Sindre AI"'
+						placeholder={isLogin ? 'e.g. "e-conomic"' : 'e.g. "Stripe · Sindre AI"'}
 						maxLength={CREDENTIAL_NAME_MAX_LENGTH}
 						autoComplete="off"
 						aria-invalid={nameProblem ? true : undefined}
@@ -124,34 +137,36 @@ function AddCredentialPage() {
 						<p className="text-xs text-muted-foreground">What agents will see.</p>
 					)}
 				</div>
-				<div className="space-y-1.5">
-					<Label htmlFor="keychain-secret">Secret</Label>
-					<div className="relative">
-						<Input
-							id="keychain-secret"
-							type={reveal ? 'text' : 'password'}
-							value={secret}
-							onChange={(e) => setSecret(e.target.value)}
-							className="pr-16 font-mono"
-							autoComplete="new-password"
-							spellCheck={false}
-							required
-						/>
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							className="absolute top-1/2 right-1 h-7 -translate-y-1/2 px-2"
-							aria-pressed={reveal}
-							onClick={() => setReveal((r) => !r)}
-						>
-							{reveal ? 'Hide' : 'Show'}
-						</Button>
+				{isLogin ? (
+					<>
+						<div className="space-y-1.5">
+							<Label htmlFor="keychain-username">Username or email</Label>
+							<Input
+								id="keychain-username"
+								value={username}
+								onChange={(e) => setUsername(e.target.value)}
+								autoComplete="off"
+								spellCheck={false}
+								required
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="keychain-password">Password</Label>
+							<SecretInput id="keychain-password" value={password} onChange={setPassword} />
+							<p className="text-xs text-muted-foreground">
+								Encrypted at rest. Never displayed after save.
+							</p>
+						</div>
+					</>
+				) : (
+					<div className="space-y-1.5">
+						<Label htmlFor="keychain-secret">Secret</Label>
+						<SecretInput id="keychain-secret" value={secret} onChange={setSecret} />
+						<p className="text-xs text-muted-foreground">
+							Encrypted at rest. Never displayed after save.
+						</p>
 					</div>
-					<p className="text-xs text-muted-foreground">
-						Encrypted at rest. Never displayed after save.
-					</p>
-				</div>
+				)}
 				<FormError error={error ?? undefined} />
 				<div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
 					<Button asChild type="button" variant="ghost">
@@ -160,7 +175,7 @@ function AddCredentialPage() {
 						</Link>
 					</Button>
 					<Button type="submit" disabled={!canSave}>
-						{create.isPending ? 'Saving…' : 'Save'}
+						{pending ? 'Saving…' : 'Save'}
 					</Button>
 				</div>
 			</form>

@@ -494,6 +494,15 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		createByoLogin: (
+			workspaceId: string,
+			body: { displayName: string; username: string; password: string },
+		) =>
+			request<{ integrationId: string }>('/integrations/byo-login', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
 			request<CredentialAuditLogPage>(
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
@@ -510,6 +519,11 @@ export const api = {
 				method: 'POST',
 				workspaceId,
 			}),
+		remove: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(
+				`/integrations/${id}/remove`,
+				{ method: 'POST', workspaceId },
+			),
 		relaunch: (id: string, workspaceId: string) =>
 			request<{ relaunch: 'stopped' | 'failed' }>(`/integrations/${id}/relaunch`, {
 				method: 'POST',
@@ -1675,7 +1689,7 @@ export interface IntegrationResponse {
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
 	originSessionId?: string | null
 	/** Keychain: how the credential is held. Absent from a server that predates it. */
-	providerMode?: 'registered' | 'byo_apikey' | 'byo_oauth'
+	providerMode?: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
 	/** Keychain: who may read it. Empty means nobody (fail-closed). */
@@ -1707,21 +1721,31 @@ export interface CredentialAuditLogPage {
 
 export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' | 'openai-style'
 
-export interface ChatCaptureInput {
+interface ChatCaptureBase {
 	sessionId: string
-	providerMode: 'byo_apikey'
-	/** manual: the user typed the ! prefix, so nothing was detected. */
-	detectedProvider: ChatCaptureProvider | 'manual'
 	displayName: string
-	rawSecret: string
 	/** Omit for the default (the session's agent). [] means unassigned. */
 	scopeGrants?: Array<{ kind: 'actor'; actorId: string } | { kind: 'workspace' }>
+	/** The secret was typed into a card an agent asked for, not the composer. */
+	fromCard?: boolean
 }
+
+export type ChatCaptureInput = ChatCaptureBase &
+	(
+		| {
+				providerMode: 'byo_apikey'
+				/** manual: the user typed the ! prefix, so nothing was detected. */
+				detectedProvider: ChatCaptureProvider | 'manual'
+				rawSecret: string
+		  }
+		| { providerMode: 'byo_login'; username: string; password: string }
+	)
 
 export interface ChatCaptureResponse {
 	integrationId: string
-	undoExpiresAt: string
-	undoUrl: string
+	/** Null for a capture from an agent's card: active straight away, nothing to undo. */
+	undoExpiresAt: string | null
+	undoUrl: string | null
 	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
 	relaunch: 'stopped' | 'failed'
 }
@@ -2058,6 +2082,14 @@ export interface MessageIntegrationConnect {
 	provider: string
 }
 
+/** An agent's request for a credential, surfaced into chat as a Keychain card. */
+export interface MessageKeychainRequest {
+	session_id: string
+	kind: 'api_key' | 'login'
+	suggested_name?: string
+	hint?: string
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -2088,6 +2120,8 @@ export interface MessageMetadata {
 	 * connect an integration, rendered as a Connect card.
 	 */
 	integration_connect?: MessageIntegrationConnect
+	/** Backend-owned: an agent's request for a credential, rendered as a Keychain card. */
+	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }

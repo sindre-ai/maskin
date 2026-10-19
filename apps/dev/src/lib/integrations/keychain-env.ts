@@ -23,6 +23,23 @@ export function byoApiKeyEnvName(displayName: string): string | null {
 	return slug ? `${KEYCHAIN_ENV_PREFIX}${BYO_APIKEY_ENV_SEGMENT}_${slug}` : null
 }
 
+/** Provider-mode segment of the env var names for a login. */
+export const BYO_LOGIN_ENV_SEGMENT = 'BYO_LOGIN'
+
+/**
+ * Env var names for a login: KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME and _PASSWORD, so a
+ * login named e-conomic becomes KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME. Null when the
+ * display name has no usable characters; such a login is not injected.
+ */
+export function byoLoginEnvNames(
+	displayName: string,
+): { username: string; password: string } | null {
+	const slug = credentialSlug(displayName)
+	if (!slug) return null
+	const base = `${KEYCHAIN_ENV_PREFIX}${BYO_LOGIN_ENV_SEGMENT}_${slug}`
+	return { username: `${base}_USERNAME`, password: `${base}_PASSWORD` }
+}
+
 export function isRedactedEnvKey(key: string): boolean {
 	return REDACTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
 }
