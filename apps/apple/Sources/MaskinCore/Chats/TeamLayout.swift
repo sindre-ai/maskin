@@ -47,13 +47,13 @@ public protocol FlowRoomsSource: Sendable {
 public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 	public enum Layout: String, Codable, CaseIterable, Sendable {
 		case sections, oneList
-		public var label: String { self == .sections ? "Sections" : "One list" }
+		public var label: String { self == .sections ? "Grouped" : "Single list" }
 	}
 	public enum Grouping: String, Codable, CaseIterable, Sendable {
 		case byTime, byPerson, newestFirst
 		public var label: String {
 			switch self {
-			case .byTime: "By time period"
+			case .byTime: "By date"
 			case .byPerson: "By person"
 			case .newestFirst: "Newest first"
 			}
@@ -109,6 +109,10 @@ public struct TeamLayout: Equatable, Sendable {
 		public var pinnedFlowIDs: Set<String>
 		/// Capped sections ("All 9 flows") the user has opened; their rows are not sliced.
 		public var expandedSectionIDs: Set<String>
+		/// Agents running right now: their conversations list under "Working".
+		public var workingAgentIDs: Set<String>
+		/// Conversations whose unread messages mention you; with a trailing question they need you.
+		public var mentionedConversationIDs: Set<String>
 		public var now: Date
 		public var calendar: Calendar
 
@@ -117,6 +121,7 @@ public struct TeamLayout: Equatable, Sendable {
 			archived: [ConversationSummary] = [], options: TeamDisplayOptions = .default,
 			chip: TeamFilterChip = .all, query: String = "", currentActorID: String? = nil,
 			pinOrder: [String] = [], pinnedFlowIDs: Set<String> = [], expandedSectionIDs: Set<String> = [],
+			workingAgentIDs: Set<String> = [], mentionedConversationIDs: Set<String> = [],
 			now: Date = Date(), calendar: Calendar = .current
 		) {
 			self.conversations = conversations
@@ -129,6 +134,8 @@ public struct TeamLayout: Equatable, Sendable {
 			self.pinOrder = pinOrder
 			self.pinnedFlowIDs = pinnedFlowIDs
 			self.expandedSectionIDs = expandedSectionIDs
+			self.workingAgentIDs = workingAgentIDs
+			self.mentionedConversationIDs = mentionedConversationIDs
 			self.now = now
 			self.calendar = calendar
 		}
@@ -185,7 +192,7 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	public struct Section: Identifiable, Equatable, Sendable {
-		public enum Kind: Equatable, Sendable { case unread, flows, people, time, all, filtered }
+		public enum Kind: Equatable, Sendable { case needsYou, working, unread, flows, people, time, all, filtered }
 		public var id: String
 		public var kind: Kind
 		public var label: String
@@ -229,7 +236,7 @@ public struct TeamLayout: Equatable, Sendable {
 
 		public var title: String {
 			switch self {
-			case .nothing: "Nothing here yet"
+			case .nothing: "No conversations yet"
 			case .noResults(let q): "No results for “\(q)”"
 			case .caughtUp: "You're all caught up"
 			case .noKind(.groups): "No group chats yet"
@@ -238,11 +245,11 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		public var message: String {
 			switch self {
-			case .nothing: "Start a conversation with an agent or a teammate."
+			case .nothing: "Ask your Chief of Staff to get started, or message a teammate."
 			case .noResults: "Check the spelling, or search everything in Maskin."
 			case .caughtUp: "Nothing unread. New messages show up here first."
 			case .noKind(.groups): "Start one from New conversation by adding two or more people."
-			case .noKind: "They'll appear here as soon as there are some."
+			case .noKind: "They'll show up here once you have some."
 			}
 		}
 		public var action: String {
@@ -388,6 +395,30 @@ public struct TeamLayout: Equatable, Sendable {
 		var sections: [Section] = []
 		let me = input.currentActorID
 
+		// NEEDS YOU first, then WORKING: each conversation lives in the first section it fits, so
+		// it never repeats below in UNREAD or the time groups.
+		let needs = conversations.filter {
+			needsYou($0, me: me, mentioned: input.mentionedConversationIDs)
+		}
+		let needsIDs = Set(needs.map(\.id))
+		let working = conversations.filter {
+			!needsIDs.contains($0.id) && isWorking($0, workingAgentIDs: input.workingAgentIDs)
+		}
+		let placed = needsIDs.union(working.map(\.id))
+		let conversations = conversations.filter { !placed.contains($0.id) }
+		if !needs.isEmpty {
+			sections.append(
+				Section(
+					id: "needs-you", kind: .needsYou, label: "Needs you", count: needs.count,
+					rows: byRecency(needs.map(conversationRow)), showsMarkAllRead: true))
+		}
+		if !working.isEmpty {
+			sections.append(
+				Section(
+					id: "working", kind: .working, label: "Working", count: working.count,
+					rows: byRecency(working.map(conversationRow))))
+		}
+
 		// UNREAD: conversations (or people, when grouping by person) and flows with unread.
 		let unreadConversations = conversations.filter(\.isUnread)
 		let unreadRows: [Row]
@@ -438,12 +469,26 @@ public struct TeamLayout: Equatable, Sendable {
 				let capped = open ? rows : Array(rows.prefix(sectionCap))
 				sections.append(
 					Section(
-						id: "people", kind: .people, label: "People", count: rows.count, rows: capped,
+						id: "people", kind: .people, label: "Conversations", count: rows.count, rows: capped,
 						moreLabel: capped.count < rows.count ? "All \(rows.count) conversations" : nil,
 						canCollapse: !isFiltering && open && rows.count > sectionCap))
 			}
 		}
 		return sections
+	}
+
+	/// Someone is waiting on you: an unread message from somebody else that mentions you or ends in a
+	/// question. The API has no "pending ask" flag on a conversation, so this reads the preview.
+	public static func needsYou(_ c: ConversationSummary, me: String?, mentioned: Set<String>) -> Bool {
+		guard c.isUnread, c.snippetActorID != me else { return false }
+		if mentioned.contains(c.id) { return true }
+		return ChatPreviewText.plain(c.snippet ?? "")
+			.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
+	}
+
+	/// An agent in the conversation is running right now.
+	public static func isWorking(_ c: ConversationSummary, workingAgentIDs: Set<String>) -> Bool {
+		c.participants.contains { $0.kind == .agent && workingAgentIDs.contains($0.id) }
 	}
 
 	/// One list: an ALL card mixing flows and conversations, newest first.

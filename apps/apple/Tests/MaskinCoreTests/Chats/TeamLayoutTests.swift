@@ -254,12 +254,13 @@ struct ConversationRowStatusTests {
 		#expect(ConversationRowStatus.workingLabel(3) == "3 working")
 	}
 
-	@Test("your latest message gets a tick, and the preview drops the author")
+	@Test("your latest message reads You: …; a sending or failed one keeps its mark")
 	func ticks() {
 		var c = convo
 		c.snippetActorName = "Me"
-		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).prefix == .tick(.sent))
-		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).preview == "Done. PR is up")
+		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).prefix == nil)
+		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).preview == "You: Done. PR is up")
+		#expect(ConversationRowStatus.make(conversation: c, tick: .failed).prefix == .tick(.failed))
 		#expect(ConversationRowStatus.make(conversation: c, tick: .failed).accessibilityText == "not sent, Done. PR is up")
 		#expect(ConversationRowStatus.Tick.read.symbol == "✓✓")
 		#expect(ConversationRowStatus.Tick.sending.symbol == "…")
@@ -346,5 +347,66 @@ struct TeamPreferencesTests {
 		#expect(TeamPreferences(defaults: defaults, actorID: "a", workspaceID: "w").pinnedFlowIDs == ["f"])
 		#expect(b.displayOptions == .default)
 		#expect(b.pinOrder.isEmpty)
+	}
+}
+
+@Suite("TeamLayout needs you and working")
+struct TeamLayoutPriorityTests {
+	private func layout(
+		_ conversations: [ConversationSummary], working: Set<String> = [], mentioned: Set<String> = []
+	) -> TeamLayout {
+		TeamLayout.build(
+			TeamLayout.Input(
+				conversations: conversations, currentActorID: "me", workingAgentIDs: working,
+				mentionedConversationIDs: mentioned, now: now, calendar: cal))
+	}
+
+	@Test("an unread question or mention goes to Needs you, and nowhere else")
+	func needsYou() {
+		let result = layout(
+			[
+				chatConvo("ask", last: ago(hours: 1), unread: 1, snippet: "Ship it today?", participants: [chatMe, forge]),
+				chatConvo("ping", last: ago(hours: 2), unread: 1, snippet: "FYI", participants: [chatMe, forge]),
+				chatConvo("plain", last: ago(hours: 3), unread: 1, snippet: "Done.", participants: [chatMe, forge]),
+				chatConvo("read", last: ago(hours: 4), snippet: "Okay?", participants: [chatMe, forge]),
+			], mentioned: ["ping"])
+		#expect(result.sections.first?.kind == .needsYou)
+		#expect(result.sections.first?.rows.map(\.id) == ["ask", "ping"])
+		#expect(result.sections.first { $0.kind == .unread }?.rows.map(\.id) == ["plain"])
+		#expect(result.conversationIDs.filter { $0 == "ask" }.count == 1)
+	}
+
+	@Test("your own last message never needs you")
+	func ownMessage() {
+		var c = chatConvo("mine", last: ago(hours: 1), unread: 1, snippet: "Any news?", participants: [chatMe, forge])
+		c.snippetActorID = "me"
+		#expect(layout([c]).sections.contains { $0.kind == .needsYou } == false)
+	}
+
+	@Test("a conversation with a running agent lists under Working, after Needs you")
+	func working() {
+		let result = layout(
+			[
+				chatConvo("run", last: ago(hours: 5), participants: [chatMe, forge]),
+				chatConvo("idle", last: ago(hours: 1), participants: [chatMe, ida]),
+			], working: ["forge"])
+		#expect(result.sections.map(\.kind) == [.working, .time])
+		#expect(result.rowIDs("working") == ["run"])
+	}
+}
+
+@Suite("ConversationRowStatus working text")
+struct WorkingTextTests {
+	private let convo = chatConvo("c", snippet: "Done", participants: [chatMe, chatRelay])
+
+	@Test("one agent is named, two are joined, more fall back to a count")
+	func names() {
+		func text(_ names: [String]) -> String {
+			ConversationRowStatus.make(conversation: convo, workingAgents: names.count, workingNames: names).workingText
+		}
+		#expect(text(["Forge"]) == "Forge is working")
+		#expect(text(["Forge", "Ida"]) == "Forge and Ida are working")
+		#expect(text(["Forge", "Ida", "Relay"]) == "3 working")
+		#expect(ConversationRowStatus.make(conversation: convo, workingAgents: 1).workingText == "Working")
 	}
 }

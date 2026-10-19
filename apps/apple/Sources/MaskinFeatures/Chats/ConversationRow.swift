@@ -45,8 +45,12 @@ struct TeamRow: View {
 				HStack(alignment: .center, spacing: MaskinSpace.s4) {
 					RowStatusLine(status: status, unread: row.isUnread)
 					Spacer(minLength: 0)
-					if status.mentionsYou { CountBadge(text: "@").accessibilityLabel("Mentions you") }
-					if row.isUnread { UnreadBadge(count: row.unreadCount) }
+					// One badge per row: a mention outranks the unread count.
+					if status.mentionsYou {
+						CountBadge(text: "@").accessibilityLabel("Mentions you")
+					} else if row.isUnread {
+						UnreadBadge(count: row.unreadCount)
+					}
 					if canExpand { chevron }
 				}
 				if let subtitle {
@@ -153,10 +157,10 @@ struct RowStatusLine: View {
 				Text("typing…")
 					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
 					.foregroundStyle(MaskinColor.sigInk)
-			case .working(let n):
+			case .working:
 				HStack(spacing: MaskinSpace.s3) {
 					TeamWorkingBars()
-					Text(ConversationRowStatus.workingLabel(n))
+					Text(status.workingText)
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
 				}
 				.foregroundStyle(MaskinColor.sigInk)

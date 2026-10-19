@@ -72,7 +72,6 @@ private struct ChatsContainer: View {
 			initialValue: ConversationsStore(
 				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
 				events: environment.events, cache: environment.snapshotCache,
-				flowRooms: LoopFlowRoomsSource(api: APILoopsSource(client: environment.client, workspaceID: workspaceID)),
 				preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID)))
 	}
 
@@ -86,14 +85,16 @@ private struct ChatsContainer: View {
 				isLive: environment.events.connection != .failed,
 				sendTick: sendTick,
 				onNewChat: { recipient in newChat = NewChatRequest(recipient: recipient) },
-				onSearchEverywhere: { _ in runtime?.selectedTab = .search }
+				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
+				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } }
 			)
 			.shellToolbar(
 				environment: environment, title: "Team",
 				actions: ShellActions(
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
-					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault))
+					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
+					hidesAvatar: true, newAlwaysVisible: true))
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {

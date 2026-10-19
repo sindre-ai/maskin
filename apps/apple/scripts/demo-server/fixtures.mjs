@@ -262,12 +262,7 @@ const rooms = [
 		at: DAY,
 	},
 ]
-const participant = (id) => {
-	const a = actors.find((x) => x.id === id)
-	return { id, name: a.name, type: a.type, kind: a.type }
-}
-
-// The create and detail responses list participants as full rows rather than the list's summaries.
+// Participants as the API sends them on the list, create and detail responses alike.
 const participantRow = (id) => {
 	const a = actors.find((x) => x.id === id)
 	return {
@@ -450,7 +445,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 					snippet: r.snippet,
 					snippet_actor_id: r.with[0],
 					snippet_actor_name: r.by,
-					participants: [...r.with.map(participant), participant(ME.id)],
+					participants: [...r.with.map(participantRow), participantRow(ME.id)],
 				})),
 				has_more: false,
 			},

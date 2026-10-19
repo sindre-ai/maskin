@@ -37,12 +37,19 @@ public struct ShellActions {
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
+	/// Hides the profile avatar on this screen (Team).
+	public var hidesAvatar: Bool
+	/// Keeps the "+" button in the bar while the content scrolls (Team).
+	public var newAlwaysVisible: Bool
 
 	public init(
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
-		displayActive: Bool = false, displayToggle: (() -> Void)? = nil
+		displayActive: Bool = false, displayToggle: (() -> Void)? = nil,
+		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false
 	) {
+		self.hidesAvatar = hidesAvatar
+		self.newAlwaysVisible = newAlwaysVisible
 		self.displayToggle = displayToggle
 		self.displaySymbol = displaySymbol
 		self.new = new
@@ -122,7 +129,7 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.accessibilityLabel(actions.displayActive ? "Filter, shown" : "Filter")
 					}
-					if showsAvatar {
+					if showsAvatar, !actions.hidesAvatar {
 						Button {
 							runtime?.showProfile = true
 						} label: {
@@ -142,7 +149,7 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.buttonStyle(.plain)
 					}
-					if let new = actions.new, !scrolled {
+					if let new = actions.new, !scrolled || actions.newAlwaysVisible {
 						Button(action: new) {
 							ShellInkCircle(symbol: "plus", label: actions.newLabel)
 						}
