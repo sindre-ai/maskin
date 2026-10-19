@@ -308,7 +308,9 @@ struct ChatThreadView: View {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
 			}
-			if let lead = liveLead, !isRoom, call == nil {
+			if let call {
+				LiveCallHeaderControls(session: call, onEnd: { liveCalls?.end() })
+			} else if let lead = liveLead, !isRoom {
 				Button {
 					liveMeeting.present(.thread(chat: store, lead: lead))
 				} label: {
@@ -607,9 +609,8 @@ struct ChatThreadView: View {
 				}
 				.transition(.opacity.combined(with: .move(edge: .bottom)))
 			}
-			if let call {
-				callPanel(call)
-			} else if searching {
+			if let call { callPanel(call) }
+			if searching && call == nil {
 				ThreadSearchBar(
 					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
 					onStep: { matchIndex = ThreadSearch.step(from: matchIndex, by: $0, count: matchIDs.count) },
@@ -632,14 +633,25 @@ struct ChatThreadView: View {
 	/// The call running in this thread, if any.
 	private var call: LiveMeetingSession? { liveCalls?.session(for: store.conversationID) }
 
+	/// The call card docked above the composer, or its compact bar once folded.
+	@ViewBuilder
 	private func callPanel(_ call: LiveMeetingSession) -> some View {
-		LiveCallPanel(
-			session: call,
-			mentioned: CallMentions.objects(
-				in: store.messages.filter { ($0.createdAt ?? .distantFuture) >= call.startedAt ?? .distantPast }),
-			onInvite: onInvite,
-			onOpenObject: { runtime?.openObject($0.id) },
-			onEnd: { liveCalls?.end() })
+		if let liveCalls {
+			if liveCalls.dock.isCollapsed {
+				LiveCallBar(
+					session: call, onOpen: { withAnimation(MaskinMotion.standard) { liveCalls.dock.toggleCollapsed() } },
+					onToggleMute: { liveCalls.toggleMute() }, onEnd: { liveCalls.end() })
+			} else {
+				LiveCallDock(
+					session: call, center: liveCalls,
+					mentioned: CallMentions.objects(
+						in: store.messages.filter { ($0.createdAt ?? .distantFuture) >= call.startedAt ?? .distantPast }),
+					onInvite: onInvite,
+					onOpenObject: { runtime?.openObject($0.id) },
+					onPullUp: { runtime?.selectedTab = .search },
+					onEnd: { liveCalls.end() })
+			}
+		}
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
@@ -648,8 +660,10 @@ struct ChatThreadView: View {
 		MaskinComposer(
 			model: composer,
 			config: MaskinComposerConfig(
-				variant: .floating, placeholder: placeholder, showsMic: !isRoom,
-				goLive: isRoom ? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
+				variant: .floating, placeholder: placeholder, showsMic: !isRoom && call == nil,
+				// HOOK(livecall): during a call dictation and go-live give way to the send button. Once the
+				// composer exposes `isInCall`, pass `call != nil` here instead of these two conditions.
+				goLive: isRoom && call == nil ? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
 				suggestions: { query in
 					MentionTrigger.candidates(
 						query: query, participants: store.participants, workspace: store.workspaceActors,

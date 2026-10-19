@@ -97,6 +97,14 @@ final class LiveMeetingSession {
 		watch()
 	}
 
+	/// Loudspeaker (true) or earpiece (false). The card keeps the choice; this applies it.
+	func setSpeaker(_ on: Bool) {
+		#if os(iOS)
+		audio.setSpeaker(on)
+		routeName = audio.routeName
+		#endif
+	}
+
 	func toggleMute() {
 		voice.toggleMute()
 		refreshNowPlaying()
