@@ -213,8 +213,121 @@ struct ObjectRow: View {
 	}
 }
 
-/// Foldable header for a group: the status category's mark (or the type glyph) + name + count,
-/// a chevron at the end. Tap to fold.
+/// One object in the v5 list: a type square, the title (2 lines), "Type · driver · age" under it
+/// and the status as a tinted pill. The ask and the unseen dot stay for rows that need the reader.
+/// The board keeps `ObjectRow`; this is the list's alone.
+struct ObjectListRow: View {
+	let object: WorkObject
+	let typeName: String
+	/// "Task · Forge · 5m", already shaped by the Display's "Show on each row".
+	let subtitle: String
+	var ask: ObjectAsk?
+	var showsStatus = true
+
+	private var unseen: Bool { object.unreadCount > 0 }
+
+	var body: some View {
+		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+			RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+				.fill(ObjectTypeSquare.color(for: object.type))
+				.frame(width: MaskinSpace.s4 + 1, height: MaskinSpace.s4 + 1)
+				.accessibilityHidden(true)
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+					Text(object.displayTitle)
+						.maskinText(.subhead)
+						.fontWeight(unseen ? .bold : .semibold)
+						.foregroundStyle(MaskinColor.ink)
+						.lineLimit(2)
+						.multilineTextAlignment(.leading)
+					if unseen {
+						Circle().fill(MaskinColor.sig)
+							.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+							.accessibilityHidden(true)
+					}
+				}
+				if let ask {
+					Group {
+						if let who = ask.askedBy, !who.isEmpty {
+							Text("\(who): ").fontWeight(.bold) + Text(ask.text)
+						} else {
+							Text(ask.text)
+						}
+					}
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.sigInk)
+					.lineLimit(1)
+				}
+				Text(subtitle)
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink3)
+					.lineLimit(1)
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			if showsStatus {
+				ObjectStatusPill(status: object.status)
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.contentShape(Rectangle())
+		.maskinHover()
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel(accessibilityLabel)
+	}
+
+	private var accessibilityLabel: String {
+		var parts = [typeName, object.displayTitle]
+		if unseen { parts.append("Changed since you last looked") }
+		if let ask { parts.append("Needs you. \(ask.line)") }
+		if subtitle != typeName { parts.append(subtitle) }
+		if object.hasActiveSession { parts.append("Agent working") }
+		if showsStatus { parts.append(MaskinStatus.sentenceLabel(for: object.status)) }
+		return parts.joined(separator: ", ")
+	}
+}
+
+/// The type's square in the list: the Patina family, light to dark, so the types read apart
+/// without a second hue.
+enum ObjectTypeSquare {
+	static func color(for type: String) -> Color {
+		switch type {
+		case "bet": MaskinColor.patina900
+		case "task": MaskinColor.patina300
+		case "insight": MaskinColor.patina400
+		case "content": MaskinColor.patina200
+		default: MaskinColor.ink5
+		}
+	}
+}
+
+/// The status as a pill in one hue family: running and asking in the teal tint, done a step
+/// deeper, everything else quiet grey.
+struct ObjectStatusPill: View {
+	let status: String
+
+	private var colors: (bg: Color, fg: Color) {
+		switch StatusCategory.of(status) {
+		case .active, .needsYou: (MaskinColor.sigTint, MaskinColor.patina700)
+		case .done: (MaskinColor.patina100, MaskinColor.patina900)
+		case .backlog, .cancelled: (MaskinSurface.fill, MaskinColor.ink3)
+		}
+	}
+
+	var body: some View {
+		Text(MaskinStatus.sentenceLabel(for: status))
+			.maskinText(.caption)
+			.fontWeight(.semibold)
+			.foregroundStyle(colors.fg)
+			.lineLimit(1)
+			.padding(.horizontal, MaskinSpace.s4 + 1)
+			.frame(height: MaskinSpace.s11 + MaskinSpace.s1)
+			.background(colors.bg, in: Capsule())
+			.fixedSize()
+	}
+}
+
+/// Foldable header for a group, as the v5 list draws it: a chevron, the name, the count at the
+/// end. Tap to fold.
 struct ObjectGroupHeader: View {
 	let group: ObjectGroup
 	var collapsed = false
@@ -225,25 +338,25 @@ struct ObjectGroupHeader: View {
 			onToggle?()
 		} label: {
 			HStack(spacing: MaskinSpace.s4) {
-				icon
+				if onToggle != nil {
+					Image(systemName: "chevron.down")
+						.maskinSymbol(MaskinFontSize.t12, weight: .heavy)
+						.foregroundStyle(MaskinColor.ink3)
+						.rotationEffect(.degrees(collapsed ? -90 : 0))
+						.frame(width: MaskinSpace.s7)
+				}
 				Text(group.title ?? "")
 					.maskinText(.subhead)
-					.fontWeight(.semibold)
+					.fontWeight(.bold)
 					.foregroundStyle(MaskinColor.ink2)
 					.lineLimit(1)
+				Spacer(minLength: 0)
 				Text("\(group.objects.count)")
 					.maskinText(.caption)
 					.monospacedDigit()
 					.foregroundStyle(MaskinColor.ink5)
-				Spacer(minLength: 0)
-				if onToggle != nil {
-					Image(systemName: "chevron.down")
-						.maskinSymbol(MaskinFontSize.t11, weight: .bold)
-						.foregroundStyle(MaskinColor.ink5)
-						.rotationEffect(.degrees(collapsed ? -90 : 0))
-				}
 			}
-			.padding(.horizontal, MaskinSpace.s4)
+			.padding(.horizontal, MaskinSpace.s2)
 			.frame(minHeight: MaskinSpace.touchMin)
 			.contentShape(Rectangle())
 		}
@@ -253,22 +366,5 @@ struct ObjectGroupHeader: View {
 		.accessibilityAddTraits(.isHeader)
 		.accessibilityLabel("\(group.title ?? ""), \(group.objects.count)")
 		.accessibilityHint(onToggle == nil ? "" : (collapsed ? "Expands the group" : "Folds the group"))
-	}
-
-	@ViewBuilder private var icon: some View {
-		if group.isType {
-			Image(systemName: MaskinObjectType.glyph(for: group.id))
-				.maskinSymbol(MaskinFontSize.t14, weight: .medium)
-				.foregroundStyle(MaskinColor.ink4)
-				.frame(width: MaskinSpace.s8, height: MaskinSpace.s8)
-		} else if group.isAttention {
-			Circle().fill(MaskinColor.sigInk)
-				.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-				.accessibilityHidden(true)
-		} else if let status = group.status, !status.isEmpty {
-			StatusCategoryGlyph(category: StatusCategory.of(status), size: MaskinSpace.s8)
-		} else if !group.id.isEmpty {
-			StatusCategoryGlyph(category: StatusCategory.of(group.id), size: MaskinSpace.s8)
-		}
 	}
 }

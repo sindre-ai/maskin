@@ -395,7 +395,7 @@ struct ObjectsListView: View {
 				ObjectGroupHeader(group: group, collapsed: collapsed) {
 					withAnimation(reduceMotion ? nil : MaskinMotion.standard) { store.toggleGroup(group.id) }
 				}
-				.padding(.horizontal, MaskinSpace.s11 - MaskinSpace.s4)
+				.padding(.horizontal, MaskinSpace.s9)
 				.listRowInsets(EdgeInsets())
 				.listRowBackground(Color.clear)
 				.listRowSeparator(.hidden)
@@ -413,8 +413,8 @@ struct ObjectsListView: View {
 						.listRowSeparatorTint(MaskinSurface.separator)
 						.listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
 						.listRowSeparator(index == count - 1 ? .hidden : .visible, edges: .bottom)
-						.alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] + MaskinSpace.s14 + MaskinSpace.s1 }
-						.alignmentGuide(.listRowSeparatorTrailing) { d in d[.trailing] }
+						.alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] + MaskinSpace.s9 }
+						.alignmentGuide(.listRowSeparatorTrailing) { d in d[.trailing] - MaskinSpace.s9 }
 				}
 			}
 		}
@@ -422,12 +422,13 @@ struct ObjectsListView: View {
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {
 		let ask = store.ask(for: object.id)
-		let content = ObjectRow(
-			object: object, typeName: store.directory.typeName(object.type), showsGlyph: store.mixesTypes,
-			ask: ask, ownerName: store.directory.name(for: object.driverId),
-			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
-			showsStatus: store.display.shows(.status), showsDriver: store.display.shows(.driver),
-			showsUpdated: store.display.shows(.updated))
+		let content = ObjectListRow(
+			object: object, typeName: store.directory.typeName(object.type),
+			subtitle: store.display.rowSubtitle(
+				typeName: store.directory.typeName(object.type),
+				driver: store.directory.name(for: object.driverId),
+				age: object.updatedAt.map { RelativeTimeFormatter.string(for: $0, now: Date(), style: .compact) }),
+			ask: ask, showsStatus: store.display.shows(.status))
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {
@@ -537,20 +538,66 @@ struct ObjectsListView: View {
 	}
 }
 
-/// A row's slice of its group card: top corners on the first row, bottom corners on the last.
+/// A row's slice of its group card: top corners on the first row, bottom corners on the last,
+/// the card's hairline border down both sides (and across the ends).
 struct CardSlice: View {
 	let isFirst: Bool
 	let isLast: Bool
 	var selected = false
 
 	var body: some View {
-		let r = MaskinRadius.tile
+		let r = MaskinRadius.card2xl
 		UnevenRoundedRectangle(
 			cornerRadii: RectangleCornerRadii(
 				topLeading: isFirst ? r : 0, bottomLeading: isLast ? r : 0, bottomTrailing: isLast ? r : 0,
 				topTrailing: isFirst ? r : 0),
 			style: .continuous)
 		.fill(selected ? MaskinSurface.fillStrong : MaskinSurface.card)
+		.overlay {
+			CardSliceBorder(isFirst: isFirst, isLast: isLast, radius: r)
+				.stroke(MaskinSurface.line, lineWidth: 1)
+		}
+	}
+}
+
+/// The open outline of a card slice: sides always, top only on the first row, bottom only on the last.
+struct CardSliceBorder: Shape {
+	let isFirst: Bool
+	let isLast: Bool
+	let radius: CGFloat
+
+	func path(in rect: CGRect) -> Path {
+		let r = rect.insetBy(dx: 0.5, dy: 0)
+		let top = isFirst ? r.minY + 0.5 : r.minY
+		let bottom = isLast ? r.maxY - 0.5 : r.maxY
+		let c = radius
+		var p = Path()
+		// Left side, up to the top edge.
+		p.move(to: CGPoint(x: r.minX, y: bottom - (isLast ? c : 0)))
+		p.addLine(to: CGPoint(x: r.minX, y: top + (isFirst ? c : 0)))
+		if isFirst {
+			p.addArc(
+				center: CGPoint(x: r.minX + c, y: top + c), radius: c, startAngle: .degrees(180),
+				endAngle: .degrees(270), clockwise: false)
+			p.addLine(to: CGPoint(x: r.maxX - c, y: top))
+			p.addArc(
+				center: CGPoint(x: r.maxX - c, y: top + c), radius: c, startAngle: .degrees(270),
+				endAngle: .degrees(0), clockwise: false)
+		} else {
+			p.move(to: CGPoint(x: r.maxX, y: top))
+		}
+		// Right side, down to the bottom edge.
+		p.addLine(to: CGPoint(x: r.maxX, y: bottom - (isLast ? c : 0)))
+		if isLast {
+			p.addArc(
+				center: CGPoint(x: r.maxX - c, y: bottom - c), radius: c, startAngle: .degrees(0),
+				endAngle: .degrees(90), clockwise: false)
+			p.addLine(to: CGPoint(x: r.minX + c, y: bottom))
+			p.addArc(
+				center: CGPoint(x: r.minX + c, y: bottom - c), radius: c, startAngle: .degrees(90),
+				endAngle: .degrees(180), clockwise: false)
+		}
+		return p
 	}
 }
 
@@ -590,7 +637,7 @@ struct ObjectsDisplayMenu: View {
 				ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
 			}
 		} label: {
-			Label("Group by: \(store.display.groupBy.title)", systemImage: "rectangle.3.group")
+			Label("Group by \u{00B7} \(store.display.groupBy.title)", systemImage: "rectangle.3.group")
 		}
 		Menu {
 			Picker(
@@ -602,7 +649,7 @@ struct ObjectsDisplayMenu: View {
 				ForEach(ObjectsSort.allCases) { Text($0.title).tag($0) }
 			}
 		} label: {
-			Label("Sort: \(store.display.sort.title)", systemImage: "arrow.up.arrow.down")
+			Label("Sort by \u{00B7} \(store.display.sort.title)", systemImage: "arrow.up.arrow.down")
 		}
 		Menu {
 			Picker(
@@ -633,7 +680,7 @@ struct ObjectsDisplayMenu: View {
 						set: { _ in store.toggleProperty(property) }))
 			}
 		} label: {
-			Label("Shown properties", systemImage: "eye")
+			Label("Show on each row", systemImage: "eye")
 		}
 		Section("Saved views") {
 			Button("Save as view", systemImage: "bookmark") { intents.namingView = true }
@@ -653,7 +700,7 @@ struct ObjectsDisplayMenu: View {
 			Divider()
 			Button("Reset display", systemImage: "xmark.circle") {
 				store.setNeedsYouOnly(false)
-				store.setGrouping(.status)
+				store.setGrouping(ObjectsDisplay.defaultGrouping)
 				Task {
 					await store.setStatus(nil)
 					await store.setSort(.needsYou)

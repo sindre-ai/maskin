@@ -53,8 +53,11 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	public var needsYouOnly = false
 	public var shown: Set<ObjectsProperty> = Set(ObjectsProperty.allCases)
 	public var layout: ObjectsLayout = .list
-	/// How the list is grouped; status by default (per type while every type shows).
-	public var groupBy: ObjectsGrouping = .status
+	/// What the list is grouped by until the person chooses (v5: attention, so what needs them leads).
+	public static let defaultGrouping: ObjectsGrouping = .attention
+
+	/// How the list is grouped.
+	public var groupBy: ObjectsGrouping = ObjectsDisplay.defaultGrouping
 	/// Group ids the reader folded, remembered per grouping so folding a status does not fold a
 	/// type of the same name.
 	public var collapsed: [ObjectsGrouping: Set<String>] = [:]
@@ -62,7 +65,7 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	public init(
 		sort: ObjectsSort = .needsYou, needsYouOnly: Bool = false,
 		shown: Set<ObjectsProperty> = Set(ObjectsProperty.allCases), layout: ObjectsLayout = .list,
-		groupBy: ObjectsGrouping = .status, collapsed: [ObjectsGrouping: Set<String>] = [:]
+		groupBy: ObjectsGrouping = ObjectsDisplay.defaultGrouping, collapsed: [ObjectsGrouping: Set<String>] = [:]
 	) {
 		self.sort = sort
 		self.needsYouOnly = needsYouOnly
@@ -79,7 +82,7 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 		needsYouOnly = try c.decodeIfPresent(Bool.self, forKey: .needsYouOnly) ?? false
 		shown = try c.decodeIfPresent(Set<ObjectsProperty>.self, forKey: .shown) ?? Set(ObjectsProperty.allCases)
 		layout = try c.decodeIfPresent(ObjectsLayout.self, forKey: .layout) ?? .list
-		groupBy = try c.decodeIfPresent(ObjectsGrouping.self, forKey: .groupBy) ?? .status
+		groupBy = try c.decodeIfPresent(ObjectsGrouping.self, forKey: .groupBy) ?? ObjectsDisplay.defaultGrouping
 		collapsed = try c.decodeIfPresent([ObjectsGrouping: Set<String>].self, forKey: .collapsed) ?? [:]
 	}
 
@@ -100,7 +103,18 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	/// Anything off its default, so the Display button can show it.
 	public var isCustomised: Bool {
 		sort != .needsYou || needsYouOnly || shown != Set(ObjectsProperty.allCases) || layout != .list
-			|| groupBy != .status
+			|| groupBy != ObjectsDisplay.defaultGrouping
+	}
+}
+
+extension ObjectsDisplay {
+	/// A row's second line, "Task · Forge · 5m": the type always, the driver and the age only while
+	/// "Show on each row" has them on, and either skipped when it is not known.
+	public func rowSubtitle(typeName: String, driver: String?, age: String?) -> String {
+		var parts = [typeName]
+		if shows(.driver), let driver, !driver.isEmpty { parts.append(driver) }
+		if shows(.updated), let age, !age.isEmpty { parts.append(age) }
+		return parts.joined(separator: " \u{00B7} ")
 	}
 }
 

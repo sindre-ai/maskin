@@ -106,6 +106,41 @@ struct ObjectsDisplaySettingsTests {
 		#expect(display.shows(.driver) && display.shows(.updated))
 	}
 
+	@Test("groups by attention until the reader chooses, and older saved choices keep theirs")
+	func attentionDefault() throws {
+		#expect(ObjectsDisplay().groupBy == .attention)
+		#expect(!ObjectsDisplay().isCustomised)
+		#expect(ObjectsDisplay(groupBy: .status).isCustomised)
+		let saved = try JSONDecoder().decode(ObjectsDisplay.self, from: Data(#"{"groupBy":"status"}"#.utf8))
+		#expect(saved.groupBy == .status)
+		let bare = try JSONDecoder().decode(ObjectsDisplay.self, from: Data("{}".utf8))
+		#expect(bare.groupBy == .attention)
+	}
+
+	@Test("a fold is remembered per grouping")
+	func foldsPerGrouping() {
+		var display = ObjectsDisplay()
+		display.toggleCollapsed("needs_you")
+		#expect(display.isCollapsed("needs_you"))
+		display.groupBy = .type
+		#expect(!display.isCollapsed("needs_you"))
+		display.groupBy = .attention
+		#expect(display.isCollapsed("needs_you"))
+		display.toggleCollapsed("needs_you")
+		#expect(!display.isCollapsed("needs_you"))
+	}
+
+	@Test("the row subtitle follows Show on each row")
+	func subtitle() {
+		var display = ObjectsDisplay()
+		#expect(display.rowSubtitle(typeName: "Task", driver: "Forge", age: "5m") == "Task \u{00B7} Forge \u{00B7} 5m")
+		display.toggle(.driver)
+		#expect(display.rowSubtitle(typeName: "Task", driver: "Forge", age: "5m") == "Task \u{00B7} 5m")
+		display.toggle(.updated)
+		#expect(display.rowSubtitle(typeName: "Task", driver: "Forge", age: "5m") == "Task")
+		#expect(ObjectsDisplay().rowSubtitle(typeName: "Bet", driver: nil, age: "") == "Bet")
+	}
+
 	@Test("toggling a property flips only that property")
 	func toggling() {
 		var display = ObjectsDisplay()
