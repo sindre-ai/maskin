@@ -73,14 +73,17 @@ public struct ActorAvatar: View {
 	private let size: CGFloat
 	private let seed: String
 	private let mood: AgentMood
+	private let shapeOverride: AgentShape?
 
 	/// - Parameters:
 	///   - seed: stable id for colour selection (defaults to the name).
 	///   - working: show the Patina "agent is running" ring.
+	///   - shape: pins an agent's geometry (the Team list shows every agent as a rounded square).
 	public init(
 		name: String, kind: Kind = .human, size: CGFloat = MaskinSpace.s12 + MaskinSpace.s3 + MaskinSpace.s3,
-		seed: String? = nil, working: Bool = false, mood: AgentMood? = nil
+		seed: String? = nil, working: Bool = false, mood: AgentMood? = nil, shape: AgentShape? = nil
 	) {
+		self.shapeOverride = shape
 		self.name = name
 		self.kind = kind
 		self.size = size
@@ -98,7 +101,9 @@ public struct ActorAvatar: View {
 		}
 	}
 
-	private var shape: AgentShape { kind == .agent ? ActorIdentity.agentShape(seed: seed) : .circle }
+	private var shape: AgentShape {
+		kind == .agent ? (shapeOverride ?? ActorIdentity.agentShape(seed: seed)) : .circle
+	}
 	private var working: Bool { mood == .working }
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var bobbing = false

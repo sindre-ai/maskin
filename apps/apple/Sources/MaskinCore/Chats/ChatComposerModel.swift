@@ -219,6 +219,9 @@ public final class ChatComposerModel {
 	// MARK: Reply, edit and drafts
 
 	/// Reply to a message: a strip above the field names whom, and the quote joins the message on send.
+	/// Puts the cursor in the field (a screen button that means "write something").
+	public func requestFocus() { focusRequest += 1 }
+
 	/// Replying replaces an edit in progress (and gives its draft back).
 	public func beginReply(author: String, content: String) {
 		let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)

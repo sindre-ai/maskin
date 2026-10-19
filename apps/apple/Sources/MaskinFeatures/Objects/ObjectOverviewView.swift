@@ -5,15 +5,15 @@ import SwiftUI
 
 /// The Overview page body, under the pinned page bar: the ask (decision card), the fields card,
 /// the description as headed sections, the evidence (pages and PDFs this object produced), a
-/// "Latest" row that jumps to Activity, and "Discuss in {flow}" when the object sits in a flow.
+/// "Latest" row that jumps to Activity, and "Ask a question", which opens Activity with the composer focused.
 struct ObjectOverviewView<Decision: View>: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
 	/// The description starts unfolded (snapshots).
 	var descriptionExpanded = false
 	var onShowActivity: () -> Void = {}
-	/// Opens a linked object; the flow button needs it, and hides without it.
-	var onOpenObject: ((String) -> Void)?
+	/// Opens Activity with the composer focused: questions about an object are asked in its timeline.
+	var onAsk: (() -> Void)?
 	@ViewBuilder var decision: () -> Decision
 
 	var body: some View {
@@ -39,8 +39,8 @@ struct ObjectOverviewView<Decision: View>: View {
 					who: store.authorName(for: latest), what: ActivityGrouping.summary(of: latest), date: latest.date,
 					action: onShowActivity)
 			}
-			if let flow = ObjectDetailLayout.flow(in: store.links), let onOpenObject {
-				DiscussInFlowButton(flowName: flow.otherTitle) { onOpenObject(flow.otherId) }
+			if let onAsk {
+				AskQuestionButton(action: onAsk)
 			}
 		}
 	}
@@ -82,9 +82,9 @@ struct DetailSection<Content: View>: View {
 	}
 }
 
-/// "Discuss in {flow}": the primary action at the foot of the Overview, a dark teal capsule.
-struct DiscussInFlowButton: View {
-	let flowName: String
+/// "Ask a question": the primary action at the foot of the Overview, a dark teal capsule. It opens
+/// Activity with the composer focused.
+struct AskQuestionButton: View {
 	let action: () -> Void
 
 	var body: some View {
@@ -92,7 +92,7 @@ struct DiscussInFlowButton: View {
 			MaskinHaptics.play(.selection)
 			action()
 		} label: {
-			Label("Discuss in \(flowName)", systemImage: "bubble.left")
+			Label("Ask a question", systemImage: "bubble.left")
 				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold, relativeTo: .body))
 				.foregroundStyle(MaskinSurface.onInverse)
 				.lineLimit(1)

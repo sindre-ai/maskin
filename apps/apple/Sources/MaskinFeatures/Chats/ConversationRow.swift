@@ -286,7 +286,7 @@ struct ConversationAvatar: View {
 		if participants.count <= 1, let only = participants.first {
 			ActorAvatar(
 				name: only.name, kind: only.kind == .agent ? .agent : .human, size: size, seed: only.id,
-				working: working)
+				working: working, shape: .roundedSquare)
 		} else if participants.count >= 2 {
 			let small = size * 0.65
 			ZStack {
@@ -302,6 +302,6 @@ struct ConversationAvatar: View {
 
 	private func avatar(_ p: ChatParticipant, _ s: CGFloat) -> some View {
 		ActorAvatar(
-			name: p.name, kind: p.kind == .agent ? .agent : .human, size: s, seed: p.id)
+			name: p.name, kind: p.kind == .agent ? .agent : .human, size: s, seed: p.id, shape: .roundedSquare)
 	}
 }

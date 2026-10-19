@@ -42,6 +42,7 @@ struct ObjectDetailContent<Decision: View>: View {
 	var onEdit: () -> Void = {}
 	var onReply: ((TimelineItem) -> Void)?
 	var onShowActivity: () -> Void = {}
+	var onAsk: (() -> Void)?
 	/// Pins "now" and opens the description (snapshots).
 	var now: Date = Date()
 	var descriptionExpanded = false
@@ -92,7 +93,7 @@ struct ObjectDetailContent<Decision: View>: View {
 	private func overview(_ object: WorkObject) -> some View {
 		ObjectOverviewView(
 			store: store, object: object, descriptionExpanded: descriptionExpanded, onShowActivity: onShowActivity,
-			onOpenObject: onOpenObject
+			onAsk: onAsk
 		) { decision() }
 	}
 }

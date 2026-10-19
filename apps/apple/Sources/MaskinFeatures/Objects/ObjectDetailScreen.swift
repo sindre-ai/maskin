@@ -96,6 +96,12 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			})
 	}
 
+	/// "Ask a question": the thread is Activity, so go there and put the cursor in the composer.
+	private func askQuestion() {
+		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity }
+		composer.requestFocus()
+	}
+
 	/// Hold → Reply: the composer quotes the event and the next comment threads under it.
 	private func startReply(to item: TimelineItem) {
 		MaskinHaptics.play(.light)
@@ -376,7 +382,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						ObjectDetailContent(
 							store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
 							onReply: startReply,
-							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } }
+							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } },
+							onAsk: askQuestion
 						) { decision }
 						.padding(.horizontal, MaskinSpace.s9)
 						.padding(.top, MaskinSpace.s5)
