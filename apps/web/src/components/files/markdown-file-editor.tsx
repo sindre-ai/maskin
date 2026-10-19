@@ -28,9 +28,9 @@ const noop = () => undefined
 const EDITOR_CLASS = '[&_.ProseMirror]:min-h-40 [&_.ProseMirror]:outline-none'
 
 // The wrapper ring is the only focus cue while the file is editable: 2px
-// brand-subtle inside, 3px brand outside (v2 File page).
+// brand-subtle inside, 3px brand outside, on a plain background (v2 File page).
 const EDITOR_FOCUS_RING =
-	'focus-within:shadow-[0_0_0_2px_var(--color-brand-subtle),0_0_0_5px_var(--color-brand)]'
+	'focus-within:bg-background focus-within:shadow-[0_0_0_2px_var(--color-brand-subtle),0_0_0_5px_var(--color-brand)]'
 
 /** The editor's own saved form of a markdown text, for the "same as mine" check on a 409. */
 async function editorSavedForm(text: string): Promise<string> {

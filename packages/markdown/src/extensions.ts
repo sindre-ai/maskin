@@ -17,7 +17,6 @@ import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 import { Markdown } from 'tiptap-markdown'
 import { MarkdownTaskList } from './task-list'
-import { MarkdownTaskList } from './task-list'
 
 // One lowlight instance across every editor mount — building the language
 // registry is not free and it never changes at runtime.

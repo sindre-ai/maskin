@@ -544,7 +544,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		}
 
 		return (
-			<>
+			// One wrapper element: the toolbar's bubble menu moves its own node into the
+			// editor DOM, so on a remount (key change) React must remove a single node.
+			<div>
 				<EditorContent
 					editor={editor}
 					className={className ? `${MARKDOWN_PROSE_CLASS} ${className}` : MARKDOWN_PROSE_CLASS}
@@ -556,7 +558,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					openPulse={linkPopoverPulse}
 					focusPulse={toolbarFocusPulse}
 				/>
-			</>
+			</div>
 		)
 	},
 )
