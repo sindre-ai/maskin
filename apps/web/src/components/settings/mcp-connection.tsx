@@ -1,10 +1,8 @@
-import { Button } from '@/components/ui/button'
+import { CopyButton } from '@/components/ui/copy-button'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getApiKey } from '@/lib/auth'
-import { Check, Copy } from 'lucide-react'
-
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 type Tab = 'claude-ai' | 'claude-code' | 'claude-desktop' | 'custom'
 
@@ -67,36 +65,6 @@ function buildConfig(tab: Tab, mcpUrl: string, apiKey: string, workspaceId: stri
 
 function buildCliCommand(mcpUrl: string, apiKey: string, workspaceId: string) {
 	return `claude mcp add --transport http maskin ${mcpUrl} --header "Authorization: Bearer ${apiKey}" --header "X-Workspace-Id: ${workspaceId}"`
-}
-
-function CopyButton({
-	text,
-	label,
-	className,
-}: { text: string; label?: boolean; className?: string }) {
-	const [copied, setCopied] = useState(false)
-
-	const handleCopy = useCallback(async () => {
-		await navigator.clipboard.writeText(text)
-		setCopied(true)
-		setTimeout(() => setCopied(false), 2000)
-	}, [text])
-
-	return (
-		<Button variant="secondary" size="sm" className={className} onClick={handleCopy}>
-			{copied ? (
-				<>
-					<Check size={14} />
-					{label && <span className="ml-1">Copied!</span>}
-				</>
-			) : (
-				<>
-					<Copy size={14} />
-					{label && <span className="ml-1">Copy</span>}
-				</>
-			)}
-		</Button>
-	)
 }
 
 export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {

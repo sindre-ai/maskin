@@ -130,6 +130,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
         with:
@@ -178,10 +180,46 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
+      # Real-container check for the MCP guard wrapper (maskin-mcp-guard): the
+      # round trip in mcp-guard-report.test.ts runs once on the host and once with
+      # the wrapper inside the agent-image built from this ref, so a script that
+      # runs on a laptop but not in the image (path, exec bit, node version) fails
+      # here and not on the first guarded session. Skipped on PRs that touch
+      # neither the image nor the guard code; always on for pushes to main.
+      - name: Did the guard wrapper inputs change?
+        id: guard
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
+              docker/agent-base turbo.json .github/workflows/ci.yml \
+              apps/dev/src/lib/integrations/mcp-guard.ts \
+              apps/dev/src/routes/mcp-guard.ts \
+              apps/dev/src/services/extension-guard-launch.ts \
+              apps/dev/src/__tests__/integration/mcp-guard-report.test.ts; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.guard.outputs.run == 'true'
+
+      # Reads the layer cache agent-base-docker.yml writes on main; never writes.
+      - name: Build agent-base image for the guard check
+        if: steps.guard.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          load: true
+          tags: maskin-agent-base:guard-test
+          cache-from: type=gha
+
       - run: pnpm test:integration -- --run
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Empty means the in-container case is skipped.
+          GUARD_TEST_IMAGE: ${{ steps.guard.outputs.run == 'true' && 'maskin-agent-base:guard-test' || '' }}
 
   # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
   # Nothing else runs that script, so a change that breaks a fresh bootstrap is

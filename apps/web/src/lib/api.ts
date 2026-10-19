@@ -249,6 +249,114 @@ function uploadFileWithProgress(
 }
 
 // Objects
+// ── Custom extensions ─────────────────────────────────────────────────────
+
+export type ExtensionStatus = 'active' | 'disabled' | 'draft'
+
+export interface ExtensionResponse {
+	id: string
+	workspaceId: string
+	slug: string
+	name: string
+	status: ExtensionStatus
+	mcpConfig: unknown | null
+	webhookConfig: ExtensionWebhookConfig | null
+	webhookToken: string | null
+	webhookUrl: string | null
+	/** True when a signing secret is stored. The secret itself is never returned. */
+	hasSigningSecret: boolean
+	toolGrants: ExtensionToolGrants
+	mcpLastError: string | null
+	createdBy: string | null
+	createdAt: string
+	updatedAt: string
+	/** Most recent committed delivery in the last 14 days. */
+	lastDeliveryAt: string | null
+	committedDeliveries: number
+}
+
+export type ExtensionToolEffect = 'allow' | 'deny'
+
+/** Plain effect, or the object form that carries an expiry (not enforced yet). */
+export type ExtensionToolGrant =
+	| ExtensionToolEffect
+	| { effect: ExtensionToolEffect; expires_at: string | null; grant_id: string }
+
+/** agentId -> toolName -> grant. An agent with no entry is denied every tool. */
+export type ExtensionToolGrants = Record<string, Record<string, ExtensionToolGrant>>
+
+export interface ExtensionTool {
+	name: string
+	kind: 'read' | 'write'
+	description?: string
+}
+
+export interface ExtensionGrants {
+	toolGrants: ExtensionToolGrants
+	tools: ExtensionTool[]
+}
+
+export interface ExtensionAttempted {
+	windowDays: number
+	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
+}
+
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+
+export type LiteralOrPath = { literal: string } | { path: string }
+
+export interface ExtensionWebhookConfig {
+	signatureScheme: ExtensionSignatureScheme
+	signatureHeader: string
+	signaturePrefix?: string
+	timestampHeader?: string
+	timestampBodyTemplate?: string
+	maxAgeSeconds?: number
+	secretSource?: 'env' | 'credential'
+	eventMap: {
+		externalIdPath: string
+		entityType: LiteralOrPath
+		action: LiteralOrPath
+		dataPath?: string
+	}
+	rateLimit?: { perMinute: number }
+}
+
+export interface VendorRecipe {
+	slug: string
+	displayName: string
+	webhookConfig?: Partial<ExtensionWebhookConfig>
+	docsUrl: string
+}
+
+export interface CreateExtensionInput {
+	slug: string
+	name: string
+	status?: ExtensionStatus
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+}
+
+export interface UpdateExtensionInput {
+	name?: string
+	status?: ExtensionStatus
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+}
+
+export interface ExtensionDeliveries {
+	windowDays: number
+	committed: number
+	deliveries: { id: string; externalId: string; receivedAt: string; processedAt: string }[]
+}
+
+export type ExtensionSampleResult =
+	| {
+			ok: true
+			event: { externalId: string; entityType: string; action: string; data: unknown }
+	  }
+	| { ok: false; field: string; message: string }
+
 export const api = {
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
@@ -891,6 +999,59 @@ export const api = {
 				`/user-display-settings/${encodeURIComponent(objectType)}`,
 				{ method: 'PUT', body: { settings }, workspaceId },
 			),
+	},
+
+	extensions: {
+		list: (workspaceId: string) => request<ExtensionResponse[]>('/extensions', { workspaceId }),
+		get: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateExtensionInput) =>
+			request<ExtensionResponse>('/extensions', { method: 'POST', body: data, workspaceId }),
+		update: (workspaceId: string, id: string, data: UpdateExtensionInput) =>
+			request<ExtensionResponse>(`/extensions/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		recipes: (workspaceId: string) =>
+			request<VendorRecipe[]>('/extensions/recipes', { workspaceId }),
+		generateSecret: (workspaceId: string) =>
+			request<{ secret: string }>('/extensions/generate-secret', { method: 'POST', workspaceId }),
+		regenerateToken: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}/regenerate-token`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		deliveries: (workspaceId: string, id: string) =>
+			request<ExtensionDeliveries>(`/extensions/${id}/deliveries`, { workspaceId }),
+		sample: (
+			workspaceId: string,
+			id: string,
+			data: { payload: string; webhook_config?: ExtensionWebhookConfig },
+		) =>
+			request<ExtensionSampleResult>(`/extensions/${id}/sample`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		setAgentGrant: (
+			workspaceId: string,
+			id: string,
+			agentId: string,
+			tools?: Record<string, ExtensionToolEffect>,
+		) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'PUT',
+				body: tools ? { tools } : {},
+				workspaceId,
+			}),
+		revokeAgentGrant: (workspaceId: string, id: string, agentId: string) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		attempted: (workspaceId: string, id: string) =>
+			request<ExtensionAttempted>(`/extensions/${id}/attempted`, { workspaceId }),
 	},
 
 	workspaceSkills: {

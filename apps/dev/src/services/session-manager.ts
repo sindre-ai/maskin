@@ -130,6 +130,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { returnToSender } from './helper-return'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
@@ -2206,11 +2207,12 @@ ${HUMAN_MESSAGE_STYLE}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
@@ -2781,6 +2783,16 @@ ${HUMAN_MESSAGE_STYLE}`
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: maskinApiUrl,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
