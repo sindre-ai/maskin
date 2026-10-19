@@ -17,6 +17,8 @@ final class LiveCallCenter {
 	private(set) var isStarting = false
 	/// Why a call could not start, shown once.
 	var problem: String?
+	/// How the call card is left: folded, captions, speaker. Starts fresh with every call.
+	var dock = LiveCallDockState()
 	/// The conversation whose thread is on screen right now, so the pill stays out of its way.
 	var visibleConversationID: String?
 
@@ -53,6 +55,7 @@ final class LiveCallCenter {
 				await chat.start()
 				let session = LiveMeetingSession(
 					kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts)
+				dock = LiveCallDockState()
 				current = session
 				session.begin()
 				startTicker()
@@ -75,6 +78,11 @@ final class LiveCallCenter {
 	}
 
 	func toggleMute() { current?.toggleMute() }
+
+	func toggleSpeaker() {
+		dock.toggleSpeaker()
+		current?.setSpeaker(dock.speakerOn)
+	}
 
 	private func resolve(
 		_ request: LiveMeetingRequest, environment: AppEnvironment

@@ -51,6 +51,7 @@ public struct MainShell: View {
 		)
 		.task(id: environment.workspaceId) { await badges.start(environment: environment) }
 		.onAppear {
+			Task { await LiveCallDemo.startIfRequested(center: liveCalls, environment: environment) }
 			// A call keeps running wherever you are; this returns you to its thread.
 			liveCalls.openConversation = { [runtime] id in
 				runtime.presentation = nil

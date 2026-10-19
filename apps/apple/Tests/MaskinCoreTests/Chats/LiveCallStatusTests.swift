@@ -15,13 +15,13 @@ import Testing
 	@Test func phasesRead() {
 		#expect(text() == "Listening…")
 		#expect(text(words: true) == "Hearing you…")
-		#expect(text(.thinking) == "Relay is thinking…")
-		#expect(text(.speaking) == "Relay is speaking…")
+		#expect(text(.thinking) == "Working on it…")
+		#expect(text(.speaking) == "Speaking. Tap to interrupt")
 		#expect(text(.speaking, yourTurn: true) == "Your turn…")
 	}
 
 	@Test func mutedBeatsListeningButNoticesAndFailuresBeatMuted() {
-		#expect(text(muted: true) == "Muted")
+		#expect(text(muted: true) == "Microphone off")
 		#expect(text(muted: true, notice: "No connection") == "No connection")
 		#expect(text(muted: true, failure: "Mic denied", notice: "x") == "Mic denied")
 	}

@@ -95,6 +95,15 @@ final class LiveAudioSession {
 		try session.setActive(true)
 	}
 
+	/// Loudspeaker or earpiece for the call's sound. Headphones and Bluetooth keep the route they have.
+	func setSpeaker(_ on: Bool) {
+		let session = AVAudioSession.sharedInstance()
+		var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
+		if on { options.insert(.defaultToSpeaker) }
+		try? session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+		try? session.overrideOutputAudioPort(on ? .speaker : .none)
+	}
+
 	nonisolated private static func currentRouteName() -> String {
 		AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? ""
 	}
