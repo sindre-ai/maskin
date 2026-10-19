@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import type { CreateSessionInput, MessageQuestionAnswer, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
 const ACTIVE_CONVERSATION_POLL_MS = 5_000
@@ -99,6 +100,9 @@ export function useStopSession(workspaceId: string) {
 		onSuccess: (result) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+		onError: () => {
+			toast.error('Failed to stop session')
 		},
 	})
 }
