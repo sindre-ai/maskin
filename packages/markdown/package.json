@@ -40,6 +40,10 @@
 		"./editor-blocks": {
 			"types": "./src/editor-blocks.ts",
 			"default": "./dist/editor-blocks.js"
+		},
+		"./react/slash-command": {
+			"types": "./src/react/slash-command.ts",
+			"default": "./dist/react/slash-command.js"
 		}
 	},
 	"scripts": {
@@ -72,6 +76,7 @@
 		"hast-util-sanitize": "^5.0.2",
 		"highlight.js": "^11.10.0",
 		"lowlight": "^3.1.0",
+		"lucide-react": "^0.468.0",
 		"react-markdown": "^9.0.1",
 		"rehype-sanitize": "^6.0.0",
 		"rehype-stringify": "^10.0.1",

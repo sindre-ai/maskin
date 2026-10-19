@@ -12,7 +12,11 @@ import {
 	type RenderCodeBlockArgs,
 	type RenderImageArgs,
 } from '@maskin/markdown/react'
-import type { MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
+import type {
+	MarkdownParseErrorInfo,
+	ShortcutInfo,
+	ToolbarActionInfo,
+} from '@maskin/markdown/react/editor'
 import {
 	Suspense,
 	lazy,
@@ -29,7 +33,9 @@ import {
 // name CI assertion (`apps/web/scripts/assert-editor-chunk.mjs`) enforces the
 // split at build time. See tech spec §12 rabbit hole #6.
 const MarkdownEditor = lazy(() =>
-	import('@maskin/markdown/react/editor').then((m) => ({ default: m.MarkdownEditor })),
+	import('@/components/shared/document-markdown-editor').then((m) => ({
+		default: m.DocumentMarkdownEditor,
+	})),
 )
 
 const UUID_RE_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -863,6 +869,23 @@ function EditorAdapter({
 		captureEditorParseError(info)
 	}, [])
 
+	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
+		capture('editor_toolbar_action_used', {
+			action: info.action,
+			variant: info.variant,
+			surface: info.surface,
+			object_id: info.objectId,
+		})
+	}, [])
+
+	const handleShortcutUsed = useCallback((info: ShortcutInfo) => {
+		capture('editor_shortcut_used', {
+			shortcut: info.shortcut,
+			variant: info.variant,
+			surface: info.surface,
+		})
+	}, [])
+
 	const disallowedNodes = useMemo(() => {
 		if (!disallowedElements) return undefined
 		const nodes: Array<'heading' | 'table' | 'taskList' | 'codeBlock'> = []
@@ -886,6 +909,8 @@ function EditorAdapter({
 				className={className}
 				disallowedNodes={disallowedNodes}
 				onParseError={handleParseError}
+				onToolbarAction={handleToolbarAction}
+				onShortcutUsed={handleShortcutUsed}
 			/>
 		</Suspense>
 	)

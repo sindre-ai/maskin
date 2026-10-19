@@ -17,6 +17,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 import { Markdown } from 'tiptap-markdown'
 import { MarkdownTaskList } from './task-list'
+import { MarkdownTaskList } from './task-list'
 
 // One lowlight instance across every editor mount — building the language
 // registry is not free and it never changes at runtime.
@@ -25,6 +26,14 @@ const lowlight = createLowlight(common)
 export type EditorVariant = 'document' | 'comment' | 'notification'
 
 export type EditorDisallowedNode = 'heading' | 'table' | 'taskList' | 'codeBlock'
+
+// Empty-state hint per variant. The document variant points at the slash menu;
+// the comment and notification variants have no slash items yet.
+const DEFAULT_PLACEHOLDER_BY_VARIANT: Record<EditorVariant, string> = {
+	document: 'Add a description. Type / for blocks.',
+	comment: 'Write, or press / for commands',
+	notification: 'Write, or press / for commands',
+}
 
 // The editor accepts every ATX level so an existing H4 to H6 (or an H1) is
 // kept. The slash menu is the place that limits what people can insert.
@@ -90,6 +99,7 @@ export function buildExtensions(
 	disallowedNodes: EditorDisallowedNode[] | undefined,
 	placeholder: string | undefined,
 	extra: Extensions | undefined,
+	shortcutExtension?: Extension,
 ): Extensions {
 	const disallowed = new Set<EditorDisallowedNode>(disallowedNodes ?? [])
 	const headingLevels = HEADING_LEVELS_BY_VARIANT[variant]
@@ -115,7 +125,7 @@ export function buildExtensions(
 			HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
 		}),
 		Placeholder.configure({
-			placeholder: placeholder ?? 'Write, or press / for commands',
+			placeholder: placeholder ?? DEFAULT_PLACEHOLDER_BY_VARIANT[variant],
 		}),
 		// Round-trips markdown to a ProseMirror doc on load and back to markdown
 		// on save. Fenced code, GFM tables, task lists, strike all flow through.
@@ -143,6 +153,11 @@ export function buildExtensions(
 	if (includeTaskList) {
 		extensions.push(MarkdownTaskList, TaskItem.configure({ nested: true }))
 	}
+
+	// Shortcut extension is variant-agnostic; the individual key handlers
+	// return the command result, so a shortcut whose command is disabled
+	// (e.g. heading on comment variant) is a no-op and doesn't emit.
+	if (shortcutExtension) extensions.push(shortcutExtension)
 
 	if (extra) extensions.push(...extra)
 

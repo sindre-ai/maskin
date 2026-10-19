@@ -1,3 +1,4 @@
+import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Extensions } from '@tiptap/react'
 import { EditorContent, useEditor } from '@tiptap/react'
@@ -20,6 +21,8 @@ import {
 	createSourceSession,
 	findReadOnlyCause,
 } from '../source-blocks'
+import { EditorToolbar, type ToolbarAction } from './editor-toolbar'
+import { MARKDOWN_PROSE_CLASS } from './prose'
 import { MarkdownRenderer } from './renderer'
 
 export type { EditorDisallowedNode, EditorVariant }
@@ -44,6 +47,42 @@ export interface MarkdownParseErrorInfo {
 	cause?: ReadOnlyCause
 	construct?: LossConstruct
 }
+
+/**
+ * Keyboard shortcut identifier fired to `onShortcutUsed`. Matches the spec §8
+ * shortcut column, lower-cased with `+` separators.
+ */
+export type EditorShortcut =
+	| 'mod+b'
+	| 'mod+i'
+	| 'mod+shift+x'
+	| 'mod+e'
+	| 'mod+shift+k'
+	| 'mod+alt+1'
+	| 'mod+alt+2'
+	| 'mod+alt+3'
+	| 'mod+shift+7'
+	| 'mod+shift+8'
+	| 'mod+shift+9'
+	| 'mod+shift+b'
+	| 'mod+z'
+	| 'mod+shift+z'
+	| 'alt+f10'
+
+export interface ToolbarActionInfo {
+	action: ToolbarAction
+	variant: EditorVariant
+	surface: string | undefined
+	objectId: string | undefined
+}
+
+export interface ShortcutInfo {
+	shortcut: EditorShortcut
+	variant: EditorVariant
+	surface: string | undefined
+}
+
+export type { ToolbarAction }
 
 export interface MarkdownEditorProps {
 	value: string
@@ -89,6 +128,16 @@ export interface MarkdownEditorProps {
 	/** Free-text surface identifier passed to `onParseError` (spec §11). */
 	surface?: string
 	objectId?: string
+	/**
+	 * Fires when the user triggers a toolbar action (bold, italic, link, …).
+	 * Callers wire this to PostHog's `editor_toolbar_action_used` event (spec §11).
+	 */
+	onToolbarAction?: (info: ToolbarActionInfo) => void
+	/**
+	 * Fires when the user triggers a keyboard shortcut listed in tech spec §8.
+	 * Callers wire this to PostHog's `editor_shortcut_used` event.
+	 */
+	onShortcutUsed?: (info: ShortcutInfo) => void
 }
 
 export interface MarkdownEditorRef {
@@ -104,6 +153,109 @@ const MAX_ERROR_MESSAGE_LENGTH = 500
 function truncateErrorMessage(err: unknown): string {
 	const raw = err instanceof Error ? err.message : String(err)
 	return raw.length > MAX_ERROR_MESSAGE_LENGTH ? `${raw.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…` : raw
+}
+
+/**
+ * Emit-on-run keybinding extension. Overrides two shortcuts and adds one:
+ * - `Mod-Shift-x` invokes Strike (default is `Mod-Shift-s`; spec §8 mandates
+ *   `Mod+Shift+X` to match the toolbar tooltip).
+ * - `Mod-Shift-k` invokes Link (Tiptap's Link ext ships no shortcut; the
+ *   toolbar advertises `Mod+Shift+K`).
+ * - `Mod-Shift-s` is dropped so Strike doesn't fire on both.
+ * - `Alt-F10` moves keyboard focus into the toolbar while a selection is
+ *   active (a no-op otherwise, so the key stays free for the browser).
+ *
+ * `Mod-k` is *deliberately unbound*. The global command palette
+ * (`apps/web/src/components/command-palette.tsx:256`) listens on the document
+ * without a `contentEditable` guard, so any binding here would clobber it
+ * (tech spec §12 rabbit hole #5). Leaving it unbound means the palette wins.
+ *
+ * Every bound key that ends up executing (i.e. the command returned `true`)
+ * calls `onShortcutFired` so the surrounding editor can forward it to
+ * PostHog's `editor_shortcut_used` event (spec §11).
+ */
+function buildShortcutExtension(
+	onShortcutFired: (shortcut: EditorShortcut) => void,
+	toggleLinkPopover: () => void,
+	focusToolbar: () => void,
+) {
+	const wrap = (shortcut: EditorShortcut, command: () => boolean) => () => {
+		const ok = command()
+		if (ok) onShortcutFired(shortcut)
+		return ok
+	}
+
+	return Extension.create({
+		name: 'maskinEditorShortcuts',
+		// Higher than the default 100 so this extension's key handlers run
+		// before StarterKit's (Bold/Italic/Strike/etc.) — we need to see the
+		// shortcut firing to emit the PostHog event. If the default handler
+		// consumed the key first, the emit never fires.
+		priority: 1000,
+		addKeyboardShortcuts() {
+			return {
+				// Overrides — the default was wrong per spec.
+				'Mod-Shift-x': wrap('mod+shift+x', () => this.editor.chain().focus().toggleStrike().run()),
+				// Drop the default Strike binding — spec says X, not S.
+				'Mod-Shift-s': () => true,
+				// New — Link has no default keybinding in @tiptap/extension-link.
+				'Mod-Shift-k': () => {
+					onShortcutFired('mod+shift+k')
+					toggleLinkPopover()
+					return true
+				},
+
+				// Backspace at the start of a heading or code block downgrades it to a
+				// paragraph (spec §8). List items and quotes already lift out of
+				// their wrapper through Tiptap's defaults; headings do not.
+				Backspace: () => {
+					const { selection } = this.editor.state
+					if (!selection.empty || selection.$from.parentOffset !== 0) return false
+					const blockType = selection.$from.parent.type.name
+					if (blockType !== 'heading' && blockType !== 'codeBlock') return false
+					return this.editor.commands.setParagraph()
+				},
+				'Alt-F10': () => {
+					if (this.editor.state.selection.empty || !this.editor.isEditable) return false
+					onShortcutFired('alt+f10')
+					focusToolbar()
+					return true
+				},
+
+				// Emit-on-run wrappers for shortcuts that already exist by default
+				// in Tiptap. We delegate to the existing command rather than
+				// re-implementing it; if the default extension is disabled (e.g.
+				// heading on comment variant) the command returns false and no
+				// event fires.
+				'Mod-b': wrap('mod+b', () => this.editor.chain().focus().toggleBold().run()),
+				'Mod-i': wrap('mod+i', () => this.editor.chain().focus().toggleItalic().run()),
+				'Mod-e': wrap('mod+e', () => this.editor.chain().focus().toggleCode().run()),
+				'Mod-Alt-1': wrap('mod+alt+1', () =>
+					this.editor.chain().focus().toggleHeading({ level: 1 }).run(),
+				),
+				'Mod-Alt-2': wrap('mod+alt+2', () =>
+					this.editor.chain().focus().toggleHeading({ level: 2 }).run(),
+				),
+				'Mod-Alt-3': wrap('mod+alt+3', () =>
+					this.editor.chain().focus().toggleHeading({ level: 3 }).run(),
+				),
+				'Mod-Shift-7': wrap('mod+shift+7', () =>
+					this.editor.chain().focus().toggleOrderedList().run(),
+				),
+				'Mod-Shift-8': wrap('mod+shift+8', () =>
+					this.editor.chain().focus().toggleBulletList().run(),
+				),
+				'Mod-Shift-9': wrap('mod+shift+9', () =>
+					this.editor.chain().focus().toggleTaskList().run(),
+				),
+				'Mod-Shift-b': wrap('mod+shift+b', () =>
+					this.editor.chain().focus().toggleBlockquote().run(),
+				),
+				'Mod-z': wrap('mod+z', () => this.editor.chain().focus().undo().run()),
+				'Mod-Shift-z': wrap('mod+shift+z', () => this.editor.chain().focus().redo().run()),
+			}
+		},
+	})
 }
 
 /**
@@ -132,6 +284,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			preserveSource = false,
 			surface,
 			objectId,
+			onToolbarAction,
+			onShortcutUsed,
 		},
 		ref,
 	) {
@@ -153,9 +307,47 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		const readOnlyRef = useRef(false)
 		const refusalsReportedRef = useRef(new Set<string>())
 
+		// Toolbar state — set by the shortcut extension so `Mod+Shift+K`
+		// opens the same link popover the toolbar button does.
+		const [linkPopoverPulse, setLinkPopoverPulse] = useState(0)
+		const [toolbarFocusPulse, setToolbarFocusPulse] = useState(0)
+
+		// The keyboard-shortcut and toolbar-action forwarders are held in refs
+		// so we can rebuild the extension list without also invalidating it on
+		// every emit. Callers pass new closures on every render; the ref keeps
+		// the extension identity stable across renders.
+		const onShortcutUsedRef = useRef(onShortcutUsed)
+		const onToolbarActionRef = useRef(onToolbarAction)
+		useEffect(() => {
+			onShortcutUsedRef.current = onShortcutUsed
+		}, [onShortcutUsed])
+		useEffect(() => {
+			onToolbarActionRef.current = onToolbarAction
+		}, [onToolbarAction])
+
+		const emitShortcut = useCallback(
+			(shortcut: EditorShortcut) => {
+				onShortcutUsedRef.current?.({ shortcut, variant, surface })
+			},
+			[variant, surface],
+		)
+
+		const openLinkPopover = useCallback(() => {
+			setLinkPopoverPulse((n) => n + 1)
+		}, [])
+
+		const focusToolbar = useCallback(() => {
+			setToolbarFocusPulse((n) => n + 1)
+		}, [])
+
+		const shortcutExtension = useMemo(
+			() => buildShortcutExtension(emitShortcut, openLinkPopover, focusToolbar),
+			[emitShortcut, openLinkPopover, focusToolbar],
+		)
+
 		const tiptapExtensions = useMemo(
-			() => buildExtensions(variant, disallowedNodes, placeholder, extensions),
-			[variant, disallowedNodes, placeholder, extensions],
+			() => buildExtensions(variant, disallowedNodes, placeholder, extensions, shortcutExtension),
+			[variant, disallowedNodes, placeholder, extensions, shortcutExtension],
 		)
 
 		const reportParseError = useCallback(
@@ -347,6 +539,24 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			)
 		}
 
-		return <EditorContent editor={editor} className={className} />
+		const handleToolbarAction = (action: ToolbarAction) => {
+			onToolbarActionRef.current?.({ action, variant, surface, objectId })
+		}
+
+		return (
+			<>
+				<EditorContent
+					editor={editor}
+					className={className ? `${MARKDOWN_PROSE_CLASS} ${className}` : MARKDOWN_PROSE_CLASS}
+				/>
+				<EditorToolbar
+					editor={editor}
+					variant={variant}
+					onToolbarAction={handleToolbarAction}
+					openPulse={linkPopoverPulse}
+					focusPulse={toolbarFocusPulse}
+				/>
+			</>
+		)
 	},
 )

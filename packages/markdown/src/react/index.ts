@@ -3,7 +3,7 @@
 // `<MarkdownEditor>` (Tiptap) lives at `@maskin/markdown/react/editor` and MUST
 // be dynamic-imported by callers so it never bundles into a read chunk.
 
-export { DEFAULT_PROSE_CLASS, MarkdownRenderer } from './renderer'
+export { MarkdownRenderer } from './renderer'
 export type {
 	MarkdownRendererProps,
 	MarkdownRendererSize,

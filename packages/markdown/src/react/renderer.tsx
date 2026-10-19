@@ -2,6 +2,7 @@ import { Children, type ReactElement, type ReactNode, isValidElement, useMemo } 
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { remarkPlugins } from '../plugins'
 import { type MentionActor, MentionedText } from './mentioned-text'
+import { MARKDOWN_PROSE_CLASS } from './prose'
 
 export type MarkdownRendererSize = 'sm' | 'xs' | 'doc'
 
@@ -90,18 +91,16 @@ function wrapWithMentions(
 	return children
 }
 
-/** The typography the read view uses, exported so an editor document can match it. */
-export const DEFAULT_PROSE_CLASS =
-	'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full'
 const XS_PROSE_CLASS = '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs'
 // The v2 document scale a detail page's body renders at: a 15px lead paragraph,
-// 12.5px bold micro-headings, 14px/1.65 running copy, and em-dash list markers.
+// 12.5px bold micro-headings and 14px/1.65 running copy. List markers come from
+// the shared prose class.
 const DOC_PROSE_CLASS = [
 	'[&_p]:text-[15px] [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',
 	'[&_h1]:text-[13px] [&_h2]:text-[13px] [&_h3]:text-[13px] [&_h4]:text-[13px]',
 	'[&_:is(h1,h2,h3,h4)]:font-bold [&_:is(h1,h2,h3,h4)]:tracking-[-0.01em] [&_:is(h1,h2,h3,h4)]:mb-1 [&_:is(h1,h2,h3,h4)]:mt-3.5',
 	'[&_li]:text-sm [&_li]:leading-[1.6] [&_li]:text-foreground [&_li]:my-0',
-	"[&_ul]:list-none [&_ul]:pl-0 [&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px] [&_ul>li]:relative [&_ul>li]:pl-[22px] [&_ul>li]:before:absolute [&_ul>li]:before:left-0 [&_ul>li]:before:text-border-strong [&_ul>li]:before:content-['—']",
+	'[&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px]',
 ].join(' ')
 
 /**
@@ -215,10 +214,10 @@ export function MarkdownRenderer({
 
 	const proseClass =
 		size === 'xs'
-			? `${DEFAULT_PROSE_CLASS} ${XS_PROSE_CLASS}`
+			? `${MARKDOWN_PROSE_CLASS} ${XS_PROSE_CLASS}`
 			: size === 'doc'
-				? `${DEFAULT_PROSE_CLASS} ${DOC_PROSE_CLASS}`
-				: DEFAULT_PROSE_CLASS
+				? `${MARKDOWN_PROSE_CLASS} ${DOC_PROSE_CLASS}`
+				: MARKDOWN_PROSE_CLASS
 
 	const effectiveUnwrap =
 		unwrapDisallowed ?? Boolean(disallowedElements && disallowedElements.length > 0)
