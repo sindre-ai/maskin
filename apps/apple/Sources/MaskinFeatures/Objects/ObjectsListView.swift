@@ -290,7 +290,7 @@ struct ObjectsListView: View {
 		case .needsYou where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
 				symbol: "checkmark.circle", title: "Nothing needs you",
-				message: "Agents are working. Asks for you land here."
+				message: "You\u{2019}re all caught up. When an agent needs a decision, it shows up here."
 			) {
 				Button("See all objects") { Task { await store.setScope(.all) } }
 					.buttonStyle(.primaryAction)
@@ -298,13 +298,13 @@ struct ObjectsListView: View {
 		case .favourites where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
 				symbol: "star", title: "No favourites yet",
-				message: "Star an object and it lands here, on every device.")
+				message: "Tap the star on any object to keep it here, on every device.")
 		default:
 			if store.isFiltered || store.display.needsYouOnly {
 				EmptyState(
 					symbol: "magnifyingglass",
 					title: store.searchText.isEmpty ? "Nothing in this status" : "Nothing matches \u{201C}\(store.searchText.trimmingCharacters(in: .whitespaces))\u{201D}",
-					message: "Nothing fits these filters. Try a different type, status or word."
+					message: "Nothing fits these filters. Try a different type or status, or clear the filter."
 				) {
 					Button("Clear filter") {
 						store.setNeedsYouOnly(false)
@@ -318,7 +318,7 @@ struct ObjectsListView: View {
 			} else {
 				EmptyState(
 					symbol: "square.stack.3d.up", title: "Nothing here yet",
-					message: "Objects from you and your agents land here."
+					message: "Create an object, or ask an agent to. What you and your agents make shows up here."
 				) {
 					Button("New object") { intents.create() }
 						.buttonStyle(.primaryAction)

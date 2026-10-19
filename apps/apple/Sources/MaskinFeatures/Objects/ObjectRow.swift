@@ -68,7 +68,7 @@ struct ObjectDriverAvatar: View {
 						.maskinSymbol(MaskinFontSize.t10, weight: .semibold)
 						.foregroundStyle(MaskinColor.ink5)
 				}
-				.accessibilityLabel("No driver")
+				.accessibilityLabel("No owner")
 		}
 	}
 }
@@ -214,7 +214,7 @@ struct ObjectRow: View {
 		if object.isStarred { parts.append("Favourite") }
 		if unseen { parts.append("Changed since you last looked") }
 		if let ask { parts.append("Needs you. \(ask.line)") } else if needsYou { parts.append("Needs you") }
-		if let ownerName, showsDriver { parts.append("driven by \(ownerName)") }
+		if let ownerName, showsDriver { parts.append("owned by \(ownerName)") }
 		if object.hasActiveSession { parts.append("Agent working") }
 		parts.append(MaskinStatus.sentenceLabel(for: object.status))
 		return parts.joined(separator: ", ")

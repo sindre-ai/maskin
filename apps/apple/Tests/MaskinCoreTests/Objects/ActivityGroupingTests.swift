@@ -178,7 +178,7 @@ struct RelatedGroupingTests {
 			link("a", "blocks", out: true), link("b", "breaks_into", out: false), link("c", "blocks", out: true),
 			link("d", "relates_to", out: true, type: "loop"),
 		])
-		#expect(groups.map(\.label) == ["In flow", "Blocks", "Part of"])
+		#expect(groups.map(\.label) == ["In flow", "Blocking", "Belongs to"])
 		#expect(groups[1].links.map(\.id) == ["a", "c"])
 	}
 

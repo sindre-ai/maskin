@@ -212,7 +212,7 @@ struct ObjectDetailSnapshotTests {
 	func related() async throws {
 		let store = await makeStore()
 		try await waitUntil { store.linkTitles["i1"] != nil }
-		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocks", "Part of", "Informed by"])
+		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocking", "Belongs to", "Based on"])
 		for (width, dark) in sizes {
 			try snapshot("related", width: width, dark: dark) {
 				ObjectDetailContent(store: store, part: .related, onOpenObject: { _ in }) { EmptyView() }
