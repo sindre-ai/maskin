@@ -17,11 +17,12 @@ struct ObjectTypeTab: Identifiable, Equatable {
 	/// Needs you · All · one tab per type present, from the store.
 	@MainActor
 	static func tabs(for store: ObjectsStore) -> [ObjectTypeTab] {
+		let total = store.typeSummaries.reduce(0) { $0 + $1.count }
 		var tabs = [
 			ObjectTypeTab(
 				scope: .needsYou, label: "Needs you",
 				count: store.needsYouCount > 0 ? "\(store.needsYouCount)" : nil, isSignal: true),
-			ObjectTypeTab(scope: .all, label: "All", count: nil),
+			ObjectTypeTab(scope: .all, label: "All", count: total > 0 ? "\(total)" : nil),
 		]
 		tabs += store.typeSummaries.filter { $0.count > 0 || store.typeFilter == $0.id }.map {
 			ObjectTypeTab(scope: .type($0.id), label: $0.label, count: $0.count > 0 ? $0.countLabel : nil)
