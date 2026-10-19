@@ -58,7 +58,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 
 			await page.goto(`/${account.workspaceId}/settings/extensions/${extId}`)
 			await expect(page.getByRole('heading', { name: 'Agent access' })).toBeVisible()
-			await expect(page.getByText('Default deny')).toBeVisible()
+			await expect(page.getByText('Default deny', { exact: true })).toBeVisible()
 
 			// Default deny: the agent is listed with its toggle off.
 			const toggle = page.getByRole('switch', { name: `${agent.name} can call ${extName} tools` })
