@@ -2,11 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-	KmsDecryptError,
-	type KmsProvider,
-	MasterKeyProvider,
-} from '@maskin/auth/kms'
+import { KmsDecryptError, type KmsProvider, MasterKeyProvider } from '@maskin/auth/kms'
 import { events, type Integration, type ScopeGrant, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
