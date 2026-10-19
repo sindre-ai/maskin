@@ -39,6 +39,28 @@ Manual fallback, if Actions is down and someone holds the Docker Hub and host
 credentials: `docker buildx imagetools create -t <image>:latest <image>:sha-xxxxxxx`,
 then `ssh <host> systemctl restart maskin-agent-server`.
 
+## The tested rollback in the BYO merge window
+
+The rollback is tested once, after the aggregate bet PR merges, inside the
+02:00 to 04:00 UTC window. The workflow cannot run earlier: it only runs once it
+is on `main`, and before the merge `:latest` is the pre-wrapper image, so a
+rollback would change nothing. Order:
+
+1. Before the merge, post the running-session count and the digest of `:latest`
+   on the wrapper task. Note the pre-wrapper `sha-*` tag.
+2. Merge. Confirm the wrapper version line in a session that started after the
+   restart.
+3. Roll back to the pre-wrapper tag. Start a new session and confirm it launches
+   and the guarded server does not start (see "Confirm it worked").
+4. Roll forward to the new `sha-*` tag. Confirm the wrapper version line again.
+5. Post both pieces of evidence on the rollout task.
+
+Hard stop: if the roll-forward is not confirmed by 03:45 UTC, do it by hand with
+the manual fallback above. Never leave the window on the pre-wrapper image. Hold
+every other merge touching `docker/agent-base/**` during the window. If another
+change to that folder (for example the AWS CLI line) lands in the same window, it
+rides the roll-forward, not a third restart.
+
 ## What the restart does (read from `apps/agent-server`, not yet observed on the host)
 
 - Running sessions keep running. The unit uses `KillMode=process`, so microVMs
@@ -54,17 +76,26 @@ then `ssh <host> systemctl restart maskin-agent-server`.
 
 ## Confirm it worked
 
-Open the log of a session that started after the restart. Every session prints
-one line at start:
+Open the log of a session that started after the restart. Do not use a session
+that was already running at the restart: it keeps the old image.
 
-- `[system] maskin-mcp-guard version: <x>` means the image has the wrapper.
-- `[system] maskin-mcp-guard not available in this image: ...` means it does not.
-  After a rollback to a pre-wrapper tag this is the expected line, and guarded
-  extensions are refused, not run: `[system] WARNING: MCP server '<name>'
-  dropped ...`. That is the fail-closed behaviour working, not a second fault.
+On an image with the wrapper, the launch script prints one line at start:
+`[system] maskin-mcp-guard version: <x>`.
 
-Do not use a session that was already running at the restart: it keeps the old
-image.
+On a pre-wrapper tag there is no wrapper line at all. Its launch script has no
+version log and no drop step, so the log says nothing about the wrapper. The
+guard is enforced only because the `maskin-mcp-guard` command does not exist
+there: a guarded server cannot start, and the extension is refused. Confirm a
+rollback to a pre-wrapper tag with both of these:
+
+- the `maskin-mcp-guard version:` line is absent from the new session's log, and
+- a guarded server does not start in that session (it is not in the session's
+  running MCP servers, and its tools are not callable).
+
+That is the fail-closed behaviour working, not a second fault. The line
+`[system] maskin-mcp-guard not available in this image: ...` (and
+`WARNING: MCP server '<name>' dropped ...`) appears only on a newer launch script
+paired with an image whose wrapper is missing or broken, not on a pre-wrapper tag.
 
 ## Gotchas
 
