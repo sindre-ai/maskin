@@ -118,6 +118,14 @@ services:
       # admits. A hash is not secret. Empty means nobody matches, so probe
       # behaves as off.
       MASKIN_MCP_PROBE_KEY_SHA256: ${MASKIN_MCP_PROBE_KEY_SHA256:-}
+      # Feature flags (apps/dev/src/lib/feature-flags.ts). Read once at boot,
+      # so a change needs a restart. Empty means every flag is off for everyone.
+      # FF_TESTER_ACTOR_IDS: comma separated actor ids who see tester features.
+      # FF_TESTER_FEATURES: comma separated flag ids on for those actors.
+      # FF_WORKSPACE_FEATURES: comma separated <workspaceId>:<flagId> entries.
+      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
+      FF_WORKSPACE_FEATURES: ${FF_WORKSPACE_FEATURES:-}
       # GitHub integration (optional)
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
