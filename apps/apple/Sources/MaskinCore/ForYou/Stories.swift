@@ -1,8 +1,9 @@
 import Foundation
 import MaskinAPI
 
-/// One card of the For you story row. A page is a loop's HTML outcome; the briefing is the
-/// Chief of Staff's spoken brief for today, shown as text.
+/// One card of the For you story row. A page is a briefing: an HTML file the Chief of Staff or a
+/// loop marked `kind: briefing`. The `.briefing` content (the spoken script as text) is only built
+/// by the TV app, which reads it aloud; the iPhone and iPad row is pages alone.
 public struct StoryCard: Identifiable, Equatable, Sendable {
 	public enum Content: Equatable, Sendable {
 		case page(LoopOutput)
@@ -32,9 +33,15 @@ public struct StoryCard: Identifiable, Equatable, Sendable {
 }
 
 extension StoryCard {
+	/// The unit of a briefing that no loop produced: the Chief of Staff's own.
+	public static let chiefOfStaffUnit = "Chief of Staff"
+
+	/// The Chief of Staff wrote it (rather than a loop), so its card wears the Chief of Staff's tile.
+	public var isFromChiefOfStaff: Bool { loopID == nil }
+
 	/// The mono line under the headline ("1 MIN READ"). A text briefing reads in `words / 200`
-	/// minutes (at least one); a loop's page is an HTML outcome, which has no length the app
-	/// knows, so it is just labelled a page. A deck's "N CARDS \u{00B7} 0:30" needs a card count and
+	/// minutes (at least one); a page is HTML, which has no length the app knows, so it is just
+	/// labelled a briefing. A deck's "N CARDS \u{00B7} 0:30" needs a card count and
 	/// duration the data does not carry.
 	public var formatLabel: String {
 		switch content {
@@ -42,7 +49,7 @@ extension StoryCard {
 			let words = script.split(whereSeparator: \.isWhitespace).count
 			return "\(max(1, Int((Double(words) / 200).rounded(.up)))) MIN READ"
 		case .page:
-			return "PAGE"
+			return "BRIEFING"
 		}
 	}
 
@@ -129,11 +136,12 @@ public enum StoryDerivation {
 		return collapsed.isEmpty ? nil : collapsed
 	}
 
-	/// Newest first; a file with no date sorts last; the same file attached to two loops once.
-	public static func pages(from outputs: [(loop: String, output: LoopOutput)]) -> [(loop: String, output: LoopOutput)] {
+	/// The HTML briefings, newest first; a file with no date sorts last. The server already limits the
+	/// list to `kind: briefing`, so this only drops what can't be shown as a page.
+	public static func pages(from briefings: [FileSummary]) -> [FileSummary] {
 		var seen = Set<String>()
-		return outputs.filter { $0.output.isHTML && seen.insert($0.output.id).inserted }
-			.sorted { ($0.output.updatedAt ?? .distantPast) > ($1.output.updatedAt ?? .distantPast) }
+		return briefings.filter { $0.kind == .html && seen.insert($0.id).inserted }
+			.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
 			.prefix(maxPages).map { $0 }
 	}
 
@@ -172,7 +180,8 @@ public struct SeenStories {
 	}
 }
 
-/// The story row: the daily briefing first, then every HTML outcome of every loop, newest first.
+/// The story row: every briefing (the Chief of Staff's, then loops'), newest first. A loop's other
+/// output files are not stories.
 @MainActor
 @Observable
 public final class StoriesStore {
@@ -267,41 +276,26 @@ public final class StoriesStore {
 	}
 
 	private func loadPages() async -> (cards: [StoryCard], details: [String: FileDetail], failures: Int) {
-		guard let all = try? await loops.loops() else { return ([], [:], 1) }
-		let loops = loops
-		var failures = 0
-		let found: [(loop: String, id: String, output: LoopOutput)] = await withTaskGroup(
-			of: (outputs: [(String, String, LoopOutput)], failed: Bool).self
-		) { group in
-			for loop in all {
-				group.addTask {
-					let overview = try? await loops.overview(loopID: loop.id)
-					return ((overview?.outputs ?? []).map { (loop.name ?? "Flow", loop.id, $0) }, overview == nil)
-				}
-			}
-			var result: [(String, String, LoopOutput)] = []
-			for await part in group {
-				result += part.outputs
-				if part.failed { failures += 1 }
-			}
-			return result
-		}.map { (loop: $0.0, id: $0.1, output: $0.2) }
-		let loopOfOutput = Dictionary(
-			found.map { ($0.output.id, $0.id) }, uniquingKeysWith: { first, _ in first })
-		let outputs = found.map { (loop: $0.loop, output: $0.output) }
-		let chosen = StoryDerivation.pages(from: outputs)
+		guard let listed = try? await files.briefings(limit: StoryDerivation.maxPages * 2) else {
+			return ([], [:], 1)
+		}
+		let chosen = StoryDerivation.pages(from: listed)
+		let (origin, lookupFailed) = await loopsAttached(to: Set(chosen.map(\.id)))
 		let files = files
 		let fetched = await withTaskGroup(of: (Int, StoryCard, FileDetail?).self) { group in
-			for (index, item) in chosen.enumerated() {
+			for (index, briefing) in chosen.enumerated() {
 				group.addTask {
-					let detail = try? await files.file(id: item.output.id)
+					let detail = try? await files.file(id: briefing.id)
+					let loop = origin[briefing.id]
+					let output = LoopOutput(
+						id: briefing.id, name: briefing.name, mimeType: briefing.mimeType,
+						updatedAt: briefing.updatedAt)
 					return (
 						index,
 						StoryCard(
-							id: item.output.id, unit: item.loop,
-							headline: StoryDerivation.headline(html: detail?.text, fileName: item.output.name),
-							updatedAt: item.output.updatedAt, content: .page(item.output),
-							loopID: loopOfOutput[item.output.id]),
+							id: briefing.id, unit: loop?.name ?? StoryCard.chiefOfStaffUnit,
+							headline: StoryDerivation.headline(html: detail?.text, fileName: briefing.name),
+							updatedAt: briefing.updatedAt, content: .page(output), loopID: loop?.id),
 						detail)
 				}
 			}
@@ -313,7 +307,35 @@ public final class StoriesStore {
 		for (card, detail) in fetched.map({ ($0.1, $0.2) }).prefix(Self.preloadCount) {
 			if let detail { details[card.id] = detail }
 		}
-		failures += fetched.filter { $0.2 == nil }.count
+		let failures = (lookupFailed ? 1 : 0) + fetched.filter { $0.2 == nil }.count
 		return (fetched.map(\.1), details, failures)
+	}
+
+	/// Which loop each of `ids` is attached to, so a loop's briefing is labelled with the loop and
+	/// shows on its page. A briefing no loop holds belongs to the Chief of Staff. Best effort: when a
+	/// lookup fails the briefings still show, and the result reports it so the row is retried.
+	private func loopsAttached(
+		to ids: Set<String>
+	) async -> (origin: [String: (id: String, name: String)], failed: Bool) {
+		guard !ids.isEmpty else { return ([:], false) }
+		guard let all = try? await loops.loops() else { return ([:], true) }
+		let loops = loops
+		var failed = false
+		var origin: [String: (id: String, name: String)] = [:]
+		await withTaskGroup(of: (loop: (id: String, name: String), outputs: [LoopOutput])?.self) { group in
+			for loop in all {
+				group.addTask {
+					guard let overview = try? await loops.overview(loopID: loop.id) else { return nil }
+					return ((loop.id, loop.name ?? "Flow"), overview.outputs)
+				}
+			}
+			for await part in group {
+				guard let part else { failed = true; continue }
+				for output in part.outputs where ids.contains(output.id) && origin[output.id] == nil {
+					origin[output.id] = part.loop
+				}
+			}
+		}
+		return (origin, failed)
 	}
 }
