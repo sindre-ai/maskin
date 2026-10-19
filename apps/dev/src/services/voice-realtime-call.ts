@@ -75,8 +75,19 @@ async function defaultCreateRealtimeCall(
 			input: {
 				// Without this the session never emits user-turn transcripts, so
 				// there is nothing to persist for the user's side of the call.
-				transcription: { model: 'whisper-1' },
-				turn_detection: { type: 'server_vad' },
+				// gpt-transcribe, not whisper-1: whisper-1 invents phrases ("Thank you
+				// for watching") on near-silence, and each one was saved as a message
+				// the user never said.
+				transcription: { model: 'gpt-transcribe' },
+				// Filters the mic audio before voice detection and the model see it, so
+				// room noise stops registering as speech. far_field suits laptop mics;
+				// near_field is for headsets.
+				noise_reduction: { type: 'far_field' },
+				// The API default (server_vad, 0.5 threshold, 200ms of silence) cut a new
+				// turn, and so a new chat message, at every short pause. semantic_vad
+				// judges whether the sentence is finished; 'low' waits longest for the
+				// speaker to carry on.
+				turn_detection: { type: 'semantic_vad', eagerness: 'low' },
 			},
 			output: { voice: input.voice },
 		},
@@ -251,9 +262,15 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	let opened = false
 	let closedByUs = false
 	// Tool calls received and not yet answered. Parallel calls in one response
-	// each get their own output, and the model is only asked to speak once the
-	// last one is in (a response.create while a response is active is an error).
+	// each get their own output.
 	let pendingCalls = 0
+	// True once the response that asked for the tools has finished (response.done).
+	// The model is only asked to speak when that has happened AND every call is
+	// answered: tools finish in milliseconds, so answering the first call used to
+	// fire response.create while the model was still streaming the rest of its
+	// calls, which OpenAI rejects (conversation_already_has_active_response) and
+	// leaves the model answering from a partial set of results.
+	let toolResponseDone = false
 	let turnIndex = 0
 	let userSpeechStartedAt: number | null = null
 	let userAudioMs = 0
@@ -275,8 +292,14 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		if (message.type === 'tool_result') {
 			pendingCalls = Math.max(0, pendingCalls - 1)
 			sendToModel(message.event)
-			if (pendingCalls === 0) sendToModel({ type: 'response.create' })
+			askModelToSpeakIfReady()
 		}
+	}
+
+	function askModelToSpeakIfReady() {
+		if (!toolResponseDone || pendingCalls > 0) return
+		toolResponseDone = false
+		sendToModel({ type: 'response.create' })
 	}
 
 	const channel = createVoiceChannel({
@@ -338,7 +361,11 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				agentResponseStartedAt = null
 				// A response that only asked for a tool is the middle of a turn, not
 				// the end: the spoken answer follows the tool result.
-				if (evt.response?.output?.some((item) => item.type === 'function_call')) return
+				if (evt.response?.output?.some((item) => item.type === 'function_call')) {
+					toolResponseDone = true
+					askModelToSpeakIfReady()
+					return
+				}
 				feed({
 					type: 'turn_completed',
 					turn_index: turnIndex,

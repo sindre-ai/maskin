@@ -37,14 +37,10 @@ async function failMicWith(page: Page, name: 'NotAllowedError' | 'NotFoundError'
 
 test.describe('Voice — row-level Call button', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`voice-enabled rows get a Call button, others do not @ ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`every agent row gets a Call button @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const voice = await account.api.createAgentActor('Vera Voice')
 			await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-			await account.api.setActorVoiceMode(account.workspaceId, voice.id, true)
 			const text = await account.api.createAgentActor('Tia Text')
 			await account.api.addWorkspaceMember(account.workspaceId, text.id)
 			await flagOn(page)
@@ -69,8 +65,8 @@ test.describe('Voice — row-level Call button', () => {
 				page
 					.getByRole('listitem')
 					.filter({ hasText: 'Tia Text' })
-					.getByRole('button', { name: /^Call / }),
-			).toHaveCount(0)
+					.getByRole('button', { name: 'Call Tia Text' }),
+			).toHaveCount(1)
 
 			// It is a sibling of the row link, not nested in it.
 			await expect(voiceRow.getByRole('link').getByRole('button')).toHaveCount(0)
@@ -80,7 +76,6 @@ test.describe('Voice — row-level Call button', () => {
 	test('hides the row Call button when the flag is off', async ({ page, account }) => {
 		const voice = await account.api.createAgentActor('Vera Voice')
 		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-		await account.api.setActorVoiceMode(account.workspaceId, voice.id, true)
 		await page.addInitScript(() => {
 			window.localStorage.setItem('ff:voice-mode-v1', 'off')
 		})
@@ -98,7 +93,6 @@ test.describe('Voice — row-level Call button', () => {
 	}) => {
 		const voice = await account.api.createAgentActor('Vera Voice')
 		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-		await account.api.setActorVoiceMode(account.workspaceId, voice.id, true)
 		await flagOn(page)
 
 		await page.goto(`/${account.workspaceId}/agents`)
@@ -109,21 +103,37 @@ test.describe('Voice — row-level Call button', () => {
 		await expect(page.getByRole('button', { name: GRANT })).toBeVisible()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/agents$`))
 	})
+
+	test('the call stays open when the user navigates to another page', async ({ page, account }) => {
+		const voice = await account.api.createAgentActor('Vera Voice')
+		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
+		await flagOn(page)
+
+		await page.goto(`/${account.workspaceId}/agents`)
+		const row = page.getByRole('listitem').filter({ hasText: 'Vera Voice' })
+		await row.hover()
+		await row.getByRole('button', { name: 'Call Vera Voice' }).click()
+		const dialog = page.getByRole('dialog', { name: 'Call Vera Voice' })
+		await expect(dialog).toBeVisible()
+
+		// Client-side navigation (a full page.goto would reload and end the call):
+		// the dialog must survive it and must not block the page behind it.
+		await page.getByRole('link', { name: 'Objects' }).first().click()
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/objects`))
+		await expect(dialog).toBeVisible()
+	})
 })
 
 test.describe('Voice — thread-header Call button', () => {
-	test('mounts for a thread with exactly one voice-enabled agent, and V opens the dialog', async ({
+	test('mounts for a thread with exactly one agent, and V opens the dialog', async ({
 		page,
 		account,
 	}) => {
 		const voice = await account.api.createAgentActor('Vera Voice')
 		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-		await account.api.setActorVoiceMode(account.workspaceId, voice.id, true)
-		const text = await account.api.createAgentActor('Tia Text')
-		await account.api.addWorkspaceMember(account.workspaceId, text.id)
 		const conversation = await account.api.createConversation(account.workspaceId, {
 			title: 'Weekly check-in',
-			participant_actor_ids: [voice.id, text.id],
+			participant_actor_ids: [voice.id],
 		})
 		await flagOn(page)
 
@@ -136,15 +146,11 @@ test.describe('Voice — thread-header Call button', () => {
 		await expect(page.getByRole('button', { name: GRANT })).toBeVisible()
 	})
 
-	test('does not mount when two voice-enabled agents share the thread', async ({
-		page,
-		account,
-	}) => {
+	test('does not mount when two agents share the thread', async ({ page, account }) => {
 		const a = await account.api.createAgentActor('Vera Voice')
 		const b = await account.api.createAgentActor('Vic Voice')
 		for (const agent of [a, b]) {
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await account.api.setActorVoiceMode(account.workspaceId, agent.id, true)
 		}
 		const conversation = await account.api.createConversation(account.workspaceId, {
 			title: 'Two voices',
@@ -154,22 +160,6 @@ test.describe('Voice — thread-header Call button', () => {
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: /Two voices/ })).toBeVisible({
-			timeout: 10_000,
-		})
-		await expect(page.getByRole('button', { name: /^Call / })).toHaveCount(0)
-	})
-
-	test('does not mount when the only agent is not voice-enabled', async ({ page, account }) => {
-		const text = await account.api.createAgentActor('Tia Text')
-		await account.api.addWorkspaceMember(account.workspaceId, text.id)
-		const conversation = await account.api.createConversation(account.workspaceId, {
-			title: 'Text only',
-			participant_actor_ids: [text.id],
-		})
-		await flagOn(page)
-
-		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
-		await expect(page.getByRole('heading', { name: /Text only/ })).toBeVisible({
 			timeout: 10_000,
 		})
 		await expect(page.getByRole('button', { name: /^Call / })).toHaveCount(0)

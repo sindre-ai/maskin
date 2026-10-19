@@ -7,8 +7,17 @@ import { type VoiceCall, type VoiceCallState, useVoiceCall } from '@/hooks/use-v
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { ExternalLink, Mic, MicOff, PhoneOff, ScrollText, X } from 'lucide-react'
-import { useEffect } from 'react'
+import {
+	ExternalLink,
+	Maximize2,
+	Mic,
+	MicOff,
+	Minimize2,
+	PhoneOff,
+	ScrollText,
+	X,
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 /** The slice of an actor the call dialog needs; agent rows pass list items, the detail header passes the full record. */
 export type VoiceCallAgent = Pick<ActorResponse, 'id' | 'name' | 'type'>
@@ -20,7 +29,7 @@ const COPY = {
 		'Your microphone will only be used while this call is running. Transcript saves to this workspace.',
 	permissionAllow: 'Allow microphone & start call',
 	permissionCancel: 'Cancel',
-	connectingBody: 'Establishing a WebRTC session (typically < 1s).',
+	connectingBody: 'Starting the call…',
 	muted: 'Muted — agent still hears silence',
 	reconnectingBody: 'Network dipped — retrying for 15s. The call auto-resumes if we get back.',
 	micBlockedTitle: 'Microphone blocked',
@@ -46,6 +55,10 @@ export function VoiceCallDialog({
 }) {
 	const isMobile = useIsMobile()
 	const call = useVoiceCall(agent.id, agent.name, open)
+	// Minimized, the call collapses to a floating bar so the page behind it is
+	// usable. The call itself (mic, connection) is untouched: this component, and
+	// so its useVoiceCall state, stays mounted either way.
+	const [minimized, setMinimized] = useState(false)
 
 	// Keyboard shortcuts inside the dialog: M toggles mute, T toggles the
 	// transcript pane. Esc ends the call (handled natively by Radix' close on
@@ -79,6 +92,17 @@ export function VoiceCallDialog({
 		onOpenChange(nextOpen)
 	}
 
+	if (minimized) {
+		return (
+			<VoiceCallBar
+				agent={agent}
+				call={call}
+				onExpand={() => setMinimized(false)}
+				onEnd={() => handleOpenChange(false)}
+			/>
+		)
+	}
+
 	// Mobile is a fullscreen sheet; desktop / tablet is a right-anchored 520px
 	// dialog. Everything below the shell is the same — same state, same tab
 	// order, same controls, same copy. Only the outer surface swaps.
@@ -95,6 +119,7 @@ export function VoiceCallDialog({
 						agent={agent}
 						call={call}
 						onClose={() => handleOpenChange(false)}
+						onMinimize={() => setMinimized(true)}
 						variant="mobile"
 					/>
 				</SheetContent>
@@ -103,12 +128,14 @@ export function VoiceCallDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
+		// Non-modal: the call lives in the workspace layout and follows the user
+		// across pages, so the page behind it must stay clickable. That means no
+		// overlay, and a click or focus move outside must not end the call (only
+		// the End/Close controls and Esc do).
+		<Dialog open={open} onOpenChange={handleOpenChange} modal={false}>
 			<DialogPortal>
-				{/* Custom overlay — no dim on desktop; the 520px sheet sits alongside
-				    chat rather than covering it per SPEC §Responsive. */}
-				<DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-transparent" />
 				<DialogPrimitive.Content
+					onInteractOutside={(e) => e.preventDefault()}
 					aria-label={`Call ${agent.name}`}
 					className="fixed inset-y-4 right-4 z-50 flex w-[520px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-background p-0 shadow-xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right"
 				>
@@ -116,6 +143,7 @@ export function VoiceCallDialog({
 						agent={agent}
 						call={call}
 						onClose={() => handleOpenChange(false)}
+						onMinimize={() => setMinimized(true)}
 						variant="desktop"
 					/>
 				</DialogPrimitive.Content>
@@ -128,11 +156,13 @@ function VoiceCallDialogBody({
 	agent,
 	call,
 	onClose,
+	onMinimize,
 	variant,
 }: {
 	agent: VoiceCallAgent
 	call: VoiceCall
 	onClose: () => void
+	onMinimize: () => void
 	variant: 'mobile' | 'desktop'
 }) {
 	const {
@@ -149,6 +179,8 @@ function VoiceCallDialogBody({
 	const isMuted = state === 'live-muted'
 	const isDesktop = variant === 'desktop'
 	const isMicError = state === 'mic-blocked' || state === 'no-mic'
+	// Minimizing only makes sense once there is a call to keep running.
+	const canMinimize = state === 'connecting' || isLive
 
 	return (
 		<div data-voice-call-state={state} className="flex h-full flex-col">
@@ -349,6 +381,17 @@ function VoiceCallDialogBody({
 				</>
 			)}
 
+			{canMinimize && (
+				<button
+					type="button"
+					onClick={onMinimize}
+					aria-label="Minimize call"
+					className="absolute right-14 top-3 flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground ring-offset-background transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					<Minimize2 size={16} />
+				</button>
+			)}
+
 			{/* Close is the last tabbable element, per SPEC tab order. */}
 			<button
 				type="button"
@@ -360,6 +403,74 @@ function VoiceCallDialogBody({
 			</button>
 		</div>
 	)
+}
+
+// The minimized call: a small floating card in the corner, shaped like a toast.
+// Non-modal and outside any Dialog, so the page behind it stays fully usable.
+// It sits at z-50 like the other overlays; toasts use z-100 and so draw over it.
+function VoiceCallBar({
+	agent,
+	call,
+	onExpand,
+	onEnd,
+}: {
+	agent: VoiceCallAgent
+	call: VoiceCall
+	onExpand: () => void
+	onEnd: () => void
+}) {
+	const { state, toggleMute } = call
+	const isMuted = state === 'live-muted'
+	const canMute = state.startsWith('live-')
+
+	return (
+		<section
+			aria-label={`Call with ${agent.name}`}
+			data-voice-call-state={state}
+			className="fixed bottom-4 right-4 z-50 flex w-[340px] max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border border-border bg-popover p-3 shadow-lg"
+		>
+			<AgentAvatar agent={agent} state={state} sizeClass="size-10 text-sm" />
+			<div className="min-w-0 flex-1">
+				<p className="truncate text-sm font-semibold text-foreground">{agent.name}</p>
+				<p aria-live="polite" className="truncate text-xs text-muted-foreground">
+					{barStatusFor(state, agent.name)}
+				</p>
+			</div>
+			{canMute && (
+				<CallControl
+					ariaLabel={isMuted ? 'Unmute' : 'Mute'}
+					onClick={toggleMute}
+					variant={isMuted ? 'warning' : 'ghost'}
+					size="sm"
+				>
+					{isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+				</CallControl>
+			)}
+			<CallControl ariaLabel="Expand call" onClick={onExpand} variant="ghost" size="sm">
+				<Maximize2 size={16} />
+			</CallControl>
+			<CallControl ariaLabel="End call" onClick={onEnd} variant="danger" size="sm">
+				<PhoneOff size={16} />
+			</CallControl>
+		</section>
+	)
+}
+
+function barStatusFor(state: VoiceCallState, agentName: string): string {
+	switch (state) {
+		case 'live-user-speaking':
+			return 'Listening…'
+		case 'live-agent-thinking':
+			return `${agentName} is thinking…`
+		case 'live-muted':
+			return 'Muted'
+		case 'live-agent-speaking':
+			return `${agentName} is speaking`
+		case 'reconnecting':
+			return 'Reconnecting…'
+		default:
+			return COPY.connectingBody
+	}
 }
 
 function AgentAvatar({
@@ -453,10 +564,11 @@ function CallControl({
 	ariaLabel: string
 	onClick: () => void
 	variant: 'ghost' | 'danger' | 'warning'
-	size: 'md' | 'lg' | 'xl'
+	size: 'sm' | 'md' | 'lg' | 'xl'
 	children: React.ReactNode
 } & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'aria-label'>) {
 	const sizeClasses = {
+		sm: 'h-8 w-8 shrink-0',
 		md: 'h-12 w-12',
 		lg: 'h-14 w-14',
 		xl: 'h-16 w-16',

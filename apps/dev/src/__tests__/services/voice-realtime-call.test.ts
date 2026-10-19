@@ -145,6 +145,7 @@ describe('attachVoiceCall', () => {
 			name: 'search_objects',
 			arguments: JSON.stringify({ q: 'loops v4' }),
 		})
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
 		await vi.waitFor(() => expect(socket.sent).toHaveLength(2))
 
 		expect(invokeTool).toHaveBeenCalledWith(
@@ -178,12 +179,82 @@ describe('attachVoiceCall', () => {
 				arguments: '{"q":"x"}',
 			})
 		}
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
 		await vi.waitFor(() => expect(socket.sent).toHaveLength(3))
 		expect(socket.sent.map((m) => m.type)).toEqual([
 			'conversation.item.create',
 			'conversation.item.create',
 			'response.create',
 		])
+	})
+
+	it('does not ask the model to speak while the response that made the calls is still active', async () => {
+		// Tools answer in milliseconds, long before the model has finished
+		// announcing its calls. A response.create then is rejected by OpenAI
+		// (conversation_already_has_active_response) and the model speaks from a
+		// partial set of results.
+		const invokeTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
+		const socket = fakeSocket()
+		const attached = attach(socket, invokeTool)
+		socket.open()
+		await attached
+
+		socket.emit({ type: 'response.created' })
+		socket.emit({
+			type: 'response.function_call_arguments.done',
+			call_id: 'call_1',
+			name: 'search_objects',
+			arguments: '{"q":"x"}',
+		})
+		await vi.waitFor(() => expect(socket.sent).toHaveLength(1))
+		await flush()
+		// call_1 is answered but the response is not done: no response.create yet.
+		expect(socket.sent.map((m) => m.type)).toEqual(['conversation.item.create'])
+
+		// The model announces a second call before it finishes.
+		socket.emit({
+			type: 'response.function_call_arguments.done',
+			call_id: 'call_2',
+			name: 'search_objects',
+			arguments: '{"q":"y"}',
+		})
+		await vi.waitFor(() => expect(socket.sent).toHaveLength(2))
+		expect(socket.sent.map((m) => m.type)).toEqual([
+			'conversation.item.create',
+			'conversation.item.create',
+		])
+
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
+		await vi.waitFor(() => expect(socket.sent).toHaveLength(3))
+		expect(socket.sent[2]).toEqual({ type: 'response.create' })
+	})
+
+	it('waits for a slow tool after the response is done, then asks the model to speak once', async () => {
+		let release: (v: unknown) => void = () => {}
+		const invokeTool = vi.fn().mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					release = resolve
+				}),
+		)
+		const socket = fakeSocket()
+		const attached = attach(socket, invokeTool)
+		socket.open()
+		await attached
+
+		socket.emit({
+			type: 'response.function_call_arguments.done',
+			call_id: 'call_1',
+			name: 'search_objects',
+			arguments: '{"q":"x"}',
+		})
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
+		await flush()
+		expect(socket.sent).toHaveLength(0)
+
+		release({ content: [{ type: 'text', text: 'ok' }] })
+		await vi.waitFor(() => expect(socket.sent).toHaveLength(2))
+		expect(socket.sent.map((m) => m.type)).toEqual(['conversation.item.create', 'response.create'])
 	})
 
 	it('refuses a tool outside the whitelist without invoking it', async () => {
@@ -199,6 +270,7 @@ describe('attachVoiceCall', () => {
 			name: 'delete_objects',
 			arguments: '{}',
 		})
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
 		await vi.waitFor(() => expect(socket.sent).toHaveLength(2))
 
 		expect(invokeTool).not.toHaveBeenCalled()

@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useActors } from '@/hooks/use-actors'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
@@ -84,23 +83,14 @@ export function ThreadHeader({
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
 	const loopId = conversation?.loop_id ?? null
-	// Call mounts only for a thread with exactly one voice-enabled agent
-	// participant: a multi-agent call is v2, and with two voice agents there is
-	// no single agent for the button to mean. Reads the workspace actors list
-	// (shared cache with /agents) because the participant rows carry no
-	// voice_enabled.
-	const { data: workspaceActors } = useActors(workspaceId)
+	// Call mounts only for a thread with exactly one agent participant: a
+	// multi-agent call is v2, and with two agents there is no single agent for
+	// the button to mean.
 	const voiceAgent = useMemo(() => {
-		const agentParticipantIds = new Set(
-			(conversation?.participants ?? [])
-				.filter((p) => p.actorType === 'agent')
-				.map((p) => p.actorId),
-		)
-		const voiceAgents = (workspaceActors ?? []).filter(
-			(a) => a.type === 'agent' && a.voice_enabled === true && agentParticipantIds.has(a.id),
-		)
-		return voiceAgents.length === 1 ? voiceAgents[0] : null
-	}, [conversation?.participants, workspaceActors])
+		const agents = (conversation?.participants ?? []).filter((p) => p.actorType === 'agent')
+		const only = agents.length === 1 ? agents[0] : null
+		return only ? { id: only.actorId, name: only.actorName, type: only.actorType } : null
+	}, [conversation?.participants])
 	// Only resolve the loop when the v4 chip can render — flag off means the
 	// chip never mounts, so the lookup is skipped rather than fetched and wasted.
 	const { data: loop } = useLoop(v4Polish ? (loopId ?? '') : '', workspaceId)

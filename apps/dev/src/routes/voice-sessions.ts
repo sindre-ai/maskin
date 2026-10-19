@@ -57,8 +57,7 @@ setCloseVendorSessionFn(closeVoiceCall)
 const createVoiceSessionBody = z
 	.object({
 		agent_actor_id: z.string().uuid().openapi({
-			description:
-				'Actor id of the voice-enabled agent to call. Must be a workspace member and carry actors.metadata.voice_enabled=true.',
+			description: 'Actor id of the agent to call. Must be an agent that is a workspace member.',
 		}),
 	})
 	.openapi('CreateVoiceSessionBody')
@@ -241,7 +240,6 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		.select({
 			id: actors.id,
 			type: actors.type,
-			metadata: actors.metadata,
 		})
 		.from(actors)
 		.where(eq(actors.id, agentActorId))
@@ -256,17 +254,13 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Agent not found'), 404)
 	}
 
-	const voiceEnabled =
-		typeof agent.metadata === 'object' &&
-		agent.metadata !== null &&
-		(agent.metadata as Record<string, unknown>).voice_enabled === true
-	if (agent.type !== 'agent' || !voiceEnabled) {
+	if (agent.type !== 'agent') {
 		await captureVoiceSessionDenied(humanActorId, {
 			agent_id: agentActorId,
 			workspace_id: workspaceId,
 			reason: 'no_active_agent',
 		})
-		return c.json(createApiError('BAD_REQUEST', 'Target agent is not voice-enabled'), 400)
+		return c.json(createApiError('BAD_REQUEST', 'Target actor is not an agent'), 400)
 	}
 
 	// Per-workspace daily minute cap (tech spec §Error handling). A crash floor,

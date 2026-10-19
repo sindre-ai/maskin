@@ -81,10 +81,10 @@ describe('POST /api/voice-sessions', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('400s when the target actor exists but is not voice-enabled', async () => {
+	it('400s when the target actor is not an agent', async () => {
 		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		mockResults.selectQueue = [[membershipRow()], [agentRow({ metadata: null })]]
+		mockResults.selectQueue = [[membershipRow()], [agentRow({ type: 'human' })]]
 		const res = await app.request(
 			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
 		)

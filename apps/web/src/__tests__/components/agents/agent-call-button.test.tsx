@@ -1,5 +1,7 @@
 import { AgentCallButton } from '@/components/agents/agent-call-button'
+import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { endVoiceCall } from '@/lib/voice-active-call'
 import { markVoiceUnavailable, resetVoiceAvailability } from '@/lib/voice-availability'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -20,11 +22,19 @@ vi.mock('@/components/agents/voice-call-dialog', () => ({
 
 const agent = { id: 'agent-1', name: 'Chief of Staff', type: 'agent' as const }
 
-const wrap = (ui: ReactNode) => render(<TooltipProvider>{ui}</TooltipProvider>)
+// VoiceCallHost owns the dialog in the app; mount it so a click has somewhere to land.
+const wrap = (ui: ReactNode) =>
+	render(
+		<TooltipProvider>
+			{ui}
+			<VoiceCallHost />
+		</TooltipProvider>,
+	)
 
 beforeEach(() => {
 	mockFlag.mockReset().mockReturnValue(true)
 	resetVoiceAvailability()
+	endVoiceCall()
 })
 
 describe('AgentCallButton', () => {
@@ -75,5 +85,27 @@ describe('AgentCallButton', () => {
 
 		act(() => resetVoiceAvailability())
 		expect(screen.getByRole('button', { name: 'Call Chief of Staff' })).toBeEnabled()
+	})
+})
+
+describe('AgentCallButton — call outlives the button', () => {
+	it('keeps the call open after the button that started it unmounts', async () => {
+		const { rerender } = wrap(<AgentCallButton agent={agent} variant="row" shortcut={false} />)
+		await userEvent.click(screen.getByRole('button', { name: 'Call Chief of Staff' }))
+		expect(screen.getByText('Call dialog for Chief of Staff')).toBeInTheDocument()
+
+		// Navigating away unmounts the page (and its Call button); the host stays.
+		rerender(
+			<TooltipProvider>
+				<VoiceCallHost />
+			</TooltipProvider>,
+		)
+		expect(screen.getByText('Call dialog for Chief of Staff')).toBeInTheDocument()
+	})
+
+	it('composer variant: a round icon button that starts the call', async () => {
+		wrap(<AgentCallButton agent={agent} variant="composer" shortcut={false} />)
+		await userEvent.click(screen.getByRole('button', { name: 'Call Chief of Staff' }))
+		expect(screen.getByText('Call dialog for Chief of Staff')).toBeInTheDocument()
 	})
 })

@@ -390,12 +390,6 @@ describe('ThreadHeader — v4 actions', () => {
 })
 
 describe('ThreadHeader — Call button', () => {
-	const voiceAgent = (id: string, name: string, voice_enabled: boolean) => ({
-		id,
-		name,
-		type: 'agent' as const,
-		voice_enabled,
-	})
 	const agentParticipant = (actorId: string, actorName: string) => ({
 		actorId,
 		actorName,
@@ -409,21 +403,13 @@ describe('ThreadHeader — Call button', () => {
 		mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
 	})
 
-	it('mounts when the thread has exactly one voice-enabled agent participant', () => {
+	it('mounts when the thread has exactly one agent participant', () => {
 		mockUseConversation.mockReturnValue({ data: buildConversation() })
-		mockUseActors.mockReturnValue({ data: [voiceAgent('agent-1', 'Billing Agent', true)] })
 		renderHeader()
 		expect(screen.getByRole('button', { name: 'Call Billing Agent' })).toBeInTheDocument()
 	})
 
-	it('does not mount when the only agent is not voice-enabled', () => {
-		mockUseConversation.mockReturnValue({ data: buildConversation() })
-		mockUseActors.mockReturnValue({ data: [voiceAgent('agent-1', 'Billing Agent', false)] })
-		renderHeader()
-		expect(screen.queryByRole('button', { name: /^Call / })).not.toBeInTheDocument()
-	})
-
-	it('does not mount with two voice-enabled agents (multi-agent calls are v2)', () => {
+	it('does not mount with two agents (multi-agent calls are v2)', () => {
 		mockUseConversation.mockReturnValue({
 			data: buildConversation({
 				participants: [
@@ -432,35 +418,7 @@ describe('ThreadHeader — Call button', () => {
 				],
 			}),
 		})
-		mockUseActors.mockReturnValue({
-			data: [
-				voiceAgent('agent-1', 'Billing Agent', true),
-				voiceAgent('agent-2', 'Sales Coach', true),
-			],
-		})
 		renderHeader()
 		expect(screen.queryByRole('button', { name: /^Call / })).not.toBeInTheDocument()
-	})
-
-	it('counts only agents who are participants, and only the voice-enabled ones', () => {
-		mockUseConversation.mockReturnValue({
-			data: buildConversation({
-				participants: [
-					...buildConversation().participants,
-					agentParticipant('agent-2', 'Sales Coach'),
-				],
-			}),
-		})
-		mockUseActors.mockReturnValue({
-			data: [
-				voiceAgent('agent-1', 'Billing Agent', true),
-				// Voice-enabled but not in this thread, and a participant without voice.
-				voiceAgent('agent-3', 'Elsewhere Agent', true),
-				voiceAgent('agent-2', 'Sales Coach', false),
-			],
-		})
-		renderHeader()
-		expect(screen.getByRole('button', { name: 'Call Billing Agent' })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Call Elsewhere Agent' })).not.toBeInTheDocument()
 	})
 })

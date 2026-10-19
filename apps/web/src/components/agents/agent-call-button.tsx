@@ -1,11 +1,12 @@
-import { type VoiceCallAgent, VoiceCallDialog } from '@/components/agents/voice-call-dialog'
+import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
+import { startVoiceCall } from '@/lib/voice-active-call'
 import { VOICE_UNAVAILABLE_TOOLTIP, useVoiceUnavailable } from '@/lib/voice-availability'
 import { Phone } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
 // One boundary per feature — this component reads `voice-mode-v1` and renders
 // nothing when the flag is off, so every surface that mounts it (agent detail
@@ -22,17 +23,17 @@ export function AgentCallButton({
 	agent: VoiceCallAgent
 	/** detail: the agent header's labelled button. row: the compact labelled
 	 *  button on an agents-list row (hover-reveal on md+, inline below). icon:
-	 *  the icon-only button in a chat thread header. */
-	variant?: 'detail' | 'row' | 'icon'
+	 *  the icon-only button in a chat thread header. composer: the round outline
+	 *  icon button beside the mic in a message composer. */
+	variant?: 'detail' | 'row' | 'icon' | 'composer'
 	/** Whether V opens the dialog. Off for list rows, where many buttons share
 	 *  one page and V has no single agent to mean. */
 	shortcut?: boolean
 }) {
 	const enabled = useFeatureFlag(VOICE_MODE_V1_ID)
 	const unavailable = useVoiceUnavailable()
-	const [open, setOpen] = useState(false)
 
-	// `V` opens the dialog when the agent detail is focused (anywhere on the
+	// `V` starts the call when the agent detail is focused (anywhere on the
 	// page counts, provided the user isn't typing in an input). Global scope
 	// mirrors the SPEC: "V opens when the agent detail is focused."
 	useEffect(() => {
@@ -48,19 +49,19 @@ export function AgentCallButton({
 				return
 			}
 			e.preventDefault()
-			setOpen(true)
+			startVoiceCall(agent)
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [enabled, shortcut, unavailable])
+	}, [enabled, shortcut, unavailable, agent])
 
 	if (!enabled) return null
 
 	const button = (
 		<Button
 			type="button"
-			variant="default"
-			size={variant === 'icon' ? 'icon' : 'sm'}
+			variant={variant === 'composer' ? 'outline' : 'default'}
+			size={variant === 'icon' || variant === 'composer' ? 'icon' : 'sm'}
 			className={cn(
 				// Reads as unavailable even when the row hover pushes opacity back to full.
 				'disabled:bg-muted disabled:text-muted-foreground',
@@ -72,8 +73,9 @@ export function AgentCallButton({
 					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 sm:w-auto sm:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
 				variant === 'icon' &&
 					'h-6 w-6 shrink-0 bg-brand text-brand-foreground hover:bg-brand-hover',
+				variant === 'composer' && 'h-7 w-7 shrink-0 rounded-full text-muted-foreground',
 			)}
-			onClick={() => setOpen(true)}
+			onClick={() => startVoiceCall(agent)}
 			disabled={unavailable}
 			aria-label={`Call ${agent.name}`}
 		>
@@ -94,7 +96,7 @@ export function AgentCallButton({
 					</TooltipTrigger>
 					<TooltipContent>{VOICE_UNAVAILABLE_TOOLTIP}</TooltipContent>
 				</Tooltip>
-			) : variant === 'icon' ? (
+			) : variant === 'icon' || variant === 'composer' ? (
 				<Tooltip>
 					<TooltipTrigger asChild>{button}</TooltipTrigger>
 					<TooltipContent>{`Call ${agent.name} · V`}</TooltipContent>
@@ -102,7 +104,6 @@ export function AgentCallButton({
 			) : (
 				button
 			)}
-			<VoiceCallDialog agent={agent} open={open} onOpenChange={setOpen} />
 		</>
 	)
 }
