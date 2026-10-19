@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { blockedToolCalls, events, extensions, workspaceMembers } from '@maskin/db/schema'
+import { events, blockedToolCalls, extensions, workspaceMembers } from '@maskin/db/schema'
 import type { ToolGrants } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
