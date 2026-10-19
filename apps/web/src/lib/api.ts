@@ -71,6 +71,9 @@ export class ApiError extends Error {
 	}
 }
 
+const SERVICE_UNAVAILABLE_MESSAGE = 'Service unavailable. Please try again in a minute.'
+const SERVICE_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+
 type RequestOptions = {
 	method?: string
 	body?: unknown
@@ -118,6 +121,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
 		// the user still experienced a broken screen, so it belongs in Faro.
 		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
+		if (err instanceof TypeError) {
+			const unavailable = new ApiError(0, SERVICE_UNAVAILABLE_MESSAGE)
+			unavailable.code = 'NETWORK_ERROR'
+			throw unavailable
+		}
 		throw err
 	}
 
@@ -160,6 +168,13 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error
 		} else {
 			message = data.error?.message || res.statusText
+		}
+
+		// A gateway answering for a down backend (502/503/504) usually carries an
+		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
+		// blank toast. Those statuses always get the friendly message.
+		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+			message = SERVICE_UNAVAILABLE_MESSAGE
 		}
 
 		const err = new ApiError(res.status, message, fieldErrors)
