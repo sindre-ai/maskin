@@ -45,6 +45,21 @@ private final class Concurrency: @unchecked Sendable {
 	var highWater: Int { lock.withLock { peak } }
 }
 
+/// Holds a fetch until the test opens it.
+private actor SlotGate {
+	private var isOpen = false
+	private var waiting: [CheckedContinuation<Void, Never>] = []
+	func wait() async {
+		if isOpen { return }
+		await withCheckedContinuation { waiting.append($0) }
+	}
+	func open() {
+		isOpen = true
+		for continuation in waiting { continuation.resume() }
+		waiting = []
+	}
+}
+
 @Suite("ChatImageLoader") struct ChatImageLoaderTests {
 	@Test("no more photos load at once than the cap, and all of them still load")
 	func capsConcurrency() async {
@@ -68,20 +83,23 @@ private final class Concurrency: @unchecked Sendable {
 	@Test("while the slots are full, the photo asked for last is loaded first")
 	func newestRequestFirst() async {
 		let probe = Concurrency()
+		let gate = SlotGate()
 		let data = png()
 		let loader = ChatImageLoader(maxConcurrent: 1) { id in
 			probe.enter(id)
 			defer { probe.leave() }
-			try? await Task.sleep(for: .milliseconds(60))
+			// Hold the only slot until the whole queue is built: no timing decides the order.
+			if id == "first" { await gate.wait() }
 			return data
 		}
 		let first = Task { await loader.image(for: "first") }
-		try? await Task.sleep(for: .milliseconds(15))
+		#expect(await eventually { () async -> Bool in probe.order == ["first"] })
 		var rest: [Task<DecodedImage?, Never>] = []
-		for id in ["a", "b", "c"] {
+		for (index, id) in ["a", "b", "c"].enumerated() {
 			rest.append(Task { await loader.image(for: id) })
-			try? await Task.sleep(for: .milliseconds(10))
+			#expect(await eventually { await loader.queuedCount == index + 1 })
 		}
+		await gate.open()
 		_ = await first.value
 		for task in rest { _ = await task.value }
 		#expect(probe.order == ["first", "c", "b", "a"])

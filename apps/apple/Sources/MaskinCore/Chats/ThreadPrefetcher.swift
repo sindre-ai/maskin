@@ -74,9 +74,14 @@ public final class ThreadPrefetcher {
 		while !rest.isEmpty, mine == generation {
 			let batch = rest.prefix(Self.concurrency)
 			rest = rest.dropFirst(batch.count)
-			let tasks = batch.compactMap { start($0) }
+			// A conversation another pass is already fetching still counts: wait for that fetch, so
+			// this returns only once everything it was asked about has been written.
+			let tasks = batch.compactMap { start($0) ?? inFlight[$0.id] }
 			for task in tasks { await task.value }
 		}
+		// `selection()` leaves out a conversation another pass is already fetching, so its fetch is
+		// not one of ours; wait for those too, so this returns only once the cache is current.
+		for task in Array(inFlight.values) { await task.value }
 	}
 
 	// MARK: - Selection

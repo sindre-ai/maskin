@@ -66,6 +66,9 @@ public actor ChatImageLoader {
 		await withCheckedContinuation { waiters.append($0) }
 	}
 
+	/// How many requests are waiting for a slot. Tests use it to know the queue is built.
+	var queuedCount: Int { waiters.count }
+
 	private func releaseSlot() {
 		if let next = waiters.popLast() {
 			next.resume()
