@@ -17,4 +17,8 @@ enum ForYouPalette {
 	static let failureBackground = MaskinColor.noticeBg
 	static let failureBorder = MaskinColor.noticeBd
 	static let failureForeground = MaskinColor.noticeFg
+
+	/// The recommended option: dark teal, top to bottom.
+	static let recommendedFill = LinearGradient(
+		colors: [MaskinColor.patina800, MaskinColor.patina900], startPoint: .top, endPoint: .bottom)
 }
