@@ -91,7 +91,8 @@ struct ObjectDetailContent<Decision: View>: View {
 
 	private func overview(_ object: WorkObject) -> some View {
 		ObjectOverviewView(
-			store: store, object: object, descriptionExpanded: descriptionExpanded, onShowActivity: onShowActivity
+			store: store, object: object, descriptionExpanded: descriptionExpanded, onShowActivity: onShowActivity,
+			onOpenObject: onOpenObject
 		) { decision() }
 	}
 }
