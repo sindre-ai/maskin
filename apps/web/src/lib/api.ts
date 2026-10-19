@@ -1076,6 +1076,19 @@ export const api = {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
 	},
 
+	webPush: {
+		// Per-actor, not per-workspace — no workspaceId. `public_key` is the VAPID application
+		// server key (public by design); `enabled` is false when the server has no VAPID keys.
+		config: () => request<{ enabled: boolean; public_key: string | null }>('/web-push/config'),
+		subscribe: (body: {
+			endpoint: string
+			keys: { p256dh: string; auth: string }
+			user_agent?: string
+		}) => request<{ id: string }>('/web-push/subscriptions', { method: 'POST', body }),
+		unsubscribe: (id: string) =>
+			request<{ deleted: boolean }>(`/web-push/subscriptions/${id}`, { method: 'DELETE' }),
+	},
+
 	featureFlags: {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
