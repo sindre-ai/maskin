@@ -1,8 +1,9 @@
 import Foundation
 import MaskinAPI
 
-/// One card of the For you story row. A page is a loop's HTML outcome; the briefing is the
-/// Chief of Staff's spoken brief for today, shown as text.
+/// One card of the For you story row. A page is a briefing: an HTML file the Chief of Staff or a
+/// loop marked `kind: briefing`. The `.briefing` content (the spoken script as text) is only built
+/// by the TV app, which reads it aloud; the iPhone and iPad row is pages alone.
 public struct StoryCard: Identifiable, Equatable, Sendable {
 	public enum Content: Equatable, Sendable {
 		case page(LoopOutput)
@@ -32,9 +33,15 @@ public struct StoryCard: Identifiable, Equatable, Sendable {
 }
 
 extension StoryCard {
+	/// The unit of a briefing that no loop produced: the Chief of Staff's own.
+	public static let chiefOfStaffUnit = "Chief of Staff"
+
+	/// The Chief of Staff wrote it (rather than a loop), so its card wears the Chief of Staff's tile.
+	public var isFromChiefOfStaff: Bool { loopID == nil }
+
 	/// The mono line under the headline ("1 MIN READ"). A text briefing reads in `words / 200`
-	/// minutes (at least one); a loop's page is an HTML outcome, which has no length the app
-	/// knows, so it is just labelled a page. A deck's "N CARDS \u{00B7} 0:30" needs a card count and
+	/// minutes (at least one); a page is HTML, which has no length the app knows, so it is just
+	/// labelled a briefing. A deck's "N CARDS \u{00B7} 0:30" needs a card count and
 	/// duration the data does not carry.
 	public var formatLabel: String {
 		switch content {
@@ -42,7 +49,7 @@ extension StoryCard {
 			let words = script.split(whereSeparator: \.isWhitespace).count
 			return "\(max(1, Int((Double(words) / 200).rounded(.up)))) MIN READ"
 		case .page:
-			return "PAGE"
+			return "BRIEFING"
 		}
 	}
 
@@ -124,18 +131,17 @@ public enum StoryDerivation {
 		else { return nil }
 		var inner = String(html[range])
 		inner = inner.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-		for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
-			inner = inner.replacingOccurrences(of: entity, with: char)
-		}
+		inner = HTMLEntities.decode(inner)
 		let collapsed = inner.split(whereSeparator: \.isWhitespace).joined(separator: " ")
 		return collapsed.isEmpty ? nil : collapsed
 	}
 
-	/// Newest first; a file with no date sorts last; the same file attached to two loops once.
-	public static func pages(from outputs: [(loop: String, output: LoopOutput)]) -> [(loop: String, output: LoopOutput)] {
+	/// The HTML briefings, newest first; a file with no date sorts last. The server already limits the
+	/// list to `kind: briefing`, so this only drops what can't be shown as a page.
+	public static func pages(from briefings: [FileSummary]) -> [FileSummary] {
 		var seen = Set<String>()
-		return outputs.filter { $0.output.isHTML && seen.insert($0.output.id).inserted }
-			.sorted { ($0.output.updatedAt ?? .distantPast) > ($1.output.updatedAt ?? .distantPast) }
+		return briefings.filter { $0.kind == .html && seen.insert($0.id).inserted }
+			.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
 			.prefix(maxPages).map { $0 }
 	}
 
@@ -174,7 +180,8 @@ public struct SeenStories {
 	}
 }
 
-/// The story row: the daily briefing first, then every HTML outcome of every loop, newest first.
+/// The story row: every briefing (the Chief of Staff's, then loops'), newest first. A loop's other
+/// output files are not stories.
 @MainActor
 @Observable
 public final class StoriesStore {
@@ -183,6 +190,13 @@ public final class StoriesStore {
 	/// True once `load()` has finished once, so a screen that shares the store loads it only if
 	/// nobody has yet.
 	public private(set) var hasLoaded = false
+	/// The files already downloaded for the first few pages (their headlines needed them), so opening
+	/// the viewer on one doesn't fetch it again. Only the first few: a deck can be half a megabyte.
+	public private(set) var preloadedFiles: [String: FileDetail] = [:]
+	public static let preloadCount = 3
+	/// The last `load()` had a request fail (a flow, or a page file), so the row may be missing
+	/// stories or show a file name where a headline belongs. `loadCompletely()` retries on this.
+	public private(set) var isPartial = false
 
 	@ObservationIgnored private let loops: any LoopsAPI
 	@ObservationIgnored private let files: any FilesRemote
@@ -212,6 +226,8 @@ public final class StoriesStore {
 		cards.filter { !seenIDs.contains($0.id) } + cards.filter { seenIDs.contains($0.id) }
 	}
 
+	public func preloadedFile(for id: String) -> FileDetail? { preloadedFiles[id] }
+
 	/// The pages one loop produced, newest first (a loop's own page shows only its own cards).
 	public func cards(forLoop loopID: String) -> [StoryCard] { cards.filter { $0.loopID == loopID } }
 
@@ -225,7 +241,7 @@ public final class StoriesStore {
 	public func load() async {
 		async let spoken = loadBriefing()
 		async let pages = loadPages()
-		let (brief, found) = await (spoken, pages)
+		let (brief, (found, details, failures)) = await (spoken, pages)
 		var next: [StoryCard] = []
 		if let brief {
 			next.append(
@@ -236,8 +252,22 @@ public final class StoriesStore {
 		}
 		next += found
 		cards = next
+		preloadedFiles = details
+		isPartial = failures > 0
 		hasLoaded = true
 		seenIDs = Set(next.filter { seen.isSeen($0) }.map(\.id))
+	}
+
+	/// `load()` again, a couple of times with a growing pause, while it keeps coming back partial.
+	/// The first load fires a request per flow and per page at once, alongside the feed; one that
+	/// fails would otherwise leave the row short until the reader pulled down.
+	public func loadCompletely(attempts: Int = 3, pause: Duration = .seconds(2)) async {
+		for attempt in 1...max(attempts, 1) {
+			await load()
+			guard isPartial, attempt < attempts else { return }
+			try? await Task.sleep(for: pause * attempt)
+			if Task.isCancelled { return }
+		}
 	}
 
 	private func loadBriefing() async -> SpokenBrief? {
@@ -245,43 +275,67 @@ public final class StoriesStore {
 		return try? await briefing.spokenBrief()
 	}
 
-	private func loadPages() async -> [StoryCard] {
-		guard let all = try? await loops.loops() else { return [] }
-		let loops = loops
-		let found: [(loop: String, id: String, output: LoopOutput)] = await withTaskGroup(
-			of: [(String, String, LoopOutput)].self
-		) { group in
-			for loop in all {
-				group.addTask {
-					let overview = try? await loops.overview(loopID: loop.id)
-					return (overview?.outputs ?? []).map { (loop.name ?? "Flow", loop.id, $0) }
-				}
-			}
-			var result: [(String, String, LoopOutput)] = []
-			for await part in group { result += part }
-			return result
-		}.map { (loop: $0.0, id: $0.1, output: $0.2) }
-		let loopOfOutput = Dictionary(
-			found.map { ($0.output.id, $0.id) }, uniquingKeysWith: { first, _ in first })
-		let outputs = found.map { (loop: $0.loop, output: $0.output) }
-		let chosen = StoryDerivation.pages(from: outputs)
+	private func loadPages() async -> (cards: [StoryCard], details: [String: FileDetail], failures: Int) {
+		guard let listed = try? await files.briefings(limit: StoryDerivation.maxPages * 2) else {
+			return ([], [:], 1)
+		}
+		let chosen = StoryDerivation.pages(from: listed)
+		let (origin, lookupFailed) = await loopsAttached(to: Set(chosen.map(\.id)))
 		let files = files
-		return await withTaskGroup(of: (Int, StoryCard).self) { group in
-			for (index, item) in chosen.enumerated() {
+		let fetched = await withTaskGroup(of: (Int, StoryCard, FileDetail?).self) { group in
+			for (index, briefing) in chosen.enumerated() {
 				group.addTask {
-					let html = try? await files.file(id: item.output.id).text
+					let detail = try? await files.file(id: briefing.id)
+					let loop = origin[briefing.id]
+					let output = LoopOutput(
+						id: briefing.id, name: briefing.name, mimeType: briefing.mimeType,
+						updatedAt: briefing.updatedAt)
 					return (
 						index,
 						StoryCard(
-							id: item.output.id, unit: item.loop,
-							headline: StoryDerivation.headline(html: html, fileName: item.output.name),
-							updatedAt: item.output.updatedAt, content: .page(item.output),
-							loopID: loopOfOutput[item.output.id]))
+							id: briefing.id, unit: loop?.name ?? StoryCard.chiefOfStaffUnit,
+							headline: StoryDerivation.headline(html: detail?.text, fileName: briefing.name),
+							updatedAt: briefing.updatedAt, content: .page(output), loopID: loop?.id),
+						detail)
 				}
 			}
-			var result: [(Int, StoryCard)] = []
+			var result: [(Int, StoryCard, FileDetail?)] = []
 			for await part in group { result.append(part) }
-			return result.sorted { $0.0 < $1.0 }.map(\.1)
+			return result.sorted { $0.0 < $1.0 }
 		}
+		var details: [String: FileDetail] = [:]
+		for (card, detail) in fetched.map({ ($0.1, $0.2) }).prefix(Self.preloadCount) {
+			if let detail { details[card.id] = detail }
+		}
+		let failures = (lookupFailed ? 1 : 0) + fetched.filter { $0.2 == nil }.count
+		return (fetched.map(\.1), details, failures)
+	}
+
+	/// Which loop each of `ids` is attached to, so a loop's briefing is labelled with the loop and
+	/// shows on its page. A briefing no loop holds belongs to the Chief of Staff. Best effort: when a
+	/// lookup fails the briefings still show, and the result reports it so the row is retried.
+	private func loopsAttached(
+		to ids: Set<String>
+	) async -> (origin: [String: (id: String, name: String)], failed: Bool) {
+		guard !ids.isEmpty else { return ([:], false) }
+		guard let all = try? await loops.loops() else { return ([:], true) }
+		let loops = loops
+		var failed = false
+		var origin: [String: (id: String, name: String)] = [:]
+		await withTaskGroup(of: (loop: (id: String, name: String), outputs: [LoopOutput])?.self) { group in
+			for loop in all {
+				group.addTask {
+					guard let overview = try? await loops.overview(loopID: loop.id) else { return nil }
+					return ((loop.id, loop.name ?? "Flow"), overview.outputs)
+				}
+			}
+			for await part in group {
+				guard let part else { failed = true; continue }
+				for output in part.outputs where ids.contains(output.id) && origin[output.id] == nil {
+					origin[output.id] = part.loop
+				}
+			}
+		}
+		return (origin, failed)
 	}
 }

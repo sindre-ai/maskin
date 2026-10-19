@@ -5663,6 +5663,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6135,6 +6136,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6354,6 +6356,7 @@
 		},
 		"/api/actors/{id}/api-keys": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6367,6 +6370,15 @@
 						"required": true,
 						"name": "id",
 						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": false,
+						"name": "x-workspace-id",
+						"in": "header"
 					}
 				],
 				"responses": {
@@ -6507,6 +6519,7 @@
 		},
 		"/api/actors/{id}/reset": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6797,6 +6810,7 @@
 		},
 		"/api/actors/{id}/pause": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -7088,6 +7102,7 @@
 		},
 		"/api/actors/{id}/run": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -7963,6 +7978,7 @@
 				}
 			},
 			"put": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Skills"
 				],
@@ -8218,6 +8234,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Skills"
 				],
@@ -8531,6 +8548,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -8862,6 +8880,7 @@
 		},
 		"/api/actors/{actorId}/workspace-skills/batch": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -9049,6 +9068,7 @@
 		},
 		"/api/actors/{actorId}/workspace-skills/{workspaceSkillId}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -11333,6 +11353,7 @@
 		},
 		"/api/workspaces/{id}/members": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11685,6 +11706,7 @@
 		},
 		"/api/workspaces/{id}/transfer-ownership": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -12041,10 +12063,11 @@
 		},
 		"/api/workspaces/{id}/members/{actorId}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
-				"summary": "Change a workspace member's role (admin/member; owner via transfer-ownership)",
+				"summary": "Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)",
 				"parameters": [
 					{
 						"schema": {
@@ -12075,7 +12098,8 @@
 										"type": "string",
 										"enum": [
 											"admin",
-											"member"
+											"member",
+											"viewer"
 										]
 									}
 								},
@@ -15231,6 +15255,7 @@
 		},
 		"/api/invites": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -15814,6 +15839,7 @@
 		},
 		"/api/invites/{id}/resend": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -16109,6 +16135,7 @@
 		},
 		"/api/invites/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -19173,6 +19200,25 @@
 						"in": "header"
 					}
 				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"native_return_url": {
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
+									}
+								}
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "LinkedIn-hosted install URL for the customer to complete LinkedIn auth in.",
@@ -19193,6 +19239,63 @@
 									"required": [
 										"install_url",
 										"integration_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "native_return_url is not an allowed return target",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -20217,6 +20320,25 @@
 						"in": "header"
 					}
 				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"native_return_url": {
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
+									}
+								}
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "Install URL for OAuth/GitHub App, or a webhook URL + integration id for manual-auth providers",
@@ -23551,6 +23673,7 @@
 		},
 		"/api/billing/checkout": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -23855,6 +23978,7 @@
 		},
 		"/api/billing/credits/checkout": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -24165,6 +24289,7 @@
 		},
 		"/api/billing/cancel": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -25904,6 +26029,7 @@
 		},
 		"/api/conversations": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -26867,6 +26993,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27085,6 +27212,7 @@
 		},
 		"/api/conversations/{id}/participants": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27227,6 +27355,7 @@
 		},
 		"/api/conversations/{id}/participants/{actorId}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27785,6 +27914,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -28293,6 +28423,7 @@
 		},
 		"/api/conversations/{id}/messages/{messageId}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -28539,6 +28670,7 @@
 		},
 		"/api/conversations/{id}/messages/{messageId}/retry": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -28802,6 +28934,7 @@
 		},
 		"/api/sessions": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -29997,6 +30130,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30057,6 +30247,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30362,6 +30553,7 @@
 		},
 		"/api/sessions/{id}/stop": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30570,6 +30762,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30632,6 +30881,7 @@
 		},
 		"/api/sessions/{id}/pause": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30840,6 +31090,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30902,6 +31209,7 @@
 		},
 		"/api/sessions/{id}/resume": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -31110,6 +31418,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -31172,6 +31537,7 @@
 		},
 		"/api/sessions/{id}/input": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -31541,6 +31907,7 @@
 		},
 		"/api/sessions/{id}/ask": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -32373,6 +32740,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -32552,6 +32976,63 @@
 											"createdAt"
 										]
 									}
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
 								}
 							}
 						}
@@ -33809,6 +34290,7 @@
 		},
 		"/api/notifications/{id}/respond": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Notifications"
 				],
@@ -38333,6 +38815,15 @@
 										],
 										"maxLength": 1000
 									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -38383,6 +38874,15 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
 											]
 										},
 										"mimeType": {
@@ -38498,6 +38998,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -38654,6 +39155,17 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"enum": [
+								"briefing"
+							]
+						},
+						"required": false,
+						"name": "kind",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -38750,6 +39262,15 @@
 													"null"
 												]
 											},
+											"kind": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"briefing"
+												]
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -38776,6 +39297,7 @@
 											"workspaceId",
 											"name",
 											"description",
+											"kind",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -38888,6 +39410,15 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
 											]
 										},
 										"mimeType": {
@@ -39003,6 +39534,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -39110,6 +39642,15 @@
 											"null"
 										],
 										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
 									},
 									"mime_type": {
 										"type": "string",
@@ -39226,6 +39767,15 @@
 												"null"
 											]
 										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -39339,6 +39889,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",

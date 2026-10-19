@@ -20,6 +20,8 @@ public struct SettingsScreen: View {
 	@State private var services: SettingsServices
 	@State private var confirmSignOut = false
 	@State private var path: [SettingsRoute]
+	/// Present inside the signed-in app; nil in previews, which hides the Security section.
+	@Environment(AppLockController.self) private var appLock: AppLockController?
 
 	/// `initialRoute` opens straight onto one page (More's Members, Billing…), with Settings
 	/// behind it.
@@ -68,6 +70,18 @@ public struct SettingsScreen: View {
 						Text("Members, integrations, billing and keys are under your profile.")
 					}
 				}
+				if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
+					Section {
+						Toggle(isOn: appLockBinding(appLock)) {
+							SettingsRow(symbol: "lock", title: "App lock")
+						}
+						.disabled(appLock.isAuthenticating)
+					} header: {
+						Text("Security")
+					} footer: {
+						Text(Self.appLockFooter(appLock.availability))
+					}
+				}
 				Section("About") {
 					LabeledContent("Version", value: Self.versionString)
 				}
@@ -107,6 +121,21 @@ public struct SettingsScreen: View {
 				Text("You will need your email and password to sign back in.")
 			}
 		}
+	}
+
+	private func appLockBinding(_ lock: AppLockController) -> Binding<Bool> {
+		Binding(
+			get: { lock.isEnabled },
+			set: { on in Task { await lock.setEnabled(on) } })
+	}
+
+	static func appLockFooter(_ availability: AppLockAvailability) -> String {
+		let how: String
+		switch availability {
+		case .biometric(let name): how = "Unlock with \(name) or your device passcode."
+		case .passcodeOnly, .unavailable: how = "Unlock with your device passcode."
+		}
+		return "\(how) Maskin locks when you open it, and after \(Int(AppLockController.gracePeriod)) seconds in the background."
 	}
 
 	static var versionString: String {
