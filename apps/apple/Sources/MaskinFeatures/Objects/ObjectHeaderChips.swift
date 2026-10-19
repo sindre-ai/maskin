@@ -11,9 +11,12 @@ struct ObjectHeaderView: View {
 	let object: WorkObject
 	/// False renders the chips as plain faces (snapshots: `Menu` does not draw offscreen).
 	var interactiveChips = true
+	/// True on iPhone, where the screen header already shows the type and title.
+	@Environment(\.objectTitleInHeader) private var titleInHeader
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
+			if !titleInHeader {
 			HStack(spacing: MaskinSpace.s3) {
 				Image(systemName: MaskinObjectType.glyph(for: object.type))
 					.maskinSymbol(MaskinFontSize.t16, weight: .medium)
@@ -30,13 +33,14 @@ struct ObjectHeaderView: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.padding(.top, MaskinSpace.s4)
 				.accessibilityAddTraits(.isHeader)
+			}
 
 			if object.status == ObjectDetailStore.archivedStatus {
 				archivedBanner.padding(.top, MaskinSpace.s7)
 			}
 
 			ObjectHeaderChips(store: store, object: object, interactive: interactiveChips)
-				.padding(.top, MaskinSpace.s8)
+				.padding(.top, titleInHeader ? 0 : MaskinSpace.s8)
 
 			if let activity = object.activeActivity, !activity.isEmpty {
 				HStack(spacing: MaskinSpace.s3) {
@@ -432,5 +436,17 @@ struct StatusBurst: View {
 				withAnimation(reduceMotion ? nil : .easeOut(duration: MaskinDuration.slide * 3)) { progress = 1 }
 			}
 		}
+	}
+}
+
+private struct ObjectTitleInHeaderKey: EnvironmentKey {
+	static let defaultValue = false
+}
+
+extension EnvironmentValues {
+	/// True when the screen header carries the object's type and title.
+	var objectTitleInHeader: Bool {
+		get { self[ObjectTitleInHeaderKey.self] }
+		set { self[ObjectTitleInHeaderKey.self] = newValue }
 	}
 }

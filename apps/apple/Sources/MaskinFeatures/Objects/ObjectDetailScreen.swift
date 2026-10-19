@@ -120,7 +120,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files, parentEventId: parent) }
 	}
 
-	public var body: some View {
+	/// The screen's content: the page, with the composer pinned under it.
+	private var mainContent: some View {
 		Group {
 			if store.object != nil {
 				pageScroll
@@ -167,6 +168,41 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				.padding(.bottom, MaskinSpace.s4)
 			}
 		}
+	}
+
+	/// iPhone: the object's type and title ride on the v4 gradient, the page on the sheet. The system
+	/// bar stays (back button, star, More; swipe-back keeps working), clear over the gradient.
+	private var usesHeader: Bool { sizeClass == .compact && store.object != nil }
+
+	@ViewBuilder private var framedContent: some View {
+		if usesHeader, let object = store.object {
+			ScreenHeaderSheet {
+				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+					Text(store.directory.typeName(object.type).uppercased())
+						.maskinText(.microLabelLarge)
+						.foregroundStyle(MaskinScreenHeader.kicker)
+					Text(object.displayTitle)
+						.maskinText(.title)
+						.foregroundStyle(.white)
+						.fixedSize(horizontal: false, vertical: true)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.accessibilityAddTraits(.isHeader)
+				}
+				.padding(.horizontal, MaskinSpace.s9)
+			} content: {
+				mainContent.environment(\.objectTitleInHeader, true)
+			}
+			#if os(iOS)
+				.toolbarBackground(.hidden, for: .navigationBar)
+				.toolbarColorScheme(.dark, for: .navigationBar)
+			#endif
+		} else {
+			mainContent
+		}
+	}
+
+	public var body: some View {
+		framedContent
 		// The header carries the title; the bar takes it over once the header has scrolled away.
 		.navigationTitle(atTop ? "" : (store.object?.displayTitle ?? ""))
 		#if os(iOS)
@@ -329,7 +365,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						pageBar
 							.padding(.top, MaskinSpace.s2)
 							.padding(.bottom, MaskinSpace.s4)
-							.background(MaskinSurface.grouped)
+							.background(usesHeader ? MaskinScreenHeader.sheet : MaskinSurface.grouped)
 							.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
 					}
 				}

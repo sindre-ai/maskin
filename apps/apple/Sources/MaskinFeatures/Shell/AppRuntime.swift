@@ -167,6 +167,9 @@ public final class AppRuntime {
 			{
 				selectedTab = tab
 			}
+			if let id = ProcessInfo.processInfo.environment["MASKIN_DEMO_OBJECT"] {
+				presentation = .object(id)
+			}
 		#endif
 	}
 
