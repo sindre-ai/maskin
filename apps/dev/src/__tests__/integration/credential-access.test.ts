@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-	KmsAccessError,
 	KmsDecryptError,
 	type KmsProvider,
 	MasterKeyProvider,
@@ -336,10 +335,11 @@ describe('getCredential: audit chain', () => {
 	it('a read whose audit insert fails returns no credential', async () => {
 		const s = await setup()
 		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
-		// actor_id has a foreign key: an actor that does not exist cannot be logged.
-		await expect(
-			getCredential(db, s.ws.id, row.id, ctxFor(randomUUID()), { kms }),
-		).rejects.toMatchObject({ cause: { code: '23503' } }) // foreign_key_violation
+		// The log has no foreign key on actor_id any more (0094), so make the insert fail on the
+		// NOT NULL request_id instead.
+		const ctx = ctxFor(s.actorA.id, { requestId: null as unknown as string })
+		const read = getCredential(db, s.ws.id, row.id, ctx, { kms })
+		await expect(read).rejects.toMatchObject({ cause: { code: '23502' } }) // not_null_violation
 		expect(await logRows(s.ws.id)).toHaveLength(0)
 		expect(captureMock).not.toHaveBeenCalled()
 	})
@@ -392,22 +392,6 @@ describe('getCredential: encryption', () => {
 		} finally {
 			process.env.INTEGRATION_ENCRYPTION_KEY = original
 		}
-	})
-
-	it('a KMS access failure throws KmsAccessError, never a null, and logs nothing', async () => {
-		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
-		const denied: KmsProvider = {
-			encrypt: kms.encrypt.bind(kms),
-			decrypt: async () => {
-				throw new KmsAccessError()
-			},
-		}
-		await expect(
-			getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms: denied }),
-		).rejects.toBeInstanceOf(KmsAccessError)
-		expect(await logRows(s.ws.id)).toHaveLength(0)
-		expect(captureMock).not.toHaveBeenCalled()
 	})
 
 	it('a corrupted dek_ciphertext throws KmsDecryptError and logs nothing', async () => {

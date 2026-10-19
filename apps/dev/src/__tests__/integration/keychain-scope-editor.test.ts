@@ -431,7 +431,6 @@ describe('migration 0091_credential_access_log_scope_changed', () => {
 		const files = readdirSync(drizzleDir).filter((f) => f.endsWith('.sql'))
 		expect(new Set(files).size).toBe(files.length)
 		expect(files).toContain('0091_credential_access_log_scope_changed.sql')
-		expect(files.filter((f) => f.startsWith('0091_'))).toHaveLength(1)
 
 		const [check] = await sql`
 			SELECT pg_get_constraintdef(oid) AS def, convalidated

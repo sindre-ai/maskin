@@ -132,20 +132,10 @@ describe('integrations Keychain columns (0087)', () => {
 	})
 })
 
-describe('workspace_kms_aliases (0087)', () => {
-	it('has the specified shape and a workspace FK', async () => {
+describe('workspace_kms_aliases (dropped by 0092)', () => {
+	it('is gone: the master key replaced the per-workspace KMS alias', async () => {
 		const cols = await columns('workspace_kms_aliases')
-		expect([...cols.keys()].sort()).toEqual(['created_at', 'kek_alias', 'provider', 'workspace_id'])
-		expect(cols.get('provider')?.column_default).toContain('aws-kms')
-
-		const { ws } = await newIntegration()
-		await sql`INSERT INTO workspace_kms_aliases (workspace_id, kek_alias) VALUES (${ws.id}, 'alias/x')`
-		await expect(
-			sql`INSERT INTO workspace_kms_aliases (workspace_id, kek_alias) VALUES (${ws.id}, 'alias/y')`,
-		).rejects.toThrow(/duplicate key/)
-		await expect(
-			sql`INSERT INTO workspace_kms_aliases (workspace_id, kek_alias) VALUES (gen_random_uuid(), 'alias/z')`,
-		).rejects.toThrow(/foreign key/)
+		expect(cols.size).toBe(0)
 	})
 })
 
