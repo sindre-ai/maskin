@@ -178,9 +178,17 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		if usesHeader, let object = store.object {
 			ScreenHeaderSheet {
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-					Text(store.directory.typeName(object.type).uppercased())
-						.maskinText(.microLabelLarge)
-						.foregroundStyle(MaskinScreenHeader.kicker)
+					HStack(spacing: MaskinSpace.s4) {
+						RoundedRectangle(cornerRadius: MaskinRadius.tag, style: .continuous)
+							.fill(MaskinObjectType.colors(for: object.type).fg)
+							.frame(width: MaskinSpace.s4 + MaskinSpace.s1, height: MaskinSpace.s4 + MaskinSpace.s1)
+							.accessibilityHidden(true)
+						Text(store.directory.typeName(object.type).uppercased())
+							.maskinText(.microLabelLarge)
+							.foregroundStyle(MaskinScreenHeader.kicker)
+							.frame(maxWidth: .infinity, alignment: .leading)
+						heroStatus(object)
+					}
 					Text(object.displayTitle)
 						.maskinText(.title)
 						.foregroundStyle(.white)
@@ -196,6 +204,23 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		} else {
 			mainContent
 		}
+	}
+
+	/// The status as a white pill on the hero; it opens the status picker.
+	private func heroStatus(_ object: WorkObject) -> some View {
+		Menu {
+			ObjectStatusMenuItems(store: store, object: object)
+		} label: {
+			Text(MaskinStatus.sentenceLabel(for: object.status))
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .bold, relativeTo: .footnote))
+				.foregroundStyle(MaskinScreenHeader.inkTop)
+				.padding(.horizontal, MaskinSpace.s6)
+				.frame(height: MaskinSpace.s13)
+				.background(Color.white, in: Capsule())
+				.frame(minHeight: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+		}
+		.accessibilityLabel("Status \(MaskinStatus.label(for: object.status)). Change status")
 	}
 
 	public var body: some View {
@@ -307,15 +332,15 @@ public struct ObjectDetailScreen<Decision: View>: View {
 								Text("\(count)")
 									.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
 									.monospacedDigit()
-									.foregroundStyle(selected ? MaskinSurface.onInverse.opacity(0.7) : MaskinColor.ink5)
+									.foregroundStyle(selected ? Color.white.opacity(0.7) : MaskinColor.ink5)
 							}
 						}
 						.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink4)
 						.padding(.horizontal, MaskinSpace.s8)
 						.frame(height: MaskinSpace.s14 + MaskinSpace.s2)
 						.background(
-							selected ? MaskinSurface.inverse : Color.clear,
-							in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+							selected ? MaskinScreenHeader.inkTop : Color.clear,
+							in: Capsule())
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
 					}

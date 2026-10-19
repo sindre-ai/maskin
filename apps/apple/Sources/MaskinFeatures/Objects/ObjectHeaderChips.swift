@@ -39,8 +39,11 @@ struct ObjectHeaderView: View {
 				archivedBanner.padding(.top, MaskinSpace.s7)
 			}
 
-			ObjectHeaderChips(store: store, object: object, interactive: interactiveChips)
-				.padding(.top, titleInHeader ? 0 : MaskinSpace.s8)
+			// On iPhone the status sits in the hero and the rest in the Overview fields card.
+			if !titleInHeader {
+				ObjectHeaderChips(store: store, object: object, interactive: interactiveChips)
+					.padding(.top, MaskinSpace.s8)
+			}
 
 			if let activity = object.activeActivity, !activity.isEmpty {
 				HStack(spacing: MaskinSpace.s3) {
@@ -56,7 +59,7 @@ struct ObjectHeaderView: View {
 				.accessibilityLabel("Working: \(activity)")
 			}
 
-			if let updated = object.updatedAt {
+			if !titleInHeader, let updated = object.updatedAt {
 				HStack(spacing: MaskinSpace.s2) {
 					Text("Updated")
 					RelativeTime(updated)
@@ -145,18 +148,7 @@ struct ObjectHeaderChips: View {
 					trigger: object.status, color: colors.fg, sparks: Self.handsOffStatuses.contains(object.status))
 			}
 		} menu: {
-			ForEach(store.statusOptions, id: \.self) { status in
-				Button {
-					MaskinHaptics.play(.selection)
-					Task { await store.setStatus(status) }
-				} label: {
-					if status == object.status {
-						Label(MaskinStatus.sentenceLabel(for: status), systemImage: "checkmark")
-					} else {
-						Text(MaskinStatus.sentenceLabel(for: status))
-					}
-				}
-			}
+			ObjectStatusMenuItems(store: store, object: object)
 		}
 	}
 
@@ -164,14 +156,6 @@ struct ObjectHeaderChips: View {
 	private static var handsOffStatuses: Set<String> { ["active", "in_progress"] }
 
 	// MARK: Driver
-
-	private var driverActors: [ActorRef] {
-		// Agents first, then people, each alphabetical.
-		store.directory.actors.values.sorted {
-			if $0.isAgent != $1.isAgent { return $0.isAgent }
-			return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-		}
-	}
 
 	private var driverChip: some View {
 		let driver = store.directory.actor(for: object.driverId)
@@ -184,18 +168,7 @@ struct ObjectHeaderChips: View {
 				}
 			}
 		} menu: {
-			ForEach(driverActors) { actor in
-				Button {
-					MaskinHaptics.play(.selection)
-					Task { await store.setDriver(actor.id) }
-				} label: {
-					if actor.id == object.driverId {
-						Label(actor.name, systemImage: "checkmark")
-					} else {
-						Label(actor.name, systemImage: actor.isAgent ? "cpu" : "person")
-					}
-				}
-			}
+			ObjectDriverMenuItems(store: store, object: object)
 		}
 	}
 
@@ -207,20 +180,7 @@ struct ObjectHeaderChips: View {
 				PriorityBars(level: PriorityBars.level(for: priority))
 			}
 		} menu: {
-			ForEach(Self.priorityOptions, id: \.self) { option in
-				Button {
-					MaskinHaptics.play(.selection)
-					Task { await store.setPriority(option) }
-				} label: {
-					if option == priority.lowercased() {
-						Label(option.capitalized, systemImage: "checkmark")
-					} else {
-						Text(option.capitalized)
-					}
-				}
-			}
-			Divider()
-			Button("No priority", role: .destructive) { Task { await store.setPriority(nil) } }
+			ObjectPriorityMenuItems(store: store, priority: priority)
 		}
 	}
 
@@ -448,5 +408,81 @@ extension EnvironmentValues {
 	var objectTitleInHeader: Bool {
 		get { self[ObjectTitleInHeaderKey.self] }
 		set { self[ObjectTitleInHeaderKey.self] = newValue }
+	}
+}
+
+// MARK: Menu items
+
+/// The status choices, shared by the hero pill, the chips and the fields card.
+struct ObjectStatusMenuItems: View {
+	let store: ObjectDetailStore
+	let object: WorkObject
+
+	var body: some View {
+		ForEach(store.statusOptions, id: \.self) { status in
+			Button {
+				MaskinHaptics.play(.selection)
+				Task { await store.setStatus(status) }
+			} label: {
+				if status == object.status {
+					Label(MaskinStatus.sentenceLabel(for: status), systemImage: "checkmark")
+				} else {
+					Text(MaskinStatus.sentenceLabel(for: status))
+				}
+			}
+		}
+	}
+}
+
+/// The people and agents that can drive an object: agents first, then people, each alphabetical.
+struct ObjectDriverMenuItems: View {
+	let store: ObjectDetailStore
+	let object: WorkObject
+
+	private var actors: [ActorRef] {
+		store.directory.actors.values.sorted {
+			if $0.isAgent != $1.isAgent { return $0.isAgent }
+			return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+		}
+	}
+
+	var body: some View {
+		ForEach(actors) { actor in
+			Button {
+				MaskinHaptics.play(.selection)
+				Task { await store.setDriver(actor.id) }
+			} label: {
+				if actor.id == object.driverId {
+					Label(actor.name, systemImage: "checkmark")
+				} else {
+					Label(actor.name, systemImage: actor.isAgent ? "cpu" : "person")
+				}
+			}
+		}
+	}
+}
+
+/// The priority choices; `priority` is the stored value, `nil` when none is set yet.
+struct ObjectPriorityMenuItems: View {
+	let store: ObjectDetailStore
+	let priority: String?
+
+	var body: some View {
+		ForEach(ObjectHeaderChips.priorityOptions, id: \.self) { option in
+			Button {
+				MaskinHaptics.play(.selection)
+				Task { await store.setPriority(option) }
+			} label: {
+				if option == priority?.lowercased() {
+					Label(option.capitalized, systemImage: "checkmark")
+				} else {
+					Text(option.capitalized)
+				}
+			}
+		}
+		if priority != nil {
+			Divider()
+			Button("No priority", role: .destructive) { Task { await store.setPriority(nil) } }
+		}
 	}
 }
