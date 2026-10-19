@@ -209,63 +209,58 @@ struct MessageRow: View {
 	}
 
 	private var own: some View {
-		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			Group {
-				if hasOwnSurface {
-					VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
-						if message.isEmojiOnly {
-							Text(message.content).maskinSymbol(emojiSize)
-						} else {
-							MarkdownContent(message.content, style: .chat, hardBreaks: true)
-						}
-					}
-					.environment(\.markdownHugsContent, true)
-				} else {
-					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-						if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
-						MessageAttachments(attachments: message.attachments)
-						if !bodyText.isEmpty {
-							HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
-								MarkdownContent(markdownText, style: .chat, hardBreaks: true)
-									.textSelection(.enabled)
-								if message.editedAt != nil { EditedMark() }
+		FlatMessageFrame(
+			showsAuthor: showsAuthor, name: "You", kind: .human, seed: message.actorID, time: message.createdAt
+		) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+				Group {
+					if hasOwnSurface {
+						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+							if message.isEmojiOnly {
+								Text(message.content).maskinSymbol(emojiSize)
+							} else {
+								MarkdownContent(message.content, style: .chat, hardBreaks: true)
 							}
 						}
+						.environment(\.markdownHugsContent, true)
+					} else {
+						VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+							if let quote { QuoteBlock(author: quote.author, text: quote.text) }
+							MessageAttachments(attachments: message.attachments)
+							if !bodyText.isEmpty {
+								MarkdownContent(markdownText, style: .chat, hardBreaks: true)
+									.textSelection(.enabled)
+							}
+							if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
+						}
+						.foregroundStyle(MaskinColor.ink)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
 					}
-					.environment(\.markdownHugsContent, true)
-					.environment(\.markdownOnInverse, true)
-					.foregroundStyle(MaskinSurface.onInverse)
-					.padding(.vertical, BubbleShape.myVertical)
-					.padding(.horizontal, BubbleShape.horizontal)
-					.background(MaskinSurface.inverse, in: BubbleShape.mine)
-					.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
+				}
+				.swipeToReply(onReply)
+				.messageContextMenu(message, isOwn: true, actions: actions)
+				if mentionChips.isEmpty {
+					MentionLine(names: untaggedNames, isOwn: true)
+				} else {
+					MentionStateLine(chips: mentionChips).frame(maxWidth: .infinity, alignment: .leading)
+				}
+				if let sendStatus {
+					MessageStatusLine(status: sendStatus, time: message.createdAt, onRetry: onRetrySend)
 				}
 			}
-			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
-			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: true, actions: actions)
-			if mentionChips.isEmpty {
-				MentionLine(names: untaggedNames, isOwn: true)
-			} else {
-				MentionStateLine(chips: mentionChips)
-			}
-			if let sendStatus {
-				MessageStatusLine(status: sendStatus, time: message.createdAt, onRetry: onRetrySend)
-			}
 		}
-		.frame(maxWidth: .infinity, alignment: .trailing)
 	}
 
 	// MARK: Theirs
 
 	private var theirs: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			if showsAuthor {
-				MessageHeader(
-					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
-					working: working,
-					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
-			}
+		FlatMessageFrame(
+			showsAuthor: showsAuthor, name: message.actorName, kind: message.author, seed: message.actorID,
+			time: message.createdAt, working: working,
+			onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil
+		) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			Group {
 				if message.isEmojiOnly {
 					Text(message.content).maskinSymbol(emojiSize)
@@ -285,11 +280,8 @@ struct MessageRow: View {
 								.padding(.top, MaskinSpace.s2)
 						}
 					}
-					.foregroundStyle(MaskinColor.ink2)
-					.padding(.vertical, BubbleShape.theirVertical)
-					.padding(.horizontal, BubbleShape.horizontal)
+					.foregroundStyle(MaskinColor.ink)
 					.frame(maxWidth: .infinity, alignment: .leading)
-					.background(MaskinSurface.card, in: BubbleShape.agent)
 				}
 			}
 			.swipeToReply(onReply)
@@ -299,8 +291,8 @@ struct MessageRow: View {
 			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
+			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
 	/// Versions pager and local feedback under an agent bubble.

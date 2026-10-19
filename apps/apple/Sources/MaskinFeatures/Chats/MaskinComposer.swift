@@ -71,6 +71,8 @@ struct MaskinComposer: View {
 	/// An agent is typing, streaming or working: Stop takes the last slot while the field is empty.
 	var busy = false
 	var onStop: (() -> Void)?
+	/// A live call is running: Go live and dictation give way to Send (set by the call card's host).
+	var isInCall = false
 	let onSend: () -> Void
 
 	init(
@@ -123,12 +125,12 @@ struct MaskinComposer: View {
 
 	var lastSlot: ComposerLastSlot {
 		ComposerLastSlot.resolve(
-			hasContent: model.hasContent, busy: busy && onStop != nil, showsMic: config.showsMic && micAvailable,
+			hasContent: model.hasContent, busy: busy && onStop != nil, showsMic: config.showsMic && micAvailable && !isInCall,
 			showsSend: config.showsSend)
 	}
 
 	/// While Stop is showing the mic stays beside it, so dictation is never blocked by a busy agent.
-	var showsMicBesideStop: Bool { lastSlot == .stop && config.showsMic && micAvailable }
+	var showsMicBesideStop: Bool { lastSlot == .stop && config.showsMic && micAvailable && !isInCall }
 
 	private var micAvailable: Bool {
 		#if os(iOS)
@@ -215,7 +217,7 @@ struct MaskinComposer: View {
 			} else {
 				if config.showsAttach { attachButton }
 				field(placeholder: config.placeholder)
-				if let goLive = config.goLive, !model.hasContent {
+				if let goLive = config.goLive, !model.hasContent, !isInCall {
 					ComposerCircleButton(
 						symbol: "waveform", fill: MaskinSurface.fill, foreground: MaskinColor.ink2,
 						label: "Start a live conversation", weight: .semibold
@@ -306,15 +308,25 @@ struct MaskinComposer: View {
 
 	// MARK: Attach
 
+	/// A native menu from the `+`: Photo or video, Camera, File, Object (inserts `/`), Person or agent (inserts `@`).
 	private var attachButton: some View {
-		ComposerCircleButton(
-			symbol: "plus", fill: MaskinSurface.fill, foreground: MaskinColor.ink3,
-			label: isTrayOpen ? "Close attach menu" : "Attach", weight: .semibold,
-			rotation: isTrayOpen ? 45 : 0
-		) {
-			MaskinHaptics.play(.selection)
-			withAnimation(reduceMotion ? nil : MaskinMotion.standard) { trayOpen.toggle() }
+		Menu {
+			ForEach(attachActions) { action in
+				Button { pick(action) } label: { Label(action.label, systemImage: action.symbol) }
+			}
+		} label: {
+			Image(systemName: "plus")
+				.maskinSymbol(MaskinFontSize.t17, weight: .semibold)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(width: Self.control, height: Self.control)
+				.background(MaskinSurface.fill, in: Circle())
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.contentShape(Circle())
 		}
+		.menuStyle(.button)
+		.buttonStyle(.maskinPressed)
+		.simultaneousGesture(TapGesture().onEnded { MaskinHaptics.play(.selection) })
+		.accessibilityLabel("Attach")
 	}
 
 	private var attachActions: [ComposerAttachAction] {
