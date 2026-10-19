@@ -442,8 +442,8 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_session: 'session_create',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
+	ask_user_question: 'session_ask_user',
 	resume_session: 'session_resume',
-	run_agent: 'session_run',
 }
 
 /** Resets the warned flag — only used in tests. */

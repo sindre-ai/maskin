@@ -8,6 +8,7 @@ import {
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
+import { formatUsd } from '@/components/settings/billing-usage'
 import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import {
@@ -19,6 +20,7 @@ import {
 	deriveAgentStatus,
 	getLatestSession,
 	groupSessionsByAgent,
+	summarizeAgentSessions,
 } from '@/lib/agent-status'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -36,6 +38,7 @@ const COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'kind', label: 'Kind', canHide: true },
 	{ id: 'activity', label: 'Activity', canHide: true },
 	{ id: 'sessions', label: 'Sessions', canHide: true },
+	{ id: 'cost', label: 'Cost', canHide: true },
 	{ id: 'status', label: 'Status', canHide: true },
 ]
 
@@ -64,6 +67,9 @@ interface AgentRow {
 	portrait: PortraitStatus
 	latestSession?: SessionResponse
 	sessionCount: number
+	activeCount: number
+	totalCostUsd: number
+	last30dCostUsd: number
 }
 
 export function AgentsIndexView({
@@ -124,11 +130,15 @@ export function AgentsIndexView({
 		() =>
 			agents.map((agent) => {
 				const sessionStatus = deriveAgentStatus(agent.id, sessionsByAgent)
+				const stats = summarizeAgentSessions(sessionsByAgent.get(agent.id))
 				return {
 					agent,
 					portrait: getPortraitStatus(agent, sessionStatus),
 					latestSession: getLatestSession(agent.id, sessionsByAgent),
-					sessionCount: sessionsByAgent.get(agent.id)?.length ?? 0,
+					sessionCount: stats.total,
+					activeCount: stats.active,
+					totalCostUsd: stats.totalCostUsd,
+					last30dCostUsd: stats.last30dCostUsd,
 				}
 			}),
 		[agents, sessionsByAgent],
@@ -169,6 +179,12 @@ export function AgentsIndexView({
 				arr.sort((a, b) => {
 					const byCount = a.sessionCount - b.sessionCount
 					return dir * (byCount || byName(a, b))
+				})
+				break
+			case 'cost':
+				arr.sort((a, b) => {
+					const byCost = a.totalCostUsd - b.totalCostUsd
+					return dir * (byCost || byName(a, b))
 				})
 				break
 			default:
@@ -218,6 +234,7 @@ export function AgentsIndexView({
 	const showKind = columnVisibility.kind !== false
 	const showActivity = columnVisibility.activity !== false
 	const showSessions = columnVisibility.sessions !== false
+	const showCost = columnVisibility.cost !== false
 	const showStatus = columnVisibility.status !== false
 
 	// Counts come off the pre-filter `rows` so a chip's number stays stable while
@@ -336,6 +353,7 @@ export function AgentsIndexView({
 							showKind={showKind}
 							showActivity={showActivity}
 							showSessions={showSessions}
+							showCost={showCost}
 							showStatus={showStatus}
 						/>
 					))}
@@ -351,6 +369,7 @@ function AgentGroupSection({
 	showKind,
 	showActivity,
 	showSessions,
+	showCost,
 	showStatus,
 }: {
 	workspaceId: string
@@ -358,6 +377,7 @@ function AgentGroupSection({
 	showKind: boolean
 	showActivity: boolean
 	showSessions: boolean
+	showCost: boolean
 	showStatus: boolean
 }) {
 	if (group.label === undefined) {
@@ -371,6 +391,7 @@ function AgentGroupSection({
 						showKind={showKind}
 						showActivity={showActivity}
 						showSessions={showSessions}
+						showCost={showCost}
 						showStatus={showStatus}
 					/>
 				))}
@@ -408,6 +429,7 @@ function AgentGroupSection({
 							showKind={showKind}
 							showActivity={showActivity}
 							showSessions={showSessions}
+							showCost={showCost}
 							showStatus={showStatus}
 						/>
 					))
@@ -429,6 +451,7 @@ function AgentRowItem({
 	showKind,
 	showActivity,
 	showSessions,
+	showCost,
 	showStatus,
 }: {
 	workspaceId: string
@@ -436,6 +459,7 @@ function AgentRowItem({
 	showKind: boolean
 	showActivity: boolean
 	showSessions: boolean
+	showCost: boolean
 	showStatus: boolean
 }) {
 	const { agent, portrait, latestSession } = row
@@ -488,13 +512,24 @@ function AgentRowItem({
 					// "What it's doing now" (mockup 2333) shares the sessions column's
 					// breakpoint — at 768px the row otherwise carried a name and a status
 					// and nothing about the work.
-					<span className="hidden w-[140px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
+					<span className="hidden w-[110px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
 						{describeFocus(portrait, latestSession)}
 					</span>
 				)}
 				{showSessions && (
-					<span className="hidden w-[74px] shrink-0 text-[11.5px] tabular-nums text-muted-foreground md:block">
-						{sessionsLabel}
+					<span className="hidden w-[74px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground md:flex">
+						<span>{sessionsLabel}</span>
+						<span className="text-[10.5px] text-muted-foreground/70">{row.activeCount} active</span>
+					</span>
+				)}
+				{showCost && (
+					// Cost waits for `lg`: at 768px the content box is ~450px, and with it
+					// the fixed columns left the name column 0px wide and overflowing.
+					<span className="hidden w-[84px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground lg:flex">
+						<span>{formatUsd(row.totalCostUsd)}</span>
+						<span className="text-[10.5px] text-muted-foreground/70">
+							{formatUsd(row.last30dCostUsd)} · 30d
+						</span>
 					</span>
 				)}
 				{showStatus && (

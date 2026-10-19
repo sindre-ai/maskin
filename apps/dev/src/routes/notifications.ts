@@ -19,7 +19,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
@@ -280,6 +280,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 const respondNotificationRoute = createRoute({
 	method: 'post',
 	path: '/{id}/respond',
+	'x-viewer-policy': 'writer',
 	tags: ['Notifications'],
 	summary: 'Respond to a notification and resume the agent',
 	request: {
@@ -324,7 +325,7 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification || !(await isWorkspaceMember(db, actorId, notification.workspaceId))) {
+	if (!notification || !(await isWorkspaceWriter(db, actorId, notification.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 	}
 
@@ -466,7 +467,6 @@ async function wakeSourceAgent(ctx: {
 		// linkage lives on notifications.object_id already; per spec §3.3 this
 		// site passes null/null.
 		initiatedFromObjectId: null,
-		initiatedFromObjectType: null,
 		await: 'none',
 	})
 }

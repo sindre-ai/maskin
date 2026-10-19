@@ -30,7 +30,7 @@ import {
 	readStripeEnv,
 } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -48,11 +48,26 @@ function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'enterprise'): num
 	return resolvePlanCapCents(plan)
 }
 
+/**
+ * Whether POST /credits/checkout can succeed. Mirrors the route's own gates
+ * (Stripe configured, top-up Price set) but reads defensively, since
+ * `/api/billing/usage` must keep serving usage when Stripe is unconfigured.
+ */
+function isCreditTopupAvailable(): boolean {
+	try {
+		return readStripeEnv().priceCreditsCustom !== null
+	} catch {
+		return false
+	}
+}
+
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 	}
 }
 
@@ -72,6 +87,7 @@ const checkoutResponseSchema = z.object({
 const checkoutRoute = createRoute({
 	method: 'post',
 	path: '/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a Maskin subscription',
 	request: {
@@ -132,6 +148,9 @@ const usageResponseSchema = z.object({
 	// Prepaid usage-credits balance, in USD cents. Only meaningful for
 	// pro/team — see `lib/credit-billing.ts`.
 	credit_balance_cents: z.number().int().nonnegative(),
+	// True only when the top-up Price env is set and Stripe is configured, i.e. when
+	// POST /credits/checkout can succeed. The web app hides Buy usage credits otherwise.
+	credit_topup_available: z.boolean(),
 	linkedin_identity_addon: linkedinIdentityAddonSchema,
 })
 
@@ -271,6 +290,7 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 		stripe_customer_id: billing?.stripe_customer_id ?? null,
 		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 		credit_balance_cents: creditBalanceCents,
+		credit_topup_available: isCreditTopupAvailable(),
 		linkedin_identity_addon: linkedinIdentityAddon,
 	}
 }
@@ -384,6 +404,7 @@ const buyCreditsBodySchema = z.object({
 const buyCreditsRoute = createRoute({
 	method: 'post',
 	path: '/credits/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a one-time usage-credits top-up',
 	request: {
@@ -496,6 +517,12 @@ app.openapi(buyCreditsRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
 	}
 
+	// The top-up Price is optional config: without it there is nothing to
+	// charge against, so the endpoint is unavailable rather than misconfigured.
+	if (!stripeEnv.priceCreditsCustom) {
+		return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
+	}
+
 	const stripe = getStripeClient(stripeEnv)
 	try {
 		const session = await createCreditCheckoutSession(
@@ -528,6 +555,7 @@ app.openapi(buyCreditsRoute, async (c) => {
 const cancelRoute = createRoute({
 	method: 'post',
 	path: '/cancel',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Downgrade to Free by cancelling the active Maskin subscription',
 	request: { headers: workspaceIdHeader },
@@ -571,6 +599,9 @@ app.openapi(cancelRoute, async (c) => {
 	// predate `billing_owner_id`; those fall back to the human admin/owner
 	// check rather than being left open to every member.
 	const callerId = c.get('actorId')
+	// The billing owner branch below ignores the role, so a viewer who holds billing ownership
+	// (transfer-ownership does not look at the new owner's role) would pass it.
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const authorized = workspace.billingOwnerId
 		? workspace.billingOwnerId === callerId
 		: await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)

@@ -16,7 +16,7 @@ import { createApiError } from '../lib/errors'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 /**
  * Streamable-HTTP MCP endpoint for the LinkedIn (LinkedIn-backed) provider.
@@ -210,7 +210,7 @@ app.post('/:instanceSlug', async (c) => {
 		)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
@@ -298,7 +298,7 @@ app.post('/', async (c) => {
 		)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 

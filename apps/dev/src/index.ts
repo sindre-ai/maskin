@@ -24,6 +24,7 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -188,6 +189,10 @@ liveActivityPush.start()
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
+
+const gscSyncScheduler = new GscSyncScheduler(db)
+gscSyncScheduler.start()
+logger.info('GSC sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()

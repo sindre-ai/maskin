@@ -113,14 +113,11 @@ vi.mock('../../../lib/integrations/oauth/token-manager', () => ({
 
 vi.mock('../../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
-	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
-	appendToLedger: vi.fn().mockResolvedValue(undefined),
-	readLedgerTail: vi.fn().mockResolvedValue([]),
-	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
 vi.mock('../../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: vi.fn(),
+	classifySessionExit: vi.fn(),
 }))
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────

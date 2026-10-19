@@ -804,6 +804,31 @@ describe('SessionDispatchQueue.tick — timeout', () => {
 		expect(dispatchRows.find((r) => r.id === 'r-next')).toBeUndefined()
 	})
 
+	it('spends an attempt on a tick that times out and gives up once none are left', async () => {
+		const { db, dispatchRows, sessionRows } = makeFakeDb({
+			dispatchRows: [aDispatchRow({ maxAttempts: 2 })],
+			sessionRows: [aSessionRow()],
+		})
+		const dispatchFn = vi.fn((): Promise<DispatchResult> => new Promise(() => {}))
+		const queue = makeQueue(db, dispatchFn, { tickTimeoutMs: 20, batchSize: 1 })
+
+		for (const attempt of [1, 2]) {
+			await queue.tick()
+			expect(dispatchRows[0]?.attempt).toBe(attempt)
+			expect(dispatchRows[0]?.status).toBe('pending')
+			// The lease runs out, so the next tick may claim the row again.
+			if (dispatchRows[0]) dispatchRows[0].nextAttemptAt = new Date(Date.now() - 1_000)
+		}
+
+		await queue.tick()
+
+		expect(dispatchFn).toHaveBeenCalledTimes(2)
+		expect(dispatchRows[0]?.status).toBe('failed')
+		expect(sessionRows[0]?.status).toBe('failed')
+		const result = sessionRows[0]?.result as { failure_reason: { human_message: string } }
+		expect(result.failure_reason.human_message).toContain('did not answer the start request')
+	})
+
 	it('abandons a claim whose DB call never settles so the next tick can run', async () => {
 		const { db } = makeFakeDb({ dispatchRows: [aDispatchRow()] })
 		const realTransaction = db.transaction.bind(db)

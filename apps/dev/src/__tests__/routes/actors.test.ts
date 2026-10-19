@@ -4,7 +4,7 @@ import { PlanCapExceededError } from '../../lib/llm-routing'
 import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createSessionTestApp, createTestApp } from '../setup'
+import { createMockAgentStorage, createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -43,64 +43,192 @@ describe('Actors Routes', () => {
 			expect(body.api_key).toMatch(/^ank_/)
 		})
 
-		it('creates an agent actor and returns 201', async () => {
-			const actor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.insert = [actor]
+		describe('creating an agent', () => {
+			const CALLER_ID = '00000000-0000-0000-0000-0000000000c1'
+			const WORKSPACE_ID = '00000000-0000-0000-0000-0000000000a1'
+			const bearer = { Authorization: 'Bearer ank_testcaller' }
 
-			const res = await app.request(
-				jsonRequest(
+			function createAgentRequest(
+				overrides: Record<string, unknown> = {},
+				headers: Record<string, string> | undefined = bearer,
+			) {
+				return jsonRequest(
 					'POST',
 					'/api/actors',
-					buildCreateActorBody({
-						type: 'agent',
-						system_prompt: 'You are a test agent',
-						llm_provider: 'anthropic',
-					}),
-				),
-			)
-
-			expect(res.status).toBe(201)
-			const body = await res.json()
-			expect(body.type).toBe('agent')
-		})
-
-		it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
-			const actor = buildActor({ type: 'agent' })
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.insert = [actor]
-
-			const res = await app.request(
-				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'agent' })),
-			)
-
-			expect(res.status).toBe(201)
-			const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
-			expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
-		})
-
-		it('preserves a caller-provided maskin MCP entry over the default', async () => {
-			const actor = buildActor({ type: 'agent' })
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.insert = [actor]
-			const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/actors',
-					buildCreateActorBody({
-						type: 'agent',
-						tools: { mcpServers: { maskin: custom } },
-					}),
-				),
-			)
-
-			expect(res.status).toBe(201)
-			const inserted = calls.inserts[0] as {
-				tools?: { mcpServers: { maskin: { url: string } } }
+					buildCreateActorBody({ type: 'agent', workspace_id: WORKSPACE_ID, ...overrides }),
+					headers,
+				)
 			}
-			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+
+			// Select order in the handler: the API key lookup, the caller's membership
+			// of workspace_id, then (only when tools/llm_config are sent) the caller's
+			// role.
+			function callerIsMember(
+				mockResults: Record<string, unknown[]>,
+				callerType = 'human',
+				role?: 'owner' | 'admin' | 'member',
+			) {
+				mockResults.selectQueue = [
+					[{ id: CALLER_ID, type: callerType }],
+					[{ actorId: CALLER_ID, role: 'member' }],
+					...(role ? [[{ role, type: callerType }]] : []),
+				]
+			}
+
+			it('creates an agent for a member caller, born as a member of the workspace', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest({ system_prompt: 'You are a test agent' }))
+
+				expect(res.status).toBe(201)
+				const body = await res.json()
+				expect(body.type).toBe('agent')
+				expect(body.workspace_id).toBe(WORKSPACE_ID)
+				// inserts: [actor, workspace member, workspace_member event]
+				expect(calls.inserts[0]).toMatchObject({ type: 'agent', createdBy: CALLER_ID })
+				expect(calls.inserts[1]).toMatchObject({
+					workspaceId: WORKSPACE_ID,
+					actorId: actor.id,
+					role: 'member',
+				})
+			})
+
+			it('lets an agent caller create an agent', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults, 'agent')
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				expect(calls.inserts[0]).toMatchObject({ createdBy: CALLER_ID })
+				expect(calls.inserts[1]).toMatchObject({ role: 'member' })
+			})
+
+			it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
+				expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+			})
+
+			it('preserves a caller-provided maskin MCP entry for a human admin', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults, 'human', 'admin')
+				const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
+
+				const res = await app.request(
+					createAgentRequest({ tools: { mcpServers: { maskin: custom } } }),
+				)
+
+				expect(res.status).toBe(201)
+				const inserted = calls.inserts[0] as {
+					tools?: { mcpServers: { maskin: { url: string } } }
+				}
+				expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+			})
+
+			it('returns 401 and writes nothing without an Authorization header', async () => {
+				const { app, calls } = createTestApp(actorsRoutes, '/api/actors')
+
+				const res = await app.request(createAgentRequest({}, undefined))
+
+				expect(res.status).toBe(401)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 401 and writes nothing for an unknown API key', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[]]
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(401)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 404 and writes nothing when the caller is not a member of workspace_id', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }], []]
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(404)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 400 when an agent names no workspace and does not ask for its own', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }]]
+
+				const res = await app.request(createAgentRequest({ workspace_id: undefined }))
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 400 when workspace_id is sent together with auto_create_workspace', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }]]
+
+				const res = await app.request(createAgentRequest({ auto_create_workspace: true }))
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it.each([
+				['tools', { tools: { mcpServers: {} } }],
+				['llm_config', { llm_config: { model: 'fake-model' } }],
+			])('returns 403 and writes nothing when a human member sends %s', async (_name, extra) => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				callerIsMember(mockResults, 'human', 'member')
+
+				const res = await app.request(createAgentRequest(extra))
+
+				expect(res.status).toBe(403)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 403 and writes nothing when an agent caller with the admin role sends tools', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				callerIsMember(mockResults, 'agent', 'admin')
+
+				const res = await app.request(createAgentRequest({ tools: { mcpServers: {} } }))
+
+				expect(res.status).toBe(403)
+				expect(calls.inserts).toHaveLength(0)
+			})
+		})
+
+		it('rejects workspace_id on a human signup', async () => {
+			const { app, calls } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({
+						type: 'human',
+						workspace_id: '00000000-0000-0000-0000-0000000000a1',
+					}),
+				),
+			)
+
+			expect(res.status).toBe(400)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
@@ -911,7 +1039,14 @@ describe('Actors Routes', () => {
 
 		it('returns 200 when agent actor deleted successfully', async () => {
 			const agentActor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const agentStorage = createMockAgentStorage()
+			const { app, mockResults } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
 			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
@@ -927,6 +1062,39 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
+			expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(agentActor.id, wsId)
+		})
+
+		it('returns 500 and does not delete the agent when its storage files cannot be removed', async () => {
+			const agentActor = buildActor({ type: 'agent' })
+			const agentStorage = createMockAgentStorage({
+				deleteAllAgentFiles: vi.fn().mockRejectedValue(new Error('s3 down')),
+			})
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.deleted).toBeUndefined()
+			expect(body.error.message).toContain('agent not deleted')
+			// No deleted event was recorded, so the failure is not reported as success.
+			expect(
+				calls.inserts.find((v) => (v as { action?: string }).action === 'deleted'),
+			).toBeUndefined()
 		})
 
 		it('records only identity fields in the deleted event, never tools, llm_config or credentials', async () => {
@@ -947,7 +1115,13 @@ describe('Actors Routes', () => {
 				llmConfig: { api_key: 'fake-llm-key-for-test', model: 'fake-model' },
 				memory: { notes: 'fake memory for test' },
 			})
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				createMockAgentStorage(),
+			)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],

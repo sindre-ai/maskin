@@ -1,4 +1,5 @@
 import {
+	HUMAN_MESSAGE_STYLE_SHORT,
 	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
 	messageMetadataSchema,
@@ -596,7 +597,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -618,7 +619,7 @@ export const tools = {
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe(
-					'Role when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write).',
+					'Role when adding a human to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Ignored for agents, which are always added as member.',
 				),
 			description: z
 				.string()
@@ -776,7 +777,7 @@ export const tools = {
 	},
 	list_workspaces: {
 		description:
-			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Each row carries `isDefault`: true for the one workspace the user chose as their default in Settings (at most one row; none if they have not chosen). Prefer it when the user does not name a workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			limit: z
 				.number()
@@ -1081,8 +1082,7 @@ export const tools = {
 		}),
 	},
 	create_comment: {
-		description:
-			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.\n\nWhen you need a human to make a call rather than just read something, put that human in `mentions` and fill in `decision` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the `decision` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.\n\nThread defaulting: when this session was dispatched from a comment (any triggering comment on this or another object), your reply is threaded inside that triggering thread automatically — you do not need to set `parent_event_id`. Pass `parent_event_id` explicitly only when you want to reply under a DIFFERENT comment than the one that spawned you. Set `no_thread: true` on the rare occasion you deliberately want a fresh top-level comment (e.g. opening a new topic on a bet) rather than a reply inside the current thread.',
+		description: `One way to communicate with humans, alongside chat. A comment is attached to an object (bet, task, insight), so it stays with that object as a visible record. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see about that object. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it makes a comment clearer or shorter.\n\nWhen you need a human to make a call rather than just read something, put that human in \`mentions\` and fill in \`decision\` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the \`decision\` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.\n\nThread defaulting: when this session was dispatched from a comment (any triggering comment on this or another object), your reply is threaded inside that triggering thread automatically — you do not need to set \`parent_event_id\`. Pass \`parent_event_id\` explicitly only when you want to reply under a DIFFERENT comment than the one that spawned you. Set \`no_thread: true\` on the rare occasion you deliberately want a fresh top-level comment (e.g. opening a new topic on a bet) rather than a reply inside the current thread.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1350,64 +1350,44 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status; pass `include_logs: true` on the same call to read the container output. For a blocking alternative that waits for completion, use run_agent instead.',
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
-			action_prompt: z.string().min(1).describe('The prompt/task for the agent to execute'),
-			config: z
-				.object({
-					base_image: z.string().optional(),
-					runtime: z.enum(['claude-code', 'codex', 'custom']).optional(),
-					runtime_config: z.record(z.unknown()).optional(),
-					timeout_seconds: z.number().int().min(30).max(3600).optional(),
-					memory_mb: z.number().int().min(256).max(8192).optional(),
-					cpu_shares: z.number().int().min(256).max(4096).optional(),
-					env_vars: z.record(z.string()).optional(),
-					browserRequired: z
-						.boolean()
-						.optional()
-						.describe(
-							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL}.',
-						),
-					previewGuestPorts: z
-						.array(z.number().int().positive().max(65535))
-						.max(8)
-						.optional()
-						.describe(
-							"Usually unnecessary: once a browser sidecar is attached (see browserRequired), any dev-server port the agent starts on its own inside 3000-12000 (e.g. Vite's default 5173) is detected and relayed automatically — the agent's Playwright tool can reach it directly, and the agent is told the URL automatically. Only set this to pre-declare a port so its relay URL (PREVIEW_URL env var) is available from the very first turn, before the dev server itself has started listening. Implies browserRequired.",
-						),
-				})
-				.optional()
-				.describe('Container configuration overrides'),
-			trigger_id: z.string().uuid().optional().describe('Trigger that initiated this session'),
-			auto_start: z.boolean().default(true).describe('Start the session immediately'),
+			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
+			actor_id: z.string().uuid().describe('The agent that should do the work'),
+			action_prompt: z.string().min(1).describe('What you want the agent to do'),
 			source_session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
+					"An earlier session to pick up from. The new session starts with that session's files, so use it to finish work an earlier session started but could not complete (for example, code that was written but not pushed).",
 				),
 			initiated_from_object_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Object id (bet, task, insight, etc.) this session is being spawned for. Threaded into the session row so a failure event can link back to the object, and emitted on the runtime_session_ended PostHog event as context_object_id. Omit when there is no originating object (direct API create, cron, onboarding).',
+					'The bet, task, insight or other object this work is for. Leave it out if the work is not about a specific object.',
 				),
-			initiated_from_object_type: z
-				.string()
-				.max(64)
+			spawned_by_message_id: z
+				.number()
+				.int()
+				.positive()
 				.optional()
 				.describe(
-					"Object type of `initiated_from_object_id` (e.g. 'bet', 'task', 'insight'). Emitted on the runtime_session_ended PostHog event as context_object_type. Must be set whenever initiated_from_object_id is set.",
+					'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
+				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Wait for the agent to finish and return the session together with the first 500 lines of its output, instead of returning straight away.',
 				),
 		}),
 	},
 	list_sessions: {
 		description:
-			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window.",
+			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window. A response over the size cap is trimmed from the tail: _meta.truncated is true and next_cursor holds the updated_at of the last row returned. To continue, call again with the same filters, before set to next_cursor and offset left at 0; repeat until next_cursor is absent.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -1551,6 +1531,38 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	ask_user_question: {
+		description:
+			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. It only works inside an agent session started from a chat; elsewhere there is nobody to ask, and the tool says so — then decide for yourself and state the assumption you made. Give 2 to 4 options each; a person can always type something else.',
+		inputSchema: z.object({
+			questions: z
+				.array(
+					z.object({
+						question: z.string().min(1).max(1000).describe('The full question.'),
+						header: z
+							.string()
+							.min(1)
+							.max(24)
+							.describe('A short label for the question, e.g. "Job board".'),
+						multi_select: z
+							.boolean()
+							.optional()
+							.describe('Let the person pick more than one option.'),
+						options: z
+							.array(
+								z.object({
+									label: z.string().min(1).max(200),
+									description: z.string().max(1000).optional(),
+								}),
+							)
+							.min(2)
+							.max(4),
+					}),
+				)
+				.min(1)
+				.max(4),
+		}),
+	},
 	pause_session: {
 		description: 'Pause a running session and save a snapshot for later resumption',
 		inputSchema: z.object({
@@ -1563,50 +1575,6 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
-		}),
-	},
-	run_agent: {
-		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution. Use run_agent when you need the answer in this run; otherwise @mention the agent in a comment on the object, which does not block or hold a container.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),
-			action_prompt: z.string().min(1).describe('The instruction for the agent'),
-			config: z
-				.object({
-					runtime: z.enum(['claude-code', 'codex', 'custom']).optional(),
-					timeout_seconds: z.number().int().min(30).max(3600).optional(),
-				})
-				.optional()
-				.describe('Container configuration overrides'),
-			poll_interval_seconds: z
-				.number()
-				.int()
-				.min(2)
-				.max(30)
-				.default(5)
-				.describe('How often to check session status'),
-			timeout_seconds: z
-				.number()
-				.int()
-				.min(30)
-				.max(3700)
-				.default(660)
-				.describe('Maximum time to wait before giving up (should exceed session timeout)'),
-			spawned_by_message_id: z
-				.number()
-				.int()
-				.positive()
-				.optional()
-				.describe(
-					'The assistant message that triggered this sub-agent spawn. Persisted onto the session so the UI can anchor a handed-off strip to that bubble; omit for a spawn with no strip.',
-				),
-			depends_on_session_ids: z
-				.array(z.string().uuid())
-				.optional()
-				.describe(
-					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
-				),
 		}),
 	},
 
@@ -1752,7 +1720,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). OAuth providers return an install_url that must be opened in a browser to complete the flow; the callback is handled automatically by the server. API-key providers (e.g. "posthog") require `api_key` and are activated immediately, with no install_url.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
@@ -1764,7 +1732,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'API key for providers whose auth type is "api_key" (e.g. "posthog"). Required for those providers and ignored for OAuth providers.',
+					'Only for the non-chat fallback: the API key for providers whose auth type is "api_key" (e.g. "posthog"). Ignored in a chat — the user types the key into the card — so never ask the user for one.',
 				),
 		}),
 	},
