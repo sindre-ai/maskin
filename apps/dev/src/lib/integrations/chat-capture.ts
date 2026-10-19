@@ -134,6 +134,10 @@ export async function captureChatSecret(
 			)
 			.limit(1)
 		if (!participant) throw new ChatCaptureError(403, 'FORBIDDEN', 'Not a participant in this chat')
+	} else if (session.actorId !== actorId) {
+		// No conversation means no human to ask: an autonomous or triggered run. Vaulting
+		// stops and respawns the session, so only the session's own driver may do it.
+		throw new ChatCaptureError(403, 'FORBIDDEN', 'Not the driver of this session')
 	}
 
 	// Only caller-supplied grants are checked against membership. The default is the

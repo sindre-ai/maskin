@@ -6,6 +6,7 @@ import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	type ScopeGrant,
+	conversationParticipants,
 	credentialAccessLog,
 	integrations,
 	sessions,
@@ -23,7 +24,7 @@ import { TokenManager } from '../../lib/integrations/oauth/token-manager'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import { logger } from '../../lib/logger'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // Obviously fake, built at runtime so no token-shaped literal sits in the repo.
@@ -64,10 +65,16 @@ async function setup() {
 		{ workspaceId: ws.id, actorId: agentA.id, role: 'member' },
 		{ workspaceId: ws.id, actorId: agentB.id, role: 'member' },
 	])
+	// A chat capture needs a conversation the human is in; without one only the driver may vault.
+	const conversation = await insertConversation(db, ws.id, human)
+	await db
+		.insert(conversationParticipants)
+		.values({ conversationId: conversation.id, actorId: human })
 	const sessionFor = async (actorId: string) => {
 		const s = await insertSession(db, ws.id, actorId, human, {
 			status: 'pending',
 			containerId: null,
+			conversationId: conversation.id,
 		})
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, s.id))
 		return row as typeof sessions.$inferSelect

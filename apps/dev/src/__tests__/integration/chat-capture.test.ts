@@ -77,7 +77,7 @@ function appFor(
 	return app
 }
 
-async function setup(opts: { withConversation?: boolean } = {}) {
+async function setup(opts: { withConversation?: boolean } = { withConversation: true }) {
 	const human = getTestActorId()
 	const ws = await insertWorkspace(db, human)
 	const agent = await insertActor(db, { type: 'agent' })
@@ -306,6 +306,21 @@ describe('POST /api/integrations/chat-capture', () => {
 		const stranger = await insertActor(db)
 		const res = await capture(appFor(stranger.id), s.ws.id, validBody(s.session.id))
 		expect(res.status).toBe(403)
+	})
+
+	it('rejects a non-driver on a session with no conversation and does not stop it', async () => {
+		const s = await setup({ withConversation: false })
+		const res = await capture(appFor(s.human), s.ws.id, validBody(s.session.id))
+		expect(res.status).toBe(403)
+		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id))
+		expect(rows).toHaveLength(0)
+	})
+
+	it('allows the driver of a session with no conversation', async () => {
+		const s = await setup({ withConversation: false })
+		const driver = await insertSession(db, s.ws.id, s.human, s.human, { conversationId: null })
+		const res = await capture(appFor(s.human), s.ws.id, validBody(driver.id))
+		expect(res.status).toBe(201)
 	})
 
 	it('names only the bad field when validation fails, never the value', async () => {

@@ -123,11 +123,12 @@ describe('integrations Keychain columns (0087)', () => {
 		).rejects.toThrow(/integrations_source_enum/)
 	})
 
-	it('CHECK: a chat_capture row needs an origin session', async () => {
+	it('no longer CHECKs that a chat_capture row has an origin session (0094)', async () => {
+		// ON DELETE SET NULL on origin_session_id would violate that CHECK, so it is gone.
 		const { row } = await newIntegration()
 		await expect(
 			sql`INSERT INTO integrations ${sql({ ...row, source: 'chat_capture' })}`,
-		).rejects.toThrow(/integrations_chat_capture_has_session/)
+		).resolves.toBeDefined()
 	})
 })
 

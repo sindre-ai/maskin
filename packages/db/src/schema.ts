@@ -359,7 +359,9 @@ export const integrations = pgTable(
 		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
 		dekCiphertext: text('dek_ciphertext'),
 		source: text('source').$type<IntegrationSource>().notNull().default('admin_ui'),
-		originSessionId: uuid('origin_session_id').references((): AnyPgColumn => sessions.id),
+		originSessionId: uuid('origin_session_id').references((): AnyPgColumn => sessions.id, {
+			onDelete: 'set null',
+		}),
 		undoExpiresAt: timestamp('undo_expires_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
@@ -390,10 +392,6 @@ export const integrations = pgTable(
 		check(
 			'integrations_source_enum',
 			sql`${t.source} IN ('admin_ui', 'chat_capture', 'oauth_callback', 'registry_install')`,
-		),
-		check(
-			'integrations_chat_capture_has_session',
-			sql`${t.source} <> 'chat_capture' OR ${t.originSessionId} IS NOT NULL`,
 		),
 		check(
 			'integrations_credentials_null_only_when_undone',
@@ -429,12 +427,10 @@ export const credentialAccessLog = pgTable(
 		workspaceId: uuid('workspace_id')
 			.references(() => workspaces.id)
 			.notNull(),
-		integrationId: uuid('integration_id')
-			.references(() => integrations.id)
-			.notNull(),
-		actorId: uuid('actor_id')
-			.references(() => actors.id)
-			.notNull(),
+		// No FKs on integration_id and actor_id: the log is insert-only, so a reference
+		// would make the actor or integration undeletable (migration 0094).
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
 		sessionId: uuid('session_id'),
 		loopId: uuid('loop_id'),
 		outboundTarget: text('outbound_target'),

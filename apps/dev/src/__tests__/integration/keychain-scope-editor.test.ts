@@ -8,6 +8,7 @@ import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	type ScopeGrant,
+	conversationParticipants,
 	credentialAccessLog,
 	integrations,
 	sessions,
@@ -26,7 +27,7 @@ import { verifyCredentialAccessChain } from '../../lib/integrations/credential-a
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
 // Obviously fake, built at runtime so no token-shaped literal sits in the repo.
@@ -102,10 +103,16 @@ async function setup() {
 		{ workspaceId: ws.id, actorId: member.id, role: 'member' },
 		{ workspaceId: ws.id, actorId: admin.id, role: 'admin' },
 	])
+	// A chat capture needs a conversation the human is in; without one only the driver may vault.
+	const conversation = await insertConversation(db, ws.id, human)
+	await db
+		.insert(conversationParticipants)
+		.values({ conversationId: conversation.id, actorId: human })
 	const sessionFor = async (actorId: string, overrides: Record<string, unknown> = {}) => {
 		const s = await insertSession(db, ws.id, actorId, human, {
 			status: 'pending',
 			containerId: null,
+			conversationId: conversation.id,
 			...overrides,
 		})
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, s.id))
