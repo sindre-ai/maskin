@@ -14,13 +14,24 @@ struct LoopDetailView: View {
 	@State private var confirmDelete = false
 	@State private var underTheHood = false
 	@State private var timeline: FlowTimelineModel?
+	@State private var tab: LoopDetailTab = .outcome
+	@Environment(\.horizontalSizeClass) private var sizeClass
 
-	var body: some View {
+	/// iPhone: the name, numbers and tabs ride on the v4 gradient; the page is on the sheet.
+	private var usesHeader: Bool {
+		#if os(iOS)
+			sizeClass == .compact
+		#else
+			false
+		#endif
+	}
+
+	private var page: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				LoopDetailContent(
 					store: store, install: install, underTheHood: underTheHood, timeline: timeline,
-					onOpenTrigger: onOpenTrigger)
+					onOpenTrigger: onOpenTrigger, headerInScreen: usesHeader, externalTab: usesHeader ? tab : nil)
 				if underTheHood { manage }
 			}
 			.padding(MaskinSpace.s9)
@@ -28,7 +39,27 @@ struct LoopDetailView: View {
 			.frame(maxWidth: .infinity)
 		}
 		.ambientBackground()
-		.navigationTitle(store.loop.displayName)
+	}
+
+	@ViewBuilder private var framedPage: some View {
+		if usesHeader {
+			ScreenHeaderSheet {
+				LoopDetailHeader(loop: store.loop, tab: $tab, showsTabs: !underTheHood)
+			} content: {
+				page
+			}
+			#if os(iOS)
+				.toolbarBackground(.hidden, for: .navigationBar)
+				.toolbarColorScheme(.dark, for: .navigationBar)
+			#endif
+		} else {
+			page
+		}
+	}
+
+	var body: some View {
+		framedPage
+		.navigationTitle(usesHeader ? "" : store.loop.displayName)
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
@@ -134,19 +165,30 @@ struct LoopDetailContent: View {
 	/// shows the agents' posts and the run feed instead.
 	var timeline: FlowTimelineModel?
 	var onOpenTrigger: (String) -> Void = { _ in }
-	@State private var tab: LoopDetailTab
+	/// iPhone: the screen's header already shows the name and the tab switcher.
+	var headerInScreen = false
+	/// The tab chosen in that header; when set it replaces this view's own.
+	var externalTab: LoopDetailTab?
+	@State private var ownTab: LoopDetailTab
+	private var tab: LoopDetailTab {
+		get { externalTab ?? ownTab }
+		nonmutating set { ownTab = newValue }
+	}
 
 	init(
 		store: LoopDetailStore, install: LoopInstall? = nil, underTheHood: Bool = false,
 		timeline: FlowTimelineModel? = nil,
-		initialTab: LoopDetailTab = .outcome, onOpenTrigger: @escaping (String) -> Void = { _ in }
+		initialTab: LoopDetailTab = .outcome, onOpenTrigger: @escaping (String) -> Void = { _ in },
+		headerInScreen: Bool = false, externalTab: LoopDetailTab? = nil
 	) {
+		self.headerInScreen = headerInScreen
+		self.externalTab = externalTab
 		self.store = store
 		self.install = install
 		self.underTheHood = underTheHood
 		self.timeline = timeline
 		self.onOpenTrigger = onOpenTrigger
-		_tab = State(initialValue: initialTab)
+		_ownTab = State(initialValue: initialTab)
 	}
 
 	var body: some View {
@@ -158,10 +200,12 @@ struct LoopDetailContent: View {
 			if underTheHood {
 				LoopHoodSection(store: store, onOpenTrigger: onOpenTrigger)
 			} else {
-				Picker("Show", selection: $tab) {
-					ForEach(LoopDetailTab.allCases) { Text($0.rawValue).tag($0) }
+				if !headerInScreen {
+					Picker("Show", selection: Binding(get: { tab }, set: { tab = $0 })) {
+						ForEach(LoopDetailTab.allCases) { Text($0.rawValue).tag($0) }
+					}
+					.pickerStyle(.segmented)
 				}
-				.pickerStyle(.segmented)
 				switch tab {
 				case .outcome:
 					LoopTargetsSection(
@@ -195,6 +239,7 @@ struct LoopDetailContent: View {
 
 	private var header: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			if !headerInScreen {
 			HStack(alignment: .top, spacing: MaskinSpace.s9) {
 				LoopProgressRing(
 					loop: store.loop, size: MaskinSpace.s14 * 2 + MaskinSpace.s4 + MaskinSpace.s1,
@@ -209,6 +254,7 @@ struct LoopDetailContent: View {
 						.foregroundStyle(MaskinColor.ink5)
 					stateLine.padding(.top, MaskinSpace.s3)
 				}
+			}
 			}
 			if let notice = store.notice {
 				FormError(notice).onTapGesture { store.notice = nil }

@@ -44,6 +44,12 @@ private struct LoopsContainer: View {
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
 		self.workspaceID = workspaceID
+		#if DEBUG
+			// Design review: open a flow's detail (MASKIN_DEMO_FLOW=<flow id>).
+			if let id = ProcessInfo.processInfo.environment["MASKIN_DEMO_FLOW"] {
+				_loopSelection = State(initialValue: id)
+			}
+		#endif
 		_loops = State(
 			initialValue: LoopsStore(
 				api: APILoopsSource(
