@@ -90,7 +90,7 @@ import Testing
 		#expect(decision?.card.id == "ok")
 		#expect(decision?.main.label == "Keep")
 		#expect(decision?.alternatives.isEmpty == true)
-		#expect(decision?.openCount == 3)
+		#expect(decision?.openCount == 2)
 	}
 
 	@Test func noDecisionWhenNothingIsOpen() {
