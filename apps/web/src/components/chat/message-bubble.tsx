@@ -23,6 +23,7 @@ import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
 import { useThreadsPane } from './threads-context'
+import { VoiceMessageMetaTag } from './voice-call-boundary'
 
 function copyMessage(content: string) {
 	void navigator.clipboard?.writeText(content).then(
@@ -103,6 +104,7 @@ export function MessageBubble({
 	const mentions = message.metadata?.mentions ?? []
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
+	const isVoice = message.metadata?.source === 'voice'
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -221,6 +223,7 @@ export function MessageBubble({
 						format="clock"
 						className="text-[10px] text-muted-foreground"
 					/>
+					{isVoice ? <VoiceMessageMetaTag /> : null}
 					{canCopy && !editing ? (
 						<button
 							type="button"
@@ -286,6 +289,7 @@ export function MessageBubble({
 						format="clock"
 						className="shrink-0 text-[10px] text-muted-foreground"
 					/>
+					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
 				{fileList ? <div className="mt-1.5">{fileList}</div> : null}

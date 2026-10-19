@@ -57,7 +57,7 @@ import {
 } from './telemetry.js'
 import { tools } from './tools.js'
 
-interface McpConfig {
+export interface McpConfig {
 	apiBaseUrl: string
 	apiKey: string
 	defaultWorkspaceId: string
@@ -171,6 +171,24 @@ function addUrl(
  */
 function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
+}
+
+/**
+ * One line telling the agent which listed integrations are not live and how to
+ * get them reconnected, or null when every row is active. `pending` rows are an
+ * unfinished connect, not a broken connection, so they are left out.
+ */
+function buildReconnectHint(rows: Array<{ provider?: string; status?: string }>): string | null {
+	const broken = new Map<string, string>()
+	for (const row of rows) {
+		if (!row.provider || !row.status || row.status === 'active' || row.status === 'pending') {
+			continue
+		}
+		if (!broken.has(row.provider)) broken.set(row.provider, row.status)
+	}
+	if (broken.size === 0) return null
+	const list = [...broken].map(([provider, status]) => `${provider} (${status})`).join(', ')
+	return `Needs reconnecting: ${list}. To put a one-click Reconnect card in the chat, call connect_integration with that provider and end your turn. Do not tell the user to go to Settings.`
 }
 
 /** Default page size when the caller did not pass an explicit limit. Kept
@@ -2298,11 +2316,42 @@ function loadHtml(config: McpConfig, filename: string): string {
 	}
 }
 
+/**
+ * Runtime handler for a registered tool. Same wrapped shape the stdio / HTTP
+ * transports get — a plain function that takes the tool's args plus an
+ * `extra` bag (typically the request context) and returns the MCP tool
+ * response (`{ content, structuredContent?, _meta? }`). Exposed so callers
+ * (voice tool-proxy in Task 3, unit tests here) can dispatch tools without
+ * standing up a transport.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: exported for use across transports; concrete arg shape varies per tool.
+export type McpToolHandler = (args: unknown, extra?: any) => Promise<any>
+
+// Per-server handler registry, populated by createMcpServer as it registers
+// tools. Keyed by the server instance so multiple servers built with
+// different configs each get their own map — no cross-config leakage.
+const serverHandlers = new WeakMap<McpServer, Map<string, McpToolHandler>>()
+
+/**
+ * Retrieve the handler map for a server previously built by `createMcpServer`.
+ * Returns an empty map if the server wasn't built here — never undefined, so
+ * callers don't need to null-check.
+ */
+export function getServerHandlers(server: McpServer): Map<string, McpToolHandler> {
+	return serverHandlers.get(server) ?? new Map()
+}
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
 		version: '0.1.0',
 	})
+
+	// Populated inside the `registerAppTool` wrapper below as each tool is
+	// registered — one entry per tool, keyed by the same name the SDK indexes.
+	// Attached to the server via `serverHandlers` so `getServerHandlers`
+	// (and `createInvokeTool` in ./invoke.ts) can dispatch tools directly.
+	const handlers = new Map<string, McpToolHandler>()
 
 	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
 	const telemetryTarget = {
@@ -2438,6 +2487,12 @@ export function createMcpServer(config: McpConfig) {
 
 			return finalResponse
 		}
+
+		// Stash the wrapped handler so `getServerHandlers(server)` and
+		// `createInvokeTool(config)` can dispatch this tool without going
+		// through a transport. Same wrapped shape stdio/HTTP get — telemetry,
+		// token-cap and mutation classification all apply.
+		handlers.set(name, wrappedHandler)
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
 		return _registerAppTool(s, name, definition, wrappedHandler as any)
@@ -6193,6 +6248,35 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'get_session_activity',
+		{
+			description: tools.get_session_activity.description,
+			inputSchema: tools.get_session_activity.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.limit_turns) params.set('limit_turns', String(args.limit_turns))
+			if (args.message_id !== undefined) params.set('message_id', String(args.message_id))
+			if (args.before_log_id !== undefined) params.set('before_log_id', String(args.before_log_id))
+			const activity = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}/activity?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)) as Record<string, unknown>
+			return {
+				_meta: meta('get_session_activity', config, args.workspace_id),
+				// Same full payload on both channels (see known-pitfalls.md).
+				content: [{ type: 'text' as const, text: JSON.stringify(activity) }],
+				structuredContent: activity,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'stop_session',
 		{
 			description: tools.stop_session.description,
@@ -6309,12 +6393,14 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.createdAt ?? null,
 				getId: (row) => row.id,
 			})
+			const reconnectHint = buildReconnectHint(pagedRows)
+			const listText = buildListContentText({ integrations: pagedRows })
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText({ integrations: pagedRows }),
+						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
 					},
 				],
 				structuredContent: {
@@ -7347,6 +7433,12 @@ ${claudeCredsBlock}`,
 			}
 		}
 	}
+
+	// Expose the collected handlers so `getServerHandlers(server)` (and
+	// `createInvokeTool` in ./invoke.ts) can dispatch tools by name without a
+	// transport. Set after every registration completes so partial builds are
+	// invisible to callers.
+	serverHandlers.set(server, handlers)
 
 	return server
 }

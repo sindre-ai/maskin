@@ -49,6 +49,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Populated on a 429 whose body carries `retry_after_seconds` (voice session mint). */
+	retryAfterSeconds?: number
 	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
 	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
@@ -68,6 +70,9 @@ export class ApiError extends Error {
 		return Object.keys(this.fieldErrors).length > 0
 	}
 }
+
+const SERVICE_UNAVAILABLE_MESSAGE = 'Service unavailable. Please try again in a minute.'
+const SERVICE_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
 
 type RequestOptions = {
 	method?: string
@@ -116,6 +121,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
 		// the user still experienced a broken screen, so it belongs in Faro.
 		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
+		if (err instanceof TypeError) {
+			const unavailable = new ApiError(0, SERVICE_UNAVAILABLE_MESSAGE)
+			unavailable.code = 'NETWORK_ERROR'
+			throw unavailable
+		}
 		throw err
 	}
 
@@ -160,9 +170,19 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
+		// A gateway answering for a down backend (502/503/504) usually carries an
+		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
+		// blank toast. Those statuses always get the friendly message.
+		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+			message = SERVICE_UNAVAILABLE_MESSAGE
+		}
+
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		if (res.status === 429 && typeof data.retry_after_seconds === 'number') {
+			err.retryAfterSeconds = data.retry_after_seconds
+		}
 		err.retryAfterMs = retryAfterMs
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
@@ -923,6 +943,48 @@ export const api = {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+	},
+
+	voiceSessions: {
+		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
+		// credential comes back: the connection to the vendor is made by the
+		// server when the offer below is posted.
+		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+			request<{ voice_session_id: string }>('/voice-sessions', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		// Hands the browser's WebRTC offer to the server, which connects it to the
+		// vendor and attaches its own tool connection. tools_available is false when
+		// that attach failed; the call still runs, and the agent says tools are down.
+		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
+				`/voice-sessions/${voiceSessionId}/offer`,
+				{ method: 'POST', body: { sdp }, workspaceId },
+			),
+		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
+		// Idempotent, so a double hangup (End button then dialog close) is harmless.
+		// Audio seconds are what this client measured; the server clamps them to
+		// the call length.
+		hangup: (
+			workspaceId: string,
+			voiceSessionId: string,
+			body: {
+				reason: 'user_hangup' | 'network_error'
+				input_audio_seconds?: number
+				output_audio_seconds?: number
+			},
+		) =>
+			request<{
+				voice_session_id: string
+				status: string
+				ended_reason: string | null
+				ended_at: string | null
+				duration_ms: number
+				total_cost_usd: number | null
+				conversation_id: string | null
+			}>(`/voice-sessions/${voiceSessionId}/hangup`, { method: 'POST', body, workspaceId }),
 	},
 
 	userDisplaySettings: {
@@ -2105,8 +2167,11 @@ export interface MessageMetadata {
 	 * Backend-owned; stripped from anything a client sends. 'final_output'
 	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
 	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 * 'voice' marks a transcript line written by the voice tool-proxy.
 	 */
-	source?: 'final_output'
+	source?: 'final_output' | 'voice'
+	/** Backend-owned: the voice call a 'voice' message was transcribed from. */
+	voice_session_id?: string
 	final_output?: MessageFinalOutput
 	/**
 	 * Backend-owned; stripped from anything a client sends, so a forged message

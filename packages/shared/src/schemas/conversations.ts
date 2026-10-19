@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
 // Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
@@ -211,9 +212,12 @@ export const messageMetadataSchema = z.object({
 	/**
 	 * Marks how the message came to exist. Absent for anything a human typed
 	 * or an agent posted via the post_conversation_message MCP tool;
-	 * 'final_output' for an agent's automatically-posted end-of-turn reply.
+	 * 'final_output' for an agent's automatically-posted end-of-turn reply;
+	 * 'voice' for a transcript line written by the voice tool-proxy.
 	 */
-	source: z.enum(['final_output']).optional(),
+	source: z.enum(['final_output', 'voice']).optional(),
+	/** Backend-owned: the voice_sessions row a 'voice' message was transcribed from. */
+	voice_session_id: z.string().uuid().optional(),
 	final_output: messageFinalOutputSchema.optional(),
 	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
 	question: messageQuestionSchema.optional(),
@@ -240,6 +244,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		source: _source,
 		final_output: _finalOutput,
 		question: _question,
+		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
 		keychain_request: _keychainRequest,
 		...rest
@@ -266,11 +271,11 @@ export const addConversationParticipantsSchema = z.object({
 })
 
 export const conversationListQuerySchema = z.object({
-	pinned: z.coerce.boolean().optional(),
+	pinned: booleanQueryParam.optional(),
 	// Excludes archived conversations by default — matches the mockup's
 	// default "Chats" list, archived ones need an explicit filter to surface.
-	archived: z.coerce.boolean().default(false),
-	unread_only: z.coerce.boolean().optional(),
+	archived: booleanQueryParam.default(false),
+	unread_only: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

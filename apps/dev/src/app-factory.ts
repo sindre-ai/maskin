@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { type NodeWebSocket, createNodeWebSocket } from '@hono/node-ws'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
 import type { Database } from '@maskin/db'
@@ -13,6 +14,7 @@ import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
+import { redactLogLine } from './lib/redact-path'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -32,6 +34,7 @@ import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
+import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
@@ -46,6 +49,7 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -63,6 +67,7 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import voiceSessionsRoutes from './routes/voice-sessions'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
@@ -112,6 +117,13 @@ export interface CreateAppOptions {
 	 * side effects for no benefit when we just want the spec.
 	 */
 	includeExtensions?: boolean
+	/**
+	 * Receives the Node WebSocket handle created for this app. The server boot
+	 * (index.ts) calls `injectWebSocket(server)` on it once `serve()` returns —
+	 * upgrade requests are only routed to the app after that. Optional so tests
+	 * and spec-export paths, which never open a socket, can ignore it.
+	 */
+	onNodeWebSocket?: (nodeWebSocket: NodeWebSocket) => void
 }
 
 const OPENAPI_INFO = {
@@ -138,6 +150,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			: ['http://localhost:5173'])
 
 	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+	const nodeWebSocket = createNodeWebSocket({ app })
+	options.onNodeWebSocket?.(nodeWebSocket)
 
 	app.onError((err, c) => {
 		if (err instanceof PlanCapExceededError) {
@@ -244,7 +258,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use(
 		'*',
-		honoLogger((line, ...rest) => console.log(line.replace(/\?\S*/, ''), ...rest)),
+		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
 	)
 
 	app.use('*', async (c, next) => {
@@ -416,6 +430,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/conversations', conversationsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
+	app.route('/api/devices', devicesRoutes)
+	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
@@ -429,6 +445,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
+	app.route('/api/voice-sessions', voiceSessionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

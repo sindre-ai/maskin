@@ -37,6 +37,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'human signup stays open, the caller has no workspace yet; the agent branch is gated in the handler (a viewer naming a workspace gets 403)',
 	],
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
+	[
+		'POST',
+		'/api/voice-sessions/:id/hangup',
+		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
+	],
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
 	['POST', '/api/webhooks/skjald/:token', 'provider webhook, authenticated by token'],
@@ -73,6 +78,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
+	// Per-actor push registration: it writes the caller's own device row and touches no
+	// workspace data, and a read-only viewer still wants their own notifications.
+	['POST', '/api/devices', 'registers the caller\u2019s own device, no workspace data'],
+	['DELETE', '/api/devices/:id_or_token', 'removes only the caller\u2019s own device'],
+	[
+		'POST',
+		'/api/live-activities/tokens',
+		'registers a Live Activity token for the caller\u2019s own device',
+	],
+	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\u2019s own token'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
