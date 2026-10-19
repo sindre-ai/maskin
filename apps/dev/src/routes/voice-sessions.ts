@@ -21,6 +21,7 @@ import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
@@ -148,6 +149,7 @@ async function releasePendingSession(db: Database, id: string): Promise<void> {
 const postVoiceSessionRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Voice'],
 	summary: 'Start a 1:1 voice call: reserve the caller’s live-call slot',
 	description:
@@ -235,6 +237,9 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 	}
 
 	const workspaceId = membership.workspaceId
+
+	// A call acts through the agent and saves a transcript: a viewer is read-only.
+	await isWorkspaceWriter(db, humanActorId, workspaceId)
 
 	const [agent] = await db
 		.select({
@@ -350,6 +355,7 @@ const offerResponse = z
 const postOfferRoute = createRoute({
 	method: 'post',
 	path: '/{id}/offer',
+	'x-viewer-policy': 'writer',
 	tags: ['Voice'],
 	summary: 'Connect a reserved voice session to the vendor',
 	description:
@@ -401,17 +407,10 @@ app.openapi(postOfferRoute, async (c) => {
 
 	// Live membership, checked here rather than trusted from the mint: a member
 	// removed between the two cannot drive the call.
-	const [member] = await db
-		.select({ actorId: workspaceMembers.actorId })
-		.from(workspaceMembers)
-		.where(
-			and(
-				eq(workspaceMembers.actorId, humanActorId),
-				eq(workspaceMembers.workspaceId, session.workspaceId),
-			),
-		)
-		.limit(1)
-	if (!member) return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	// A member demoted to viewer in the meantime is refused too (403).
+	if (!(await isWorkspaceWriter(db, humanActorId, session.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	}
 
 	if (session.status !== 'pending' || session.vendorSessionId !== null) {
 		return c.json(createApiError('CONFLICT', 'This voice session already took an offer'), 409)

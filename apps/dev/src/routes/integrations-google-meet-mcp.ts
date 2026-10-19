@@ -4,7 +4,7 @@ import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
 import { createGoogleMeetMcpServer } from '../lib/integrations/providers/google-meet/mcp-server'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 /**
  * Streamable-HTTP MCP endpoint for the Google Meet integration, mounted at
@@ -52,7 +52,7 @@ app.post('/', async (c) => {
 		)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 

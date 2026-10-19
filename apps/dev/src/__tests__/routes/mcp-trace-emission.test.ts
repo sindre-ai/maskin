@@ -204,6 +204,87 @@ describe('MCP tool-call trace emission via /mcp', () => {
 		expect(traces().every((t) => t.agentActorId === 'actor-42')).toBe(true)
 	})
 
+	it('stamps api_key, the actor type and the client family on a resolved key', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+			'User-Agent': 'claude-cli/2.0.14 (external, cli)',
+		})
+		expect(traces()[0]).toMatchObject({
+			authMethod: 'api_key',
+			actorType: 'agent',
+			client: 'claude_code',
+		})
+		// The raw User-Agent is reduced to a label before it reaches the trace.
+		expect(JSON.stringify(traces()[0])).not.toContain('claude-cli')
+	})
+
+	it('reports a human key as actor_type human and an unknown User-Agent as other', async () => {
+		validateApiKey.mockResolvedValue({ actorId: 'actor-7', type: 'human' })
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+			'User-Agent': 'curl/8.4.0',
+		})
+		expect(traces()[0]).toMatchObject({
+			authMethod: 'api_key',
+			actorType: 'human',
+			client: 'other',
+		})
+	})
+
+	// An unresolved caller must never read as authenticated.
+	it('leaves auth_method and actor_type null when the key does not resolve', async () => {
+		validateApiKey.mockResolvedValue(null)
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			Authorization: 'Bearer ank_not_a_real_key',
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+			'User-Agent': 'Cursor/0.45.1',
+		})
+		expect(traces()[0]).toMatchObject({
+			agentActorId: null,
+			authMethod: null,
+			actorType: null,
+			client: 'cursor',
+		})
+	})
+
+	it('leaves auth_method null when no credential is sent, without querying for one', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			Authorization: '',
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+		expect(validateApiKey).not.toHaveBeenCalled()
+		expect(traces()[0]).toMatchObject({ authMethod: null, actorType: null, client: 'other' })
+	})
+
+	it('leaves auth_method null when the actor lookup throws', async () => {
+		validateApiKey.mockRejectedValue(new Error('db down'))
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), { 'X-Maskin-Session-Id': MASKIN_SESSION_ID })
+		expect(traces()[0]).toMatchObject({ authMethod: null, actorType: null })
+	})
+
+	it('serves the actor type from the memoized entry without a second query', async () => {
+		const app = await createApp()
+		for (const id of [1, 2]) {
+			respondOk(id)
+			await post(app, toolCall(id, 'list_objects', {}), {
+				'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+			})
+		}
+		expect(validateApiKey).toHaveBeenCalledTimes(1)
+		expect(traces().map((t) => t.actorType)).toEqual(['agent', 'agent'])
+		expect(traces().map((t) => t.authMethod)).toEqual(['api_key', 'api_key'])
+	})
+
 	it('still records misfires when trace capture throws', async () => {
 		captureMcpToolCall.mockRejectedValue(new Error('posthog exploded'))
 		mockHandleRequest.mockImplementation(

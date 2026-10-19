@@ -184,7 +184,7 @@ describe('AgentsIndexView', () => {
 			const sessions = screen.getByText('1 session')
 			expect(activity.className).toContain('md:block')
 			expect(sessions.parentElement?.className).toContain('md:flex')
-			expect(screen.getByText('$0.00').parentElement?.className).toContain('md:flex')
+			expect(screen.getByText('$0.00').parentElement?.className).toContain('lg:flex')
 		})
 
 		it('shows active sessions and total / last-30-day cost per agent', () => {

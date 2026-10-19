@@ -84,7 +84,11 @@ describe('POST /api/voice-sessions', () => {
 	it('400s when the target actor is not an agent', async () => {
 		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		mockResults.selectQueue = [[membershipRow()], [agentRow({ type: 'human' })]]
+		mockResults.selectQueue = [
+			[membershipRow()],
+			[{ role: 'member' }],
+			[agentRow({ type: 'human' })],
+		]
 		const res = await app.request(
 			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
 		)
@@ -98,6 +102,7 @@ describe('POST /api/voice-sessions', () => {
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[membershipRow()],
+			[{ role: 'member' }], // writer-role check
 			[agentRow()],
 			[{ seconds: '0' }], // daily minutes used
 		]
@@ -126,6 +131,7 @@ describe('POST /api/voice-sessions', () => {
 		)
 		mockResults.selectQueue = [
 			[membershipRow()],
+			[{ role: 'member' }], // writer-role check
 			[agentRow()],
 			[{ seconds: String(60 * 60) }], // daily seconds used: exactly the cap
 		]
@@ -151,6 +157,7 @@ describe('POST /api/voice-sessions', () => {
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[membershipRow()],
+			[{ role: 'member' }], // writer-role check
 			[agentRow()],
 			[{ seconds: '0' }], // daily minutes used
 		]
@@ -187,7 +194,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			...overrides,
 		}
 	}
-	const memberRow = () => ({ actorId: HUMAN })
+	const memberRow = () => ({ role: 'member' })
 	const offerAgent = () => ({
 		name: 'Chief of Staff',
 		systemPrompt: 'You are the Chief of Staff.',

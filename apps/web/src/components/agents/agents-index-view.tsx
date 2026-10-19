@@ -522,7 +522,7 @@ function AgentRowItem({
 					// "What it's doing now" (mockup 2333) shares the sessions column's
 					// breakpoint — at 768px the row otherwise carried a name and a status
 					// and nothing about the work.
-					<span className="hidden w-[140px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
+					<span className="hidden w-[110px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
 						{describeFocus(portrait, latestSession)}
 					</span>
 				)}
@@ -533,7 +533,9 @@ function AgentRowItem({
 					</span>
 				)}
 				{showCost && (
-					<span className="hidden w-[84px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground md:flex">
+					// Cost waits for `lg`: at 768px the content box is ~450px, and with it
+					// the fixed columns left the name column 0px wide and overflowing.
+					<span className="hidden w-[84px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground lg:flex">
 						<span>{formatUsd(row.totalCostUsd)}</span>
 						<span className="text-[10.5px] text-muted-foreground/70">
 							{formatUsd(row.last30dCostUsd)} · 30d

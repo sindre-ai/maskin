@@ -65,7 +65,7 @@ import {
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifySessionExit } from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -80,7 +80,10 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
-import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
+import {
+	mcpServersReferenceEnvKey,
+	serverSpecReferencesEnvKey,
+} from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
@@ -95,6 +98,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -120,6 +124,7 @@ import {
 	registerMcpInit,
 } from '../lib/mcp-health'
 import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -153,6 +158,7 @@ import {
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
+	sumAssistantUsage,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
@@ -614,6 +620,7 @@ export class SessionManager extends EventEmitter {
 			// still retries and still tells the human.
 			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
 			fallbackModel: readEmptyTurnFallbackModel(),
+			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
 		})
 	}
 
@@ -993,6 +1000,17 @@ export class SessionManager extends EventEmitter {
 		// pre-stage a temp dir locally — we only own the queue handoff.
 		if (this.dispatchQueue) {
 			try {
+				// Mark the row as waiting on a machine before it is enqueued. The row
+				// otherwise keeps its default session_state='queued', which the
+				// reaper's queued-rescue reads as a dead driver after 2 min: it
+				// re-fires _driveToRunning, startSession throws on the 'starting'
+				// status, and boot-stall fails the row as startup_stalled 5 min later
+				// while it is still legitimately waiting for a slot. Written before
+				// enqueue so it cannot overwrite the dispatcher's 'running'.
+				await this.db
+					.update(sessions)
+					.set({ sessionState: 'waiting_for_machine', stateEnteredAt: new Date() })
+					.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'starting')))
 				await this.dispatchQueue.enqueue(sessionId)
 				logger.info(`Session enqueued for remote dispatch: ${sessionId}`, {
 					workspaceId: session.workspaceId,
@@ -2175,7 +2193,13 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+		// A helper another agent started from a chat. It is interactive only so it
+		// can ask the person something, and it ends the moment it gives a result.
+		const helperPreamble =
+			sessionConfig.stop_on_result === true
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
+				: ''
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
 ${HUMAN_MESSAGE_STYLE}`
 
@@ -2324,7 +2348,12 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
 				oauthExpiresAtTaken = resolved.oauthExpiresAt
-				routeModelName = resolved.modelName
+				// maskin_plan names its model on the result; a BYO endpoint's model is
+				// the ANTHROPIC_MODEL it was configured with.
+				routeModelName =
+					resolved.route === LLM_ROUTE_CUSTOM
+						? resolved.envVars.ANTHROPIC_MODEL
+						: resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -2385,11 +2414,11 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
-		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
-		// OpenRouter model that will actually run: the follow-on local cost
-		// resolver keys OpenRouter's pricing table on that value, and without
+		// On the maskin_plan and workspace_custom routes we ALSO stamp
+		// `sessions.model_name` with the model that will actually run: the local
+		// cost resolver keys OpenRouter's pricing table on that value, and without
 		// it every non-Anthropic session reads as an Opus-priced number.
-		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// claude_oauth and the API-key routes leave `model_name` null on purpose —
 		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
@@ -2401,7 +2430,7 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
 			)
 			const modelNameToPersist =
-				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				(routeTaken === LLM_ROUTE_MASKIN_PLAN || routeTaken === LLM_ROUTE_CUSTOM) &&
 				routeModelName &&
 				routeModelName !== session.modelName
 					? routeModelName
@@ -2470,6 +2499,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const integrationTokens: Record<string, string> = {}
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2612,7 +2642,26 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (accessToken !== null) {
 				const envVarName =
 					mcp?.envKey ?? `${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
-				envVars[envVarName] = accessToken
+				// Server-side copy, for code in this process that needs a provider
+				// token without the container ever seeing it (the preflight Slack alert).
+				integrationTokens[envVarName] = accessToken
+				// The container only gets the token if the agent is meant to use it:
+				// its own tools config (or the session's MCP list) references the
+				// token variable, or the MCP server auto-injected below needs it to
+				// sign in. Anything else would hand every shell-capable agent in the
+				// workspace a credential it has no use for.
+				const agentUsesToken =
+					mcpServersReferenceEnvKey(agentToolsMcpServers, envVarName) ||
+					mcpServersReferenceEnvKey(sessionConfig.mcps, envVarName)
+				if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
+					envVars[envVarName] = accessToken
+				} else {
+					logger.debug('Integration token not injected; agent config does not reference it', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						provider: integration.provider,
+					})
+				}
 			}
 			if (autoInjectServer) {
 				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
@@ -2696,6 +2745,8 @@ ${HUMAN_MESSAGE_STYLE}`
 			'ANTHROPIC_MODEL',
 			'ANTHROPIC_SMALL_FAST_MODEL',
 			'MASKIN_CLAUDE_EFFORT',
+			'MAX_THINKING_TOKENS',
+			'MASKIN_DISABLE_WEB_SEARCH',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -2818,7 +2869,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						statusSnippet: v.statusSnippet,
 					})),
 				})
-				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
 						botToken: slackBotToken,
@@ -3181,6 +3232,12 @@ ${HUMAN_MESSAGE_STYLE}`
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
+						if (
+							chunk.stream === 'stdout' &&
+							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
+						) {
+							continue
+						}
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
 							await this.emitUnhealthyMcpWarningIfAny(sessionId, chunk.data)
@@ -3582,9 +3639,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
-			exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (classifiedFailureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
@@ -3947,6 +4002,7 @@ ${HUMAN_MESSAGE_STYLE}`
 	 */
 	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
+		let tokensOnly = false
 		try {
 			const drained = this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
@@ -3962,6 +4018,12 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (!usage) {
 				usage = await extractSessionUsage(this.db, sessionId)
 			}
+			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
+			// to the tokens the assistant messages reported. Cost stays null.
+			if (!usage) {
+				usage = await sumAssistantUsage(this.db, sessionId)
+				tokensOnly = usage !== null
+			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
 		}
@@ -3972,10 +4034,14 @@ ${HUMAN_MESSAGE_STYLE}`
 		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
 		// lookup failure falls back to the CLI figure rather than losing the
 		// segment's cost entirely.
+		// A tokens-only segment (no `result` envelope) skips this: it has no
+		// reported cost, and pricing its tokens here would be a guess.
 		let resolvedCostUsd = usage.totalCostUsd
 		try {
-			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
-			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			if (!tokensOnly) {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			}
 		} catch (err) {
 			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
 				sessionId,
@@ -4253,6 +4319,102 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
+		)
+	}
+
+	/**
+	 * Ends a helper session (one an agent started from a chat, config.stop_on_result)
+	 * once it has returned its result. A helper runs interactively so it can ask
+	 * the person a question, but an interactive session never exits on its own;
+	 * without this it would sit idle, holding a container, until the timeout.
+	 *
+	 * Settled through settleSession like any other end, so the row reads
+	 * completed (or failed), `notify_on_complete` still sends the result back to
+	 * the agent that started it, and `wait: true` callers see it finish.
+	 */
+	async finishHelperSession(
+		sessionId: string,
+		outcome: { isError: boolean; text: string },
+	): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session || session.status !== 'running') return
+
+		const settled = await settleSession(
+			session.id,
+			outcome.isError
+				? {
+						kind: 'fail',
+						classification: 'unknown',
+						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
+						resultText: outcome.text,
+						// Same settle source the idle close uses: the remote stop endpoint
+						// validates it against a fixed list, and this is a close-out of an
+						// idle interactive session.
+						source: 'idle-watcher',
+					}
+				: {
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'idle-watcher',
+						resultText: outcome.text,
+					},
+			this.buildSettleDeps(),
+		)
+		if (settled.alreadySettled) return
+
+		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
+
+		if (!session.agentServerId && session.containerId) {
+			await this.containers.remove(session.containerId).catch((err) =>
+				logger.warn('Failed to remove helper container', {
+					sessionId: session.id,
+					containerId: session.containerId,
+					error: String(err),
+				}),
+			)
+		}
+
+		if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+			const now = new Date()
+			await this.db
+				.update(actors)
+				.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+				.where(eq(actors.id, session.actorId))
+				.catch((err) =>
+					logger.warn('Failed to sync agentState after helper finished', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		this.telemetry.recordSessionEnded({
+			sessionId: session.id,
+			endReason: outcome.isError ? 'failed' : 'completed',
+			durationMs: elapsedMs(session.startedAt, session.createdAt),
+			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+		})
+
+		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
+		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+		await this.insertSystemLog(session.id, 'Session completed — result returned').catch((err) =>
+			logger.warn('Failed to write helper close system log', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
+
+		await this.clearActiveSession(session.id)
+		await this.cleanupBrowserSidecar(session.id)
+		await this.cleanupSession(session.id)
+
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after helper finished', { error: String(err) }),
 		)
 	}
 
@@ -5378,6 +5540,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// paths (queue-drain rejection, remote sessions) that have no
 		// activeSessions entry to key off.
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 	}
 
 	/**
@@ -5394,6 +5557,9 @@ ${HUMAN_MESSAGE_STYLE}`
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, line.content)) {
+				continue
+			}
 			if (line.stream === 'stdout') {
 				await this.emitGithubCauseTagIfAny(sessionId, line.content)
 				await this.emitUnhealthyMcpWarningIfAny(sessionId, line.content)
@@ -5670,9 +5836,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,
@@ -6025,6 +6189,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)

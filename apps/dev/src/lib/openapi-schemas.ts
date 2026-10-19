@@ -130,6 +130,13 @@ export const workspaceResponseSchema = z.object({
 	id: z.string().uuid(),
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
+	// Whether a BYO key is stored, for every caller. Only a human admin or owner
+	// gets llm_keys, custom_llm, claude_oauth and billing inside settings.
+	llm_configured: z.object({
+		anthropic: z.boolean(),
+		openai: z.boolean(),
+		custom_llm: z.boolean(),
+	}),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
 	// column OR an enterprise billing owner), not the raw column. Derived, so it
@@ -371,12 +378,14 @@ export const spawnedSessionResponseSchema = z.object({
 	actorId: z.string().uuid(),
 	actorName: z.string(),
 	actionPrompt: z.string(),
+	createdAt: z.string().nullable(),
 	startedAt: z.string().nullable(),
 	completedAt: z.string().nullable(),
 	durationMs: z.number().nullable(),
 	result: jsonbField.nullable(),
 	currentActivity: z.string().nullable(),
 	depends_on_session_ids: z.array(z.string().uuid()),
+	awaiting: z.object({ message_id: z.number(), question: z.unknown() }).nullable(),
 })
 
 /**

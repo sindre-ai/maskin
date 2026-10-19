@@ -138,6 +138,11 @@ export const messageQuestionSchema = z.object({
 	/** The session whose turn asked. Ties the answer back to the right agent. */
 	session_id: z.string().uuid(),
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
+	/**
+	 * The asking session is a helper another agent started, not a participant of
+	 * this chat: the answer goes to that session's input, not to the chat's agents.
+	 */
+	reply_to_session: z.boolean().optional(),
 })
 
 /**
@@ -157,6 +162,22 @@ export const messageQuestionAnswerSchema = z.object({
 		)
 		.min(1)
 		.max(MESSAGE_MAX_QUESTIONS),
+})
+
+/**
+ * Set by the backend when an agent in a chat calls `connect_integration`: the
+ * chat renders a Connect card (button for OAuth providers, key input for
+ * API-key providers) instead of the agent pasting a URL. Never accepted from a
+ * client — the POST /messages route strips it, same as `question`.
+ *
+ * Only the provider name is stored. The card reads live integration status, so
+ * it flips to "Connected" by itself and never shows a stale state on scrollback.
+ */
+export const messageIntegrationConnectSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** Provider name as listed by `GET /api/integrations/providers`, e.g. 'linear'. */
+	provider: z.string().min(1).max(100),
 })
 
 export const messageMetadataSchema = z.object({
@@ -181,6 +202,10 @@ export const messageMetadataSchema = z.object({
 	question: messageQuestionSchema.optional(),
 	/** Client-supplied: which options the human picked for a `question`. */
 	question_answer: messageQuestionAnswerSchema.optional(),
+	/** Backend-owned: an agent's request to connect an integration, shown as a card. */
+	integration_connect: messageIntegrationConnectSchema.optional(),
+	/** Backend-owned: the helper session whose result this message hands to its sender. */
+	helper_return: z.string().uuid().optional(),
 })
 
 /**
@@ -197,6 +222,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		final_output: _finalOutput,
 		question: _question,
 		voice_session_id: _voiceSessionId,
+		integration_connect: _integrationConnect,
 		...rest
 	} = metadata
 	return rest as T
@@ -290,6 +316,7 @@ export const updateConversationParticipantStateSchema = z
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
+export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>
 export type MessageQuestionItem = z.infer<typeof messageQuestionItemSchema>
 export type MessageQuestionAnswer = z.infer<typeof messageQuestionAnswerSchema>
 
@@ -306,6 +333,19 @@ export function formatQuestionsAsMarkdown(questions: MessageQuestionItem[]): str
 			return [q.question, ...options].join('\n')
 		})
 		.join('\n\n')
+}
+
+/** The `connect-card` request body: the provider `connect_integration` was called with. */
+export const sessionConnectCardSchema = z.object({
+	provider: z.string().min(1).max(100),
+})
+
+/**
+ * The plain-markdown rendering of a connect card, used as the message's
+ * `content` so every reader that isn't the chat UI still says what is needed.
+ */
+export function formatIntegrationConnectAsMarkdown(displayName: string): string {
+	return `Connect **${displayName}** to continue — use the Connect card below, or go to Settings → Integrations.`
 }
 
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */

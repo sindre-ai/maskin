@@ -325,62 +325,55 @@ describe('ThreadHeader — v4 actions', () => {
 		})
 	})
 
-	// S2 · bet 34706e2f, task 5 — the Produced toggle mounts only when the
-	// route resolves `graph-provenance-writes` on. Count is a `<span>` with
-	// `aria-label` so screen readers hear "N items produced" rather than the
-	// pill glyph, and the toggle carries aria-pressed for open/closed state.
-	describe('Produced toggle (S2 · graph-provenance-writes)', () => {
-		it('renders the toggle with the count pill when producedEnabled', () => {
+	// The Overview toggle is the single entry point to the right rail's Threads
+	// and Produced tabs. It mounts only when the route passes a handler (either
+	// tab's flag is on), carries aria-pressed for open/closed, and pulses a dot
+	// while something has changed since the pane was last open.
+	describe('Overview toggle', () => {
+		function setup() {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
 			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
 			mockUseLoop.mockReturnValue({ data: null })
-			renderHeader(true, {
-				producedEnabled: true,
-				producedCount: 4,
-				producedOpen: false,
-				onToggleProduced: vi.fn(),
-			})
-			const toggle = screen.getByRole('button', { name: /Open Produced pane/i })
-			expect(toggle).toBeInTheDocument()
+		}
+
+		it('renders the toggle when the route passes a handler', () => {
+			setup()
+			renderHeader(true, { overviewOpen: false, onToggleOverview: vi.fn() })
+			const toggle = screen.getByRole('button', { name: /Open Overview/i })
 			expect(toggle).toHaveAttribute('aria-pressed', 'false')
-			expect(screen.getByLabelText('4 items produced')).toHaveTextContent('4')
+			expect(screen.queryByRole('status', { name: 'New activity' })).not.toBeInTheDocument()
 		})
 
-		it('does not render the toggle when producedEnabled is false', () => {
-			mockUseConversation.mockReturnValue({ data: buildConversation() })
-			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
-			mockUseLoop.mockReturnValue({ data: null })
-			renderHeader(true, { producedEnabled: false, producedCount: 4 })
-			expect(screen.queryByRole('button', { name: /Produced pane/i })).not.toBeInTheDocument()
+		it('does not render the toggle without a handler', () => {
+			setup()
+			renderHeader(true, {})
+			expect(screen.queryByRole('button', { name: /Overview/i })).not.toBeInTheDocument()
 		})
 
-		it('calls onToggleProduced when clicked and flips aria-pressed', async () => {
+		it('shows the new-activity dot when overviewHasNew', () => {
+			setup()
+			renderHeader(true, { onToggleOverview: vi.fn(), overviewHasNew: true })
+			expect(screen.getByRole('status', { name: 'New activity' })).toBeInTheDocument()
+		})
+
+		it('calls onToggleOverview when clicked and flips aria-pressed', async () => {
 			const user = userEvent.setup()
 			const onToggle = vi.fn()
-			mockUseConversation.mockReturnValue({ data: buildConversation() })
-			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
-			mockUseLoop.mockReturnValue({ data: null })
-			const { rerender } = renderHeader(true, {
-				producedEnabled: true,
-				producedCount: 2,
-				producedOpen: false,
-				onToggleProduced: onToggle,
-			})
-			await user.click(screen.getByRole('button', { name: /Open Produced pane/i }))
+			setup()
+			const { rerender } = renderHeader(true, { overviewOpen: false, onToggleOverview: onToggle })
+			await user.click(screen.getByRole('button', { name: /Open Overview/i }))
 			expect(onToggle).toHaveBeenCalledOnce()
 			rerender(
 				<ThreadHeader
 					workspaceId="ws-1"
 					conversationId="conv-1"
 					v4Polish={true}
-					producedEnabled={true}
-					producedCount={2}
-					producedOpen={true}
-					onToggleProduced={onToggle}
+					overviewOpen={true}
+					onToggleOverview={onToggle}
 				/>,
 			)
 			await waitFor(() =>
-				expect(screen.getByRole('button', { name: /Close Produced pane/i })).toHaveAttribute(
+				expect(screen.getByRole('button', { name: /Close Overview/i })).toHaveAttribute(
 					'aria-pressed',
 					'true',
 				),

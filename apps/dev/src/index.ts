@@ -25,6 +25,7 @@ import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
@@ -197,6 +198,10 @@ commentDispatcher.start()
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
+
+const gscSyncScheduler = new GscSyncScheduler(db)
+gscSyncScheduler.start()
+logger.info('GSC sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
