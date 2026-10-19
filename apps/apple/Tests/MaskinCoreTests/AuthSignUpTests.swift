@@ -11,6 +11,8 @@ private let secret = "correct-horse-battery"
 private struct FakeSignUp: Authenticating {
 	var result: Result<SignUpResult, any Error>
 	var recorder = KeyRecorder()
+	/// When set, the call parks here (after recording its key) until the test releases it.
+	var gate: Gate?
 	func login(email: String, password: String) async throws -> LoginResult {
 		throw AuthError.invalidCredentials
 	}
@@ -18,6 +20,7 @@ private struct FakeSignUp: Authenticating {
 		-> SignUpResult
 	{
 		recorder.keys.withLock { $0.append(idempotencyKey) }
+		await gate?.wait()
 		return try result.get()
 	}
 }
@@ -40,10 +43,10 @@ private let created = SignUpResult(
 @MainActor
 @Suite("AuthSession sign-up")
 struct AuthSignUpTests {
-	private func make(_ result: Result<SignUpResult, any Error>, store: InMemorySecretStore = .init())
-		-> (AuthSession, InMemorySecretStore, InMemoryFirstUseStore, FakeSignUp)
-	{
-		let fake = FakeSignUp(result: result)
+	private func make(
+		_ result: Result<SignUpResult, any Error>, store: InMemorySecretStore = .init(), gate: Gate? = nil
+	) -> (AuthSession, InMemorySecretStore, InMemoryFirstUseStore, FakeSignUp) {
+		let fake = FakeSignUp(result: result, gate: gate)
 		let firstUse = InMemoryFirstUseStore()
 		let auth = AuthSession(authenticator: fake, store: store, firstUse: firstUse)
 		return (auth, store, firstUse, fake)
@@ -128,11 +131,19 @@ struct AuthSignUpTests {
 
 	@Test("a second sign-up while one is running is ignored")
 	func reentrancy() async {
-		let (auth, _, _, fake) = make(.success(created))
-		async let a: Void = auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
-		async let b: Void = auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
-		_ = await (a, b)
+		// The first sign-up is held inside the authenticator until the second has been attempted, so
+		// "while one is running" is a fact of the test, not a scheduling accident (a fake that returns
+		// at once can finish before the second call even starts, and then it is legitimately accepted).
+		let gate = Gate()
+		let (auth, _, _, fake) = make(.success(created), gate: gate)
+		let first = Task { await auth.signUp(name: "Sam", email: "sam@example.com", password: secret) }
+		await gate.waitUntilStarted()
+		#expect(auth.isSigningUp)
+		await auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
+		await gate.release()
+		await first.value
 		#expect(fake.recorder.keys.withLock { $0.count } == 1)
+		#expect(!auth.isSigningUp)
 	}
 
 	@Test("no credential appears in any error's text or description")
