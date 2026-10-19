@@ -390,6 +390,19 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 		],
 	)
 
+	// Call is offered only when exactly one agent is addressed, counting both the
+	// To-row chips and @-mentioned agents (a multi-agent call is v2). People
+	// don't count: a call targets the agent.
+	const callAgent = useMemo<Recipient | null>(() => {
+		const agents = new Map<string, Recipient>()
+		for (const r of recipients) if (r.type === 'agent') agents.set(r.id, r)
+		for (const id of selection.agents) {
+			const c = candidates.find((cand) => cand.id === id)
+			if (c?.type === 'agent') agents.set(c.id, c)
+		}
+		return agents.size === 1 ? (agents.values().next().value ?? null) : null
+	}, [recipients, selection.agents, candidates])
+
 	const composerPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
@@ -559,6 +572,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 					textareaLabel="Message this conversation"
 					value={draft}
 					onValueChange={setDraft}
+					callAgent={callAgent}
 				/>
 			</div>
 		</div>

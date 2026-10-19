@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,7 +34,7 @@ import {
 	Plus,
 	X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -78,6 +79,14 @@ export function ThreadHeader({
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
 	const loopId = conversation?.loop_id ?? null
+	// Call mounts only for a thread with exactly one agent participant: a
+	// multi-agent call is v2, and with two agents there is no single agent for
+	// the button to mean.
+	const voiceAgent = useMemo(() => {
+		const agents = (conversation?.participants ?? []).filter((p) => p.actorType === 'agent')
+		const only = agents.length === 1 ? agents[0] : null
+		return only ? { id: only.actorId, name: only.actorName, type: only.actorType } : null
+	}, [conversation?.participants])
 	// Only resolve the loop when the v4 chip can render — flag off means the
 	// chip never mounts, so the lookup is skipped rather than fetched and wasted.
 	const { data: loop } = useLoop(v4Polish ? (loopId ?? '') : '', workspaceId)
@@ -331,6 +340,7 @@ export function ThreadHeader({
 					</Tooltip>
 				) : null}
 				<span className="ml-auto" />
+				{voiceAgent ? <AgentCallButton agent={voiceAgent} variant="icon" /> : null}
 				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
 				    ⋯ menu; Focus + Close stay inline (v4 spec). v4-only. */}
 				{v4Polish ? (

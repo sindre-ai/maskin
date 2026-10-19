@@ -96,6 +96,13 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
+	// Projected from actors.metadata->>'voice_enabled' — read-only surface,
+	// writes go through POST /actors/:id/voice-mode. Mirrors installedLoopId
+	// above so agents doing read-modify-write via MCP never accidentally
+	// overwrite the raw metadata JSONB. Optional at the type level so
+	// existing fixtures + callers that pre-date the voice bet don't need to
+	// synthesise a value.
+	voice_enabled: z.boolean().optional(),
 	skills: z.array(actorSkillSchema).optional(),
 	// Populated only when X-Workspace-Id is provided — the actor's membership
 	// role in that specific workspace (mirrors the `role` field on the

@@ -37,6 +37,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'human signup stays open, the caller has no workspace yet; the agent branch is gated in the handler (a viewer naming a workspace gets 403)',
 	],
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
+	[
+		'POST',
+		'/api/voice-sessions/:id/hangup',
+		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
+	],
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
 	['POST', '/api/webhooks/skjald/:token', 'provider webhook, authenticated by token'],
