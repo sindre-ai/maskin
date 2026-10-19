@@ -29,6 +29,8 @@ import {
 	trackRelationshipCreated,
 	trackScrollToTop,
 	trackSidebarToggle,
+	trackSidebarWorkspaceSwitcherDismissedImmediately,
+	trackSidebarWorkspaceSwitcherOpenAttempted,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSindreMessageReceived,
 	trackSindreMessageSent,
@@ -562,6 +564,28 @@ describe('v1 taxonomy helpers', () => {
 
 		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.opened', {
 			workspaceId: 'ws-42',
+		})
+	})
+
+	it('sidebar.workspace_switcher.open_attempted carries the workspaceId and pointerType', () => {
+		const capture = captureSpy()
+
+		trackSidebarWorkspaceSwitcherOpenAttempted({ workspaceId: 'ws-42', pointerType: 'touch' })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.open_attempted', {
+			workspaceId: 'ws-42',
+			pointerType: 'touch',
+		})
+	})
+
+	it('sidebar.workspace_switcher.dismissed_immediately carries the workspaceId and openMs', () => {
+		const capture = captureSpy()
+
+		trackSidebarWorkspaceSwitcherDismissedImmediately({ workspaceId: 'ws-42', openMs: 12 })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.dismissed_immediately', {
+			workspaceId: 'ws-42',
+			openMs: 12,
 		})
 	})
 

@@ -8,7 +8,14 @@ vi.mock('@/lib/api', () => ({
 			list: vi.fn(),
 			logs: vi.fn(),
 			create: vi.fn(),
+			stop: vi.fn(),
 		},
+	},
+}))
+
+vi.mock('sonner', () => ({
+	toast: {
+		error: vi.fn(),
 	},
 }))
 
@@ -20,10 +27,12 @@ import {
 	useMentionSessionsForObject,
 	useSession,
 	useSessionErrorLog,
+	useStopSession,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -192,6 +201,35 @@ describe('useCreateSession', () => {
 		result.current.mutate({ actor_id: 'actor-1', action_prompt: 'Bad' })
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Forbidden')
+	})
+})
+
+describe('useStopSession', () => {
+	it('calls api.sessions.stop and does not toast on success', async () => {
+		vi.mocked(api.sessions.stop).mockResolvedValue(
+			buildSession({ id: 'session-1', status: 'failed' }),
+		)
+
+		const { result } = renderHook(() => useStopSession(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('session-1')
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.sessions.stop).toHaveBeenCalledWith('session-1', workspaceId)
+		expect(toast.error).not.toHaveBeenCalled()
+	})
+
+	it('toasts an error when the stop fails instead of failing silently', async () => {
+		vi.mocked(api.sessions.stop).mockRejectedValue(new Error('agent-server request failed'))
+
+		const { result } = renderHook(() => useStopSession(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('session-1')
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(toast.error).toHaveBeenCalledWith('Failed to stop session')
 	})
 })
 
