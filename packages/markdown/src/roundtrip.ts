@@ -1,10 +1,10 @@
 // Headless Markdown ↔ Tiptap round-trip helper.
 //
-// Mirrors the extension set that `<MarkdownEditor variant='document'>` mounts
-// in `./react/editor.tsx` — same StarterKit configuration, same code-block +
-// link + table + task-list wiring, same `tiptap-markdown` options. The React
-// editor and the CI fixture suite must exercise the same pipeline; if they
-// drift, the fixture guarantee becomes a fiction.
+// Builds its editor from `buildExtensions('document', ...)` in `./extensions`,
+// the same function `<MarkdownEditor variant='document'>` mounts in
+// `./react/editor.tsx`. It is imported, not copied: the React editor and the CI
+// fixture suite exercise one pipeline, so the fixture guarantee cannot drift
+// from what the app ships.
 //
 // Used by:
 //   - `src/__tests__/roundtrip.test.ts` — real agent-generated fixture suite
@@ -15,54 +15,11 @@
 // environment must set one up first.
 
 import { Editor } from '@tiptap/core'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import Link from '@tiptap/extension-link'
-import Table from '@tiptap/extension-table'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
-import TableRow from '@tiptap/extension-table-row'
-import TaskItem from '@tiptap/extension-task-item'
-import TaskList from '@tiptap/extension-task-list'
-import StarterKit from '@tiptap/starter-kit'
-import { common, createLowlight } from 'lowlight'
-import { Markdown } from 'tiptap-markdown'
-
-const lowlight = createLowlight(common)
+import { buildExtensions } from './extensions'
 
 function buildEditor(markdown: string): Editor {
 	return new Editor({
-		extensions: [
-			// Match `document` variant in editor.tsx: keep all StarterKit nodes
-			// except CodeBlock (replaced by lowlight), and expose H1–H6 so the
-			// fixture suite can exercise every ATX level. The React editor caps
-			// at H1–H3 for UX; the round-trip layer must not, or agent-generated
-			// H4+ headings silently degrade to paragraphs.
-			StarterKit.configure({
-				codeBlock: false,
-				heading: { levels: [1, 2, 3, 4, 5, 6] },
-			}),
-			CodeBlockLowlight.configure({ lowlight }),
-			Link.configure({
-				openOnClick: false,
-				autolink: true,
-				HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
-			}),
-			Markdown.configure({
-				html: false,
-				tightLists: true,
-				bulletListMarker: '-',
-				linkify: false,
-				breaks: true,
-				transformPastedText: true,
-				transformCopiedText: true,
-			}),
-			Table.configure({ resizable: false }),
-			TableRow,
-			TableHeader,
-			TableCell,
-			TaskList,
-			TaskItem.configure({ nested: true }),
-		],
+		extensions: buildExtensions('document', undefined, undefined, undefined),
 		content: markdown,
 	})
 }

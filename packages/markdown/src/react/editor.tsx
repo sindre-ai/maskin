@@ -1,16 +1,6 @@
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import Link from '@tiptap/extension-link'
-import Placeholder from '@tiptap/extension-placeholder'
-import Table from '@tiptap/extension-table'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
-import TableRow from '@tiptap/extension-table-row'
-import TaskItem from '@tiptap/extension-task-item'
-import TaskList from '@tiptap/extension-task-list'
+import type { Editor } from '@tiptap/core'
 import type { Extensions } from '@tiptap/react'
 import { EditorContent, useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import { common, createLowlight } from 'lowlight'
 import {
 	forwardRef,
 	useCallback,
@@ -20,26 +10,39 @@ import {
 	useRef,
 	useState,
 } from 'react'
-import { Markdown } from 'tiptap-markdown'
+import { editorMarkdownIt, nodeFeatures, serializeTopLevelBlocks } from '../editor-blocks'
+import { type EditorDisallowedNode, type EditorVariant, buildExtensions } from '../extensions'
+import {
+	type LossConstruct,
+	type ReadOnlyCause,
+	type SourceSession,
+	buildSave,
+	createSourceSession,
+	findReadOnlyCause,
+} from '../source-blocks'
+import { MarkdownRenderer } from './renderer'
 
-// One lowlight instance across every editor mount — building the language
-// registry is not free and it never changes at runtime.
-const lowlight = createLowlight(common)
-
-export type EditorVariant = 'document' | 'comment' | 'notification'
-
-export type EditorDisallowedNode = 'heading' | 'table' | 'taskList' | 'codeBlock'
+export type { EditorDisallowedNode, EditorVariant }
 
 export interface MentionSuggestionItem {
 	id: string
 	label: string
 }
 
+/**
+ * What the shared editor event carries. A real parse failure has reason
+ * parse_error. A file or description that opens read-only has reason
+ * read_only_fallback and a cause. A block the editor could not write back
+ * without losing something has reason loss_check and the construct found.
+ */
 export interface MarkdownParseErrorInfo {
 	errorMessage: string
 	variant: EditorVariant
 	surface: string | undefined
 	objectId: string | undefined
+	reason: 'parse_error' | 'read_only_fallback' | 'loss_check'
+	cause?: ReadOnlyCause
+	construct?: LossConstruct
 }
 
 export interface MarkdownEditorProps {
@@ -60,11 +63,23 @@ export interface MarkdownEditorProps {
 	className?: string
 	extensions?: Extensions
 	/**
-	 * Fires when tiptap-markdown fails to parse `value` on mount. Callers wire
-	 * this to PostHog's `editor_markdown_parse_error` event — the fallback path
-	 * itself renders the raw string as plain text so the editor never crashes.
+	 * Fires when tiptap-markdown fails to parse `value` on mount, when
+	 * `preserveSource` opens read-only, and when a rewrite is refused. Callers
+	 * wire this to PostHog's `editor_markdown_parse_error` event — the fallback
+	 * path itself renders the raw string as plain text so the editor never crashes.
 	 */
 	onParseError?: (info: MarkdownParseErrorInfo) => void
+	/**
+	 * Treat `value` as source text to protect. The editor writes back only the
+	 * top-level blocks the person touched (every other block, the blank lines
+	 * between blocks and the final newline come back as loaded), refuses to
+	 * rewrite a block it cannot hold losslessly, and opens read-only when the
+	 * text has front matter, raw HTML, footnotes or link reference definitions,
+	 * or when its blocks cannot be matched. `onChange` and `onChangeInternal`
+	 * then receive that text. Read-only and still-checking states render the
+	 * normal read view.
+	 */
+	preserveSource?: boolean
 	/** Free-text surface identifier passed to `onParseError` (spec §11). */
 	surface?: string
 	objectId?: string
@@ -83,72 +98,6 @@ const MAX_ERROR_MESSAGE_LENGTH = 500
 function truncateErrorMessage(err: unknown): string {
 	const raw = err instanceof Error ? err.message : String(err)
 	return raw.length > MAX_ERROR_MESSAGE_LENGTH ? `${raw.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…` : raw
-}
-
-const HEADING_LEVELS_BY_VARIANT: Record<EditorVariant, Array<1 | 2 | 3>> = {
-	document: [1, 2, 3],
-	comment: [],
-	notification: [],
-}
-
-function buildExtensions(
-	variant: EditorVariant,
-	disallowedNodes: EditorDisallowedNode[] | undefined,
-	placeholder: string | undefined,
-	extra: Extensions | undefined,
-): Extensions {
-	const disallowed = new Set<EditorDisallowedNode>(disallowedNodes ?? [])
-	const headingLevels = HEADING_LEVELS_BY_VARIANT[variant]
-	const includeHeading = headingLevels.length > 0 && !disallowed.has('heading')
-	const includeTable = variant === 'document' && !disallowed.has('table')
-	const includeTaskList = variant !== 'notification' && !disallowed.has('taskList')
-	const includeCodeBlock = !disallowed.has('codeBlock')
-
-	const extensions: Extensions = [
-		// StarterKit ships Doc, Paragraph, Text, Bold, Italic, Strike, BulletList,
-		// OrderedList, ListItem, Blockquote, HorizontalRule, Code (inline),
-		// HardBreak, History, Dropcursor, Gapcursor. CodeBlock is replaced by
-		// CodeBlockLowlight below; Heading is variant-gated.
-		StarterKit.configure({
-			codeBlock: false,
-			heading: includeHeading ? { levels: headingLevels } : false,
-		}),
-		Link.configure({
-			openOnClick: false,
-			autolink: true,
-			HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
-		}),
-		Placeholder.configure({
-			placeholder: placeholder ?? 'Write, or press / for commands',
-		}),
-		// Round-trips markdown to a ProseMirror doc on load and back to markdown
-		// on save. Fenced code, GFM tables, task lists, strike all flow through.
-		Markdown.configure({
-			html: false,
-			tightLists: true,
-			bulletListMarker: '-',
-			linkify: false,
-			breaks: true,
-			transformPastedText: true,
-			transformCopiedText: true,
-		}),
-	]
-
-	if (includeCodeBlock) {
-		extensions.push(CodeBlockLowlight.configure({ lowlight }))
-	}
-
-	if (includeTable) {
-		extensions.push(Table.configure({ resizable: false }), TableRow, TableHeader, TableCell)
-	}
-
-	if (includeTaskList) {
-		extensions.push(TaskList, TaskItem.configure({ nested: true }))
-	}
-
-	if (extra) extensions.push(...extra)
-
-	return extensions
 }
 
 /**
@@ -173,6 +122,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			className,
 			extensions,
 			onParseError,
+			preserveSource = false,
 			surface,
 			objectId,
 		},
@@ -187,6 +137,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		// and saves it, where the Textarea path returns early when the draft
 		// equals the saved content.
 		const dirtyRef = useRef(false)
+		// preserveSource: 'pending' until the text has been checked against the
+		// read-only list, then 'editable' or 'readonly' for good (per mount).
+		const [sourceStatus, setSourceStatus] = useState<'pending' | 'editable' | 'readonly'>(
+			preserveSource ? 'pending' : 'editable',
+		)
+		const sourceSessionRef = useRef<SourceSession | null>(null)
+		const readOnlyRef = useRef(false)
+		const refusalsReportedRef = useRef(new Set<string>())
 
 		const tiptapExtensions = useMemo(
 			() => buildExtensions(variant, disallowedNodes, placeholder, extensions),
@@ -198,9 +156,38 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				if (parseErrorReportedRef.current) return
 				parseErrorReportedRef.current = true
 				setParseFailed(true)
-				onParseError?.({ errorMessage, variant, surface, objectId })
+				onParseError?.({ errorMessage, variant, surface, objectId, reason: 'parse_error' })
 			},
 			[onParseError, variant, surface, objectId],
+		)
+
+		// The markdown to hand to callers. With preserveSource it is the original
+		// text with only the touched blocks rewritten; otherwise the editor's own
+		// serialisation of the whole document.
+		const markdownOf = useCallback(
+			(e: Editor): string => {
+				const session = sourceSessionRef.current
+				if (!preserveSource || !session) return e.storage.markdown.getMarkdown() as string
+				const result = buildSave(session, {
+					current: serializeTopLevelBlocks(e),
+					currentFeatures: (index) => nodeFeatures(e.state.doc.child(index)),
+				})
+				for (const refusal of result.refused) {
+					const key = `${refusal.construct}:${refusal.blocks.join(',')}`
+					if (refusalsReportedRef.current.has(key)) continue
+					refusalsReportedRef.current.add(key)
+					onParseError?.({
+						errorMessage: `rewrite refused: ${refusal.construct}`,
+						variant,
+						surface,
+						objectId,
+						reason: 'loss_check',
+						construct: refusal.construct,
+					})
+				}
+				return result.text
+			},
+			[preserveSource, onParseError, variant, surface, objectId],
 		)
 
 		const editor = useEditor(
@@ -212,7 +199,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				onBlur: ({ editor: e }) => {
 					if (dirtyRef.current) {
 						try {
-							const markdown = e.storage.markdown.getMarkdown() as string
+							const markdown = markdownOf(e)
 							onChange(markdown)
 							dirtyRef.current = false
 						} catch (err) {
@@ -226,7 +213,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					dirtyRef.current = true
 					if (!onChangeInternal) return
 					try {
-						onChangeInternal(e.storage.markdown.getMarkdown() as string)
+						onChangeInternal(markdownOf(e))
 					} catch {
 						// swallow — the blur path is authoritative
 					}
@@ -252,12 +239,54 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			[tiptapExtensions],
 		)
 
+		// preserveSource: check the text against the read-only list once the
+		// editor has parsed it. Whole file, never half. A read-only open is one
+		// event, and nothing is ever sent to the server from it.
+		useEffect(() => {
+			if (!editor || !preserveSource || sourceStatus !== 'pending') return
+			try {
+				const md = editorMarkdownIt(editor)
+				const cause = findReadOnlyCause(md, value, editor.state.doc.childCount)
+				if (cause) {
+					// StrictMode runs this effect twice before the state lands.
+					const alreadyReported = readOnlyRef.current
+					readOnlyRef.current = true
+					editor.setEditable(false)
+					setSourceStatus('readonly')
+					if (!alreadyReported) {
+						onParseError?.({
+							errorMessage: `opened read-only: ${cause}`,
+							variant,
+							surface,
+							objectId,
+							reason: 'read_only_fallback',
+							cause,
+						})
+					}
+					return
+				}
+				sourceSessionRef.current = createSourceSession(md, value, serializeTopLevelBlocks(editor))
+				setSourceStatus('editable')
+			} catch (err) {
+				readOnlyRef.current = true
+				editor.setEditable(false)
+				setSourceStatus('readonly')
+				onParseError?.({
+					errorMessage: truncateErrorMessage(err),
+					variant,
+					surface,
+					objectId,
+					reason: 'parse_error',
+				})
+			}
+		}, [editor, preserveSource, sourceStatus, value, onParseError, variant, surface, objectId])
+
 		// Malformed-Markdown fallback: `tiptap-markdown` swallows most invalid
 		// input silently rather than throwing, so an editor that mounts with
 		// non-empty markdown but returns an empty doc is treated as a parse
 		// failure — matches the AC's "no crash, plain text render, one event".
 		useEffect(() => {
-			if (!editor || parseFailed) return
+			if (!editor || parseFailed || readOnlyRef.current) return
 			try {
 				const roundTrip = editor.storage.markdown.getMarkdown() as string
 				if (value.trim().length > 0 && roundTrip.trim().length === 0) {
@@ -271,12 +300,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		const getMarkdown = useCallback((): string => {
 			if (parseFailed) return value
 			if (!editor) return value
+			if (preserveSource && sourceStatus !== 'editable') return value
 			try {
-				return editor.storage.markdown.getMarkdown() as string
+				return markdownOf(editor)
 			} catch {
 				return value
 			}
-		}, [editor, parseFailed, value])
+		}, [editor, parseFailed, value, preserveSource, sourceStatus, markdownOf])
 
 		useImperativeHandle(
 			ref,
@@ -296,6 +326,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			return (
 				<div className={className}>
 					<pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{value}</pre>
+				</div>
+			)
+		}
+
+		// Still checking, or opened read-only: the normal read view of the text.
+		if (preserveSource && sourceStatus !== 'editable') {
+			return (
+				<div className={className}>
+					<MarkdownRenderer content={value} />
 				</div>
 			)
 		}

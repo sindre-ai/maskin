@@ -28,6 +28,18 @@
 		"./react/editor": {
 			"types": "./src/react/editor.tsx",
 			"default": "./dist/react/editor.js"
+		},
+		"./extensions": {
+			"types": "./src/extensions.ts",
+			"default": "./dist/extensions.js"
+		},
+		"./source-blocks": {
+			"types": "./src/source-blocks.ts",
+			"default": "./dist/source-blocks.js"
+		},
+		"./editor-blocks": {
+			"types": "./src/editor-blocks.ts",
+			"default": "./dist/editor-blocks.js"
 		}
 	},
 	"scripts": {
