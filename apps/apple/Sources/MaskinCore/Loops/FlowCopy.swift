@@ -6,10 +6,13 @@ public enum LoopLatestUpdate {
 	public struct Line: Equatable, Sendable {
 		public var author: String?
 		public var text: String
+		/// When the post was written; nil when the API did not say.
+		public var date: Date?
 
-		public init(author: String?, text: String) {
+		public init(author: String?, text: String, date: Date? = nil) {
 			self.author = author
 			self.text = text
+			self.date = date
 		}
 	}
 
@@ -68,7 +71,7 @@ public enum LoopLatestUpdate {
 	public static func line(post: LoopPost, author: String?, limit: Int = LoopLatestUpdate.limit) -> Line? {
 		let text = sentence(from: post.text, limit: limit)
 		guard !text.isEmpty else { return nil }
-		return Line(author: author, text: text)
+		return Line(author: author, text: text, date: post.date)
 	}
 }
 

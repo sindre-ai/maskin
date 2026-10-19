@@ -3,67 +3,117 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One flow in the list as a glanceable card: icon tile, name, "cycle · stage", a Patina "Needs you"
-/// chip when the viewer is the blocker, the newest thing an agent said as one line of secondary
-/// text (one line, Decision 1), and the flow's first target inline. The stats row is gone: those
-/// counts live on the flow page. Pure values in,
-/// so it renders in previews and snapshots.
+/// One flow in the list as a glanceable card (v4): name and state pill, three numbers, the agents
+/// on it with the newest thing one of them said, a callout when the flow waits on the viewer, and
+/// the flow's first target inline. Pure values in, so it renders in previews and snapshots.
 struct LoopCard: View {
 	let loop: LoopSummary
 	let needsYou: Bool
 	var hasUpdate = false
 	var update: LoopLatestUpdate.Line?
+	/// The agents on the flow, by display name.
+	var agentNames: [String] = []
 	/// The most urgent target, when the flow has any.
 	var target: OutcomeCard?
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			header
-			if let update { latest(update) }
+			stats
+			if update != nil || !agentNames.isEmpty { latestRow }
 			if let target { targetBlock(target) }
+			if loop.waitingCount > 0 || needsYou { waitingCallout }
 		}
-		.padding(.vertical, MaskinSpace.s9)
-		.padding(.horizontal, MaskinSpace.s10)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
+		.padding(MaskinSpace.s9)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
+				.strokeBorder(MaskinSurface.separator, lineWidth: 1)
+		)
 		.contentShape(Rectangle())
-		.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
+		.maskinHover(.lift, cornerRadius: MaskinRadius.tile)
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
 
 	private var header: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s8) {
-			Image(systemName: "arrow.triangle.2.circlepath")
-				.maskinSymbol(MaskinSpace.s11, weight: .semibold)
-				.foregroundStyle(MaskinColor.sigInk)
-				.frame(width: MaskinSpace.s14 + MaskinSpace.s8, height: MaskinSpace.s14 + MaskinSpace.s8)
-				.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
-				.accessibilityHidden(true)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				HStack(spacing: MaskinSpace.s3) {
-					Text(loop.displayName)
-						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.bold, relativeTo: .headline))
-						.tracking(-0.018 * MaskinFontSize.t17)
-						.foregroundStyle(MaskinColor.ink)
-						.lineLimit(2)
-					if hasUpdate {
-						Image(systemName: "arrow.up.circle.fill")
-							.font(.caption)
-							.foregroundStyle(MaskinColor.sigInk)
-							.accessibilityLabel("Update available")
-					}
-				}
-				Text(stageLine)
-					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-					.foregroundStyle(MaskinColor.ink5)
-					.lineLimit(1)
+		HStack(alignment: .center, spacing: MaskinSpace.s4) {
+			Text(loop.displayName)
+				.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.bold, relativeTo: .headline))
+				.tracking(-0.018 * MaskinFontSize.t17)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(2)
+			if hasUpdate {
+				Image(systemName: "arrow.up.circle.fill")
+					.font(.caption)
+					.foregroundStyle(MaskinColor.sigInk)
+					.accessibilityLabel("Update available")
 			}
 			Spacer(minLength: MaskinSpace.s3)
-			if needsYou { NeedsYouChip() }
+			Text(loop.pill.label)
+				.maskinText(.caption)
+				.fontWeight(.bold)
+				.foregroundStyle(MaskinColor.sigInk)
+				.padding(.horizontal, MaskinSpace.s5)
+				.frame(height: MaskinSpace.s12)
+				.background(MaskinColor.sigTint, in: Capsule())
 		}
 	}
 
-	/// The newest post as one line of secondary text, its author in semibold ahead of the rest.
+	/// Waiting on you, in progress, closed.
+	private var stats: some View {
+		HStack(alignment: .bottom, spacing: MaskinSpace.s11) {
+			stat(loop.waitingCount, "Waiting on you")
+			stat(loop.inProgressCount, "In progress")
+			stat(loop.closedCount, "Closed")
+		}
+	}
+
+	private func stat(_ value: Int, _ label: String) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			Text("\(value)")
+				.font(MaskinTypeface.sans(MaskinFontSize.t22, weight: .heavy, relativeTo: .title2))
+				.monospacedDigit()
+				.foregroundStyle(MaskinColor.ink)
+			Text(label).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+		}
+		.fixedSize()
+	}
+
+	/// The agents on the flow as overlapping initials, then the newest post and when it was written.
+	private var latestRow: some View {
+		HStack(alignment: .center, spacing: MaskinSpace.s5) {
+			if !agentNames.isEmpty { FlowAvatarStack(names: agentNames) }
+			if let update { latest(update) } else { Spacer(minLength: 0) }
+			if let date = update?.date {
+				RelativeTime(date, style: .compact)
+					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+			}
+		}
+		.padding(.top, MaskinSpace.s5)
+		.overlay(alignment: .top) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
+	}
+
+	/// The flow waits on the viewer: a tinted callout that reads the count.
+	private var waitingCallout: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			Circle().fill(MaskinScreenHeader.inkTop).frame(width: MaskinSpace.s3 + 1, height: MaskinSpace.s3 + 1)
+				.accessibilityHidden(true)
+			Text(loop.waitingCount > 0 ? "\(loop.waitingCount) waiting on you" : "Needs you")
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
+				.foregroundStyle(MaskinScreenHeader.inkTop)
+			Spacer(minLength: 0)
+			Image(systemName: "chevron.right")
+				.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
+				.foregroundStyle(MaskinColor.sig)
+				.accessibilityHidden(true)
+		}
+		.padding(.horizontal, MaskinSpace.s7)
+		.padding(.vertical, MaskinSpace.s5)
+		.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+	}
+
+	/// The newest post as text, its author in semibold ahead of the rest.
 	private func latest(_ update: LoopLatestUpdate.Line) -> some View {
 		Group {
 			if let author = update.author {
@@ -72,9 +122,9 @@ struct LoopCard: View {
 				Text(update.text)
 			}
 		}
-		.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+		.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 		.foregroundStyle(MaskinColor.ink4)
-		.lineLimit(1)
+		.lineLimit(2)
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
@@ -110,7 +160,7 @@ struct LoopCard: View {
 	}
 
 	private var accessibilityLabel: String {
-		var parts = [loop.displayName, stageLine]
+		var parts = [loop.displayName, stageLine, "\(loop.waitingCount) waiting on you, \(loop.inProgressCount) in progress, \(loop.closedCount) closed"]
 		if needsYou { parts.append("Needs you") }
 		if let update { parts.append(([update.author, update.text].compactMap { $0 }).joined(separator: " ")) }
 		if let target {
@@ -157,5 +207,32 @@ struct LoopProgressRing: View {
 		}
 		.frame(width: size, height: size)
 		.accessibilityHidden(true)
+	}
+}
+
+/// Up to three agents on a flow as overlapping initials on the avatar gradient, then "+n".
+struct FlowAvatarStack: View {
+	let names: [String]
+	var limit = 3
+
+	var body: some View {
+		HStack(spacing: -MaskinSpace.s3) {
+			ForEach(Array(names.prefix(limit).enumerated()), id: \.offset) { _, name in
+				Text(name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?")
+					.maskinText(.caption)
+					.fontWeight(.bold)
+					.foregroundStyle(MaskinColor.avFg)
+					.frame(width: MaskinSpace.s13 - MaskinSpace.s2, height: MaskinSpace.s13 - MaskinSpace.s2)
+					.background(Circle().fill(MaskinGradient.avatar))
+					.overlay(Circle().strokeBorder(MaskinSurface.card, lineWidth: 2))
+			}
+			if names.count > limit {
+				Text("+\(names.count - limit)")
+					.maskinText(.caption).fontWeight(.semibold).foregroundStyle(MaskinColor.ink4)
+					.padding(.leading, MaskinSpace.s5)
+			}
+		}
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("Agents: \(names.joined(separator: ", "))")
 	}
 }

@@ -30,6 +30,8 @@ public struct ForYouScreen: View {
 	@State private var path: [String] = []
 	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
 	@State private var undoOffer: UndoOffer?
+	/// The briefing being read. Owned here because on iPhone the briefing row sits in the header.
+	@State private var openStory: StoryCard?
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -45,7 +47,7 @@ public struct ForYouScreen: View {
 			store: runtime.store, outbox: runtime.outbox,
 			openObject: openObject, chief: runtime.chief, environment: environment,
 			stories: appRuntime.storiesStore(), wide: isWide, undoOffer: $undoOffer,
-			openAgent: { appRuntime.openAgent($0) }
+			openAgent: { appRuntime.openAgent($0) }, openStory: $openStory
 		)
 		.shellToolbar(
 			environment: environment, title: "For you",
@@ -59,17 +61,23 @@ public struct ForYouScreen: View {
 						if !store.options.filterBarOn { store.options.intent = nil }
 					}
 				}),
-			header: ShellHeaderContent(kicker: ShellHeaderKicker.date(.now)) {
-				if runtime.store.options.filterBarOn {
-					ScreenHeaderChipRow {
-						ForEach(ForYouFeedView.intents, id: \.self) { intent in
-							let count = runtime.store.intentCount(intent)
-							if intent == nil || count > 0 || runtime.store.options.intent == intent {
-								ScreenHeaderChip(
-									label: intent?.label ?? "All", count: "\(count)",
-									selected: runtime.store.options.intent == intent
-								) {
-									withAnimation(MaskinMotion.standard) { runtime.store.options.intent = intent }
+			header: ShellHeaderContent(kicker: nil, showsSearch: false) {
+				VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+					if let stories = appRuntime.storiesStore(), !stories.cards.isEmpty {
+						StoryRow(stories: stories, open: { card in openStory = card }, metrics: .forYou)
+							.contentMargins(.horizontal, MaskinSpace.s9, for: .scrollContent)
+					}
+					if runtime.store.options.filterBarOn {
+						ScreenHeaderChipRow {
+							ForEach(ForYouFeedView.intents, id: \.self) { intent in
+								let count = runtime.store.intentCount(intent)
+								if intent == nil || count > 0 || runtime.store.options.intent == intent {
+									ScreenHeaderChip(
+										label: intent?.label ?? "All", count: "\(count)",
+										selected: runtime.store.options.intent == intent
+									) {
+										withAnimation(MaskinMotion.standard) { runtime.store.options.intent = intent }
+									}
 								}
 							}
 						}
@@ -138,7 +146,8 @@ struct ForYouFeedView: View {
 	var undoOffer: Binding<UndoOffer?> = .constant(nil)
 	/// Opens the agent behind "with {agent}". Nil in snapshots.
 	var openAgent: ((String) -> Void)?
-	@State private var openStory: StoryCard?
+	/// The briefing being read; the screen owns it (the row sits in its header on iPhone).
+	@Binding var openStory: StoryCard?
 	/// Which cards the reader opened with Discuss; the rest stay compact.
 	/// Width of the feed, to pick the briefing card size with or without the sidebar open.
 	@State private var feedWidth: CGFloat = 0
@@ -173,7 +182,8 @@ struct ForYouFeedView: View {
 					Color.clear.frame(height: 0).id(Self.topId)
 						.listRowSeparator(.hidden).listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets())
-					if let stories, !stories.cards.isEmpty {
+					// On iPhone the briefing row sits in the screen header.
+					if wide, let stories, !stories.cards.isEmpty {
 						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
 						.listRowSeparator(.hidden)
 						.listRowBackground(Color.clear)

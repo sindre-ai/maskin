@@ -117,7 +117,7 @@ private struct LoopsContainer: View {
 		.shellToolbar(
 			environment: environment, title: "Flows",
 			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }),
-			header: ShellHeaderContent(kicker: "FLOWS") {
+			header: ShellHeaderContent(kicker: "FLOWS", showsAccount: false) {
 				ScreenHeaderChipRow {
 					ScreenHeaderChip(label: "All", selected: !loops.needsYouOnly) {
 						withAnimation(MaskinMotion.quick) { loops.needsYouOnly = false }

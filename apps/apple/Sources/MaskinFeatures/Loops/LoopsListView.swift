@@ -31,7 +31,7 @@ struct LoopsListView: View {
 		LoopCard(
 			loop: loop, needsYou: store.needsYou(loop),
 			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-			update: store.latestUpdate(for: loop),
+			update: store.latestUpdate(for: loop), agentNames: store.agentNames(for: loop),
 			target: LoopOutcomes.cards(for: [loop]).first)
 	}
 

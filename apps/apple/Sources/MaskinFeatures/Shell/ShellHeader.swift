@@ -6,16 +6,28 @@ import SwiftUI
 /// The words in a root screen's header: the kicker above the title, and optional filter chips
 /// under it (`ScreenHeaderChip`s in a `ScreenHeaderChipRow`).
 public struct ShellHeaderContent {
-	public var kicker: String
+	/// Nil leaves the line empty (For you has none).
+	public var kicker: String?
+	/// False drops the search button (For you: search is one tap away in the tab bar).
+	public var showsSearch: Bool
+	/// False drops the account avatar (Team and Flows).
+	public var showsAccount: Bool
 	public var chips: AnyView?
 
-	public init<Chips: View>(kicker: String, @ViewBuilder chips: () -> Chips) {
+	public init<Chips: View>(
+		kicker: String?, showsSearch: Bool = true, showsAccount: Bool = true,
+		@ViewBuilder chips: () -> Chips
+	) {
 		self.kicker = kicker
+		self.showsSearch = showsSearch
+		self.showsAccount = showsAccount
 		self.chips = AnyView(chips())
 	}
 
-	public init(kicker: String) {
+	public init(kicker: String?, showsSearch: Bool = true, showsAccount: Bool = true) {
 		self.kicker = kicker
+		self.showsSearch = showsSearch
+		self.showsAccount = showsAccount
 		self.chips = nil
 	}
 }
@@ -112,10 +124,12 @@ struct ShellHeaderView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				HStack(spacing: MaskinSpace.s4) {
-					Text(content.kicker)
-						.maskinText(.microLabelLarge)
-						.foregroundStyle(MaskinScreenHeader.kicker)
-						.lineLimit(1)
+					if let kicker = content.kicker {
+						Text(kicker)
+							.maskinText(.microLabelLarge)
+							.foregroundStyle(MaskinScreenHeader.kicker)
+							.lineLimit(1)
+					}
 					Spacer(minLength: MaskinSpace.s4)
 					buttons
 				}
@@ -136,10 +150,9 @@ struct ShellHeaderView: View {
 			if actions.live {
 				HeaderButton(symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel, prominent: true, action: openLive)
 			}
-			if let new = actions.new {
-				HeaderButton(symbol: "plus", label: actions.newLabel, prominent: true, action: new)
+			if content.showsSearch {
+				HeaderButton(symbol: "magnifyingglass", label: "Search", action: openSearch)
 			}
-			HeaderButton(symbol: "magnifyingglass", label: "Search", action: openSearch)
 			if let display = actions.display {
 				Menu {
 					display.content
@@ -152,7 +165,8 @@ struct ShellHeaderView: View {
 					symbol: actions.displaySymbol, label: actions.displayActive ? "Filter, shown" : "Filter",
 					marked: actions.displayActive, action: toggle)
 			}
-			if showsAvatar {
+			// New is the rightmost button, after the avatar when there is one.
+			if showsAvatar, content.showsAccount {
 				Button(action: openProfile) {
 					ShellNavAvatar(name: environment.auth.session?.name ?? "")
 						.frame(width: MaskinScreenHeader.buttonSize, height: MaskinScreenHeader.buttonSize)
@@ -160,6 +174,9 @@ struct ShellHeaderView: View {
 				}
 				.buttonStyle(.plain)
 				.accessibilityLabel("Account")
+			}
+			if let new = actions.new {
+				HeaderButton(symbol: "plus", label: actions.newLabel, prominent: true, action: new)
 			}
 		}
 	}

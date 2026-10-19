@@ -423,7 +423,7 @@ export function overrides({ method, path, params, query, base, item }) {
 					snippet: r.snippet,
 					snippet_actor_id: r.with[0],
 					snippet_actor_name: r.by,
-					participants: [...r.with.map(participant), participant(ME.id)],
+					participants: [...r.with.map(participantRow), participantRow(ME.id)],
 				})),
 				has_more: false,
 			},
