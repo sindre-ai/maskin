@@ -80,6 +80,10 @@ test.describe('Agent Keychain card', () => {
 		page,
 		account,
 	}) => {
+		// The receipt links to the Keychain pages, which only exist behind this flag.
+		await page.addInitScript(() => {
+			localStorage.setItem('ff:keychain-settings-ui', 'on')
+		})
 		const conversation = await account.api.createConversation(account.workspaceId, {
 			title: `Keychain login ${Date.now()}`,
 			participant_actor_ids: [],

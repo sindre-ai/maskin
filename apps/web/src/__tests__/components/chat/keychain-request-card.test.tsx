@@ -5,6 +5,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
+const flags = vi.hoisted(() => ({ settingsUi: true }))
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id === 'keychain-settings-ui' && flags.settingsUi,
+}))
+
 const mockChatCapture = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/lib/api')>()),
@@ -59,6 +64,7 @@ async function fillLogin(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	flags.settingsUi = true
 	participants = [
 		{ actorId: 'human-1', actorName: 'Magnus', actorType: 'human' },
 		{ actorId: ASKING_AGENT, actorName: 'Bookkeeper', actorType: 'agent' },
@@ -181,6 +187,27 @@ describe('KeychainRequestCard', () => {
 		// The message is visible to everyone in the chat and to the agent: no value in it.
 		expect(content).not.toContain(PASSWORD)
 		expect(content).not.toContain('me@example.test')
+	})
+
+	it('points at the Keychain settings only when the settings pages exist', async () => {
+		const user = userEvent.setup()
+		renderCard()
+		expect(screen.getByText(/Settings → Keychain/)).toBeInTheDocument()
+		await fillLogin(user)
+		await user.click(screen.getByRole('button', { name: 'Save to Keychain' }))
+		expect(await screen.findByRole('link', { name: 'Manage in Keychain' })).toBeInTheDocument()
+	})
+
+	it('hides the link and the Settings line when the Keychain settings flag is off', async () => {
+		flags.settingsUi = false
+		const user = userEvent.setup()
+		renderCard()
+		expect(screen.getByText('Saved for this workspace.')).toBeInTheDocument()
+		expect(screen.queryByText(/Settings → Keychain/)).not.toBeInTheDocument()
+		await fillLogin(user)
+		await user.click(screen.getByRole('button', { name: 'Save to Keychain' }))
+		expect(await screen.findByText(/to the Keychain\./)).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Manage in Keychain' })).not.toBeInTheDocument()
 	})
 
 	it('does not restart the agent when its idle session could not be stopped, and says so', async () => {
