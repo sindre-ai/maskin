@@ -106,7 +106,15 @@ public struct ObjectsScreen: View {
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(
 					environment: environment, title: usesHeader ? "Objects" : nil, actions: shellActions,
-					header: ShellHeaderContent(kicker: "OBJECTS"))
+					header: ShellHeaderContent(kicker: "OBJECTS") {
+						ScreenHeaderChipRow {
+							ForEach(ObjectTypeTab.tabs(for: store)) { tab in
+								ScreenHeaderChip(
+									label: tab.label, count: tab.count, selected: tab.scope == store.scope
+								) { Task { await store.setScope(tab.scope) } }
+							}
+						}
+					})
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)

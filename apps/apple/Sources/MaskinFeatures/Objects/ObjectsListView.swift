@@ -120,10 +120,13 @@ struct ObjectsListView: View {
 			.padding(.horizontal, MaskinSpace.s11)
 			.accessibilityLabel("\(store.title). Go to")
 			.accessibilityHint("Opens the list of places to go")
-			ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
-				Task { await store.setScope(scope) }
+			// iPhone shows the type tabs as chips in the screen header.
+			if sizeClass != .compact {
+				ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
+					Task { await store.setScope(scope) }
+				}
+				.padding(.top, MaskinSpace.s5)
 			}
-			.padding(.top, MaskinSpace.s5)
 			if store.statusFilter != nil {
 				filterChips.padding(.top, MaskinSpace.s5)
 			}

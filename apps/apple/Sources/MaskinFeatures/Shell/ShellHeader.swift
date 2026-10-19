@@ -3,11 +3,66 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The words in a root screen's header: the kicker above the title.
+/// The words in a root screen's header: the kicker above the title, and optional filter chips
+/// under it (`ScreenHeaderChip`s in a `ScreenHeaderChipRow`).
 public struct ShellHeaderContent {
 	public var kicker: String
+	public var chips: AnyView?
 
-	public init(kicker: String) { self.kicker = kicker }
+	public init<Chips: View>(kicker: String, @ViewBuilder chips: () -> Chips) {
+		self.kicker = kicker
+		self.chips = AnyView(chips())
+	}
+
+	public init(kicker: String) {
+		self.kicker = kicker
+		self.chips = nil
+	}
+}
+
+/// A filter chip on the dark header: translucent white, solid white when selected.
+struct ScreenHeaderChip: View {
+	let label: String
+	var count: String?
+	let selected: Bool
+	let action: () -> Void
+
+	var body: some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			action()
+		} label: {
+			HStack(spacing: MaskinSpace.s3) {
+				Text(label).maskinText(.subhead).fontWeight(.semibold)
+				if let count {
+					Text(count).maskinText(.caption).fontWeight(.bold).monospacedDigit().opacity(0.7)
+				}
+			}
+			.foregroundStyle(selected ? MaskinScreenHeader.inkTop : Color.white)
+			.padding(.horizontal, MaskinSpace.s8)
+			.frame(height: MaskinSpace.s14 + MaskinSpace.s2)
+			.background(Capsule().fill(selected ? Color.white : MaskinScreenHeader.buttonFill))
+			.overlay(Capsule().strokeBorder(MaskinScreenHeader.buttonRing, lineWidth: selected ? 0 : 1))
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(count.map { "\(label), \($0)" } ?? label)
+		.accessibilityAddTraits(selected ? .isSelected : [])
+	}
+}
+
+/// The row of chips under the title: scrolls sideways, bleeds to the screen edges.
+struct ScreenHeaderChipRow<Content: View>: View {
+	@ViewBuilder var content: Content
+
+	var body: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s4) { content }
+				.padding(.horizontal, MaskinSpace.s9)
+		}
+		.scrollClipDisabled()
+	}
 }
 
 /// The v4 root-screen header on iPhone: kicker and buttons on one row, then the large title, on the dark teal gradient. The content that follows rides up over its bottom edge.
@@ -23,22 +78,25 @@ struct ShellHeaderView: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			HStack(spacing: MaskinSpace.s4) {
-				Text(content.kicker)
-					.maskinText(.microLabelLarge)
-					.foregroundStyle(MaskinScreenHeader.kicker)
+			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+				HStack(spacing: MaskinSpace.s4) {
+					Text(content.kicker)
+						.maskinText(.microLabelLarge)
+						.foregroundStyle(MaskinScreenHeader.kicker)
+						.lineLimit(1)
+					Spacer(minLength: MaskinSpace.s4)
+					buttons
+				}
+				Text(title)
+					.maskinText(.largeTitle)
+					.foregroundStyle(.white)
 					.lineLimit(1)
-				Spacer(minLength: MaskinSpace.s4)
-				buttons
+					.minimumScaleFactor(0.7)
+					.accessibilityAddTraits(.isHeader)
 			}
-			Text(title)
-				.maskinText(.largeTitle)
-				.foregroundStyle(.white)
-				.lineLimit(1)
-				.minimumScaleFactor(0.7)
-				.accessibilityAddTraits(.isHeader)
+			.padding(.horizontal, MaskinSpace.s9)
+			if let chips = content.chips { chips }
 		}
-		.padding(.horizontal, MaskinSpace.s9)
 		.padding(.top, MaskinSpace.s4)
 		// Room for the sheet to ride up over this edge.
 		.padding(.bottom, MaskinSpace.s12 + MaskinScreenHeader.overlap)

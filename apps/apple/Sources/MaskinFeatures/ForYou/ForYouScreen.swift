@@ -59,7 +59,23 @@ public struct ForYouScreen: View {
 						if !store.options.filterBarOn { store.options.intent = nil }
 					}
 				}),
-			header: ShellHeaderContent(kicker: ShellHeaderKicker.date(.now))
+			header: ShellHeaderContent(kicker: ShellHeaderKicker.date(.now)) {
+				if runtime.store.options.filterBarOn {
+					ScreenHeaderChipRow {
+						ForEach(ForYouFeedView.intents, id: \.self) { intent in
+							let count = runtime.store.intentCount(intent)
+							if intent == nil || count > 0 || runtime.store.options.intent == intent {
+								ScreenHeaderChip(
+									label: intent?.label ?? "All", count: "\(count)",
+									selected: runtime.store.options.intent == intent
+								) {
+									withAnimation(MaskinMotion.standard) { runtime.store.options.intent = intent }
+								}
+							}
+						}
+					}
+				}
+			}
 		)
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()
@@ -145,7 +161,7 @@ struct ForYouFeedView: View {
 	private let sidebarFeedWidth: CGFloat = 780
 
 	private static let topId = "forYou.top"
-	private static let intents: [ForYouIntent?] = [nil] + ForYouIntent.allCases
+	static let intents: [ForYouIntent?] = [nil] + ForYouIntent.allCases
 
 	var body: some View {
 		let entries = store.entries
@@ -163,7 +179,8 @@ struct ForYouFeedView: View {
 						.listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: rowInset, bottom: MaskinSpace.s3, trailing: rowInset))
 					}
-					if store.options.filterBarOn { intentPills }
+					// iPhone shows the intent filter as chips in the screen header.
+					if store.options.filterBarOn, wide { intentPills }
 					headerRows(entries: entries)
 					feedRows(entries: entries)
 				}

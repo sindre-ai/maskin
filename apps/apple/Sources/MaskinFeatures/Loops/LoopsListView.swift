@@ -81,7 +81,8 @@ struct LoopsListView: View {
 					.listRowBackground(Color.clear)
 					.onTapGesture { store.notice = nil }
 			}
-			if search.isEmpty, store.needYouCount > 0 {
+			// iPhone shows this filter as chips in the screen header.
+			if search.isEmpty, store.needYouCount > 0, sizeClass != .compact {
 				FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
 					withAnimation(MaskinMotion.quick) { store.needsYouOnly.toggle() }
 				}
