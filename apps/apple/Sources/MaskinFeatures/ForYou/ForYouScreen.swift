@@ -345,14 +345,13 @@ struct ForYouFeedView: View {
 				// The wide feed decides inline (pills, Return); there are no swipe rows to explain.
 				if !wide { swipeHint }
 				ForEach(groups(of: open), id: \.bucket) { group in
-					// The primary group is the feed itself: the design shows no header above it.
-					if group.bucket != .needs {
-						SectionHeader(
-							title: title(for: group.bucket), count: group.entries.count,
-							action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
-						)
-						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
-					}
+					SectionHeader(
+						title: title(for: group.bucket), count: group.entries.count,
+						countText: group.bucket == .needs
+							? "\(group.entries.count) \(group.entries.count == 1 ? "decision" : "decisions")" : nil,
+						action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
+					)
+					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if wide {
 						decisionGrid(group.entries)
 					} else {
@@ -410,7 +409,7 @@ struct ForYouFeedView: View {
 			HandledSummary.make(for: entry, sender: store.senderName(of: entry.card)).map { (entry, $0) }
 		}
 		if store.options.showsHandled, !rows.isEmpty {
-			SectionHeader(title: "HANDLED TODAY", count: rows.count, mono: true)
+			SectionHeader(title: "Handled today", count: rows.count)
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			SummaryList {
 				ForEach(rows, id: \.0.id) { entry, summary in
@@ -566,18 +565,22 @@ private struct SectionHeader: View {
 	let count: Int
 	/// A mono label (LATER, HANDLED TODAY) rather than a heading.
 	var mono = false
+	/// Replaces the bare number ("3 decisions").
+	var countText: String?
 	var action: (title: String, run: () -> Void)?
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s3) {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 			if mono {
 				Text(title).font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold)).tracking(0.96)
 					.foregroundStyle(MaskinColor.ink5)
 				Text("\(count)").font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold))
 					.foregroundStyle(MaskinColor.inkPlaceholder)
 			} else {
-				Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-				Text("\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+				Text(title).font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold)).tracking(-0.15)
+					.foregroundStyle(MaskinColor.ink)
+				Text(countText ?? "\(count)").font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.inkPlaceholder)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			if let action {

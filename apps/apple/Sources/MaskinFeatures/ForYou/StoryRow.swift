@@ -40,13 +40,12 @@ struct StoryCardMetrics: Equatable {
 	var radius: CGFloat
 	/// A fixed height (the iPhone For you row); nil takes the shared briefing height.
 	var height: CGFloat?
-	/// The iPhone For you design: a 2pt ring on unseen cards, a progress bar and the author's
-	/// avatar and name on top, a four-line headline and an 11pt format label.
+	/// The v5 hero card on the dark For you header: headline, round badge and mono unit label.
 	var ringed = false
 
 	static let compact = StoryCardMetrics(width: 124, radius: 24)
-	/// iPhone For you (mockup): 128 x 180, outer radius 26 around a 24 card.
-	static let forYou = StoryCardMetrics(width: 128, radius: 26, height: 180, ringed: true)
+	/// iPhone For you (v5): 108 x 144, radius 20, on the dark header.
+	static let forYou = StoryCardMetrics(width: 108, radius: 20, height: 144, ringed: true)
 	/// iPad (4-iPad.md): 204 wide, radius 28; 150 wide while the sidebar takes room.
 	static let regular = StoryCardMetrics(width: 204, radius: 28)
 	static let regularWithSidebar = StoryCardMetrics(width: 150, radius: 28)
@@ -68,64 +67,46 @@ struct StoryCardView: View {
 		if metrics.ringed { ringedBody } else { plainBody }
 	}
 
-	/// The iPhone For you card. An unseen card wears a 2pt Patina ring; opening it takes the ring
-	/// off and the card moves to the end of the row.
+	/// The v5 hero card (108 x 144, radius 20) on the dark header: headline on top, a round badge
+	/// and the mono unit label below. An unseen card is white; a seen one is translucent white.
+	/// Opening it fades it to the seen look and moves it to the end of the row.
 	private var ringedBody: some View {
-		let outer = RoundedRectangle(cornerRadius: metrics.radius, style: .continuous)
-		let inner = RoundedRectangle(cornerRadius: metrics.radius - 2, style: .continuous)
-		let accent = isSeen ? MaskinColor.ink5 : MaskinColor.stLab
+		let shape = RoundedRectangle(cornerRadius: metrics.radius, style: .continuous)
+		let look = HeroLook(isSeen: isSeen)
 		return Button(action: action) {
-			VStack(alignment: .leading, spacing: 0) {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5 - 1) {
-					Capsule()
-						.fill(isSeen ? MaskinColor.inkPlaceholder : MaskinColor.stLab.opacity(0.4))
-						.frame(height: 3)
-					HStack(spacing: MaskinSpace.s3) {
-						if card.isBriefing {
-							ChiefOfStaffTile(size: 22)
-						} else {
-							Text(String(card.byline.prefix(1)).uppercased())
-								.font(MaskinTypeface.sans(MaskinFontSize.t9, weight: .bold))
-								.foregroundStyle(MaskinColor.sigInk)
-								.frame(width: 22, height: 22)
-								.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-						}
-						Text(card.byline)
-							.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .semibold))
-							.foregroundStyle(isSeen ? MaskinColor.ink : MaskinColor.stFg)
-							.lineLimit(1)
-					}
-					.accessibilityHidden(true)
-				}
-				Spacer(minLength: 0)
+			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 				Text(card.headline)
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold))
-					.tracking(-0.225)
-					.lineSpacing(MaskinSpace.s1)
-					.foregroundStyle(isSeen ? MaskinColor.ink : MaskinColor.stFg)
+					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold))
+					.tracking(-0.17)
+					.lineSpacing(1)
+					.foregroundStyle(look.foreground)
 					.multilineTextAlignment(.leading)
-					.lineLimit(4)
-				Text(card.formatLabel)
-					.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold))
-					.maskinMonoLabelScale()
-					.tracking(0.77)
-					.foregroundStyle(accent)
-					.lineLimit(1)
-					.padding(.top, MaskinSpace.s3 + 1)
+					.lineLimit(5)
+					.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+				HStack(spacing: MaskinSpace.s3) {
+					Image(systemName: card.isBriefing ? "play.fill" : "doc.text.fill")
+						.maskinSymbol(MaskinFontSize.t11, weight: .bold)
+						.foregroundStyle(look.badgeForeground)
+						.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
+						.background(look.badge, in: Circle())
+					Text(card.unit.uppercased())
+						.font(MaskinTypeface.mono(MaskinFontSize.t9, weight: .semibold))
+						.maskinMonoLabelScale()
+						.tracking(0.63)
+						.foregroundStyle(look.label)
+						.lineLimit(1)
+						.minimumScaleFactor(0.7)
+				}
+				.accessibilityHidden(true)
 			}
-			.padding(.top, MaskinSpace.s5).padding(.horizontal, MaskinSpace.s7).padding(.bottom, 13)
-			.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-			.background(isSeen ? AnyShapeStyle(MaskinSurface.card) : AnyShapeStyle(MaskinGradient.unseenBrief), in: inner)
-			.overlay(inner.strokeBorder(MaskinSurface.grouped, lineWidth: 2))
-			.shadow(color: MaskinPatina.cardShadow, radius: 1, y: 1)
-			.shadow(color: MaskinPatina.cardShadow, radius: 9, y: 6)
-			.padding(2)
-			.frame(width: metrics.width, height: height)
-			.background(isSeen ? Color.clear : MaskinColor.sig, in: outer)
-			.contentShape(outer)
+			.padding(MaskinSpace.s6)
+			.frame(width: metrics.width, height: height, alignment: .topLeading)
+			.background(look.fill, in: shape)
+			.overlay(shape.strokeBorder(look.border, lineWidth: 1))
+			.contentShape(shape)
 		}
 		.buttonStyle(.maskinPressed(.shrink))
-		.accessibilityLabel("\(card.byline): \(card.headline), \(card.formatLabel)\(isSeen ? "" : ", new")")
+		.accessibilityLabel("\(card.unit): \(card.headline), \(card.formatLabel)\(isSeen ? "" : ", new")")
 		.accessibilityHint("Opens the briefing")
 	}
 
@@ -186,4 +167,17 @@ struct StoryCardView: View {
 	private var fill: AnyShapeStyle {
 		isSeen ? AnyShapeStyle(MaskinSurface.card) : AnyShapeStyle(MaskinGradient.unseenBrief)
 	}
+}
+
+/// The colours of a hero card (v5 `s.bg/s.bd/s.fg/s.badge/s.kc`): white while unseen, translucent
+/// white once seen. The header is dark in both modes, so these do not follow the colour scheme.
+private struct HeroLook {
+	let isSeen: Bool
+
+	var fill: Color { isSeen ? Color.white.opacity(0.1) : .white }
+	var border: Color { isSeen ? Color.white.opacity(0.16) : .white }
+	var foreground: Color { isSeen ? .white : MaskinColor.patina900 }
+	var badge: Color { isSeen ? Color.white.opacity(0.14) : MaskinColor.patina900 }
+	var badgeForeground: Color { isSeen ? MaskinColor.patina200 : .white }
+	var label: Color { isSeen ? MaskinColor.patina200 : MaskinColor.patina700 }
 }

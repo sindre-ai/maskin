@@ -9,7 +9,12 @@ struct SummaryList<Content: View>: View {
 
 	var body: some View {
 		VStack(spacing: 0) { content }
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+			.overlay(
+				RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
+					.strokeBorder(MaskinSurface.line, lineWidth: 1)
+			)
+			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 			.accessibilityElement(children: .contain)
 	}
 }
@@ -37,10 +42,10 @@ struct SummaryRow: View {
 			} label: {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 					Text(label)
-						.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold)).tracking(-0.15)
+						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold)).tracking(-0.15)
 						.foregroundStyle(MaskinColor.ink).lineLimit(1)
 					Text(detail)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
+						.font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink4)
 						.lineLimit(1)
 				}
 				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
@@ -51,8 +56,8 @@ struct SummaryRow: View {
 			if case .button(let title, let run) = trailing {
 				Button(action: run) {
 					Text(title)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
-						.foregroundStyle(MaskinColor.ink2)
+						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+						.foregroundStyle(mark == .later ? MaskinColor.ink2 : MaskinColor.patina900)
 						.padding(.horizontal, MaskinSpace.s7)
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
@@ -68,7 +73,7 @@ struct SummaryRow: View {
 	}
 
 	@ViewBuilder private var markView: some View {
-		let size: CGFloat = mark == .later ? 28 : MaskinSpace.s12
+		let size: CGFloat = mark == .later ? 28 : 26
 		let symbol: String = {
 			switch mark {
 			case .done: "checkmark"
@@ -79,9 +84,9 @@ struct SummaryRow: View {
 		}()
 		Image(systemName: symbol)
 			.maskinSymbol(MaskinFontSize.t12, weight: .bold)
-			.foregroundStyle(mark == .later ? MaskinColor.ink4 : MaskinSurface.onInverse)
 			.frame(width: size, height: size)
-			.background(mark == .later ? MaskinSurface.fill : MaskinSurface.inverse, in: Circle())
+			.foregroundStyle(mark == .later ? MaskinColor.ink4 : Color.white)
+			.background(mark == .later ? MaskinSurface.fill : MaskinColor.patina900, in: Circle())
 			.accessibilityHidden(true)
 	}
 }
