@@ -29,7 +29,9 @@ import {
 // name CI assertion (`apps/web/scripts/assert-editor-chunk.mjs`) enforces the
 // split at build time. See tech spec §12 rabbit hole #6.
 const MarkdownEditor = lazy(() =>
-	import('@maskin/markdown/react/editor').then((m) => ({ default: m.MarkdownEditor })),
+	import('@/components/shared/document-markdown-editor').then((m) => ({
+		default: m.DocumentMarkdownEditor,
+	})),
 )
 
 const UUID_RE_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'

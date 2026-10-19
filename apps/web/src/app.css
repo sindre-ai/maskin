@@ -853,3 +853,14 @@
 		}
 	}
 }
+
+/* Tiptap's Placeholder extension only sets data-placeholder on the empty
+   first block; this is the rule that paints it. Without it the empty-state
+   hint ("Add a description. Type / for blocks.") never shows. */
+.ProseMirror p.is-editor-empty:first-child::before {
+	content: attr(data-placeholder);
+	float: left;
+	height: 0;
+	pointer-events: none;
+	color: var(--muted-foreground);
+}
