@@ -242,7 +242,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors())
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
-	app.use('*', honoLogger())
+	app.use(
+		'*',
+		honoLogger((line, ...rest) => console.log(line.replace(/\?\S*/, ''), ...rest)),
+	)
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)

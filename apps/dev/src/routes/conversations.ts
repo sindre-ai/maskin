@@ -32,14 +32,20 @@ import {
 	idParamSchema,
 	messageResponseSchema,
 	messageWithSpawnedSessionsSchema,
+	spawnedSessionResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
-import { loadSpawnedSessionsByMessage } from '../services/spawned-sessions'
+import {
+	anchorSpawnedSessionsToMessage,
+	loadPendingSpawnedSessions,
+	loadSpawnedSessionsByMessage,
+} from '../services/spawned-sessions'
 
 type Env = {
 	Variables: {
@@ -47,6 +53,8 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		maskinSessionId?: string
+		workspaceRole?: string
 	}
 }
 
@@ -205,6 +213,7 @@ async function loadConversationWithAuth(db: Database, conversationId: string, ca
 const createConversationRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Create a conversation with one or more human/agent participants',
 	request: {
@@ -224,6 +233,7 @@ const createConversationRoute = createRoute({
 })
 
 app.openapi(createConversationRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const callerId = c.get('actorId')
@@ -512,6 +522,7 @@ app.openapi(getConversationRoute, (async (c) => {
 const updateConversationRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Rename a conversation',
 	request: {
@@ -529,6 +540,7 @@ const updateConversationRoute = createRoute({
 })
 
 app.openapi(updateConversationRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -577,6 +589,7 @@ app.openapi(updateConversationRoute, (async (c) => {
 const addParticipantsRoute = createRoute({
 	method: 'post',
 	path: '/{id}/participants',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Add participants to a conversation',
 	request: {
@@ -596,6 +609,7 @@ const addParticipantsRoute = createRoute({
 })
 
 app.openapi(addParticipantsRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -639,6 +653,7 @@ app.openapi(addParticipantsRoute, (async (c) => {
 const removeParticipantRoute = createRoute({
 	method: 'delete',
 	path: '/{id}/participants/{actorId}',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Remove a participant from a conversation (or leave, if self)',
 	request: {
@@ -656,6 +671,7 @@ const removeParticipantRoute = createRoute({
 })
 
 app.openapi(removeParticipantRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -715,6 +731,7 @@ const listMessagesRoute = createRoute({
 					schema: z.object({
 						messages: z.array(messageWithSpawnedSessionsSchema),
 						has_more: z.boolean(),
+						pending_handoffs: z.array(spawnedSessionResponseSchema).optional(),
 					}),
 				},
 			},
@@ -773,6 +790,15 @@ app.openapi(listMessagesRoute, (async (c) => {
 		actorId: callerId,
 	})
 
+	// Handoffs no message carries yet ride on the newest page only.
+	const pendingHandoffs = query.before_id
+		? undefined
+		: await loadPendingSpawnedSessions(db, {
+				conversationId: id,
+				workspaceId,
+				actorId: callerId,
+			})
+
 	return c.json({
 		messages: page.map(
 			(m) =>
@@ -782,6 +808,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
 		),
 		has_more: hasMore,
+		...(pendingHandoffs ? { pending_handoffs: pendingHandoffs } : {}),
 	})
 }) as RouteHandler<typeof listMessagesRoute, Env>)
 
@@ -789,6 +816,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 const postMessageRoute = createRoute({
 	method: 'post',
 	path: '/{id}/messages',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Post a message to a conversation',
 	request: {
@@ -810,6 +838,7 @@ const postMessageRoute = createRoute({
 })
 
 app.openapi(postMessageRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const callerId = c.get('actorId')
@@ -890,6 +919,35 @@ app.openapi(postMessageRoute, (async (c) => {
 	})
 	if (!created) throw new Error('Failed to create message')
 
+	// An agent narrating a handoff mid-turn: hang the sub-sessions it has started
+	// since its last message under this one, so the card shows while they run.
+	// The spawner is the agent's own live session, taken from the body or, since
+	// the MCP post tool does not send it, the X-Maskin-Session-Id header.
+	if (callerType === 'agent') {
+		const claimed = sessionId ?? c.get('maskinSessionId')
+		if (claimed) {
+			const [own] = await db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.id, claimed),
+						eq(sessions.actorId, callerId),
+						eq(sessions.workspaceId, workspaceId),
+					),
+				)
+				.limit(1)
+			if (own) {
+				await anchorSpawnedSessionsToMessage(db, {
+					spawnerSessionId: own.id,
+					conversationId: id,
+					actorId: callerId,
+					messageId: created.id,
+				})
+			}
+		}
+	}
+
 	// @mentioning an agent who isn't yet an active participant should actually
 	// pull them into the conversation — otherwise evaluateAndRespond's
 	// candidate query (scoped to active conversationParticipants) never sees
@@ -953,6 +1011,7 @@ app.openapi(postMessageRoute, (async (c) => {
 const editMessageRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/messages/{messageId}',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Edit a message you authored',
 	request: {
@@ -971,6 +1030,7 @@ const editMessageRoute = createRoute({
 })
 
 app.openapi(editMessageRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const callerId = c.get('actorId')
@@ -1065,6 +1125,7 @@ app.openapi(editMessageRoute, (async (c) => {
 const retryMessageRoute = createRoute({
 	method: 'post',
 	path: '/{id}/messages/{messageId}/retry',
+	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
 	summary: 'Re-run the agent responder for a message (force a reply)',
 	request: {
@@ -1084,6 +1145,7 @@ const retryMessageRoute = createRoute({
 })
 
 app.openapi(retryMessageRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const callerId = c.get('actorId')

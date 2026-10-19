@@ -89,6 +89,11 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Same call the real helper makes for an exit with no final result message,
+	// so the assertions below keep reading the tail + option the classifier got.
+	// The helper's own rule is covered in lib/credit-classifier.test.ts.
+	classifySessionExit: (tail: string, exitCode: number) =>
+		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
 }))
 
 import { execFile } from 'node:child_process'
@@ -2224,7 +2229,7 @@ describe('SessionManager', () => {
 				},
 			}
 
-			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+			it('auto-injects the Slack MCP server but not SLACK_BOT_TOKEN when the agent config does not reference it', async () => {
 				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
 				const fixtures = buildLaunchFixtures([integration])
 
@@ -2238,7 +2243,9 @@ describe('SessionManager', () => {
 					env: Record<string, string>
 				}
 
-				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				// The server authenticates on MASKIN_API_KEY, so the container has no use for
+				// the bot token unless the agent's own tools config asks for it.
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
 				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
 				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
 					mcpServers: Record<string, { type: string; url: string }>
@@ -2456,6 +2463,244 @@ describe('SessionManager', () => {
 					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
 				},
 			)
+		})
+
+		describe('integration tokens only reach agents that use them', () => {
+			// Google Meet: autoInject false. Slack: autoInject true, server signs in
+			// with MASKIN_API_KEY. PostHog: autoInject true, server signs in with the
+			// integration token itself.
+			const googleMeetProviderConfig = {
+				config: {
+					name: 'google-meet',
+					mcp: {
+						envKey: 'GOOGLE_MEET_TOKEN',
+						autoInject: false,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/google-meet/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
+						},
+					},
+				},
+			}
+			const posthogProviderConfig = {
+				config: {
+					name: 'posthog',
+					mcp: {
+						envKey: 'POSTHOG_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: 'https://mcp.posthog.com/mcp',
+							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+						},
+					},
+				},
+			}
+
+			const mcpKeysOf = (env: Record<string, string>) =>
+				env.MCP_SERVERS_JSON
+					? Object.keys((JSON.parse(env.MCP_SERVERS_JSON) as { mcpServers: object }).mcpServers)
+					: []
+
+			async function launchEnv(opts: {
+				provider: string
+				providerConfig: unknown
+				token: string
+				agentTools?: Record<string, unknown> | null
+				sessionMcps?: Array<Record<string, unknown>>
+			}) {
+				const integration = buildIntegration({ provider: opts.provider })
+				const fixtures = buildLaunchFixtures([integration])
+				fixtures.agent.tools = opts.agentTools ?? null
+				if (opts.sessionMcps) {
+					fixtures.session.config = {
+						...(fixtures.session.config as Record<string, unknown>),
+						mcps: opts.sessionMcps,
+					}
+				}
+				vi.mocked(getProvider).mockReturnValue(opts.providerConfig as never)
+				mockGetValidToken.mockResolvedValueOnce(opts.token)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				return (mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> })
+					.env
+			}
+
+			it('gives an agent with no reference to a non-auto-injected integration no token for it', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							maskin: {
+								type: 'http',
+								url: '${MASKIN_API_URL}/mcp',
+								headers: { Authorization: '${MASKIN_API_KEY}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBeUndefined()
+				// Not auto-injected, so no server either
+				expect(mcpKeysOf(env)).not.toContain('integration-google-meet')
+			})
+
+			it('gives an agent whose own tools config references the token that token', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							'google-meet': {
+								type: 'http',
+								url: 'https://meet.example.test/mcp',
+								headers: { Authorization: 'Bearer ${GOOGLE_MEET_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('reads a reference in a stdio server env block and ignores malformed entries', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							broken: null,
+							bare: {},
+							stdio: {
+								command: 'npx',
+								env: { MEET_ACCESS_TOKEN: '${GOOGLE_MEET_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('gives a session whose own MCP list references the token that token', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					sessionMcps: [
+						{
+							type: 'http',
+							url: 'https://meet.example.test/mcp',
+							headers: { Authorization: 'Bearer ${GOOGLE_MEET_TOKEN}' },
+						},
+					],
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('keeps the auto-injected server for every agent but leaves the token out when the server signs in without it (Slack)', async () => {
+				const env = await launchEnv({
+					provider: 'slack',
+					providerConfig: slackProviderConfig,
+					token: 'xoxb-real-bot-token',
+				})
+				expect(env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(mcpKeysOf(env)).toContain('integration-slack')
+			})
+
+			it('still gives the token to an agent that references it on an auto-inject provider (Slack)', async () => {
+				const env = await launchEnv({
+					provider: 'slack',
+					providerConfig: slackProviderConfig,
+					token: 'xoxb-real-bot-token',
+					agentTools: {
+						mcpServers: {
+							slack: {
+								type: 'stdio',
+								command: 'npx',
+								args: ['-y', '@modelcontextprotocol/server-slack'],
+								env: { SLACK_BOT_TOKEN: '${SLACK_BOT_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(mcpKeysOf(env)).toContain('integration-slack')
+			})
+
+			it('keeps token and server for every agent when the auto-injected server needs the token to sign in (PostHog)', async () => {
+				const env = await launchEnv({
+					provider: 'posthog',
+					providerConfig: posthogProviderConfig,
+					token: 'phx_token_value',
+				})
+				expect(env.POSTHOG_TOKEN).toBe('phx_token_value')
+				expect(mcpKeysOf(env)).toContain('integration-posthog')
+			})
+
+			it('does not put the token in the container for an unreferencing agent but still uses it for the preflight Slack alert', async () => {
+				const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-alert' })
+				const fixtures = buildLaunchFixtures([slackIntegration])
+				fixtures.agent.tools = {
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_broken' },
+						},
+					},
+				}
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-alert-bot-token')
+
+				const slackAuth: string[] = []
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(async (url: string | URL, init?: RequestInit) => {
+						const u = url.toString()
+						if (u === 'https://api.github.com/user') return new Response('bad', { status: 401 })
+						if (u === 'https://slack.com/api/chat.postMessage') {
+							slackAuth.push(String((init?.headers as Record<string, string>)?.Authorization))
+							return new Response(JSON.stringify({ ok: true }), {
+								status: 200,
+								headers: { 'content-type': 'application/json' },
+							})
+						}
+						throw new Error(`unexpected fetch: ${u}`)
+					}),
+				)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(slackAuth).toEqual(['Bearer xoxb-alert-bot-token'])
+			})
 		})
 
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
@@ -4541,6 +4786,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4567,6 +4813,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4594,6 +4841,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -4644,6 +4892,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 			]
 
 			await (
@@ -4819,6 +5068,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -4929,6 +5179,7 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[], // sumAssistantUsage fallback
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
 					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
@@ -5075,6 +5326,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
@@ -5163,6 +5415,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[], // hasOtherActiveSessions
 			]
 			mockResults.insertQueue = [
