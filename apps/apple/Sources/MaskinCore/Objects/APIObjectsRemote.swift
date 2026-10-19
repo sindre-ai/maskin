@@ -419,7 +419,7 @@ private struct GraphDTO: Decodable {
 				id: rel.id, relation: rel.type, isOutgoing: outgoing, otherId: otherId,
 				otherType: known?.type ?? (outgoing ? rel.targetType : rel.sourceType),
 				otherTitle: (title?.isEmpty == false ? title : nil) ?? "Untitled",
-				otherStatus: known?.status)
+				otherStatus: known?.status, otherDriver: known?.driver)
 		}
 		return ObjectGraph(object: object.model, links: links, events: (events ?? []).map(\.model))
 	}

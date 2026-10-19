@@ -18,11 +18,12 @@ struct ObjectActivityView: View {
 	var onOpenObject: ((String) -> Void)?
 	var onReply: ((TimelineItem) -> Void)?
 	/// Which items to show; the whole timeline by default.
+	var include: (TimelineItem) -> Bool = { _ in true }
 	/// Pins "now" for snapshots; the live page uses the clock.
 	var now: Date = Date()
 
 	var body: some View {
-		let days = ActivityGrouping.days(store.timeline, now: now)
+		let days = ActivityGrouping.days(store.timeline.filter(include), now: now)
 		VStack(alignment: .leading, spacing: 0) {
 			if days.isEmpty {
 				if store.hasFetched {

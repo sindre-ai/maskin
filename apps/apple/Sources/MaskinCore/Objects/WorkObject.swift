@@ -63,10 +63,12 @@ public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable, Codable {
 	public var otherType: String
 	public var otherTitle: String
 	public var otherStatus: String?
+	/// The actor driving the other object (its owner), when the graph carries it.
+	public var otherDriver: String?
 
 	public init(
 		id: String, relation: String, isOutgoing: Bool, otherId: String, otherType: String,
-		otherTitle: String, otherStatus: String? = nil
+		otherTitle: String, otherStatus: String? = nil, otherDriver: String? = nil
 	) {
 		self.id = id
 		self.relation = relation
@@ -75,6 +77,7 @@ public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable, Codable {
 		self.otherType = otherType
 		self.otherTitle = otherTitle
 		self.otherStatus = otherStatus
+		self.otherDriver = otherDriver
 	}
 
 	/// "blocks", "blocked by", "informs", "informed by", "relates to"...

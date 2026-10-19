@@ -38,6 +38,20 @@ public enum LoopPhases {
 		}
 	}
 
+	/// Members still on their way, grouped by status in workflow order: everything but those in the
+	/// workflow's last status. Statuses with nobody in them are dropped.
+	public static func inMotion(members: [LoopMember], statusOrder: [String]) -> [LoopPhase] {
+		let done = statusOrder.last
+		let moving = members.filter { $0.status != done }
+		var order = statusOrder
+		for status in moving.map(\.status) where !order.contains(status) { order.append(status) }
+		let byStatus = Dictionary(grouping: moving, by: \.status)
+		return order.compactMap { status in
+			guard let inPhase = byStatus[status], !inPhase.isEmpty else { return nil }
+			return LoopPhase(status: status, members: inPhase, steps: [])
+		}
+	}
+
 	/// The `from_status` an event trigger fires on, if it has one.
 	static func fromStatus(_ step: LoopStep) -> String? {
 		guard case .object(let config) = step.triggerConfig,
