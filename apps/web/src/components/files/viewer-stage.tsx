@@ -36,6 +36,7 @@ import {
 } from '@/lib/viewer-detect'
 import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
 import { ThumbnailRail } from './thumbnail-rail'
 
@@ -90,6 +91,7 @@ export function ViewerStage({
 	pins,
 	onPinPlace,
 }: ViewerStageProps) {
+	const editableMarkdown = useEditableMarkdown(file)
 	if (isHtml(file.mimeType))
 		return (
 			<HtmlViewerStage
@@ -100,6 +102,12 @@ export function ViewerStage({
 				pins={pins}
 				onPinPlace={onPinPlace}
 			/>
+		)
+	if (editableMarkdown)
+		return (
+			<StageFrame>
+				<EditableMarkdownStage file={file} />
+			</StageFrame>
 		)
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />

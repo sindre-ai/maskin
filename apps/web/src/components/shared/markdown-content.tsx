@@ -4,8 +4,8 @@ import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { captureEditorParseError } from '@/lib/editor-events'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
-import { capture } from '@/lib/posthog'
 import {
 	MarkdownRenderer,
 	type MentionActor,
@@ -866,12 +866,7 @@ function EditorAdapter({
 	)
 
 	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
-		capture('editor_markdown_parse_error', {
-			error_message: info.errorMessage,
-			variant: info.variant,
-			surface: info.surface,
-			object_id: info.objectId,
-		})
+		captureEditorParseError(info)
 	}, [])
 
 	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
