@@ -14,6 +14,16 @@ vi.mock('@/hooks/use-actors', () => ({
 	useUploadActorAvatar: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
 }))
 
+const mockWebPush = vi.hoisted(() => ({ state: 'unavailable' as string }))
+vi.mock('@/hooks/use-web-push', () => ({
+	useWebPush: () => ({
+		state: mockWebPush.state,
+		isLoading: false,
+		enable: { mutate: vi.fn(), isPending: false },
+		disable: { mutate: vi.fn(), isPending: false },
+	}),
+}))
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function renderProfile(overrides: Parameters<typeof buildActorResponse>[0] = {}) {
@@ -28,6 +38,20 @@ describe('ProfileView', () => {
 		mockUseActor.mockReset()
 		updateMutate.mockReset()
 		uploadMutateAsync.mockReset()
+		mockWebPush.state = 'unavailable'
+	})
+
+	it('hides the Notifications section when browser push is unavailable', () => {
+		renderProfile()
+		expect(screen.queryByText('Notifications')).not.toBeInTheDocument()
+		expect(screen.queryByRole('switch', { name: 'Browser notifications' })).not.toBeInTheDocument()
+	})
+
+	it('shows the Browser notifications toggle when push is available', () => {
+		mockWebPush.state = 'off'
+		renderProfile()
+		expect(screen.getByText('Notifications')).toBeInTheDocument()
+		expect(screen.getByRole('switch', { name: 'Browser notifications' })).not.toBeChecked()
 	})
 
 	it('leads with the name and pairs the email with the workspace', () => {

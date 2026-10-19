@@ -1808,6 +1808,37 @@ export const deviceTokens = pgTable(
 	],
 )
 
+// ── Web Push subscriptions ──────────────────────────────────────────────────
+//
+// One row per browser push subscription (RFC 8030 / 8291). Kept apart from `device_tokens`,
+// whose APNs token is a hex string used as a URL path segment toward Apple; a browser
+// subscription is an opaque endpoint URL plus an encryption key pair. `endpoint` is unique so
+// re-subscribing from the same browser upserts, and a browser that changes hands moves to the
+// new actor. The p256dh/auth keys are per-subscription secrets: never logged, never returned
+// by the API. Cascades with the actor.
+
+export const webPushSubscriptions = pgTable(
+	'web_push_subscriptions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		endpoint: text('endpoint').notNull(),
+		p256dh: text('p256dh').notNull(),
+		auth: text('auth').notNull(),
+		userAgent: text('user_agent'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('web_push_subscriptions_endpoint_uniq').on(t.endpoint),
+		index('web_push_subscriptions_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type WebPushSubscription = typeof webPushSubscriptions.$inferSelect
+
 // ── Live Activity tokens ────────────────────────────────────────────────────
 //
 // ActivityKit push tokens. Two kinds share one table:

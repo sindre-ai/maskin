@@ -130,7 +130,10 @@
 		"APNS_KEY_ID",
 		"APNS_TEAM_ID",
 		"APNS_PRIVATE_KEY",
-		"APNS_BUNDLE_ID"
+		"APNS_BUNDLE_ID",
+		"VAPID_PUBLIC_KEY",
+		"VAPID_PRIVATE_KEY",
+		"VAPID_SUBJECT"
 	],
 	"tasks": {
 		"build": {
