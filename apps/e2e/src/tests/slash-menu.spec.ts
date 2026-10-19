@@ -73,6 +73,37 @@ test.describe('Slash-command menu (document variant)', () => {
 		await expect(editor).toContainText('/')
 	})
 
+	test('announces the highlighted row when the arrow keys move it', async ({ page, account }) => {
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Slash menu announce',
+			status: 'signal',
+		})
+		const editor = await openEditor(page, account.workspaceId, bet.id)
+		await editor.click()
+		await page.keyboard.type('/')
+
+		const menu = page.getByRole('dialog', { name: 'Insert block' })
+		await expect(menu.getByRole('status')).toHaveText('Heading, Section title, 1 of 8')
+		await page.keyboard.press('ArrowDown')
+		await expect(menu.getByRole('status')).toHaveText('Subheading, Smaller title, 2 of 8')
+	})
+
+	test('shows only the query in bold when nothing matches', async ({ page, account }) => {
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Slash menu no match',
+			status: 'signal',
+		})
+		const editor = await openEditor(page, account.workspaceId, bet.id)
+		await editor.click()
+		await page.keyboard.type('/zzz')
+
+		const menu = page.getByRole('dialog', { name: 'Insert block' })
+		await expect(menu).toContainText('No matches for zzz')
+		await expect(menu.locator('.font-semibold', { hasText: 'zzz' })).toHaveText('zzz')
+	})
+
 	test('does not open on / in the middle of a word', async ({ page, account }) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',

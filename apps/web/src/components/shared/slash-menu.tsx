@@ -58,6 +58,10 @@ function IconTile({ icon: Icon }: { icon: LucideIcon }) {
 	)
 }
 
+// Header label: 11px semibold muted sentence case. The 8px mono eyebrow is too small on
+// touch and would render as BLOCKS.
+const HEADER_CLASS = 'px-[9px] pb-[6px] pt-[5px] text-[11px] font-semibold text-muted-foreground'
+
 const ROW_CLASS = cn(
 	'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5',
 	'data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground',
@@ -98,6 +102,26 @@ export interface SlashMenuPanelProps {
 	onDismiss: () => void
 }
 
+function highlightAnnouncement({
+	step,
+	items,
+	selectedId,
+	selectedLanguageId,
+}: Pick<SlashMenuPanelProps, 'step' | 'items' | 'selectedId' | 'selectedLanguageId'>): string {
+	if (step === 'language') {
+		const index = SLASH_CODE_LANGUAGES.findIndex((l) => l.id === selectedLanguageId)
+		const lang = SLASH_CODE_LANGUAGES[index]
+		return lang
+			? `${lang.label}, ${index + 1} of ${SLASH_CODE_LANGUAGES.length}`
+			: 'Choose a language'
+	}
+	const index = items.findIndex((i) => i.id === selectedId)
+	const item = items[index]
+	return item
+		? `${item.title}, ${item.description}, ${index + 1} of ${items.length}`
+		: 'No matching blocks'
+}
+
 export function SlashMenuPanel({
 	items,
 	query,
@@ -128,7 +152,7 @@ export function SlashMenuPanel({
 				onValueChange={onSelectedLanguageChange}
 				label="Language"
 			>
-				<div className="eyebrow px-2.5 pb-1 pt-2">Language</div>
+				<div className={HEADER_CLASS}>Language</div>
 				<Command.List>
 					{SLASH_CODE_LANGUAGES.map((lang) => (
 						<Command.Item
@@ -144,7 +168,7 @@ export function SlashMenuPanel({
 			</Command>
 		) : (
 			<Command shouldFilter={false} value={selectedId} onValueChange={onSelectedChange} label="Blocks">
-				<div className="eyebrow px-2.5 pb-1 pt-2">{mobile ? 'Insert block' : 'Blocks'}</div>
+				<div className={HEADER_CLASS}>{mobile ? 'Insert block' : 'Blocks'}</div>
 				<Command.List
 					className={cn(
 						// Desktop scrolls inside the popover itself, which already caps its height.
@@ -152,7 +176,8 @@ export function SlashMenuPanel({
 					)}
 				>
 					<Command.Empty className="px-2.5 py-3 text-[12.5px] text-muted-foreground">
-						<span className="font-semibold text-foreground">{`No matches for ${query}`}</span>
+						<span>No matches for </span>
+						<span className="font-semibold text-foreground">{query}</span>
 						<span className="mt-0.5 block text-[11px]">Press Esc to keep typing</span>
 					</Command.Empty>
 					{items.map((item) => (
@@ -165,7 +190,7 @@ export function SlashMenuPanel({
 							<IconTile icon={ITEM_ICONS[item.id] ?? Minus} />
 							<span className="min-w-0">
 								<span className="block text-[13px] font-semibold leading-tight">{item.title}</span>
-								<span className="block text-[11.5px] leading-tight text-muted-foreground">
+								<span className="mt-px block text-[11px] leading-tight text-muted-foreground">
 									{item.description}
 								</span>
 							</span>
@@ -175,11 +200,10 @@ export function SlashMenuPanel({
 			</Command>
 		)
 
+	// Focus stays in the editor, so announce the highlighted row whenever it moves.
 	const announcement = (
 		<span role="status" className="sr-only">
-			{step === 'language'
-				? `Choose a language, ${SLASH_CODE_LANGUAGES.length} options`
-				: `Insert block menu open, ${items.length} options`}
+			{highlightAnnouncement({ step, items, selectedId, selectedLanguageId })}
 		</span>
 	)
 
@@ -207,7 +231,7 @@ export function SlashMenuPanel({
 				align="start"
 				sideOffset={6}
 				collisionPadding={8}
-				className="w-[262px] p-1.5"
+				className="w-[262px] rounded-xl p-1.5 shadow-lg"
 				onMouseDown={keepEditorFocus}
 				onOpenAutoFocus={(e) => e.preventDefault()}
 				onCloseAutoFocus={(e) => e.preventDefault()}
