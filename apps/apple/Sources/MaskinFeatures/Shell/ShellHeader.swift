@@ -3,19 +3,14 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The words in a root screen's header: a kicker, and the one sentence under the title.
+/// The words in a root screen's header: the kicker above the title.
 public struct ShellHeaderContent {
 	public var kicker: String
-	public var summary: String
 
-	public init(kicker: String, summary: String) {
-		self.kicker = kicker
-		self.summary = summary
-	}
+	public init(kicker: String) { self.kicker = kicker }
 }
 
-/// The v4 root-screen header on iPhone: kicker and buttons on one row, then the large title and the
-/// summary, on the dark teal gradient. The content that follows rides up over its bottom edge.
+/// The v4 root-screen header on iPhone: kicker and buttons on one row, then the large title, on the dark teal gradient. The content that follows rides up over its bottom edge.
 struct ShellHeaderView: View {
 	let environment: AppEnvironment
 	let title: String
@@ -36,18 +31,12 @@ struct ShellHeaderView: View {
 				Spacer(minLength: MaskinSpace.s4)
 				buttons
 			}
-			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-				Text(title)
-					.maskinText(.largeTitle)
-					.foregroundStyle(.white)
-					.lineLimit(1)
-					.minimumScaleFactor(0.7)
-					.accessibilityAddTraits(.isHeader)
-				Text(content.summary)
-					.maskinText(.body)
-					.foregroundStyle(.white.opacity(0.8))
-					.fixedSize(horizontal: false, vertical: true)
-			}
+			Text(title)
+				.maskinText(.largeTitle)
+				.foregroundStyle(.white)
+				.lineLimit(1)
+				.minimumScaleFactor(0.7)
+				.accessibilityAddTraits(.isHeader)
 		}
 		.padding(.horizontal, MaskinSpace.s9)
 		.padding(.top, MaskinSpace.s4)

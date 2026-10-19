@@ -69,8 +69,8 @@ extension View {
 	/// a screen's root content, inside its `NavigationStack`, and don't also set `.navigationTitle`
 	/// on it.
 	///
-	/// With `header`, iPhone swaps the system bar for the v4 header (kicker, large title, one
-	/// sentence, the buttons on a dark teal gradient). iPad and Mac keep the system bar.
+	/// With `header`, iPhone swaps the system bar for the v4 header (kicker, large title, the
+	/// buttons on a dark teal gradient). iPad and Mac keep the system bar.
 	public func shellToolbar(
 		environment: AppEnvironment, title: String? = nil, actions: ShellActions = ShellActions(),
 		header: ShellHeaderContent? = nil

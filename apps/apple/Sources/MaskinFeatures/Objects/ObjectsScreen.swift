@@ -106,8 +106,7 @@ public struct ObjectsScreen: View {
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(
 					environment: environment, title: usesHeader ? "Objects" : nil, actions: shellActions,
-					header: ShellHeaderContent(
-						kicker: "OBJECTS", summary: ShellHeaderSummary.objects(needingYou: store.needsYouCount)))
+					header: ShellHeaderContent(kicker: "OBJECTS"))
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)

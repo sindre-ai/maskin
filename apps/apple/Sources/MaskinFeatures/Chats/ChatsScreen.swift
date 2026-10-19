@@ -94,10 +94,7 @@ private struct ChatsContainer: View {
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
 					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault),
-				header: ShellHeaderContent(
-					kicker: "TEAM",
-					summary: ShellHeaderSummary.chats(
-						unreadConversations: store.conversations.filter(\.isUnread).count)))
+				header: ShellHeaderContent(kicker: "TEAM"))
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {

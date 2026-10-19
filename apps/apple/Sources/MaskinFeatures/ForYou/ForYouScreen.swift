@@ -59,9 +59,7 @@ public struct ForYouScreen: View {
 						if !store.options.filterBarOn { store.options.intent = nil }
 					}
 				}),
-			header: ShellHeaderContent(
-				kicker: ShellHeaderSummary.dateKicker(.now),
-				summary: ShellHeaderSummary.forYou(decisionsWaiting: runtime.store.needsCount))
+			header: ShellHeaderContent(kicker: ShellHeaderKicker.date(.now))
 		)
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()

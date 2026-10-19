@@ -111,10 +111,7 @@ private struct LoopsContainer: View {
 		.shellToolbar(
 			environment: environment, title: "Flows",
 			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }),
-			header: ShellHeaderContent(
-				kicker: "FLOWS",
-				summary: ShellHeaderSummary.flows(
-					running: loops.loops.filter { $0.status.isLive }.count, needingYou: loops.needYouCount)))
+			header: ShellHeaderContent(kicker: "FLOWS"))
 	}
 
 	@ViewBuilder
