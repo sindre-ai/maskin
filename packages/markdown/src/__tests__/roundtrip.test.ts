@@ -98,3 +98,72 @@ describe('```chart fenced block preservation', () => {
 		expect(normalized).toContain('"caption":"Doctrine cluster — fully shipped 2026-08-23"')
 	})
 })
+
+// Mixed bullet + task lists and tidy checkbox lists. Unlike the fixtures above
+// these are small hand-written shapes, not copies of live objects: the 22 real
+// blobs never hit them (task "Mixed bullet and task list saves without a stray
+// empty task item"), so they are pinned here instead of in the manifest.
+// Each shape asserts three things: the first pass leaves the list as written
+// (item count, plain bullet stays plain, no blank lines added), the second pass
+// matches the first (idempotence), and no empty task item appears.
+describe('mixed bullet and task lists', () => {
+	const MIXED_SHAPES = [
+		{
+			label: 'plain bullet, then two task items',
+			source: '- a\n- [ ] b\n- [x] c\n',
+			expected: '- a\n- [ ] b\n- [x] c',
+		},
+		{
+			label: 'two task items, then a plain bullet',
+			source: '- [ ] b\n- [x] c\n- a\n',
+			expected: '- [ ] b\n- [x] c\n- a',
+		},
+		{
+			label: 'task items nested under a plain bullet',
+			source: '- a\n  - [ ] b\n  - [x] c\n- d\n',
+			expected: '- a\n  - [ ] b\n  - [x] c\n- d',
+		},
+		{
+			label: 'plain bullets nested under a task item',
+			source: '- [ ] a\n  - b\n  - c\n- [x] d\n',
+			expected: '- [ ] a\n  - b\n  - c\n- [x] d',
+		},
+		{
+			label: 'tidy checkbox list',
+			source: '- [ ] a\n- [x] b\n',
+			expected: '- [ ] a\n- [x] b',
+		},
+		{
+			label: 'tidy checkbox list, three items',
+			source: '- [ ] a\n- [x] b\n- [ ] c\n',
+			expected: '- [ ] a\n- [x] b\n- [ ] c',
+		},
+	]
+
+	const itemCount = (md: string) => md.split('\n').filter((line) => /^\s*- /.test(line)).length
+
+	describe.each(MIXED_SHAPES)('$label', ({ source, expected }) => {
+		it('keeps every item, adds no blank lines and no empty task item', () => {
+			const out = roundTrip(source)
+			expect(out).toBe(expected)
+			expect(itemCount(out)).toBe(itemCount(source))
+			expect(out).not.toMatch(/- \[[ x]\] ?$/m)
+		})
+
+		it('round-trips idempotently', () => {
+			expect(assertIdempotent(source).ok).toBe(true)
+		})
+	})
+
+	// Meaning is kept for a loose checkbox list: the blank lines may go (the
+	// loose to tight change is on the allowed list) but never any item or state.
+	it('keeps a loose checkbox list as a checkbox list with its checked state', () => {
+		const source = '- [ ] a\n\n- [x] b\n'
+		const out = roundTrip(source)
+		expect(out.split('\n').filter((line) => /^- \[[ x]\] \S/.test(line))).toEqual([
+			'- [ ] a',
+			'- [x] b',
+		])
+		expect(assertIdempotent(source).ok).toBe(true)
+	})
+})
