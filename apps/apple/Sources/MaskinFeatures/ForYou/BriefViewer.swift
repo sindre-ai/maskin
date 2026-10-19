@@ -3,7 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The full-screen brief: a sequence of slides (the daily briefing as text, then each loop's HTML
+/// The full-screen brief: a sequence of slides (the Chief of Staff's briefing page, then each loop's
 /// pages) under a wrapper that owns the pacing. Segmented progress on top, tap the right or left
 /// half to move, hold to pause, swipe down or the close button to leave. Each slide is marked
 /// seen as it is reached. The slides themselves render through the same sandboxed web view as
@@ -235,20 +235,9 @@ struct BriefViewer: View {
 	@ViewBuilder
 	private func slide(_ card: StoryCard) -> some View {
 		switch card.content {
-		case .briefing(let headline, let script):
-			let text = BriefSequence.briefingText(headline: headline, script: script)
-			ScrollView {
-				VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-					Text(text.title).maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
-					if !text.body.isEmpty {
-						Text(text.body).maskinText(.body).foregroundStyle(MaskinColor.patina100)
-					}
-				}
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.padding(.vertical, MaskinSpace.s9)
-			}
-			.scrollBounceBehavior(.basedOnSize)
-			.id(card.id)
+		case .briefing:
+			// Only the TV builds these (it reads the script aloud); a phone's row is briefing pages.
+			EmptyView()
 		case .page(let output):
 			BriefPageSlide(
 				environment: environment, output: output, preload: preloaded[output.id] ?? stories.preloadedFile(for: output.id),

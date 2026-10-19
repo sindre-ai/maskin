@@ -97,8 +97,7 @@ final class StoriesProvider {
 				client: environment.client, workspaceID: workspace,
 				objects: APIObjectsRemote(client: environment.client, credentials: credentials),
 				files: files),
-			files: files, briefing: APISpokenBriefing(client: environment.client, workspaceID: workspace),
-			readerName: { [weak environment] in environment?.auth.session?.name })
+			files: files, briefing: nil)
 		current = (workspace, store)
 		return store
 	}
