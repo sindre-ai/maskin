@@ -2,20 +2,12 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
-import {
-	FileConflictError,
-	FileRetryableError,
-	type FileSaveClient,
-} from '@/hooks/use-markdown-file-save'
-import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import {
 	type FileViewerZoomMode,
 	trackFileViewerPageNavigated,
 	trackFileViewerZoomUsed,
 } from '@/lib/analytics'
-import { ApiError, type FileDetail, api } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
+import type { FileDetail } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { base64ToBytes, decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
 import {
@@ -25,7 +17,6 @@ import {
 	VIEWER_WHEEL_MESSAGE,
 	prepareViewerHtml,
 } from '@/lib/mini-app'
-import { queryKeys } from '@/lib/query-keys'
 import {
 	type Size,
 	ZOOM_MAX,
@@ -43,12 +34,10 @@ import {
 	type ViewerVariantOverride,
 	resolveViewerVariant,
 } from '@/lib/viewer-detect'
-import { isMarkdownFile } from '@maskin/shared'
-import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
-import { MarkdownFileEditor } from './markdown-file-editor'
 import { ThumbnailRail } from './thumbnail-rail'
 
 // 8 seconds is the spec's `iframe-blocked` timeout: the sandboxed frame that
@@ -102,7 +91,7 @@ export function ViewerStage({
 	pins,
 	onPinPlace,
 }: ViewerStageProps) {
-	const richMarkdownEditor = useFeatureFlag('rich-markdown-editor')
+	const editableMarkdown = useEditableMarkdown(file)
 	if (isHtml(file.mimeType))
 		return (
 			<HtmlViewerStage
@@ -114,10 +103,12 @@ export function ViewerStage({
 				onPinPlace={onPinPlace}
 			/>
 		)
-	// The one read of rich-markdown-editor for the file viewer. Flag on: any file
-	// the shared markdown helper accepts (a .md file with a generic type
-	// included) opens in the editor. Flag off: exactly what shipped.
-	if (richMarkdownEditor && isMarkdownFile(file)) return <EditableMarkdownViewerStage file={file} />
+	if (editableMarkdown)
+		return (
+			<StageFrame>
+				<EditableMarkdownStage file={file} />
+			</StageFrame>
+		)
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />
 	if (isPlainText(file.mimeType)) return <TextViewerStage file={file} />
@@ -142,67 +133,6 @@ function StageFrame({ children }: { children: React.ReactNode }) {
 
 function fileText(file: FileDetail): string {
 	return file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
-}
-
-function EditableMarkdownViewerStage({ file }: { file: FileDetail }) {
-	const client = useFileSaveClient(file)
-	const { data: members } = useWorkspaceMembers(file.workspaceId)
-	// Viewers count as members on file routes, so the API would let them edit;
-	// the UI must not offer it. Until the role is known, show the read view.
-	const actorId = getStoredActor()?.id
-	const role = members?.find((m) => m.actorId === actorId)?.role
-	const hash = file.contentHash ?? null
-	const canEdit = hash !== null && role !== undefined && role !== 'viewer'
-	return (
-		<StageFrame>
-			<div className="h-full w-full overflow-auto">
-				<div className="mx-auto max-w-[740px] px-6 py-8">
-					<MarkdownFileEditor
-						fileId={file.id}
-						text={fileText(file)}
-						hash={hash ?? ''}
-						client={client}
-						canEdit={canEdit}
-					/>
-				</div>
-			</div>
-		</StageFrame>
-	)
-}
-
-/** The editor's save and reload calls for one file, on the shared files API. */
-function useFileSaveClient(file: FileDetail): FileSaveClient {
-	const queryClient = useQueryClient()
-	const { workspaceId, id } = file
-	return useMemo(
-		() => ({
-			async save(text, ifMatch) {
-				try {
-					const updated = await api.files.update(workspaceId, id, {
-						content: text,
-						encoding: 'utf8',
-						if_match: ifMatch,
-					})
-					queryClient.setQueryData(queryKeys.files.detail(workspaceId, id), updated)
-					return { hash: requireContentHash(updated) }
-				} catch (err) {
-					if (err instanceof ApiError && err.status === 409) throw new FileConflictError()
-					if (err instanceof ApiError && err.status === 503) throw new FileRetryableError()
-					throw err
-				}
-			},
-			async fetchLatest() {
-				const latest = await api.files.get(workspaceId, id)
-				return { text: fileText(latest), hash: requireContentHash(latest) }
-			},
-		}),
-		[queryClient, workspaceId, id],
-	)
-}
-
-function requireContentHash(file: FileDetail): string {
-	if (!file.contentHash) throw new Error('The file came back without a content hash')
-	return file.contentHash
 }
 
 function MarkdownViewerStage({ file }: { file: FileDetail }) {
