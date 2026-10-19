@@ -81,6 +81,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'registers a Live Activity token for the caller\u2019s own device',
 	],
 	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\u2019s own token'],
+	[
+		'POST',
+		'/api/web-push/subscriptions',
+		'registers the caller\u2019s own browser, no workspace data',
+	],
+	['DELETE', '/api/web-push/subscriptions/:id', 'removes only the caller\u2019s own subscription'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
