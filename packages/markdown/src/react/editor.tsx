@@ -51,6 +51,12 @@ export interface MarkdownEditorProps {
 	onChange: (markdown: string) => void
 	/** Opt-in: fires per-transaction. Callers use it to render an "unsaved" chip. */
 	onChangeInternal?: (markdown: string) => void
+	/**
+	 * Opt-in: fires after each transaction that changed the document, without
+	 * serialising it. For callers that read the text later (autosave does so on
+	 * its debounce, through the ref) and must not pay for it on every keystroke.
+	 */
+	onEdit?: () => void
 	onBlur?: () => void
 	onFocus?: () => void
 	placeholder?: string
@@ -111,6 +117,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			value,
 			onChange,
 			onChangeInternal,
+			onEdit,
 			onBlur,
 			onFocus,
 			placeholder,
@@ -211,6 +218,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				onFocus: () => onFocus?.(),
 				onUpdate: ({ editor: e }) => {
 					dirtyRef.current = true
+					onEdit?.()
 					if (!onChangeInternal) return
 					try {
 						onChangeInternal(markdownOf(e))

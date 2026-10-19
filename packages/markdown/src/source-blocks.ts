@@ -249,8 +249,13 @@ export function blockFeatures(md: MarkdownItLike, markdown: string): BlockFeatur
 				features.linkTargets.push(attr(child, 'href'))
 				features.linkTitles.push(attr(child, 'title'))
 			} else if (child.type === 'image') {
-				features.images.push(`${attr(child, 'src')}\u0000${child.content}\u0000${attr(child, 'title')}`)
-			} else if (child.type === 'html_inline' && child.content.includes('task-list-item-checkbox')) {
+				features.images.push(
+					`${attr(child, 'src')}\u0000${child.content}\u0000${attr(child, 'title')}`,
+				)
+			} else if (
+				child.type === 'html_inline' &&
+				child.content.includes('task-list-item-checkbox')
+			) {
 				features.tasks.push(/\bchecked\b/.test(child.content) ? 'x' : ' ')
 			}
 		}

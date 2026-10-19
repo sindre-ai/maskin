@@ -142,7 +142,8 @@ describe('line breaks inside a touched block', () => {
 	// The read view (remark-breaks) shows a single line break as a line break,
 	// so the editor keeps it as a hard break and writes a trailing backslash,
 	// inside the block the person touched only.
-	const original = 'First line of a hand wrapped\nparagraph that continues\nand ends here.\n\nOther text\n'
+	const original =
+		'First line of a hand wrapped\nparagraph that continues\nand ends here.\n\nOther text\n'
 
 	it('leaves a hand-wrapped paragraph alone when another block is edited', () => {
 		const opened = openSource(original)
@@ -163,7 +164,8 @@ describe('line breaks inside a touched block', () => {
 
 describe('images and headings', () => {
 	it('keeps an image alone on a line and an image inside a paragraph', () => {
-		const original = '# T\n\n![alt](a.png)\n\ntext with ![b](b.png "the title") inline\n\nlast word\n'
+		const original =
+			'# T\n\n![alt](a.png)\n\ntext with ![b](b.png "the title") inline\n\nlast word\n'
 		const opened = openSource(original)
 		opened.replace('last', 'LAST')
 		const result = opened.save()

@@ -31,9 +31,7 @@ export function openSource(original: string): OpenedSource {
 	})
 	const md = editorMarkdownIt(editor)
 	const cause = findReadOnlyCause(md, original, editor.state.doc.childCount)
-	const session = cause
-		? null
-		: createSourceSession(md, original, serializeTopLevelBlocks(editor))
+	const session = cause ? null : createSourceSession(md, original, serializeTopLevelBlocks(editor))
 
 	return {
 		editor,
