@@ -836,7 +836,7 @@
 			content: "\2014";
 			position: absolute;
 			left: 0;
-			color: var(--muted-foreground);
+			color: var(--border-strong);
 		}
 		& ol > li::marker {
 			font-variant-numeric: tabular-nums;
@@ -907,6 +907,16 @@
 		& li.task-list-item input[type="checkbox"]:disabled {
 			cursor: default;
 		}
+		/* Unchecked boxes darken on hover; read-only (disabled) boxes stay still. */
+		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:hover:not(:disabled, :checked) {
+			border-color: var(--muted-foreground);
+		}
+		/* appearance: none drops the native look, so keep an explicit keyboard
+		   focus ring. */
+		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:focus-visible {
+			outline: 2px solid var(--ring);
+			outline-offset: 2px;
+		}
 		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:checked {
 			border-color: var(--foreground);
 			background: var(--foreground);
@@ -925,6 +935,7 @@
 		& li.task-list-item:has(> p:first-child > input:checked) {
 			color: var(--muted-foreground);
 			text-decoration: line-through;
+			text-decoration-color: var(--border-strong);
 		}
 		& li.task-list-item:has(> p:first-child > input:checked) > p:first-child {
 			color: var(--muted-foreground);
