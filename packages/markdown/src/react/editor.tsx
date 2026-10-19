@@ -63,6 +63,7 @@ export type EditorShortcut =
 	| 'mod+shift+b'
 	| 'mod+z'
 	| 'mod+shift+z'
+	| 'alt+f10'
 
 export interface ToolbarActionInfo {
 	action: ToolbarAction
@@ -145,6 +146,8 @@ const HEADING_LEVELS_BY_VARIANT: Record<EditorVariant, Array<1 | 2 | 3>> = {
  * - `Mod-Shift-k` invokes Link (Tiptap's Link ext ships no shortcut; the
  *   toolbar advertises `Mod+Shift+K`).
  * - `Mod-Shift-s` is dropped so Strike doesn't fire on both.
+ * - `Alt-F10` moves keyboard focus into the toolbar while a selection is
+ *   active (a no-op otherwise, so the key stays free for the browser).
  *
  * `Mod-k` is *deliberately unbound*. The global command palette
  * (`apps/web/src/components/command-palette.tsx:256`) listens on the document
@@ -158,6 +161,7 @@ const HEADING_LEVELS_BY_VARIANT: Record<EditorVariant, Array<1 | 2 | 3>> = {
 function buildShortcutExtension(
 	onShortcutFired: (shortcut: EditorShortcut) => void,
 	toggleLinkPopover: () => void,
+	focusToolbar: () => void,
 ) {
 	const wrap = (shortcut: EditorShortcut, command: () => boolean) => () => {
 		const ok = command()
@@ -182,6 +186,23 @@ function buildShortcutExtension(
 				'Mod-Shift-k': () => {
 					onShortcutFired('mod+shift+k')
 					toggleLinkPopover()
+					return true
+				},
+
+				// Backspace at the start of a heading or code block downgrades it to a
+				// paragraph (spec §8). List items and quotes already lift out of
+				// their wrapper through Tiptap's defaults; headings do not.
+				Backspace: () => {
+					const { selection } = this.editor.state
+					if (!selection.empty || selection.$from.parentOffset !== 0) return false
+					const blockType = selection.$from.parent.type.name
+					if (blockType !== 'heading' && blockType !== 'codeBlock') return false
+					return this.editor.commands.setParagraph()
+				},
+				'Alt-F10': () => {
+					if (this.editor.state.selection.empty || !this.editor.isEditable) return false
+					onShortcutFired('alt+f10')
+					focusToolbar()
 					return true
 				},
 
@@ -329,6 +350,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		// Toolbar state — set by the shortcut extension so `Mod+Shift+K`
 		// opens the same link popover the toolbar button does.
 		const [linkPopoverPulse, setLinkPopoverPulse] = useState(0)
+		const [toolbarFocusPulse, setToolbarFocusPulse] = useState(0)
 
 		// The keyboard-shortcut and toolbar-action forwarders are held in refs
 		// so we can rebuild the extension list without also invalidating it on
@@ -354,9 +376,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			setLinkPopoverPulse((n) => n + 1)
 		}, [])
 
+		const focusToolbar = useCallback(() => {
+			setToolbarFocusPulse((n) => n + 1)
+		}, [])
+
 		const shortcutExtension = useMemo(
-			() => buildShortcutExtension(emitShortcut, openLinkPopover),
-			[emitShortcut, openLinkPopover],
+			() => buildShortcutExtension(emitShortcut, openLinkPopover, focusToolbar),
+			[emitShortcut, openLinkPopover, focusToolbar],
 		)
 
 		const tiptapExtensions = useMemo(
@@ -483,6 +509,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					variant={variant}
 					onToolbarAction={handleToolbarAction}
 					openPulse={linkPopoverPulse}
+					focusPulse={toolbarFocusPulse}
 				/>
 			</>
 		)
