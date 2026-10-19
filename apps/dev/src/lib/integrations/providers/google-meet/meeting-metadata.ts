@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { files, integrations, objects, relationships, workspaces } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogRelationshipCreated } from '../../../events/record-event'
+import { sha256Hex } from '../../../file-save'
 import { logger } from '../../../logger'
 import { derivePairEndpointKinds } from '../../../relationships-endpoint-kind'
 import type { IntegrationConfig } from '../../../types'
@@ -210,6 +211,7 @@ export async function attachTranscriptFile(
 			mimeType: 'text/markdown',
 			sizeBytes: contentBytes.byteLength,
 			storageKey,
+			contentHash: sha256Hex(contentBytes),
 			createdBy: actorId,
 		})
 		.returning({ id: files.id })

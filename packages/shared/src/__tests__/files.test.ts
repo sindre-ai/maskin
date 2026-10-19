@@ -99,3 +99,36 @@ describe('createFileSchema', () => {
 		)
 	})
 })
+
+describe('updateFileSchema if_match', () => {
+	const hash = 'a'.repeat(64)
+
+	it('accepts a sha256 hex digest alongside a change', () => {
+		expect(updateFileSchema.parse({ content: 'x', if_match: hash }).if_match).toBe(hash)
+	})
+
+	it('accepts a save without if_match', () => {
+		expect(updateFileSchema.safeParse({ content: 'x' }).success).toBe(true)
+	})
+
+	it('rejects a value that is not a sha256 hex digest', () => {
+		expect(updateFileSchema.safeParse({ content: 'x', if_match: 'abc' }).success).toBe(false)
+		expect(updateFileSchema.safeParse({ content: 'x', if_match: 'A'.repeat(64) }).success).toBe(
+			false,
+		)
+	})
+
+	it('does not count if_match as a field to update', () => {
+		expect(updateFileSchema.safeParse({ if_match: hash }).success).toBe(false)
+	})
+
+	it('drops source and actor_type, which the server sets itself', () => {
+		const parsed = updateFileSchema.parse({
+			content: 'x',
+			source: 'accepted_change',
+			actor_type: 'agent',
+		})
+		expect(parsed).not.toHaveProperty('source')
+		expect(parsed).not.toHaveProperty('actor_type')
+	})
+})

@@ -124,6 +124,16 @@ describe('S3StorageProvider', () => {
 			})
 		})
 
+		it('hands the abort signal to the client so a timed-out upload is dropped', async () => {
+			const { provider, send } = getProvider()
+			send.mockResolvedValueOnce({})
+			const controller = new AbortController()
+
+			await provider.put('my-key', Buffer.from('data'), { signal: controller.signal })
+
+			expect(send.mock.calls[0]?.[1]).toEqual({ abortSignal: controller.signal })
+		})
+
 		it('sends PutObjectCommand with Uint8Array data', async () => {
 			const { provider, send, getCommand } = getProvider()
 			send.mockResolvedValueOnce({})
