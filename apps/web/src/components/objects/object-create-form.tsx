@@ -119,7 +119,13 @@ export function ObjectCreateForm({
 
 			{/* Content editor */}
 			<div className="mb-8">
-				<MarkdownContent content={object?.content ?? ''} onChange={handleContentChange} editable />
+				<MarkdownContent
+					content={object?.content ?? ''}
+					onChange={handleContentChange}
+					editable
+					surface="description"
+					objectId={objectId}
+				/>
 			</div>
 
 			{/* Linked objects */}
