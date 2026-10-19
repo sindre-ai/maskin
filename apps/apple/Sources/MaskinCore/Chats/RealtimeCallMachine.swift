@@ -97,13 +97,13 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 			finishUtterance(at: now)
 			phase = .listening
 		case "conversation.item.input_audio_transcription.completed":
-			if let text = event.transcript?.trimmed {
+			if let text = event.transcript?.trimmedOrNil {
 				heardText = text
 				addLine(.user, text)
 			}
 		// GA name first; the beta name is kept for an older edge.
 		case "response.output_audio_transcript.done", "response.audio_transcript.done":
-			if let text = event.transcript?.trimmed { addLine(.assistant, text) }
+			if let text = event.transcript?.trimmedOrNil { addLine(.assistant, text) }
 		case "response.function_call_arguments.done":
 			guard let callId = event.callId, let name = event.name else { return [] }
 			phase = .thinking
@@ -153,7 +153,7 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 			let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
 		{
 			let query = (object["q"] as? String) ?? (object["query"] as? String)
-			if let query = query?.trimmed, !query.isEmpty { return "searching for \(query)…" }
+			if let query = query?.trimmedOrNil { return "searching for \(query)…" }
 		}
 		return "running \(name)…"
 	}
@@ -170,7 +170,7 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 }
 
 extension String {
-	fileprivate var trimmed: String? {
+	fileprivate var trimmedOrNil: String? {
 		let value = trimmingCharacters(in: .whitespacesAndNewlines)
 		return value.isEmpty ? nil : value
 	}

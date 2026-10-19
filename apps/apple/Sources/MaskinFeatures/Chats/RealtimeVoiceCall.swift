@@ -121,13 +121,17 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 			voiceSessionID = id
 			// Ended while the slot was being reserved: give it straight back.
 			guard isActive else {
+				transport.close()
 				release(reason: .userHangup)
 				return
 			}
 			let sdp = try await transport.makeOffer(
 				onEvent: { [weak self] data in self?.received(data) },
 				onConnection: { [weak self] state in self?.connectionChanged(state) })
+			// Ended while the offer was being made: `release` has already dropped its reference to
+			// this transport, so close the local one (this frees a microphone opened late).
 			guard isActive else {
+				transport.close()
 				release(reason: .userHangup)
 				return
 			}
@@ -144,6 +148,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		} catch RealtimeTransportError.microphoneDenied {
 			stop(because: "Allow Microphone access in Settings to talk with \(agentName).")
 		} catch is CancellationError {
+			transport.close()
 			return
 		} catch {
 			stop(because: "Couldn't connect the call. Try again.")

@@ -15,6 +15,9 @@ final class WebRTCTransport: RealtimeTransport {
 	private var channel: RTCDataChannel?
 	private var micTrack: RTCAudioTrack?
 	private var audioSessionActive = false
+	/// Set by `close()`. An offer still waiting on the permission prompt must not open the
+	/// microphone after the call was hung up.
+	private var isClosed = false
 
 	func makeOffer(
 		onEvent: @escaping @MainActor @Sendable (Data) -> Void,
@@ -23,6 +26,7 @@ final class WebRTCTransport: RealtimeTransport {
 		guard await AVAudioApplication.requestRecordPermission() else {
 			throw RealtimeTransportError.microphoneDenied
 		}
+		guard !isClosed else { throw CancellationError() }
 		try configureAudioSession()
 
 		bridge.onMessage = { data in Task { @MainActor in onEvent(data) } }
@@ -72,6 +76,7 @@ final class WebRTCTransport: RealtimeTransport {
 	func restartIce() { peer?.restartIce() }
 
 	func close() {
+		isClosed = true
 		bridge.onMessage = nil
 		bridge.onConnection = nil
 		channel?.close()
@@ -104,11 +109,11 @@ final class WebRTCTransport: RealtimeTransport {
 
 	// MARK: SDP, as plain strings so nothing non-Sendable crosses an await
 
-	private static func createOffer(_ peer: RTCPeerConnection) async throws -> String {
+	nonisolated private static func createOffer(_ peer: RTCPeerConnection) async throws -> String {
 		let constraints = RTCMediaConstraints(
 			mandatoryConstraints: ["OfferToReceiveAudio": "true"], optionalConstraints: nil)
 		return try await withCheckedThrowingContinuation { continuation in
-			peer.offer(for: constraints) { description, error in
+			peer.offer(for: constraints) { @Sendable description, error in
 				if let description {
 					continuation.resume(returning: description.sdp)
 				} else {
@@ -119,17 +124,17 @@ final class WebRTCTransport: RealtimeTransport {
 		}
 	}
 
-	private static func setLocal(_ peer: RTCPeerConnection, sdp: String) async throws {
+	nonisolated private static func setLocal(_ peer: RTCPeerConnection, sdp: String) async throws {
 		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-			peer.setLocalDescription(RTCSessionDescription(type: .offer, sdp: sdp)) { error in
+			peer.setLocalDescription(RTCSessionDescription(type: .offer, sdp: sdp)) { @Sendable error in
 				if let error { continuation.resume(throwing: error) } else { continuation.resume() }
 			}
 		}
 	}
 
-	private static func setRemote(_ peer: RTCPeerConnection, sdp: String) async throws {
+	nonisolated private static func setRemote(_ peer: RTCPeerConnection, sdp: String) async throws {
 		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-			peer.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: sdp)) { error in
+			peer.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: sdp)) { @Sendable error in
 				if let error { continuation.resume(throwing: error) } else { continuation.resume() }
 			}
 		}
