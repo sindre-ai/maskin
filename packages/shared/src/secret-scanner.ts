@@ -171,6 +171,23 @@ export function redactionMarker(secret: string, name: string): string {
 	return `${prefix}[REDACTED · vaulted as ${name}]`
 }
 
+/**
+ * The text with every matched secret cut out and nothing put in its place, for handing
+ * a cancelled message back to its author: their own words are kept, the secret is not.
+ * A space on each side of a cut collapses to one, and spaces left at either end go.
+ * Line breaks are never touched.
+ */
+export function withoutSecrets(text: string, matches: readonly SecretMatch[]): string {
+	let out = ''
+	let cursor = 0
+	for (const m of [...matches].sort((a, b) => a.start - b.start)) {
+		out += text.slice(cursor, m.start)
+		cursor = m.end
+		if (out.endsWith(' ') && text[cursor] === ' ') cursor += 1
+	}
+	return (out + text.slice(cursor)).replace(/^ +| +$/g, '')
+}
+
 export function redactSecrets(text: string, matches: readonly SecretMatch[], name: string): string {
 	let out = ''
 	let cursor = 0

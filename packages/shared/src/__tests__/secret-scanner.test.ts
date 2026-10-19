@@ -5,6 +5,7 @@ import {
 	redactSecrets,
 	redactionMarker,
 	scanForSecrets,
+	withoutSecrets,
 } from '../secret-scanner'
 
 // Obviously fake values, assembled at runtime so no token-shaped literal sits in the repo.
@@ -128,6 +129,35 @@ describe('redaction', () => {
 			const marker = redactionMarker(secret, 'NAME')
 			expect(scanForSecrets(marker)).toEqual([])
 		}
+	})
+})
+
+describe('withoutSecrets', () => {
+	it('keeps the words around a secret and cuts the secret out', () => {
+		const text = `Please call OpenAI with ${fake.github} and tell me what it says`
+		expect(withoutSecrets(text, scanForSecrets(text))).toBe(
+			'Please call OpenAI with and tell me what it says',
+		)
+	})
+
+	it('cuts every secret, and leaves nothing a scan would still flag', () => {
+		const text = `a ${fake.github} b ${fake.slack} c`
+		const out = withoutSecrets(text, scanForSecrets(text))
+		expect(out).toBe('a b c')
+		expect(scanForSecrets(out)).toEqual([])
+	})
+
+	it('returns an empty string when the whole message was the secret', () => {
+		expect(withoutSecrets(fake.cloudflare, scanForSecrets(fake.cloudflare))).toBe('')
+	})
+
+	it('trims spaces left at the ends but never touches line breaks', () => {
+		const text = `${fake.github} first line\nsecond line ${fake.slack}`
+		expect(withoutSecrets(text, scanForSecrets(text))).toBe('first line\nsecond line')
+	})
+
+	it('returns the text unchanged when nothing matched', () => {
+		expect(withoutSecrets('hello  there', [])).toBe('hello  there')
 	})
 })
 

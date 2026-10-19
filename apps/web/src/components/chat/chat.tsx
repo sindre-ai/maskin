@@ -48,7 +48,7 @@ import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
-import type { SecretMatch } from '@maskin/shared'
+import { type SecretMatch, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
@@ -1206,7 +1206,11 @@ export function Composer({
 					restarting={secretRestarting}
 					onSend={onSend}
 					onCancel={() => {
+						// The message is dropped, not the person's words: the text comes back
+						// without the secret, so cancelling never costs them what they wrote.
+						const restored = withoutSecrets(secretFlow.content, secretFlow.matches)
 						setSecretFlow(null)
+						setValue(restored)
 						textareaRef.current?.focus()
 					}}
 					onEdit={() => {

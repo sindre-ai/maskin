@@ -170,6 +170,39 @@ describe('Composer secret guard', () => {
 		expect(trackEventMock).not.toHaveBeenCalled()
 	})
 
+	it('Cancel message hands back what the person wrote, without the secret', async () => {
+		const props = renderComposer()
+		const user = await typeAndSend(`Please use ${FAKE_CF} to deploy the worker`)
+
+		await user.click(await screen.findByRole('button', { name: 'Cancel message' }))
+
+		expect(props.onSend).not.toHaveBeenCalled()
+		expect(screen.getByRole('textbox')).toHaveValue('Please use to deploy the worker')
+		// The secret does not come back: not into the composer, not into any storage.
+		expect(screen.getByRole('textbox')).not.toHaveValue(expect.stringContaining(FAKE_CF))
+		expect(storageHolds(FAKE_CF)).toBe(false)
+		expect(storageHolds('Zq7')).toBe(false)
+	})
+
+	it('Cancel message leaves an empty composer when the whole message was the secret', async () => {
+		renderComposer()
+		const user = await typeAndSend(FAKE_CF)
+
+		await user.click(await screen.findByRole('button', { name: 'Cancel message' }))
+
+		expect(screen.getByRole('textbox')).toHaveValue('')
+	})
+
+	it('Escape on the card cancels the same way, keeping what the person wrote', async () => {
+		renderComposer()
+		const user = await typeAndSend(`deploy with ${FAKE_CF} please`)
+		await screen.findByRole('button', { name: 'Cancel message' })
+
+		await user.keyboard('{Escape}')
+
+		await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('deploy with please'))
+	})
+
 	it('vaults through the scope step and sends only the redaction marker', async () => {
 		chatCaptureMock.mockResolvedValue({
 			integrationId: 'int-1',
