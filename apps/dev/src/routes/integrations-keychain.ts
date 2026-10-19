@@ -138,7 +138,7 @@ app.openapi(chatCaptureRoute, (async (c) => {
 	const body = parsed.data
 
 	try {
-		const result = await captureChatSecret(db, getKmsProvider(db), {
+		const result = await captureChatSecret(db, getKmsProvider(), {
 			workspaceId,
 			actorId,
 			sessionId: body.sessionId,
@@ -244,7 +244,7 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 	const body = parsed.data
 
 	try {
-		const result = await createByoApiKey(db, getKmsProvider(db), {
+		const result = await createByoApiKey(db, getKmsProvider(), {
 			workspaceId,
 			actorId,
 			displayName: body.displayName,
@@ -502,7 +502,7 @@ const rotateDekRoute = createRoute({
 	path: '/{id}/rotate-dek',
 	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
-	summary: 'Re-wrap one credential under a fresh data key and the workspace current KEK',
+	summary: 'Re-wrap one credential under a fresh data key and the current master key',
 	request: { headers: workspaceIdHeader, params: idParamSchema },
 	responses: {
 		200: {
@@ -539,7 +539,7 @@ app.openapi(rotateDekRoute, (async (c) => {
 		)
 	}
 
-	const outcome = await rotateIntegrationDek(db, getKmsProvider(db), {
+	const outcome = await rotateIntegrationDek(db, getKmsProvider(), {
 		integrationId: id,
 		workspaceId,
 		actorId: callerId,

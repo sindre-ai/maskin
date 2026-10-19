@@ -1,9 +1,10 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	type ScopeGrant,
@@ -32,10 +33,10 @@ import { db, getTestActorId, sql } from './global-setup'
 const CANARY = `fake-scope-${'0123456789'.repeat(3)}`
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'keychain-scope-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
 afterAll(() => {

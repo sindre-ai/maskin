@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import { events, credentialAccessLog, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,11 +23,11 @@ import { db, getTestActorId } from './global-setup'
 const CANARY = `lin_${'CANARY0123'.repeat(5)}`
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'byo-apikey-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
 afterAll(() => {

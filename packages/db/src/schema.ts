@@ -6,6 +6,7 @@ import {
 	bigserial,
 	boolean,
 	check,
+	date,
 	index,
 	integer,
 	jsonb,
@@ -354,7 +355,7 @@ export const integrations = pgTable(
 		displayName: text('display_name'),
 		// JSONB array of ScopeGrant. Fail-closed: the empty default grants nobody.
 		scopeGrants: jsonb('scope_grants').$type<ScopeGrant[]>().notNull().default(sql`'[]'::jsonb`),
-		// KMS-wrapped per-credential DEK. NULL = legacy row, decrypted under
+		// Master-key-wrapped per-credential DEK. NULL = legacy row, decrypted under
 		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
 		dekCiphertext: text('dek_ciphertext'),
 		source: text('source').$type<IntegrationSource>().notNull().default('admin_ui'),
@@ -406,16 +407,6 @@ export type Integration = typeof integrations.$inferSelect
 
 // ── Keychain ────────────────────────────────────────────────────────────────
 
-/** workspace -> KMS key alias (AwsKmsProvider provisions the alias on a workspace's first write). */
-export const workspaceKmsAliases = pgTable('workspace_kms_aliases', {
-	workspaceId: uuid('workspace_id')
-		.primaryKey()
-		.references(() => workspaces.id),
-	kekAlias: text('kek_alias').notNull(),
-	provider: text('provider').notNull().default('aws-kms'),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
-
 export type CredentialAccessAction =
 	| 'read'
 	| 'create'
@@ -460,6 +451,23 @@ export const credentialAccessLog = pgTable(
 		index('cal_actor_read_at_idx').on(t.actorId, t.readAt),
 		index('cal_action_idx').on(t.workspaceId, t.action),
 	],
+)
+/**
+ * The audit-chain head, once per workspace per UTC day. Append-only: a trigger
+ * rejects UPDATE and DELETE (see migration 0092).
+ */
+export const credentialChainSnapshots = pgTable(
+	'credential_chain_snapshots',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		snapshotDate: date('snapshot_date').notNull(),
+		maxId: bigint('max_id', { mode: 'bigint' }).notNull(),
+		rowHash: text('row_hash').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.snapshotDate] })],
 )
 export type NewIntegration = typeof integrations.$inferInsert
 

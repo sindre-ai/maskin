@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +6,7 @@ import {
 	KmsAccessError,
 	KmsDecryptError,
 	type KmsProvider,
-	LocalFileKmsProvider,
+	MasterKeyProvider,
 } from '@maskin/auth/kms'
 import { events, type Integration, type ScopeGrant, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -42,11 +42,11 @@ import { db, getTestActorId, sql } from './global-setup'
 const SECRET = 'fake-api-key-not-real-0000'
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'cred-access-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 })
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 beforeEach(() => {

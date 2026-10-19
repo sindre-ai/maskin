@@ -1,7 +1,8 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	INTEGRATION_STATUS_ACTIVE,
@@ -48,14 +49,14 @@ import { db, getTestActorId, sql } from './global-setup'
  */
 
 let kmsDir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 
 beforeAll(() => {
 	process.env.INTEGRATION_ENCRYPTION_KEY = 'a'.repeat(64)
 	process.env.UNIPILE_BASE_URL = 'https://unipile.test.invalid'
 	process.env.UNIPILE_API_KEY = 'ignored-by-test-stub'
 	kmsDir = mkdtempSync(join(tmpdir(), 'readers-kek-'))
-	kms = new LocalFileKmsProvider(join(kmsDir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
 

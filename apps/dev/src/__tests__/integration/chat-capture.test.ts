@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { LocalFileKmsProvider } from '@maskin/auth/kms'
+import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	conversationParticipants,
@@ -36,11 +37,11 @@ import { fakeSessionControl } from './session-control-fake'
 const CANARY = `cfut_${'CANARY0123'.repeat(5)}`
 
 let dir: string
-let kms: LocalFileKmsProvider
+let kms: MasterKeyProvider
 
 beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), 'chat-capture-kek-'))
-	kms = new LocalFileKmsProvider(join(dir, 'kek'))
+	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
 afterAll(() => {

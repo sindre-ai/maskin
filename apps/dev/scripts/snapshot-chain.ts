@@ -2,16 +2,14 @@
 // src/jobs/keychain-chain-snapshot.ts), for the main-only smoke workflow.
 //
 // Walks every workspace's credential_access_log chain, checks the latest snapshot in
-// the write-once bucket against it, and writes at most one object per workspace for
+// credential_chain_snapshots against it, and writes at most one row per workspace for
 // today. A second run on the same UTC day writes nothing.
 //
 // Run:
-//   DATABASE_URL=... KEYCHAIN_WORM_BUCKET=... AWS_REGION=eu-central-1 \
-//     pnpm --filter @maskin/dev exec tsx scripts/snapshot-chain.ts
+//   DATABASE_URL=... pnpm --filter @maskin/dev exec tsx scripts/snapshot-chain.ts
 //
-// Prints the run result as one JSON line. Exit code 0 = ran clean, 2 = skipped
-// (KEYCHAIN_WORM_BUCKET is not set, nothing was read or written), 1 = failed (a chain
-// or snapshot verification failure, or a lookup, read or write error).
+// Prints the run result as one JSON line. Exit code 0 = ran clean, 1 = failed (a chain
+// or snapshot verification failure, or a database error).
 
 import { createDb } from '@maskin/db'
 import { ChainSnapshotJob } from '../src/jobs/keychain-chain-snapshot'
@@ -26,7 +24,6 @@ async function main(): Promise<number> {
 	try {
 		const result = await new ChainSnapshotJob(db).run()
 		console.log(JSON.stringify(result))
-		if (!result.enabled) return 2
 		return result.verificationFailures > 0 || result.errors > 0 ? 1 : 0
 	} finally {
 		await db.$client.end()

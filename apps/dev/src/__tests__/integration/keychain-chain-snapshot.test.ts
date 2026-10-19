@@ -1,63 +1,12 @@
-import { WormSnapshotStore, type WormSnapshotStoreConfig } from '@maskin/storage'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const captureMock = vi.hoisted(() => vi.fn(async () => {}))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: captureMock }))
 
-import {
-	ChainSnapshotJob,
-	VERIFICATION_FAILED_EVENT,
-	snapshotKey,
-} from '../../jobs/keychain-chain-snapshot'
+import { ChainSnapshotJob, VERIFICATION_FAILED_EVENT } from '../../jobs/keychain-chain-snapshot'
 import { verifyCredentialAccessChain } from '../../lib/integrations/credential-audit'
 import { insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
-
-class AwsError extends Error {
-	constructor(name: string) {
-		super(name)
-		this.name = name
-	}
-}
-
-/** An in-memory bucket behind the S3 client interface, with a log of what was sent. */
-function fakeBucket(opts: { denyList?: boolean } = {}) {
-	const objects = new Map<string, string>()
-	const sent: string[] = []
-	const client = {
-		async send(command: { constructor: { name: string }; input: Record<string, string> }) {
-			const name = command.constructor.name
-			sent.push(name)
-			switch (name) {
-				case 'ListObjectsV2Command': {
-					if (opts.denyList) throw new AwsError('AccessDenied')
-					const prefix = command.input.Prefix ?? ''
-					const keys = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort()
-					return { Contents: keys.map((Key) => ({ Key })), IsTruncated: false }
-				}
-				case 'PutObjectCommand': {
-					if (command.input.IfNoneMatch === '*' && objects.has(command.input.Key)) {
-						throw new AwsError('PreconditionFailed')
-					}
-					objects.set(command.input.Key, command.input.Body)
-					return {}
-				}
-				case 'GetObjectCommand': {
-					const body = objects.get(command.input.Key)
-					if (body === undefined) throw new AwsError('NoSuchKey')
-					return { Body: { transformToString: async () => body } }
-				}
-				default:
-					throw new Error(`unexpected S3 command ${name}`)
-			}
-		},
-	}
-	const store = new WormSnapshotStore({
-		bucket: 'worm',
-		client: client as unknown as WormSnapshotStoreConfig['client'],
-	})
-	return { store, objects, sent, puts: () => sent.filter((n) => n === 'PutObjectCommand').length }
-}
 
 async function chainWorkspace(rows = 2) {
 	const ws = await insertWorkspace(db, getTestActorId())
@@ -93,110 +42,66 @@ const head = async (workspaceId: string) => {
 	return { id: chain.headId as string, hash: chain.headHash as string }
 }
 
-const jobAt = (store: WormSnapshotStore | null, iso: string) =>
-	new ChainSnapshotJob(db, store, () => new Date(iso))
+const snapshots = (workspaceId: string) =>
+	sql<{ date: string; max_id: string; row_hash: string }[]>`
+		SELECT snapshot_date::text AS date, max_id::text AS max_id, row_hash
+		FROM credential_chain_snapshots WHERE workspace_id = ${workspaceId} ORDER BY snapshot_date
+	`
+
+/** A snapshot written earlier, as the table owner (the table is append-only, so only inserts). */
+const seedSnapshot = (workspaceId: string, date: string, maxId: string, rowHash: string) =>
+	sql`INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+		VALUES (${workspaceId}, ${date}::date, ${maxId}::bigint, ${rowHash})`
+
+const jobAt = (iso: string) => new ChainSnapshotJob(db, () => new Date(iso))
 
 beforeEach(() => captureMock.mockClear())
 
 describe('ChainSnapshotJob', () => {
-	it('writes one object per workspace holding the chain head, and writes nothing on a second run the same day', async () => {
+	it('writes one row per workspace holding the chain head, and writes nothing on a second run the same day', async () => {
 		const s = await chainWorkspace()
-		const bucket = fakeBucket()
-		const job = jobAt(bucket.store, '2026-10-12T02:31:00Z')
+		const job = jobAt('2026-10-12T02:31:00Z')
 
-		expect(await job.snapshotWorkspace(bucket.store, s.ws.id)).toBe('written')
+		expect(await job.snapshotWorkspace(s.ws.id)).toBe('written')
 
-		const key = snapshotKey(s.ws.id, '2026-10-12')
 		const h = await head(s.ws.id)
-		expect(key).toBe(`snapshots/${s.ws.id}/2026-10-12.json`)
-		expect(JSON.parse(bucket.objects.get(key) as string)).toEqual({
-			max_id: h.id,
-			row_hash: h.hash,
-			date: '2026-10-12',
-		})
+		expect(await snapshots(s.ws.id)).toEqual([
+			{ date: '2026-10-12', max_id: h.id, row_hash: h.hash },
+		])
 
-		const putsAfterFirst = bucket.puts()
-		expect(await job.snapshotWorkspace(bucket.store, s.ws.id)).toBe('unchanged')
-		expect(bucket.puts()).toBe(putsAfterFirst)
-		expect(bucket.objects.size).toBe(1)
+		expect(await job.snapshotWorkspace(s.ws.id)).toBe('unchanged')
+		expect(await snapshots(s.ws.id)).toHaveLength(1)
 	})
 
-	it('writes a new object only when the chain has grown since the latest snapshot', async () => {
+	it('writes a new row only when the chain has grown since the latest snapshot', async () => {
 		const s = await chainWorkspace()
-		const bucket = fakeBucket()
-		await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(bucket.store, s.ws.id)
+		await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)
 
 		// Next day, nothing new: nothing written.
-		const nextDay = jobAt(bucket.store, '2026-10-13T02:31:00Z')
-		expect(await nextDay.snapshotWorkspace(bucket.store, s.ws.id)).toBe('unchanged')
-		expect(bucket.objects.size).toBe(1)
+		const nextDay = jobAt('2026-10-13T02:31:00Z')
+		expect(await nextDay.snapshotWorkspace(s.ws.id)).toBe('unchanged')
+		expect(await snapshots(s.ws.id)).toHaveLength(1)
 
-		// Next day, new rows: a second object with the new head.
+		// Next day, new rows: a second row with the new head.
 		await addRow(s)
-		expect(await nextDay.snapshotWorkspace(bucket.store, s.ws.id)).toBe('written')
+		expect(await nextDay.snapshotWorkspace(s.ws.id)).toBe('written')
 		const h = await head(s.ws.id)
-		expect(JSON.parse(bucket.objects.get(snapshotKey(s.ws.id, '2026-10-13')) as string)).toEqual({
-			max_id: h.id,
-			row_hash: h.hash,
-			date: '2026-10-13',
-		})
-		expect(bucket.objects.size).toBe(2)
+		expect(await snapshots(s.ws.id)).toEqual([
+			expect.objectContaining({ date: '2026-10-12' }),
+			{ date: '2026-10-13', max_id: h.id, row_hash: h.hash },
+		])
 	})
 
-	it('listing returns no exact match: writes', async () => {
+	it('a row for today that already exists is kept, not overwritten', async () => {
 		const s = await chainWorkspace()
-		const bucket = fakeBucket()
-		expect(
-			await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(bucket.store, s.ws.id),
-		).toBe('written')
-		expect(bucket.puts()).toBe(1)
-	})
-
-	it('exact match for today: skips without a PUT', async () => {
-		const s = await chainWorkspace()
-		const bucket = fakeBucket()
-		// Today's object exists but the chain has since grown, so only the exact-key check can stop a write.
-		const first = await chainHeadSnapshot(s, bucket, '2026-10-12')
+		await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)
+		const [first] = await snapshots(s.ws.id)
 		await addRow(s)
-		const puts = bucket.puts()
 
-		const outcome = await jobAt(bucket.store, '2026-10-12T20:00:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
+		const outcome = await jobAt('2026-10-12T20:00:00Z').snapshotWorkspace(s.ws.id)
 
 		expect(outcome).toBe('already_written')
-		expect(bucket.puts()).toBe(puts)
-		expect(bucket.objects.get(snapshotKey(s.ws.id, '2026-10-12'))).toBe(first)
-	})
-
-	it('a longer key that only shares the prefix does not count as a match: writes', async () => {
-		const s = await chainWorkspace()
-		const bucket = fakeBucket()
-		bucket.objects.set(`${snapshotKey(s.ws.id, '2026-10-12')}.bak`, '{"not":"a snapshot"}')
-		// The longer key is under the workspace prefix but is not a .json snapshot name.
-
-		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
-
-		expect(outcome).toBe('written')
-		expect(bucket.objects.has(snapshotKey(s.ws.id, '2026-10-12'))).toBe(true)
-	})
-
-	it('a 403 on the lookup is a failure: nothing is written and nothing is retried', async () => {
-		const s = await chainWorkspace()
-		const bucket = fakeBucket({ denyList: true })
-
-		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
-
-		expect(outcome).toBe('failed')
-		expect(bucket.puts()).toBe(0)
-		expect(bucket.sent.filter((n) => n === 'ListObjectsV2Command')).toHaveLength(1)
+		expect(await snapshots(s.ws.id)).toEqual([first])
 	})
 
 	it('a broken chain fires the failure event and writes nothing', async () => {
@@ -208,15 +113,11 @@ describe('ChainSnapshotJob', () => {
 		)[0] as { id: string }
 		// Tamper as the table owner (the app role could not).
 		await sql`UPDATE credential_access_log SET request_id = 'edited' WHERE id = ${second.id}::bigint`
-		const bucket = fakeBucket()
 
-		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
+		const outcome = await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)
 
 		expect(outcome).toBe('chain_broken')
-		expect(bucket.puts()).toBe(0)
+		expect(await snapshots(s.ws.id)).toEqual([])
 		expect(captureMock).toHaveBeenCalledWith(
 			VERIFICATION_FAILED_EVENT,
 			expect.any(String),
@@ -226,21 +127,13 @@ describe('ChainSnapshotJob', () => {
 
 	it('a whole-chain rewrite is caught by the snapshot: same row id, different hash', async () => {
 		const s = await chainWorkspace()
-		const bucket = fakeBucket()
 		const h = await head(s.ws.id)
-		// A snapshot written earlier, whose hash no longer matches what the database holds.
-		bucket.objects.set(
-			snapshotKey(s.ws.id, '2026-10-01'),
-			JSON.stringify({ max_id: h.id, row_hash: 'f'.repeat(64), date: '2026-10-01' }),
-		)
+		await seedSnapshot(s.ws.id, '2026-10-01', h.id, 'f'.repeat(64))
 
-		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
+		const outcome = await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)
 
 		expect(outcome).toBe('snapshot_mismatch')
-		expect(bucket.puts()).toBe(0)
+		expect(await snapshots(s.ws.id)).toHaveLength(1)
 		expect(captureMock).toHaveBeenCalledWith(
 			VERIFICATION_FAILED_EVENT,
 			expect.any(String),
@@ -250,24 +143,13 @@ describe('ChainSnapshotJob', () => {
 
 	it('a snapshot row that is gone from the chain fires the failure event', async () => {
 		const s = await chainWorkspace()
-		const bucket = fakeBucket()
 		const h = await head(s.ws.id)
-		bucket.objects.set(
-			snapshotKey(s.ws.id, '2026-10-01'),
-			JSON.stringify({
-				max_id: String(BigInt(h.id) + 1000n),
-				row_hash: h.hash,
-				date: '2026-10-01',
-			}),
-		)
+		await seedSnapshot(s.ws.id, '2026-10-01', String(BigInt(h.id) + 1000n), h.hash)
 
-		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
+		const outcome = await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)
 
 		expect(outcome).toBe('snapshot_mismatch')
-		expect(bucket.puts()).toBe(0)
+		expect(await snapshots(s.ws.id)).toHaveLength(1)
 	})
 
 	it('verifies and snapshots a chain whose rows have non-zero microseconds', async () => {
@@ -278,34 +160,39 @@ describe('ChainSnapshotJob', () => {
 		`
 		expect((text as { t: string }).t).toMatch(/\.\d{6}Z$/)
 		expect((text as { t: string }).t).not.toMatch(/\.000000Z$/)
-		const bucket = fakeBucket()
 
-		const outcome = await jobAt(bucket.store, '2026-10-12T02:31:00Z').snapshotWorkspace(
-			bucket.store,
-			s.ws.id,
-		)
-
-		expect(outcome).toBe('written')
+		expect(await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)).toBe('written')
 	})
 
-	it('run() snapshots every workspace with a chain, and is inert with no bucket', async () => {
+	it('run() snapshots every workspace with a chain', async () => {
 		const s = await chainWorkspace()
-		const bucket = fakeBucket()
 
-		const result = await jobAt(bucket.store, '2026-10-12T02:31:00Z').run()
+		const result = await jobAt('2026-10-12T02:31:00Z').run()
 
-		expect(result.enabled).toBe(true)
 		expect(result.written).toBeGreaterThanOrEqual(1)
-		expect(bucket.objects.has(snapshotKey(s.ws.id, '2026-10-12'))).toBe(true)
-
-		const inert = await jobAt(null, '2026-10-12T02:31:00Z').run()
-		expect(inert).toMatchObject({ enabled: false, written: 0 })
+		expect(await snapshots(s.ws.id)).toHaveLength(1)
 	})
 })
 
-async function chainHeadSnapshot(s: Chain, bucket: ReturnType<typeof fakeBucket>, date: string) {
-	const h = await head(s.ws.id)
-	const body = JSON.stringify({ max_id: h.id, row_hash: h.hash, date })
-	bucket.objects.set(snapshotKey(s.ws.id, date), body)
-	return body
-}
+describe('credential_chain_snapshots', () => {
+	it('rejects UPDATE and DELETE, even for the table owner', async () => {
+		const s = await chainWorkspace()
+		await jobAt('2026-10-12T02:31:00Z').snapshotWorkspace(s.ws.id)
+
+		await expect(
+			sql`UPDATE credential_chain_snapshots SET row_hash = 'x' WHERE workspace_id = ${s.ws.id}`,
+		).rejects.toThrow(/append-only/)
+		await expect(
+			sql`DELETE FROM credential_chain_snapshots WHERE workspace_id = ${s.ws.id}`,
+		).rejects.toThrow(/append-only/)
+		expect(await snapshots(s.ws.id)).toHaveLength(1)
+	})
+
+	it('allows one row per workspace per day', async () => {
+		const s = await chainWorkspace()
+		const h = await head(s.ws.id)
+		await seedSnapshot(s.ws.id, '2026-10-01', h.id, h.hash)
+
+		await expect(seedSnapshot(s.ws.id, '2026-10-01', h.id, h.hash)).rejects.toThrow(/duplicate key/)
+	})
+})

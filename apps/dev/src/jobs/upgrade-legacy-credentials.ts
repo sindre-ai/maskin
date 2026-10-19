@@ -11,7 +11,7 @@ import { logger } from '../lib/logger'
  *
  * A legacy row has dek_ciphertext NULL and decrypts under INTEGRATION_ENCRYPTION_KEY.
  * This job decrypts it, re-encrypts the same plaintext under a fresh DEK wrapped by
- * the workspace KEK, and writes credentials and dek_ciphertext in one UPDATE. The
+ * the master key, and writes credentials and dek_ciphertext in one UPDATE. The
  * decrypted value never changes; the new envelope is read back before it is written.
  *
  * BUILT BUT OFF. It does nothing unless KEYCHAIN_LEGACY_UPGRADE_ENABLED is exactly
@@ -109,7 +109,7 @@ export class UpgradeLegacyCredentialsJob {
 		this.running = true
 		result.enabled = true
 		try {
-			const kms = getKmsProvider(this.db)
+			const kms = getKmsProvider()
 			let cursor: string | null = null
 			for (;;) {
 				const rows: Array<{
