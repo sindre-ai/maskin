@@ -256,13 +256,12 @@ describe('MCP telemetry wrapper', () => {
 		expect(sizeEvents).toHaveLength(0)
 	})
 
-	it('does not emit a mutation event when the response shape is unrecognised', async () => {
-		// Default fetch stub returns `[]` so update_objects with no updates
-		// returns an empty result array. With no entry reporting success: true
-		// the wrapper must NOT count the call as a mutation — otherwise the
-		// bet metric is biased upward.
+	it('does not emit a mutation event when update_objects is rejected for writing nothing', async () => {
+		// An empty update_objects call used to return an empty result array as a
+		// success. It now throws before any write, and a rejected call must NOT
+		// count as a mutation — otherwise the bet metric is biased upward.
 		const handler = getHandler('update_objects')
-		await handler({ workspace_id: wsId, updates: [] })
+		await expect(handler({ workspace_id: wsId, updates: [] })).rejects.toThrow(/wrote nothing/)
 
 		const mutations = recorded.filter((r) => r.event_type === 'mutation')
 		expect(mutations).toHaveLength(0)
