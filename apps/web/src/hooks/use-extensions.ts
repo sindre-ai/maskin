@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { CreateExtensionInput, ExtensionWebhookConfig, UpdateExtensionInput } from '../lib/api'
+import type {
+	CreateExtensionInput,
+	ExtensionToolEffect,
+	ExtensionWebhookConfig,
+	UpdateExtensionInput,
+} from '../lib/api'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -84,5 +89,43 @@ export function useExtensionSample(workspaceId: string, id: string) {
 	return useMutation({
 		mutationFn: (data: { payload: string; webhook_config?: ExtensionWebhookConfig }) =>
 			api.extensions.sample(workspaceId, id, data),
+	})
+}
+
+/** Refused tool calls land from running sessions, so the page re-reads them while it is open. */
+const ATTEMPTED_POLL_MS = 15_000
+
+export function useExtensionAttempted(workspaceId: string, id: string) {
+	return useQuery({
+		queryKey: queryKeys.extensions.attempted(workspaceId, id),
+		queryFn: () => api.extensions.attempted(workspaceId, id),
+		enabled: !!workspaceId && !!id,
+		refetchInterval: ATTEMPTED_POLL_MS,
+	})
+}
+
+/** The grants live on the extension row, so every grant change refreshes it (and the list). */
+function useRefreshExtension(workspaceId: string, id: string) {
+	const queryClient = useQueryClient()
+	return () => {
+		queryClient.invalidateQueries({ queryKey: queryKeys.extensions.detail(workspaceId, id) })
+		queryClient.invalidateQueries({ queryKey: queryKeys.extensions.all(workspaceId) })
+	}
+}
+
+export function useSetAgentGrant(workspaceId: string, id: string) {
+	const refresh = useRefreshExtension(workspaceId, id)
+	return useMutation({
+		mutationFn: (v: { agentId: string; tools?: Record<string, ExtensionToolEffect> }) =>
+			api.extensions.setAgentGrant(workspaceId, id, v.agentId, v.tools),
+		onSuccess: refresh,
+	})
+}
+
+export function useRevokeAgentGrant(workspaceId: string, id: string) {
+	const refresh = useRefreshExtension(workspaceId, id)
+	return useMutation({
+		mutationFn: (agentId: string) => api.extensions.revokeAgentGrant(workspaceId, id, agentId),
+		onSuccess: refresh,
 	})
 }

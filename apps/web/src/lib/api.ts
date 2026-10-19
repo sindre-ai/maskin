@@ -265,7 +265,7 @@ export interface ExtensionResponse {
 	webhookUrl: string | null
 	/** True when a signing secret is stored. The secret itself is never returned. */
 	hasSigningSecret: boolean
-	toolGrants: Record<string, unknown>
+	toolGrants: ExtensionToolGrants
 	mcpLastError: string | null
 	createdBy: string | null
 	createdAt: string
@@ -273,6 +273,32 @@ export interface ExtensionResponse {
 	/** Most recent committed delivery in the last 14 days. */
 	lastDeliveryAt: string | null
 	committedDeliveries: number
+}
+
+export type ExtensionToolEffect = 'allow' | 'deny'
+
+/** Plain effect, or the object form that carries an expiry (not enforced yet). */
+export type ExtensionToolGrant =
+	| ExtensionToolEffect
+	| { effect: ExtensionToolEffect; expires_at: string | null; grant_id: string }
+
+/** agentId -> toolName -> grant. An agent with no entry is denied every tool. */
+export type ExtensionToolGrants = Record<string, Record<string, ExtensionToolGrant>>
+
+export interface ExtensionTool {
+	name: string
+	kind: 'read' | 'write'
+	description?: string
+}
+
+export interface ExtensionGrants {
+	toolGrants: ExtensionToolGrants
+	tools: ExtensionTool[]
+}
+
+export interface ExtensionAttempted {
+	windowDays: number
+	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
 }
 
 export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
@@ -1008,6 +1034,24 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		setAgentGrant: (
+			workspaceId: string,
+			id: string,
+			agentId: string,
+			tools?: Record<string, ExtensionToolEffect>,
+		) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'PUT',
+				body: tools ? { tools } : {},
+				workspaceId,
+			}),
+		revokeAgentGrant: (workspaceId: string, id: string, agentId: string) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		attempted: (workspaceId: string, id: string) =>
+			request<ExtensionAttempted>(`/extensions/${id}/attempted`, { workspaceId }),
 	},
 
 	workspaceSkills: {

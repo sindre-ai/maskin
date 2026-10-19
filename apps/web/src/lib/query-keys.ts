@@ -89,6 +89,8 @@ export const queryKeys = {
 		deliveries: (workspaceId: string, id: string) =>
 			['extensions', workspaceId, id, 'deliveries'] as const,
 		recipes: (workspaceId: string) => ['extensions', workspaceId, 'recipes'] as const,
+		attempted: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'attempted'] as const,
 	},
 	workspaceSkills: {
 		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,
