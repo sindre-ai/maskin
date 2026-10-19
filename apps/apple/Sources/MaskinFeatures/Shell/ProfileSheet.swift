@@ -105,6 +105,9 @@ struct ProfileSheet: View {
 			}
 		}
 		.presentationDetents([.large])
+		.presentationCornerRadius(32)
+		.presentationBackground(MaskinScreenHeader.sheet)
+		.presentationDragIndicator(.visible)
 		.environment(\.shellShowsAvatar, false)
 	}
 
@@ -173,30 +176,37 @@ struct ProfileSheet: View {
 
 	// MARK: Cards
 
-	/// Who is signed in; tap for Your profile.
+	/// Who is signed in (tap for Your profile) and Done.
 	@ViewBuilder private var profileCard: some View {
 		if let session = environment.auth.session {
-			NavigationLink(value: Route.yourProfile) {
-				HStack(spacing: MaskinSpace.s8) {
-					ActorAvatar(name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12)
-					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-						Text(session.name).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						Text(profileSubtitle(email: session.email)).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-							.lineLimit(1)
+			HStack(spacing: MaskinSpace.s8) {
+				NavigationLink(value: Route.yourProfile) {
+					HStack(spacing: MaskinSpace.s8) {
+						ActorAvatar(name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12)
+						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+							Text(session.name).foregroundStyle(MaskinColor.ink)
+								.font(MaskinTypeface.sans(MaskinFontSize.t19, weight: MaskinFontWeight.w750, relativeTo: .title3))
+								.lineLimit(1)
+							Text(profileSubtitle(email: session.email)).maskinText(.subhead)
+								.foregroundStyle(MaskinColor.ink4).lineLimit(1)
+						}
+						Spacer(minLength: MaskinSpace.s2)
 					}
-					Spacer(minLength: MaskinSpace.s4)
-					Text("Your profile").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-					Image(systemName: "chevron.right")
-						.maskinSymbol(MaskinSpace.s7, weight: .semibold)
-						.foregroundStyle(MaskinColor.ink5)
-						.accessibilityHidden(true)
+					.contentShape(Rectangle())
 				}
-				.padding(MaskinSpace.s9)
-				.contentShape(Rectangle())
+				.buttonStyle(.maskinPressed)
+				.accessibilityLabel("Your profile, \(session.name)")
+				Button { dismiss() } label: {
+					Text("Done")
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinSurface.onInverse)
+						.padding(.horizontal, MaskinSpace.s7)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.background(MaskinSurface.inverse, in: Capsule())
+				}
+				.buttonStyle(.maskinPressed)
 			}
-			.buttonStyle(.maskinPressed)
-			.accessibilityLabel("Your profile, \(session.name)")
-			.profileCard()
+			.padding(.horizontal, MaskinSpace.s2)
 		}
 	}
 
@@ -358,9 +368,9 @@ private struct ProfileTile: View {
 	var body: some View {
 		Image(systemName: symbol)
 			.maskinSymbol(MaskinSpace.s10, weight: .semibold)
-			.foregroundStyle(MaskinColor.ink2)
+			.foregroundStyle(MaskinColor.stLab)
 			.frame(width: Self.size, height: Self.size)
-			.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
+			.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
 			.accessibilityHidden(true)
 	}
 }

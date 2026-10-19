@@ -25,31 +25,20 @@ struct HighlightedText: View {
 	}
 }
 
-/// One search hit: kind glyph, highlighted title, muted subtitle and a snippet around the match.
+/// One search hit in the v5 shape: a type-coloured dot, the highlighted title (with a muted
+/// snippet under it when the match is in the body) and the type as a mono label at the end.
 struct SearchResultRow: View {
 	let result: SearchResult
 	let query: String
 
 	var body: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s7) {
-			leading
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+			dot
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				HighlightedText(text: result.title, query: query)
-					.maskinText(.headline)
+					.maskinText(.body)
 					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(2)
-				HStack(spacing: MaskinSpace.s3) {
-					if let label = kindLabel { MonoLabel(label) }
-					if !result.subtitle.isEmpty {
-						Text(result.subtitle).lineLimit(1)
-					}
-					if result.updatedAt != nil {
-						Text("·")
-						RelativeTime(result.updatedAt, style: .compact)
-					}
-				}
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink4)
 				if !snippet.isEmpty {
 					HighlightedText(text: snippet, query: query)
 						.maskinText(.subhead)
@@ -57,9 +46,11 @@ struct SearchResultRow: View {
 						.lineLimit(2)
 				}
 			}
-			Spacer(minLength: MaskinSpace.s2)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			MonoLabel(result.kindLabel)
 		}
-		.padding(.vertical, MaskinSpace.s2)
+		.padding(.vertical, MaskinSpace.s3)
+		.frame(minHeight: MaskinSpace.touchMin)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 	}
@@ -68,35 +59,17 @@ struct SearchResultRow: View {
 		SearchHighlight.snippet(of: result.snippet, around: query)
 	}
 
-	/// Objects lead with their type; the other kinds are named by their group.
-	private var kindLabel: String? {
-		switch result.kind {
-		case .object: result.detail
-		case .chat: "Chat"
-		case .agent: "Agent"
-		case .file: nil
-		}
-	}
-
-	@ViewBuilder private var leading: some View {
-		switch result.kind {
-		case .object:
-			TypeBadge(result.detail ?? "task", style: .tile)
-		case .agent:
-			ActorAvatar(name: result.title, kind: .agent, seed: result.entityId)
-		case .chat:
-			glyph("bubble.left.and.bubble.right")
-		case .file:
-			glyph("doc.text")
-		}
-	}
-
-	private func glyph(_ name: String) -> some View {
-		Image(systemName: name)
-			.maskinSymbol(MaskinFontSize.t16)
-			.foregroundStyle(MaskinColor.ink4)
-			.frame(width: MaskinSpace.s13, height: MaskinSpace.s13)
-			.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.input))
+	private var dot: some View {
+		RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+			.fill(dotColor)
+			.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 			.accessibilityHidden(true)
+	}
+
+	private var dotColor: Color {
+		switch result.kind {
+		case .object: MaskinObjectType.dotColor(for: result.detail ?? "task")
+		case .chat, .agent, .file: MaskinColor.ink5
+		}
 	}
 }

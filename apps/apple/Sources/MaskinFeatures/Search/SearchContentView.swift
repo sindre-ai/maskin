@@ -157,23 +157,18 @@ struct SearchContentBody: View {
 		if sections.isEmpty {
 			noMatch
 		} else {
-			ForEach(sections) { section in
-				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-					HStack(spacing: MaskinSpace.s4) {
-						MonoLabel(section.group.title)
-						Text("\(section.results.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
-					}
+			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+				MonoLabel("\(store.visibleCount) \(store.visibleCount == 1 ? "result" : "results")")
 					.accessibilityAddTraits(.isHeader)
-					card {
-						ForEach(Array(section.results.enumerated()), id: \.element.id) { index, result in
-							if index > 0 { Divider() }
-							Button { onSelect(result) } label: {
-								SearchResultRow(result: result, query: store.query)
-									.padding(.vertical, MaskinSpace.s3)
-							}
-							.buttonStyle(.maskinPressed)
-							.maskinHover()
+				card {
+					let all = sections.flatMap(\.results)
+					ForEach(Array(all.enumerated()), id: \.element.id) { index, result in
+						if index > 0 { Divider() }
+						Button { onSelect(result) } label: {
+							SearchResultRow(result: result, query: store.query)
 						}
+						.buttonStyle(.maskinPressed)
+						.maskinHover()
 					}
 				}
 			}
@@ -188,7 +183,7 @@ struct SearchContentBody: View {
 	/// Nothing in the chosen scope: offer to hand the question to Chief of Staff.
 	private var noMatch: some View {
 		VStack(spacing: MaskinSpace.s3) {
-			Text("Nothing matches that yet").maskinText(.title).foregroundStyle(MaskinColor.ink)
+			Text("Nothing matches.").maskinText(.title).foregroundStyle(MaskinColor.ink)
 			Text("An agent can look further than the index does.")
 				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				.multilineTextAlignment(.center)
