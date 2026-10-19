@@ -105,4 +105,7 @@ export const notificationQuerySchema = z.object({
 	object_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
+	// Sort by created_at. Default `asc` preserves the historical order; clients
+	// that want the newest page first (inbox views) pass `desc`.
+	order: z.enum(['asc', 'desc']).default('asc'),
 })

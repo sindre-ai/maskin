@@ -78,6 +78,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
+	// Per-actor push registration: it writes the caller's own device row and touches no
+	// workspace data, and a read-only viewer still wants their own notifications.
+	['POST', '/api/devices', 'registers the caller\u2019s own device, no workspace data'],
+	['DELETE', '/api/devices/:id_or_token', 'removes only the caller\u2019s own device'],
+	[
+		'POST',
+		'/api/live-activities/tokens',
+		'registers a Live Activity token for the caller\u2019s own device',
+	],
+	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\u2019s own token'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
