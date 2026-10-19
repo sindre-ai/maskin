@@ -23,6 +23,7 @@ import {
 import { Markdown } from 'tiptap-markdown'
 import { MarkdownTaskList } from '../task-list'
 import { EditorToolbar, type ToolbarAction } from './editor-toolbar'
+import { MARKDOWN_PROSE_CLASS } from './prose'
 
 // One lowlight instance across every editor mount — building the language
 // registry is not free and it never changes at runtime.
@@ -511,7 +512,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
 		return (
 			<>
-				<EditorContent editor={editor} className={className} />
+				<EditorContent
+					editor={editor}
+					className={className ? `${MARKDOWN_PROSE_CLASS} ${className}` : MARKDOWN_PROSE_CLASS}
+				/>
 				<EditorToolbar
 					editor={editor}
 					variant={variant}
