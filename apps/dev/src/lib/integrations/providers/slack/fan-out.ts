@@ -4,6 +4,7 @@ import { events as eventsTable, files, integrations } from '@maskin/db/schema'
 import { MAX_FILE_SIZE_BYTES } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, sql } from 'drizzle-orm'
+import { sha256Hex } from '../../../file-save'
 import { fileStorageKey } from '../../../file-urls'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
@@ -197,6 +198,7 @@ async function persistOne(
 			mimeType,
 			sizeBytes: bytes.byteLength,
 			storageKey,
+			contentHash: sha256Hex(bytes),
 			createdBy: actorId,
 		})
 		.returning()
