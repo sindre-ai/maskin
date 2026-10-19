@@ -90,7 +90,8 @@ function wrapWithMentions(
 	return children
 }
 
-const DEFAULT_PROSE_CLASS =
+/** The typography the read view uses, exported so an editor document can match it. */
+export const DEFAULT_PROSE_CLASS =
 	'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full'
 const XS_PROSE_CLASS = '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs'
 // The v2 document scale a detail page's body renders at: a 15px lead paragraph,

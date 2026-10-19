@@ -40,7 +40,7 @@ export function EditorBanner({ tone, heading, children, actions, className }: Ed
 				className={cn('shrink-0', tone === 'danger' ? 'text-destructive' : undefined)}
 				aria-hidden="true"
 			/>
-			<div className="min-w-0 flex-1">
+			<div className="min-w-0 flex-1 basis-64">
 				{heading && <p className="font-medium text-foreground">{heading}</p>}
 				<p>{children}</p>
 			</div>

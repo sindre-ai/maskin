@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { type FileSaveClient, useMarkdownFileSave } from '@/hooks/use-markdown-file-save'
 import { trackEvent } from '@/lib/analytics'
 import { captureEditorParseError } from '@/lib/editor-events'
+import { DEFAULT_PROSE_CLASS } from '@maskin/markdown/react'
 import type { MarkdownEditorRef, MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
 import { Check } from 'lucide-react'
 import { Suspense, lazy, useCallback, useRef, useState } from 'react'
@@ -22,6 +23,10 @@ export const READ_ONLY_FILE_BANNER =
 	"This file is read-only here. Editing it could change parts you didn't touch."
 
 const noop = () => undefined
+
+// The document wears the read view's typography so Rendered looks the same
+// before and after you start typing.
+const EDITOR_CLASS = `${DEFAULT_PROSE_CLASS} [&_.ProseMirror]:min-h-40 [&_.ProseMirror]:outline-none`
 
 /** The editor's own saved form of a markdown text, for the "same as mine" check on a 409. */
 async function editorSavedForm(text: string): Promise<string> {
@@ -174,6 +179,7 @@ export function MarkdownFileEditor({
 						value={save.baseText}
 						preserveSource
 						variant="document"
+						className={EDITOR_CLASS}
 						surface="file"
 						objectId={fileId}
 						onChange={noop}
