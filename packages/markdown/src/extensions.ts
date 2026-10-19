@@ -13,10 +13,10 @@ import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import TableRow from '@tiptap/extension-table-row'
 import TaskItem from '@tiptap/extension-task-item'
-import TaskList from '@tiptap/extension-task-list'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 import { Markdown } from 'tiptap-markdown'
+import { MarkdownTaskList } from './task-list'
 
 // One lowlight instance across every editor mount — building the language
 // registry is not free and it never changes at runtime.
@@ -114,7 +114,7 @@ export function buildExtensions(
 	}
 
 	if (includeTaskList) {
-		extensions.push(TaskList, TaskItem.configure({ nested: true }))
+		extensions.push(MarkdownTaskList, TaskItem.configure({ nested: true }))
 	}
 
 	if (extra) extensions.push(...extra)
