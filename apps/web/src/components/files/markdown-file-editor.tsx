@@ -7,7 +7,7 @@ import { captureEditorParseError } from '@/lib/editor-events'
 import type { MarkdownEditorRef, MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
 import { Check } from 'lucide-react'
 import { Suspense, lazy, useCallback, useRef, useState } from 'react'
-import { SourceView, ViewToggle, type ViewMode } from './file-body'
+import { SourceView, type ViewMode, ViewToggle } from './file-body'
 
 // Dynamic-imported so Tiptap never bundles into a read-only route (same split
 // as MarkdownContent; the Vite chunk-name CI assertion enforces it).
