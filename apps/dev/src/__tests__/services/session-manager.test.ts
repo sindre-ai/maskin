@@ -89,6 +89,11 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Same call the real helper makes for an exit with no final result message,
+	// so the assertions below keep reading the tail + option the classifier got.
+	// The helper's own rule is covered in lib/credit-classifier.test.ts.
+	classifySessionExit: (tail: string, exitCode: number) =>
+		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
 }))
 
 import { execFile } from 'node:child_process'
