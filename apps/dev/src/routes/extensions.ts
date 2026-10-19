@@ -85,8 +85,8 @@ const extensionResponseSchema = z.object({
 	slug: z.string(),
 	name: z.string(),
 	status: z.enum(['active', 'disabled', 'draft']),
-	mcpConfig: z.unknown().nullable(),
-	webhookConfig: z.unknown().nullable(),
+	mcpConfig: z.record(z.string(), z.unknown()).nullable(),
+	webhookConfig: z.record(z.string(), z.unknown()).nullable(),
 	webhookToken: z.string().nullable(),
 	webhookUrl: z.string().nullable(),
 	/** True when a signing secret is stored. The secret itself is never returned. */
@@ -188,8 +188,8 @@ function toResponse(
 		toolGrants: base.toolGrants as Record<string, unknown>,
 		mcpLastError: base.mcpLastError,
 		createdBy: base.createdBy,
-		createdAt: base.createdAt,
-		updatedAt: base.updatedAt,
+		createdAt: row.createdAt.toISOString(),
+		updatedAt: row.updatedAt.toISOString(),
 		lastDeliveryAt: extra.stats?.lastDeliveryAt?.toISOString() ?? null,
 		committedDeliveries: extra.stats?.committed ?? 0,
 	}
@@ -280,7 +280,7 @@ const recipesRoute = createRoute({
 						z.object({
 							slug: z.string(),
 							displayName: z.string(),
-							webhookConfig: z.unknown().optional(),
+							webhookConfig: z.record(z.string(), z.unknown()).optional(),
 							docsUrl: z.string(),
 						}),
 					),
