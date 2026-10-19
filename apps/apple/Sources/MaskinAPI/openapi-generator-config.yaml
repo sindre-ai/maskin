@@ -81,3 +81,5 @@ filter:
     - /api/conversations/{id}/participants/{actorId}
     - /api/briefing/spoken
     - /api/billing/usage
+    - /api/invites/preview
+    - /api/invites/{token}/accept
