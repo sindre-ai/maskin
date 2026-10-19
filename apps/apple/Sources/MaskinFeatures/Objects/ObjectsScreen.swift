@@ -106,7 +106,7 @@ public struct ObjectsScreen: View {
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(
 					environment: environment, title: usesHeader ? "Objects" : nil, actions: shellActions,
-					header: ShellHeaderContent(kicker: "OBJECTS") {
+					header: ShellHeaderContent {
 						ScreenHeaderChipRow {
 							ForEach(ObjectTypeTab.tabs(for: store)) { tab in
 								ScreenHeaderChip(

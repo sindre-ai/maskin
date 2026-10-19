@@ -20,10 +20,12 @@ public enum MaskinScreenHeader {
 
 	/// How far the sheet rides up over the header.
 	public static let overlap: CGFloat = 22
-	public static let sheetRadius: CGFloat = MaskinRadius.brief
+	public static let sheetRadius: CGFloat = 28
 	public static let buttonSize: CGFloat = 40
-	/// The dot on the Display button when a setting is changed.
-	public static let dotSize: CGFloat = 8
+	/// The glass capsule at the top right: 48pt tall, 36pt discs inside 44pt hit areas.
+	public static let capsuleHeight: CGFloat = 48
+	public static let discSize: CGFloat = 36
+	public static let capsuleRing = Color.white.opacity(0.16)
 
 	public static var gradient: some View {
 		ZStack {

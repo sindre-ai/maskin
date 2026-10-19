@@ -3,32 +3,21 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The words in a root screen's header: the kicker above the title, and optional filter chips
-/// under it (`ScreenHeaderChip`s in a `ScreenHeaderChipRow`).
+/// What a root screen adds to the v4 header besides its title and the capsule: whether the capsule
+/// carries the account avatar (For you only), and optional chips or a row under the title.
 public struct ShellHeaderContent {
-	/// Nil leaves the line empty (For you has none).
-	public var kicker: String?
-	/// False drops the search button (For you: search is one tap away in the tab bar).
-	public var showsSearch: Bool
-	/// False drops the account avatar (Team and Flows).
-	public var showsAccount: Bool
-	public var chips: AnyView?
+	/// True on For you: the avatar opens the profile sheet. Other tabs do not show it.
+	public var showsAvatar: Bool
+	public var below: AnyView?
 
-	public init<Chips: View>(
-		kicker: String?, showsSearch: Bool = true, showsAccount: Bool = true,
-		@ViewBuilder chips: () -> Chips
-	) {
-		self.kicker = kicker
-		self.showsSearch = showsSearch
-		self.showsAccount = showsAccount
-		self.chips = AnyView(chips())
+	public init<Below: View>(showsAvatar: Bool = false, @ViewBuilder below: () -> Below) {
+		self.showsAvatar = showsAvatar
+		self.below = AnyView(below())
 	}
 
-	public init(kicker: String?, showsSearch: Bool = true, showsAccount: Bool = true) {
-		self.kicker = kicker
-		self.showsSearch = showsSearch
-		self.showsAccount = showsAccount
-		self.chips = nil
+	public init(showsAvatar: Bool = false) {
+		self.showsAvatar = showsAvatar
+		self.below = nil
 	}
 }
 
@@ -121,69 +110,70 @@ struct ShellHeaderView: View {
 	let openLive: () -> Void
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-				HStack(spacing: MaskinSpace.s4) {
-					if let kicker = content.kicker {
-						Text(kicker)
-							.maskinText(.microLabelLarge)
-							.foregroundStyle(MaskinScreenHeader.kicker)
-							.lineLimit(1)
-					}
-					Spacer(minLength: MaskinSpace.s4)
-					buttons
-				}
-				Text(title)
-					.maskinText(.largeTitle)
-					.foregroundStyle(.white)
-					.lineLimit(1)
-					.minimumScaleFactor(0.7)
-					.accessibilityAddTraits(.isHeader)
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			HStack {
+				Spacer(minLength: 0)
+				capsule
 			}
 			.padding(.horizontal, MaskinSpace.s9)
-			if let chips = content.chips { chips }
+			Text(title)
+				.maskinText(.largeTitle)
+				.foregroundStyle(.white)
+				.lineLimit(1)
+				.minimumScaleFactor(0.7)
+				.padding(.horizontal, MaskinSpace.s11)
+				.accessibilityAddTraits(.isHeader)
+			if let below = content.below { below.padding(.top, MaskinSpace.s5) }
 		}
 	}
 
-	@ViewBuilder private var buttons: some View {
-		HStack(spacing: MaskinSpace.s4) {
-			if actions.live {
-				HeaderButton(symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel, prominent: true, action: openLive)
-			}
-			if content.showsSearch {
-				HeaderButton(symbol: "magnifyingglass", label: "Search", action: openSearch)
-			}
+	/// One glass capsule at the top right: Display on every tab, then Live (For you), the avatar
+	/// (For you) or New (Team).
+	private var capsule: some View {
+		HStack(spacing: 0) {
 			if let display = actions.display {
 				Menu {
 					display.content
 				} label: {
-					HeaderDisc(symbol: actions.displaySymbol, marked: actions.displayActive)
+					CapsuleDisc(symbol: ShellActions.slidersSymbol, marked: actions.displayActive)
 				}
 				.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
-			} else if let toggle = actions.displayToggle {
-				HeaderButton(
-					symbol: actions.displaySymbol, label: actions.displayActive ? "Filter, shown" : "Filter",
-					marked: actions.displayActive, action: toggle)
 			}
-			// New is the rightmost button, after the avatar when there is one.
-			if showsAvatar, content.showsAccount {
+			if actions.live {
+				Button(action: openLive) {
+					CapsuleDisc(symbol: "waveform", prominent: true)
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel(LiveMeetingRequest.dailyBriefing.buttonLabel)
+			}
+			if showsAvatar, content.showsAvatar {
 				Button(action: openProfile) {
 					ShellNavAvatar(name: environment.auth.session?.name ?? "")
-						.frame(width: MaskinScreenHeader.buttonSize, height: MaskinScreenHeader.buttonSize)
+						.frame(width: MaskinScreenHeader.discSize, height: MaskinScreenHeader.discSize)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 						.contentShape(Circle())
 				}
 				.buttonStyle(.plain)
 				.accessibilityLabel("Account")
 			}
 			if let new = actions.new {
-				HeaderButton(symbol: "plus", label: actions.newLabel, prominent: true, action: new)
+				Button(action: new) {
+					CapsuleDisc(symbol: "plus", prominent: true)
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel(actions.newLabel)
 			}
 		}
+		.padding(.horizontal, MaskinSpace.s1)
+		.frame(height: MaskinScreenHeader.capsuleHeight)
+		.background(Capsule().fill(MaskinScreenHeader.buttonFill))
+		.overlay(Capsule().strokeBorder(MaskinScreenHeader.capsuleRing, lineWidth: 1))
 	}
 }
 
-/// A 40pt circle in the header: translucent white, or solid white for a primary action.
-private struct HeaderDisc: View {
+/// One 44pt hit area in the capsule with a 36pt disc: solid white for a primary action, plain glyph
+/// otherwise. A changed Display setting fills the Display disc.
+private struct CapsuleDisc: View {
 	let symbol: String
 	var prominent = false
 	var marked = false
@@ -191,35 +181,16 @@ private struct HeaderDisc: View {
 	var body: some View {
 		Image(systemName: symbol)
 			.maskinSymbol(16, weight: .semibold)
-			// The glyph lives in a fixed 40pt disc, so it must not grow past it with Dynamic Type.
+			// The glyph lives in a fixed disc, so it must not grow past it with Dynamic Type.
 			.dynamicTypeSize(...DynamicTypeSize.large)
-			.foregroundStyle(prominent ? MaskinScreenHeader.inkTop : .white)
-			.frame(width: MaskinScreenHeader.buttonSize, height: MaskinScreenHeader.buttonSize)
-			.background(Circle().fill(prominent ? Color.white : MaskinScreenHeader.buttonFill))
-			.overlay(Circle().strokeBorder(MaskinScreenHeader.buttonRing, lineWidth: 1))
-			.overlay(alignment: .topTrailing) {
-				if marked {
-					Circle().fill(MaskinScreenHeader.glow)
-						.frame(width: MaskinScreenHeader.dotSize, height: MaskinScreenHeader.dotSize)
-				}
-			}
+			.foregroundStyle(prominent || marked ? MaskinScreenHeader.inkTop : .white)
+			.frame(width: MaskinScreenHeader.discSize, height: MaskinScreenHeader.discSize)
+			.background(
+				Circle().fill(
+					prominent ? Color.white : (marked ? MaskinScreenHeader.kicker : Color.clear))
+			)
+			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 			.contentShape(Circle())
-	}
-}
-
-private struct HeaderButton: View {
-	let symbol: String
-	let label: String
-	var prominent = false
-	var marked = false
-	let action: () -> Void
-
-	var body: some View {
-		Button(action: action) {
-			HeaderDisc(symbol: symbol, prominent: prominent, marked: marked)
-		}
-		.buttonStyle(.plain)
-		.accessibilityLabel(label)
 	}
 }
 

@@ -396,6 +396,14 @@ struct ChatsDisplayMenu: View {
 	@Bindable var store: ConversationsStore
 
 	var body: some View {
+		Picker("Show", selection: Binding(
+			get: { store.filter == .unread ? ConversationsStore.Filter.unread : .all },
+			set: { store.filter = $0 })
+		) {
+			Text("All").tag(ConversationsStore.Filter.all)
+			Text("Unread").tag(ConversationsStore.Filter.unread)
+		}
+		.pickerStyle(.inline)
 		Picker("Layout", selection: $store.displayOptions.layout) {
 			ForEach(TeamDisplayOptions.Layout.allCases, id: \.self) { Text($0.label).tag($0) }
 		}

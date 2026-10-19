@@ -117,7 +117,7 @@ private struct LoopsContainer: View {
 		.shellToolbar(
 			environment: environment, title: "Flows",
 			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }),
-			header: ShellHeaderContent(kicker: "FLOWS", showsAccount: false) {
+			header: ShellHeaderContent {
 				ScreenHeaderChipRow {
 					ScreenHeaderChip(label: "All", selected: !loops.needsYouOnly) {
 						withAnimation(MaskinMotion.quick) { loops.needsYouOnly = false }
@@ -207,6 +207,11 @@ struct FlowsDisplayMenu: View {
 	@Bindable var store: LoopsStore
 
 	var body: some View {
+		Picker("Show", selection: $store.needsYouOnly) {
+			Text("All").tag(false)
+			Text("Needs you").tag(true)
+		}
+		.pickerStyle(.inline)
 		Picker("Sort", selection: $store.sort) {
 			ForEach(LoopsSort.allCases) { Text($0.title).tag($0) }
 		}

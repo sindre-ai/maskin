@@ -52,36 +52,13 @@ public struct ForYouScreen: View {
 		.shellToolbar(
 			environment: environment, title: "For you",
 			actions: ShellActions(
-				live: true, displayActive: runtime.store.options.filterBarOn,
-				displayToggle: {
-					// The button only shows or hides the filter pills; turning them off clears the pick.
-					let store = runtime.store
-					withAnimation(MaskinMotion.standard) {
-						store.options.filterBarOn.toggle()
-						if !store.options.filterBarOn { store.options.intent = nil }
-					}
-				}),
-			header: ShellHeaderContent(kicker: nil, showsSearch: false) {
-				VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-					if let stories = appRuntime.storiesStore(), !stories.cards.isEmpty {
-						StoryRow(stories: stories, open: { card in openStory = card }, metrics: .forYou)
-							.contentMargins(.horizontal, MaskinSpace.s9, for: .scrollContent)
-					}
-					if runtime.store.options.filterBarOn {
-						ScreenHeaderChipRow {
-							ForEach(ForYouFeedView.intents, id: \.self) { intent in
-								let count = runtime.store.intentCount(intent)
-								if intent == nil || count > 0 || runtime.store.options.intent == intent {
-									ScreenHeaderChip(
-										label: intent?.label ?? "All", count: "\(count)",
-										selected: runtime.store.options.intent == intent
-									) {
-										withAnimation(MaskinMotion.standard) { runtime.store.options.intent = intent }
-									}
-								}
-							}
-						}
-					}
+				live: true,
+				display: ShellDisplayMenu { ForYouDisplayMenu(store: runtime.store, wide: isWide) },
+				displayActive: !runtime.store.options.showsHandled || runtime.store.options.filterBarOn),
+			header: ShellHeaderContent(showsAvatar: true) {
+				if let stories = appRuntime.storiesStore(), !stories.cards.isEmpty {
+					StoryRow(stories: stories, open: { card in openStory = card }, metrics: .forYou)
+						.contentMargins(.horizontal, MaskinSpace.s11, for: .scrollContent)
 				}
 			}
 		)
@@ -728,6 +705,24 @@ extension View {
 		} else {
 			// The Chief of Staff sheet opens at the large detent only (spec 7).
 			self.presentationDetents([.large]).presentationDragIndicator(.visible)
+		}
+	}
+}
+
+/// For you's Display menu: show or hide what was handled today (and, on iPad, the intent pills).
+struct ForYouDisplayMenu: View {
+	@Bindable var store: ForYouStore
+	let wide: Bool
+
+	var body: some View {
+		Toggle("Show handled today", isOn: $store.options.showsHandled)
+		if wide {
+			Toggle("Filter pills", isOn: $store.options.filterBarOn)
+		}
+		Button("Reset") {
+			store.options.showsHandled = true
+			store.options.filterBarOn = false
+			store.options.intent = nil
 		}
 	}
 }
