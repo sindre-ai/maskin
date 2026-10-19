@@ -65,7 +65,39 @@ struct ScreenHeaderChipRow<Content: View>: View {
 	}
 }
 
-/// The v4 root-screen header on iPhone: kicker and buttons on one row, then the large title, on the dark teal gradient. The content that follows rides up over its bottom edge.
+/// A header on the dark teal gradient with the content on a rounded sheet that rides up over the
+/// header's bottom edge. The header is whatever the screen puts in `header`; this draws the gradient,
+/// the room under it and the sheet.
+struct ScreenHeaderSheet<Header: View, Content: View>: View {
+	let header: Header
+	let content: Content
+
+	init(@ViewBuilder header: () -> Header, @ViewBuilder content: () -> Content) {
+		self.header = header()
+		self.content = content()
+	}
+
+	var body: some View {
+		VStack(spacing: -MaskinScreenHeader.overlap) {
+			header
+				.padding(.top, MaskinSpace.s4)
+				// Room for the sheet to ride up over this edge.
+				.padding(.bottom, MaskinSpace.s12 + MaskinScreenHeader.overlap)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.background { MaskinScreenHeader.gradient.ignoresSafeArea(edges: .top) }
+				.environment(\.colorScheme, .dark)
+			content
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				.background(MaskinScreenHeader.sheet)
+				.clipShape(
+					UnevenRoundedRectangle(
+						topLeadingRadius: MaskinScreenHeader.sheetRadius,
+						topTrailingRadius: MaskinScreenHeader.sheetRadius))
+		}
+	}
+}
+
+/// The v4 root-screen header on iPhone: kicker and buttons on one row, then the large title.
 struct ShellHeaderView: View {
 	let environment: AppEnvironment
 	let title: String
@@ -97,12 +129,6 @@ struct ShellHeaderView: View {
 			.padding(.horizontal, MaskinSpace.s9)
 			if let chips = content.chips { chips }
 		}
-		.padding(.top, MaskinSpace.s4)
-		// Room for the sheet to ride up over this edge.
-		.padding(.bottom, MaskinSpace.s12 + MaskinScreenHeader.overlap)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.background { MaskinScreenHeader.gradient.ignoresSafeArea(edges: .top) }
-		.environment(\.colorScheme, .dark)
 	}
 
 	@ViewBuilder private var buttons: some View {

@@ -109,21 +109,15 @@ private struct ShellToolbarModifier: ViewModifier {
 
 	func body(content: Content) -> some View {
 		if let headerContent, let title {
-			VStack(spacing: -MaskinScreenHeader.overlap) {
+			ScreenHeaderSheet {
 				ShellHeaderView(
 					environment: environment, title: title, content: headerContent, actions: actions,
 					showsAvatar: showsAvatar,
 					openSearch: { runtime?.selectedTab = .search },
 					openProfile: { runtime?.showProfile = true },
 					openLive: { liveMeeting.present(.dailyBriefing) })
+			} content: {
 				content
-					.frame(maxWidth: .infinity, maxHeight: .infinity)
-					.background(MaskinScreenHeader.sheet)
-					.clipShape(
-						UnevenRoundedRectangle(
-							topLeadingRadius: MaskinScreenHeader.sheetRadius,
-							topTrailingRadius: MaskinScreenHeader.sheetRadius)
-					)
 			}
 			.hiddenNavigationBar()
 		} else {
@@ -299,7 +293,7 @@ extension View {
 
 extension View {
 	/// iOS: hides the system bar (the v4 header replaces it). A no-op on macOS, which never shows it.
-	fileprivate func hiddenNavigationBar() -> some View {
+	func hiddenNavigationBar() -> some View {
 		#if os(iOS)
 			return toolbar(.hidden, for: .navigationBar)
 		#else

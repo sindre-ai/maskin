@@ -22,9 +22,13 @@ public final class AppRuntime {
 	/// permission (see `requestPushPermission()`): by then they have seen what a conversation is.
 	var selectedTab: ShellTab = .forYou {
 		didSet {
+			if selectedTab == .search, oldValue != .search { tabBeforeSearch = oldValue }
 			if selectedTab == .chats, oldValue != .chats { Task { await requestPushPermission() } }
 		}
 	}
+
+	/// Where Cancel on the Search screen goes back to.
+	var tabBeforeSearch: ShellTab = .forYou
 
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each

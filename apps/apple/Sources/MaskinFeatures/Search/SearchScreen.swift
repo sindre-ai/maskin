@@ -36,8 +36,19 @@ private struct SearchScreenContent: View {
 	@State private var store: SearchStore
 	@State private var path: [SearchRoute] = []
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.horizontalSizeClass) private var sizeClass
+	@FocusState private var fieldFocused: Bool
 	private let environment: AppEnvironment
 	private let open: ((SearchResult) -> Void)?
+
+	/// iPhone swaps the system search field for the v4 header with its own field and Cancel.
+	private var usesHeader: Bool {
+		#if os(iOS)
+			sizeClass == .compact
+		#else
+			false
+		#endif
+	}
 
 	init(environment: AppEnvironment, open: ((SearchResult) -> Void)? = nil) {
 		let remote = APISearchRemote(
@@ -53,16 +64,7 @@ private struct SearchScreenContent: View {
 
 	var body: some View {
 		NavigationStack(path: $path) {
-			SearchContentView(
-				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
-				onAskChiefOfStaff: askChiefOfStaff, onSelect: select
-			)
-				.shellToolbar(environment: environment, title: "Search")
-				.searchable(
-					text: Binding(get: { store.query }, set: { store.setQuery($0) }),
-					prompt: "Search"
-				)
-				.onSubmit(of: .search) { Task { await store.commit() } }
+			searchBody
 				.navigationDestination(for: SearchRoute.self) { route in
 					switch route {
 					case .object(let id):
@@ -75,6 +77,40 @@ private struct SearchScreenContent: View {
 		.onAppear {
 			store.reloadRecents()
 			store.expireStaleDirectories()
+		}
+	}
+
+	private var results: some View {
+		SearchContentView(
+			store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
+			onAskChiefOfStaff: askChiefOfStaff, onSelect: select)
+	}
+
+	@ViewBuilder private var searchBody: some View {
+		if usesHeader {
+			ScreenHeaderSheet {
+				SearchFieldHeader(
+					query: Binding(get: { store.query }, set: { store.setQuery($0) }),
+					focused: $fieldFocused,
+					onSubmit: { Task { await store.commit() } },
+					onCancel: {
+						store.setQuery("")
+						fieldFocused = false
+						runtime?.selectedTab = runtime?.tabBeforeSearch ?? .forYou
+					})
+			} content: {
+				results
+			}
+			.hiddenNavigationBar()
+			.onAppear { fieldFocused = true }
+		} else {
+			results
+				.shellToolbar(environment: environment, title: "Search")
+				.searchable(
+					text: Binding(get: { store.query }, set: { store.setQuery($0) }),
+					prompt: "Search"
+				)
+				.onSubmit(of: .search) { Task { await store.commit() } }
 		}
 	}
 
