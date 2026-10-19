@@ -394,6 +394,7 @@ export function EditorToolbar({
 	linkOpenRef.current = linkOpen
 	// Crossing the breakpoint makes the bubble menu re-run shouldShow now
 	// instead of on the next selection change.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: isMobile is the trigger, not a value read in the body
 	useEffect(() => {
 		if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr)
 	}, [editor, isMobile])
