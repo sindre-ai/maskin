@@ -45,7 +45,9 @@ describe('crypto', () => {
 		// Flip a character in the encrypted portion
 		const parts = encrypted.split(':')
 		const part = parts[2] ?? ''
-		parts[2] = `ff${part.slice(2)}`
+		// Overwrite the first byte with one that differs from it, or a ciphertext that already
+		// starts with ff (1 in 256) would come back unchanged and decrypt fine.
+		parts[2] = `${part.startsWith('ff') ? '00' : 'ff'}${part.slice(2)}`
 		expect(() => decrypt(parts.join(':'))).toThrow()
 	})
 
@@ -156,7 +158,8 @@ describe('envelope encryption', () => {
 			},
 		}
 		const parts = sealed.credentials.split(':')
-		parts[2] = `ff${(parts[2] ?? '').slice(2)}`
+		const body = parts[2] ?? ''
+		parts[2] = `${body.startsWith('ff') ? '00' : 'ff'}${body.slice(2)}`
 		await expect(
 			decryptEnvelope(spy, WORKSPACE, parts.join(':'), sealed.dekCiphertext),
 		).rejects.toThrow()
