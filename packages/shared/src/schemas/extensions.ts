@@ -136,3 +136,19 @@ export const updateExtensionBodySchema = z
 	})
 	.strict()
 export type UpdateExtensionBody = z.infer<typeof updateExtensionBodySchema>
+
+// ── Tool grants API bodies ──────────────────────────────────────────────────
+
+/**
+ * Grant an agent access to an extension. With no body the agent gets each
+ * declared tool's default (read allow, write deny); entries in `tools` override
+ * those defaults. Tool names must be declared in mcp_config.tools.
+ */
+export const setAgentGrantBodySchema = z
+	.object({ tools: z.record(z.string(), z.enum(['allow', 'deny'])).optional() })
+	.strict()
+export type SetAgentGrantBody = z.infer<typeof setAgentGrantBodySchema>
+
+/** Flip one tool for one agent. */
+export const setToolGrantBodySchema = z.object({ effect: z.enum(['allow', 'deny']) }).strict()
+export type SetToolGrantBody = z.infer<typeof setToolGrantBodySchema>

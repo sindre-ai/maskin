@@ -24,6 +24,19 @@ export function grantEffect(grant: ToolGrant): 'allow' | 'deny' {
 	return typeof grant === 'string' ? grant : grant.effect
 }
 
+/**
+ * What granting an agent starts from: every declared tool gets a default from
+ * its kind (read allow, write deny). Written out in full at grant time, because
+ * the launch policy only allows tools it finds listed as allow.
+ */
+export function defaultToolGrants(
+	tools: ReadonlyArray<{ name: string; kind: 'read' | 'write' }>,
+): Record<string, 'allow' | 'deny'> {
+	const out: Record<string, 'allow' | 'deny'> = {}
+	for (const t of tools) out[t.name] = t.kind === 'read' ? 'allow' : 'deny'
+	return out
+}
+
 // JSONPath subset lives in @maskin/shared so the settings UI validates with the same parser.
 export { evalJsonPath, parseJsonPath } from '@maskin/shared'
 

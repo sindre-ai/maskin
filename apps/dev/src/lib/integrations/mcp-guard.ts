@@ -96,10 +96,14 @@ export function mintGuardKey(
 
 export function parseGuardKey(key: string): { sessionId: string; extensionId: string } | null {
 	const parts = key.split('.')
-	if (parts.length !== 4 || parts[0] !== KEY_PREFIX || !parts[3]) return null
+	if (parts.length !== 4) return null
+	const [prefix, sessionId, extensionId, secret] = parts
+	if (prefix !== KEY_PREFIX || !secret) return null
 	// The ids go straight into a uuid column lookup, so anything else is a bad key, not a 500.
-	if (!UUID_RE.test(parts[1]) || !UUID_RE.test(parts[2])) return null
-	return { sessionId: parts[1], extensionId: parts[2] }
+	if (!sessionId || !extensionId || !UUID_RE.test(sessionId) || !UUID_RE.test(extensionId)) {
+		return null
+	}
+	return { sessionId, extensionId }
 }
 
 export function guardKeyMatches(key: string, storedHash: unknown): boolean {

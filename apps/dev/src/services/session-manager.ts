@@ -2207,11 +2207,12 @@ ${HUMAN_MESSAGE_STYLE}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
@@ -2789,7 +2790,7 @@ ${HUMAN_MESSAGE_STYLE}`
 			sessionId: session.id,
 			workspaceId: session.workspaceId,
 			agentId: agent.id,
-			apiUrl: envVars.MASKIN_API_URL,
+			apiUrl: maskinApiUrl,
 			servers: autoInjectedMcpServers,
 		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }

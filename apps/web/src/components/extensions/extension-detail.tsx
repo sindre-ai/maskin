@@ -1,3 +1,4 @@
+import { AgentAccessSection } from '@/components/extensions/agent-access-section'
 import { extensionRowStatus } from '@/components/extensions/custom-extensions-section'
 import { DeliveryHistory } from '@/components/extensions/delivery-history'
 import { MappingSection } from '@/components/extensions/mapping-section'
@@ -197,6 +198,8 @@ function ExtensionDetailBody({
 					/>
 				</>
 			)}
+
+			<AgentAccessSection ext={ext} workspaceId={workspaceId} />
 
 			{reveal && (
 				<WebhookRevealDialog

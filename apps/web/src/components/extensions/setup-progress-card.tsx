@@ -1,5 +1,6 @@
 import type { ExtensionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { allowedToolNames, declaredTools } from '@/lib/extension-grants'
 import { Check, Circle } from 'lucide-react'
 
 interface Step {
@@ -9,9 +10,10 @@ interface Step {
 
 /**
  * Setup checklist. Every step comes from the saved row: Webhook (config,
- * token and stored secret), Mapping (an external id path), and the last step
- * flips from Waiting for first delivery to Receiving once a committed delivery
- * exists in the ledger.
+ * token and stored secret), Mapping (an external id path), Access (an agent
+ * holds at least one allowed tool; shown once the extension declares tools),
+ * and the last step flips from Waiting for first delivery to Receiving once a
+ * committed delivery exists in the ledger.
  */
 export function SetupProgressCard({ ext }: { ext: ExtensionResponse }) {
 	const webhookDone = !!ext.webhookConfig && !!ext.webhookToken && ext.hasSigningSecret
@@ -21,6 +23,12 @@ export function SetupProgressCard({ ext }: { ext: ExtensionResponse }) {
 		{ label: 'Webhook', done: webhookDone },
 		{ label: 'Mapping', done: mappingDone },
 	]
+	if (declaredTools(ext).length > 0) {
+		const accessDone = Object.keys(ext.toolGrants).some(
+			(agentId) => allowedToolNames(ext, agentId).length > 0,
+		)
+		steps.push({ label: 'Access', done: accessDone })
+	}
 	const headline = receiving
 		? `Receiving from ${ext.name}.`
 		: webhookDone && mappingDone
