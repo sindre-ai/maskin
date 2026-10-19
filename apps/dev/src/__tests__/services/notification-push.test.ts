@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import type { ApnsSender } from '../../services/apns'
 import { NotificationPushFanout } from '../../services/notification-push'
+import type { PushChannel } from '../../services/push-types'
 import { createTestContext } from '../setup'
 
 const event = {
@@ -30,7 +30,7 @@ function setup(rows: unknown[], enabled = true, queue?: unknown[][]) {
 	if (queue) mockResults.selectQueue = queue
 	const sender = { isEnabled: () => enabled, sendToActor: vi.fn() }
 	const bridge = new EventEmitter()
-	const fanout = new NotificationPushFanout(db, bridge as never, sender as unknown as ApnsSender)
+	const fanout = new NotificationPushFanout(db, bridge as never, [sender as unknown as PushChannel])
 	return { fanout, sender, bridge }
 }
 
@@ -163,6 +163,34 @@ describe('NotificationPushFanout', () => {
 				'human',
 				expect.objectContaining({ decision: null }),
 			)
+		})
+	})
+	describe('multiple channels', () => {
+		function setupChannels(channels: PushChannel[]) {
+			const { db, mockResults } = createTestContext()
+			mockResults.select = [notif()]
+			const fanout = new NotificationPushFanout(db, new EventEmitter() as never, channels)
+			return fanout
+		}
+
+		it('sends the same message to every enabled channel and skips disabled ones', async () => {
+			const apns = { isEnabled: () => true, sendToActor: vi.fn() }
+			const web = { isEnabled: () => true, sendToActor: vi.fn() }
+			const off = { isEnabled: () => false, sendToActor: vi.fn() }
+			await setupChannels([apns, web, off]).handleEvent(event)
+			expect(apns.sendToActor).toHaveBeenCalledTimes(1)
+			expect(web.sendToActor).toHaveBeenCalledWith('human', apns.sendToActor.mock.calls[0]?.[1])
+			expect(off.sendToActor).not.toHaveBeenCalled()
+		})
+
+		it('still delivers on the other channels when one rejects', async () => {
+			const broken = {
+				isEnabled: () => true,
+				sendToActor: vi.fn().mockRejectedValue(new Error('x')),
+			}
+			const web = { isEnabled: () => true, sendToActor: vi.fn() }
+			await setupChannels([broken, web]).handleEvent(event)
+			expect(web.sendToActor).toHaveBeenCalledTimes(1)
 		})
 	})
 })
