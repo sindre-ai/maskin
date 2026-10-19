@@ -138,6 +138,33 @@ export function splitSource(md: MarkdownItLike, original: string): SourceModel {
 const FRONT_MATTER = /^﻿?---[ \t]*\r?\n(?![ \t]*\r?\n)[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/
 const FOOTNOTE_MARKER = /\[\^[^\]\s]+\]/
 
+// Names on the HTML element list (current and obsolete, lower case). Only these
+// count as raw HTML. A word in angle brackets that is not on the list, such as
+// <owner>, <id> or a hyphenated <agent-id>, is a placeholder: the editor holds
+// it as plain text. Names that are both an element and a likely placeholder
+// (title, data, label, summary, source) stay on the list, so they open read-only.
+const HTML_ELEMENTS = new Set(
+	`a abbr acronym address applet area article aside audio b base basefont bdi bdo big
+blockquote body br button canvas caption center cite code col colgroup data datalist dd del
+details dfn dialog dir div dl dt em embed fieldset figcaption figure font footer form frame
+frameset h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li
+link main map mark marquee math menu meta meter nav nobr noframes noscript object ol optgroup
+option output p param picture pre progress q rp rt ruby s samp script search section select slot
+small source span strike strong style sub summary sup svg table tbody td template textarea tfoot
+th thead time title tr track tt u ul var video wbr`.split(/\s+/),
+)
+
+const HTML_TAG_NAME = /<\/?([A-Za-z][A-Za-z0-9-]*)/g
+
+/** True when the text holds a comment, a declaration or a tag that is on the HTML element list. */
+function holdsRealHtml(content: string): boolean {
+	if (/<[!?]/.test(content)) return true
+	for (const match of content.matchAll(HTML_TAG_NAME)) {
+		if (HTML_ELEMENTS.has((match[1] ?? '').toLowerCase())) return true
+	}
+	return false
+}
+
 // markdown-it is built with html: false in the editor, so raw HTML is not a
 // token there. Detection needs an instance with html on; it is built from the
 // editor's own constructor so the version and dialect match.
@@ -173,9 +200,9 @@ export function findReadOnlyCause(
 
 	let footnote = false
 	for (const token of tokens) {
-		if (token.type === 'html_block') return 'raw_html'
+		if (token.type === 'html_block' && holdsRealHtml(token.content)) return 'raw_html'
 		for (const child of token.children ?? []) {
-			if (child.type === 'html_inline') return 'raw_html'
+			if (child.type === 'html_inline' && holdsRealHtml(child.content)) return 'raw_html'
 			if (child.type === 'text' && FOOTNOTE_MARKER.test(child.content)) footnote = true
 		}
 	}

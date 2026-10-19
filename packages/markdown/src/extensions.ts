@@ -3,7 +3,7 @@
 // suite) imports the same builder, so the CI fixtures run against the editor
 // the app really ships and the two cannot drift (CTO rider 1).
 
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Extension, Node, mergeAttributes } from '@tiptap/core'
 import type { Extensions } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Link from '@tiptap/extension-link'
@@ -59,6 +59,32 @@ export const InlineImage = Node.create({
 	},
 })
 
+// tiptap-markdown writes a "<" in text as &lt; and a ">" as &gt;. A placeholder
+// such as <owner> in prose would come back as &lt;owner&gt;, which reads the
+// same in the app but not in the raw file. Write a backslash instead (\<owner>),
+// which every markdown reader shows as the same words. The sentinel stands in for
+// "<" while the serializer escapes everything else, then becomes the backslash pair.
+// tiptap-markdown reads a node's markdown spec from its storage when it
+// serialises, so this swaps the text node's serializer once the editor exists.
+const ANGLE = '\uE000'
+
+const KeepAngleBrackets = Extension.create({
+	name: 'keepAngleBrackets',
+	onBeforeCreate() {
+		const text = this.editor.extensionManager.extensions.find((e) => e.name === 'text')
+		if (!text) return
+		text.storage = {
+			...text.storage,
+			markdown: {
+				serialize(state: { text(text: string): void; out: string }, node: { text?: string }) {
+					state.text((node.text ?? '').replace(/<(?=[A-Za-z/!?])/g, ANGLE))
+					state.out = state.out.split(ANGLE).join('\\<')
+				},
+			},
+		}
+	},
+})
+
 export function buildExtensions(
 	variant: EditorVariant,
 	disallowedNodes: EditorDisallowedNode[] | undefined,
@@ -82,6 +108,7 @@ export function buildExtensions(
 			heading: includeHeading ? { levels: headingLevels } : false,
 		}),
 		InlineImage,
+		KeepAngleBrackets,
 		Link.configure({
 			openOnClick: false,
 			autolink: true,

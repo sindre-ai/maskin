@@ -210,7 +210,13 @@ describe('read-only list', () => {
 		['front matter', '---\ntitle: x\n---\n\n# Hi\n', 'front_matter'],
 		['raw html', '# Hi\n\n<div>x</div>\n', 'raw_html'],
 		['an html comment', '# Hi\n\n<!-- note -->\n\ntext\n', 'raw_html'],
-		['inline html', 'text <br> more\n', 'raw_html'],
+		['a line break tag', 'text <br> more\n', 'raw_html'],
+		['a line break tag in capitals', 'text <BR> more\n', 'raw_html'],
+		['an image tag', 'text <img src="a.png"> more\n', 'raw_html'],
+		['a details block', '<details>\n<summary>s</summary>\n\nbody\n\n</details>\n', 'raw_html'],
+		['a closing tag', 'text </div> more\n', 'raw_html'],
+		['an element that is also a likely placeholder', 'use <label> here\n', 'raw_html'],
+		['a title tag', 'x <title> y\n', 'raw_html'],
 		['a footnote', 'Text[^1]\n\n[^1]: note\n', 'footnote'],
 		['a link reference definition', 'See [a][1]\n\n[1]: https://x.com\n', 'link_reference'],
 	])('opens read-only for %s', (_name, markdown, cause) => {
@@ -224,5 +230,56 @@ describe('read-only list', () => {
 		const opened = openSource('---\n\nText\n\n---\n\nMore\n')
 		expect(opened.cause).toBeNull()
 		opened.destroy()
+	})
+
+	// Angle-bracket words that are not HTML elements are placeholders, held as
+	// plain text. Hyphenated names count as placeholders too (CTO ruling).
+	it.each([
+		['a placeholder', 'Use <owner> in the path.\n'],
+		['a placeholder alone on a line', '<owner>\n\nmore\n'],
+		['a placeholder in capitals', 'Use <PR> and <Task-ID> here.\n'],
+		['a hyphenated name', 'Use <agent-id> here.\n'],
+		['a tag inside a code span', 'Use `<div>` here.\n'],
+		['a tag inside a code fence', '```html\n<div>x</div>\n```\n'],
+		['an autolink', 'See <https://example.com> now.\n'],
+	])('opens %s editable', (_name, markdown) => {
+		const opened = openSource(markdown)
+		expect(opened.cause).toBeNull()
+		opened.destroy()
+	})
+})
+
+describe('placeholders in angle brackets', () => {
+	const original = 'Use <owner> and <agent-id> in the path, with more words here.\n\nother text\n'
+
+	it('leaves the placeholders as written when another block is edited', () => {
+		const opened = openSource(original)
+		opened.replace('other', 'another')
+		expect(opened.save().text).toBe(original.replace('other', 'another'))
+		opened.destroy()
+	})
+
+	it('writes the placeholders back with a backslash, not as entities, when their block is edited', () => {
+		const opened = openSource(original)
+		opened.replace('more words', 'extra words')
+		const result = opened.save()
+		expect(result.refused).toEqual([])
+		expect(result.text).toBe(
+			'Use \\<owner> and \\<agent-id> in the path, with extra words here.\n\nother text\n',
+		)
+		opened.destroy()
+	})
+
+	it('shows the same words in the editor before and after the edit', () => {
+		const opened = openSource(original)
+		opened.replace('more words', 'extra words')
+		const after = opened.save().text
+		const reopened = openSource(after)
+		expect(reopened.editor.getText()).toContain('Use <owner> and <agent-id> in the path')
+		expect(openSource(original).editor.getText()).toContain(
+			'Use <owner> and <agent-id> in the path',
+		)
+		opened.destroy()
+		reopened.destroy()
 	})
 })
