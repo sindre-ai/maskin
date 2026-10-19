@@ -1480,6 +1480,28 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 	)
 }
 
+const UPDATE_ENTRY_FIELDS =
+	'title, content, status, metadata, driver, attach_file_ids, detach_file_ids'
+
+/**
+ * True when an update_objects entry asks for at least one write: a field change,
+ * or a non-empty attach/detach list. An id on its own, or an id with only empty
+ * attach/detach arrays, writes nothing.
+ */
+function updateEntryHasChange(entry: {
+	id: string
+	attach_file_ids?: string[]
+	detach_file_ids?: string[]
+	[key: string]: unknown
+}): boolean {
+	const { id: _id, attach_file_ids, detach_file_ids, ...fields } = entry
+	return (
+		Object.values(fields).some((v) => v !== undefined) ||
+		Boolean(attach_file_ids?.length) ||
+		Boolean(detach_file_ids?.length)
+	)
+}
+
 /** Extracts a workspace_id from tool args without coupling the wrapper to the schemas. */
 function extractWorkspaceId(args: unknown): string | undefined {
 	if (!args || typeof args !== 'object') return undefined
@@ -2864,6 +2886,23 @@ export function createMcpServer(config: McpConfig) {
 				error?: string
 			}> = []
 
+			// Refuse a call that would write nothing. The schema defaults both lists
+			// to [], so a missing list, an empty list and a list sent under the wrong
+			// name (the SDK drops unknown keys) all arrive here as []. Throw before
+			// any API call so the SDK reports isError and the caller cannot mistake
+			// an empty result for a finished write.
+			const hasWritableUpdate = args.updates?.some(updateEntryHasChange) ?? false
+			if (!hasWritableUpdate && !args.edges?.length) {
+				const idleIds = (args.updates ?? []).map((u) => u.id)
+				throw new Error(
+					`update_objects wrote nothing: ${
+						idleIds.length > 0
+							? `no entry in updates (${idleIds.join(', ')}) has a field to change`
+							: 'it received no updates and no edges'
+					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Send real arrays, not JSON strings, and name the list updates (not objects). Nothing was written.`,
+				)
+			}
+
 			// Update objects in parallel
 			if (args.updates?.length) {
 				const objectResults = await Promise.all(
@@ -2876,6 +2915,18 @@ export function createMcpServer(config: McpConfig) {
 							result?: unknown
 							error?: string
 						}> = []
+
+						// In a mixed call, an entry with nothing to write is reported, not
+						// dropped, so its id never silently vanishes from results.
+						if (!updateEntryHasChange({ id, attach_file_ids, detach_file_ids, ...body })) {
+							out.push({
+								type: 'object',
+								id,
+								success: false,
+								error: `No field to change. Allowed: ${UPDATE_ENTRY_FIELDS}. Empty attach_file_ids and detach_file_ids lists count as nothing.`,
+							})
+							return out
+						}
 
 						// Captured from the PATCH response (when present) so attach_file_ids
 						// can use the object's real type ('bet' | 'task' | 'insight') as
