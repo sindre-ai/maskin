@@ -1,3 +1,4 @@
+import MaskinCore
 import MaskinDesign
 import SwiftUI
 
@@ -6,10 +7,27 @@ import SwiftUI
 struct SearchFieldHeader: View {
 	@Binding var query: String
 	var focused: FocusState<Bool>.Binding
+	/// Its scope (All, Team, Objects...) shows as chips under the field.
+	let scopes: SearchStore
 	let onSubmit: () -> Void
 	let onCancel: () -> Void
 
 	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			fieldRow
+			ScreenHeaderChipRow {
+				ForEach(SearchScope.chips) { scope in
+					ScreenHeaderChip(
+						label: scope.title,
+						count: scopes.phase == .results ? "\(scopes.count(in: scope))" : nil,
+						selected: scopes.scope == scope
+					) { scopes.scope = scope }
+				}
+			}
+		}
+	}
+
+	private var fieldRow: some View {
 		HStack(spacing: MaskinSpace.s7) {
 			HStack(spacing: MaskinSpace.s4) {
 				Image(systemName: "magnifyingglass")

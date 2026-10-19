@@ -83,7 +83,7 @@ private struct SearchScreenContent: View {
 	private var results: some View {
 		SearchContentView(
 			store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
-			onAskChiefOfStaff: askChiefOfStaff, onSelect: select)
+			onAskChiefOfStaff: askChiefOfStaff, onSelect: select, showsScopes: !usesHeader)
 	}
 
 	@ViewBuilder private var searchBody: some View {
@@ -92,6 +92,7 @@ private struct SearchScreenContent: View {
 				SearchFieldHeader(
 					query: Binding(get: { store.query }, set: { store.setQuery($0) }),
 					focused: $fieldFocused,
+					scopes: store,
 					onSubmit: { Task { await store.commit() } },
 					onCancel: {
 						store.setQuery("")

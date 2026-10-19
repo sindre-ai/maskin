@@ -19,11 +19,14 @@ struct SearchContentView: View {
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
 	let onSelect: (SearchResult) -> Void
+	/// False on iPhone, where the scope chips (All, Team, Objects...) sit in the screen header.
+	var showsScopes = true
 
 	var body: some View {
 		ScrollView {
 			SearchContentBody(
-				store: store, onSelect: onSelect, showsChips: true, needsYou: needsYou,
+				store: store, onSelect: onSelect, showsChips: true, showsScopes: showsScopes,
+				needsYou: needsYou,
 				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s5)
@@ -41,13 +44,14 @@ struct SearchContentBody: View {
 	let store: SearchStore
 	let onSelect: (SearchResult) -> Void
 	var showsChips = false
+	var showsScopes = true
 	var needsYou: [SearchNeedsYou] = []
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-			if showsChips { SearchScopeChips(store: store) }
+			if showsChips { SearchScopeChips(store: store, showsScopes: showsScopes) }
 			switch store.phase {
 			case .idle:
 				needsYouSection
@@ -216,12 +220,15 @@ struct SearchContentBody: View {
 /// the results without searching again.
 struct SearchScopeChips: View {
 	let store: SearchStore
+	var showsScopes = true
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: MaskinSpace.s2) {
-					ForEach(SearchScope.chips) { scope in chip(scope) }
+			if showsScopes {
+				ScrollView(.horizontal, showsIndicators: false) {
+					HStack(spacing: MaskinSpace.s2) {
+						ForEach(SearchScope.chips) { scope in chip(scope) }
+					}
 				}
 			}
 			let types = store.objectTypes
