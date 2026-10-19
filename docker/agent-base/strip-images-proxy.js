@@ -254,12 +254,9 @@ function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
 		}
 		timer = setTimeout(() => retry(`no first token within ${timeoutMs}ms`), timeoutMs)
 		upstream.on('error', (err) => {
-			if (settled || finished) return
-			clearTimeout(timer)
-			settled = true
-			finished = true
-			console.error(`strip-images-proxy: upstream error: ${err.message}`)
-			res.writeHead(502).end()
+			// Refused or reset before any response: as good as a stall, try the next attempt
+			// (the last one is a plain forward(), which answers 502 if it fails too).
+			retry(`upstream error before response (${err.message})`)
 		})
 		upstream.end(bytes)
 	}

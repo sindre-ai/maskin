@@ -1,7 +1,7 @@
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type Block = { type: string; text?: string; content?: Block[] }
 type Payload = { messages: { content: Block[] }[] }
@@ -393,6 +393,42 @@ describe('time-to-first-token guard over HTTP', () => {
 		const res = await post()
 		expect(await res.text()).toBe(FIRST)
 		expect(seen).toHaveLength(1)
+	})
+
+	it('retries when the connection is reset before any response', async () => {
+		const { seen, post } = await setup((n, res) => {
+			if (n === 1) return void res.socket?.destroy()
+			sse(res)
+			res.end(FIRST)
+		})
+		const res = await post()
+		expect(res.status).toBe(200)
+		expect(await res.text()).toBe(FIRST)
+		expect(seen).toHaveLength(2)
+	})
+
+	it('answers 502 when the untimed last attempt cannot connect either', async () => {
+		const { seen, post } = await setup((_n, res) => res.socket?.destroy())
+		const res = await post()
+		expect(res.status).toBe(502)
+		expect(seen).toHaveLength(4)
+	})
+
+	it('drops the upstream call when the client hangs up during the untimed last attempt', async () => {
+		let lastClosed = false
+		const { seen, post } = await setup((n, res) => {
+			sse(res)
+			if (n === 4)
+				res.on('close', () => {
+					lastClosed = true
+				})
+		})
+		const controller = new AbortController()
+		const pending = post(undefined, controller.signal).catch(() => 'aborted')
+		await vi.waitFor(() => expect(seen).toHaveLength(4), { timeout: 2000 })
+		controller.abort()
+		await pending
+		await vi.waitFor(() => expect(lastClosed).toBe(true), { timeout: 1000 })
 	})
 
 	it('stops retrying when the client hangs up', async () => {
