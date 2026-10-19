@@ -14,7 +14,7 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Display, the avatar, then Live and New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
+/// Order in the pill is Display, Live, the avatar, then New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
 /// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
@@ -104,9 +104,13 @@ private struct ShellToolbarModifier: ViewModifier {
 			.backChevronOnly()
 			.trackScrolled($scrolled)
 			.toolbar {
-				// One group, one glass capsule: the tools and the avatar share it (separate items or a
-				// ToolbarSpacer would split them into separate capsules).
-				ToolbarItemGroup(placement: .primaryAction) {
+				// One item, one glass capsule: the tools and the avatar share it (separate items or a
+				// ToolbarSpacer would split them into separate capsules). The buttons sit in a
+				// zero-spacing stack because a ToolbarItemGroup puts system spacing between its
+				// items, which left a wide gap between Live and the avatar; v6 packs 44 pt slots
+				// edge to edge.
+				ToolbarItem(placement: .primaryAction) {
+					HStack(spacing: 0) {
 					if let display = actions.display {
 						Menu {
 							display.content
@@ -129,6 +133,16 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.accessibilityLabel(actions.displayActive ? "Filter, shown" : "Filter")
 					}
+					// Live sits before the avatar, which stays last (as in the v6 bar).
+					if actions.live {
+						Button {
+							liveMeeting.present(.dailyBriefing)
+						} label: {
+							ShellInkCircle(
+								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
+						}
+						.buttonStyle(.plain)
+					}
 					if showsAvatar, !actions.hidesAvatar {
 						Button {
 							runtime?.showProfile = true
@@ -140,20 +154,13 @@ private struct ShellToolbarModifier: ViewModifier {
 						.buttonStyle(.plain)
 						.accessibilityLabel("Account")
 					}
-					if actions.live {
-						Button {
-							liveMeeting.present(.dailyBriefing)
-						} label: {
-							ShellInkCircle(
-								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
-						}
-						.buttonStyle(.plain)
-					}
 					if let new = actions.new, !scrolled || actions.newAlwaysVisible {
 						Button(action: new) {
 							ShellInkCircle(symbol: "plus", label: actions.newLabel)
 						}
 						.buttonStyle(.plain)
+					}
+
 					}
 				}
 			}

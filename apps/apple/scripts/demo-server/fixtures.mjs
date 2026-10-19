@@ -301,6 +301,33 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		postedComments.set(body.entity_id, [...(postedComments.get(body.entity_id) ?? []), event])
 		return { status: 201, body: event }
 	}
+	// Any email and password signs in as the first human, with a key and the demo workspace, so the
+	// app has a workspace to load instead of the schema-sample's empty one.
+	if (method === 'post' && path === '/api/auth/login') {
+		const me = actors.find((a) => a.type === 'human') ?? actors[0]
+		return {
+			// Every field the login schema marks required, so the app's decoder accepts it.
+			body: {
+				id: me.id,
+				type: 'human',
+				name: me.name,
+				email: me.email ?? 'sindre@northwind.example',
+				description: '',
+				system_prompt: null,
+				tools: {},
+				memory: {},
+				llm_provider: null,
+				llm_config: {},
+				isSystem: false,
+				agentState: 'idle',
+				agentStateUpdatedAt: null,
+				createdAt: ago(90 * DAY),
+				updatedAt: ago(90 * DAY),
+				api_key: 'ank_demo',
+				workspace_id: WORKSPACE_ID,
+			},
+		}
+	}
 	if (method === 'get' && path === '/api/workspaces') {
 		return {
 			body: [

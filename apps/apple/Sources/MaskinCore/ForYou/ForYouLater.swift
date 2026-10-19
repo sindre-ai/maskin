@@ -99,7 +99,7 @@ public final class LaterStore {
 		return entry.until > now()
 	}
 
-	/// Due, and the reader has not acted on it since: the card carries a "Back from Later" note.
+	/// Due, and the reader has not acted on it since: the card carries a "Back again" note.
 	public func isBackFromLater(_ id: String) -> Bool {
 		_ = tick
 		guard let entry = entries[id] else { return false }

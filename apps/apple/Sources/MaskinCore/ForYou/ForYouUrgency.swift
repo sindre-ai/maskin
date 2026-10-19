@@ -1,7 +1,7 @@
 import Foundation
 
-/// The one chip a card can carry that says why it sits where it does ("Blocking Forge", "Due
-/// 15 Oct", "Waiting 2d"). Order is Blocking work now, then Due soon, then When you have a minute.
+/// The one chip a card can carry that says why it sits where it does ("Holding up Forge", "Due
+/// 15 Oct", "Asked 2 days ago"). Order is Blocking work now, then Due soon, then When you have a minute.
 public struct ForYouUrgency: Equatable, Sendable {
 	public enum Kind: Sendable, Equatable { case blocking, due, waiting }
 
@@ -29,7 +29,7 @@ public struct ForYouUrgency: Equatable, Sendable {
 	/// words, and how long the card has waited.
 	public static func make(for card: ForYouCard, agent: String?, now: Date = Date()) -> ForYouUrgency? {
 		if card.status?.lowercased() == "blocked" {
-			return ForYouUrgency(kind: .blocking, text: "Blocking \(agent ?? "work")")
+			return ForYouUrgency(kind: .blocking, text: "Holding up \(agent ?? "work")")
 		}
 		let text = [card.decision?.summary, card.decision?.ask, card.mention?.content]
 			.compactMap { $0 }.joined(separator: " ")
@@ -85,11 +85,12 @@ public enum ForYouFormat {
 		return "held \(days)d"
 	}
 
-	/// "Waiting 2d": a card that has sat for a full day. Nothing earlier, so a fresh ask has no chip.
+	/// "Asked 2 days ago": a card that has sat for a full day. Nothing earlier, so a fresh ask has no chip.
 	public static func waitingNote(since date: Date?, now: Date = Date()) -> String? {
 		guard let date else { return nil }
 		let days = Int(now.timeIntervalSince(date) / 86_400)
 		if days < 1 { return nil }
-		return days >= 7 ? "Waiting 7d+" : "Waiting \(days)d"
+		if days >= 7 { return "Asked over a week ago" }
+		return days == 1 ? "Asked yesterday" : "Asked \(days) days ago"
 	}
 }

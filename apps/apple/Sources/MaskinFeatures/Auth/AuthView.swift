@@ -147,6 +147,37 @@ public struct AuthView: View {
 					#endif
 					.disabled(busy)
 			}
+		case .organization:
+			AuthField(
+				label: "Organization", problem: model.message(for: .organization),
+				isFocused: focus == .organization
+			) {
+				TextField("Company name", text: $model.organization)
+					.focused($focus, equals: .organization)
+					.submitLabel(.next)
+					.onSubmit { advance(from: .organization) }
+					.autocorrectionDisabled()
+					#if os(iOS)
+						.textContentType(.organizationName)
+						.textInputAutocapitalization(.words)
+					#endif
+					.disabled(busy)
+			}
+		case .role:
+			AuthField(
+				label: "Role", problem: model.message(for: .role), isFocused: focus == .role
+			) {
+				TextField("What you do", text: $model.role)
+					.focused($focus, equals: .role)
+					.submitLabel(.next)
+					.onSubmit { advance(from: .role) }
+					.autocorrectionDisabled()
+					#if os(iOS)
+						.textContentType(.jobTitle)
+						.textInputAutocapitalization(.words)
+					#endif
+					.disabled(busy)
+			}
 		case .email:
 			AuthField(
 				label: "Email", problem: model.message(for: .email), isFocused: focus == .email
@@ -183,6 +214,30 @@ public struct AuthView: View {
 				.buttonStyle(.maskinPressed)
 				.accessibilityLabel(showPassword ? "Hide password" : "Show password")
 			}
+		case .confirmPassword:
+			AuthField(
+				label: "Confirm password", problem: model.message(for: .confirmPassword),
+				isFocused: focus == .confirmPassword
+			) {
+				Group {
+					if showPassword {
+						TextField("Repeat your password", text: $model.confirmPassword)
+							.autocorrectionDisabled()
+							#if os(iOS)
+								.textInputAutocapitalization(.never)
+							#endif
+					} else {
+						SecureField("Repeat your password", text: $model.confirmPassword)
+					}
+				}
+				.focused($focus, equals: .confirmPassword)
+				.submitLabel(.done)
+				.onSubmit(submit)
+				#if os(iOS)
+					.textContentType(.newPassword)
+				#endif
+				.disabled(busy)
+			}
 		}
 	}
 
@@ -201,8 +256,8 @@ public struct AuthView: View {
 			}
 		}
 		.focused($focus, equals: .password)
-		.submitLabel(model.mode == .signIn ? .go : .done)
-		.onSubmit(submit)
+		.submitLabel(model.mode == .signIn ? .go : .next)
+		.onSubmit { advance(from: .password) }
 		#if os(iOS)
 			.textContentType(model.mode == .signIn ? .password : .newPassword)
 		#else

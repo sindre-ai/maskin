@@ -49,16 +49,7 @@ public struct ForYouScreen: View {
 		)
 		.shellToolbar(
 			environment: environment, title: "For you",
-			actions: ShellActions(
-				live: true, displayActive: runtime.store.options.filterBarOn,
-				displayToggle: {
-					// The button only shows or hides the filter pills; turning them off clears the pick.
-					let store = runtime.store
-					withAnimation(MaskinMotion.standard) {
-						store.options.filterBarOn.toggle()
-						if !store.options.filterBarOn { store.options.intent = nil }
-					}
-				})
+			actions: ShellActions(live: true)
 		)
 		.task(id: environment.workspaceId) {
 			async let feed: Void = runtime.store.load()
@@ -132,7 +123,6 @@ struct ForYouFeedView: View {
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
-	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
 	/// Compact width reads as a 680 pt column; the wide feed uses the full width (4-iPad.md).
@@ -336,8 +326,6 @@ struct ForYouFeedView: View {
 				)
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			} else {
-				// The wide feed decides inline (pills, Return); there are no swipe rows to explain.
-				if !wide { swipeHint }
 				ForEach(groups(of: open), id: \.bucket) { group in
 					// The primary group is the feed itself: the design shows no header above it.
 					if group.bucket != .needs {
@@ -419,23 +407,6 @@ struct ForYouFeedView: View {
 							} : .none)
 				}
 			}
-			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
-		}
-	}
-
-	/// One-time explanation of the two swipes, which nothing else on the card hints at.
-	@ViewBuilder private var swipeHint: some View {
-		if !swipeHintSeen {
-			HStack(alignment: .top, spacing: MaskinSpace.s4) {
-				Image(systemName: "hand.draw").accessibilityHidden(true)
-				Text("Swipe right to accept the recommended option, left for Later.")
-					.maskinText(.subhead)
-				Spacer(minLength: 0)
-				Button("Got it") { withAnimation(MaskinMotion.standard) { swipeHintSeen = true } }
-					.maskinText(.subhead).fontWeight(.semibold)
-					.frame(minHeight: MaskinSpace.touchMin)
-			}
-			.foregroundStyle(MaskinColor.ink4)
 			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		}
 	}

@@ -61,7 +61,7 @@ struct LaterStoreTests {
 		#expect(store.isBackFromLater("a") == false)
 		clock.now = at(hour: 18, minute: 1)
 		#expect(store.isDeferred("a") == false)
-		#expect(store.isBackFromLater("a"))  // "Back from Later" until the reader acts
+		#expect(store.isBackFromLater("a"))  // "Back again" until the reader acts
 		store.clear("a")
 		#expect(store.isBackFromLater("a") == false)
 	}
