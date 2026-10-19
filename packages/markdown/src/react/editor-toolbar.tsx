@@ -87,6 +87,17 @@ function findAncestor(
 	return null
 }
 
+/**
+ * The slash menu only opens on a "/" at the start of a block or after
+ * whitespace, so a caret that sits right after a word needs a space first.
+ */
+function slashTrigger(editor: Editor): string {
+	const { $from } = editor.state.selection
+	if ($from.parentOffset === 0) return '/'
+	const before = $from.parent.textBetween($from.parentOffset - 1, $from.parentOffset, '\n', '\n')
+	return /\s/.test(before) ? '/' : ' /'
+}
+
 const URL_TEST_RE = /^(https?:\/\/|mailto:|tel:|\/)/i
 const BARE_HOST_RE = /^[^\s/]+\.[a-z]{2,}(?:[/?#]\S*)?$/i
 
@@ -574,7 +585,9 @@ export function EditorToolbar({
 							icon={SlashIcon}
 							label="Insert block"
 							shortcut="/"
-							onClick={() => run('slash', () => editor.chain().focus().insertContent('/').run())}
+							onClick={() =>
+								run('slash', () => editor.chain().focus().insertContent(slashTrigger(editor)).run())
+							}
 						/>
 					</div>
 					<LinkPopover

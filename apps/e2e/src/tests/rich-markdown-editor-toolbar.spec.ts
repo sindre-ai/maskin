@@ -293,4 +293,19 @@ test.describe('rich-markdown-editor — floating toolbar & shortcuts', () => {
 		await bar.getByRole('button', { name: 'Insert block' }).click()
 		await expect(editor).toContainText('/')
 	})
+
+	test('the mobile bar slash button adds a space first when the caret follows a word', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 })
+		const { editor } = await openEditor(page, account, 'hello')
+		await editor.press('End')
+		const bar = page.locator('[data-editor-toolbar="mobile"]')
+		await expect(bar).toBeVisible()
+
+		await bar.getByRole('button', { name: 'Insert block' }).click()
+		// "hello/" would be mid-word and never open the slash menu.
+		await expect(editor).toContainText('hello /')
+	})
 })
