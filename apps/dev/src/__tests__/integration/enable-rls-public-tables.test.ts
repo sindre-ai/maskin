@@ -57,6 +57,9 @@ describe('migration 0096_enable_rls_public_tables (integration)', () => {
 				await sql.unsafe(`CREATE ROLE ${role} NOLOGIN`)
 				createdRoles.push(role)
 			}
+			// global-setup recreates "public", which leaves it without USAGE for other
+			// roles; without it the role cannot resolve table names at all.
+			await sql.unsafe(`GRANT USAGE ON SCHEMA public TO ${role}`)
 		}
 	})
 
