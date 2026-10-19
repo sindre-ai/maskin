@@ -173,6 +173,24 @@ function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
 }
 
+/**
+ * One line telling the agent which listed integrations are not live and how to
+ * get them reconnected, or null when every row is active. `pending` rows are an
+ * unfinished connect, not a broken connection, so they are left out.
+ */
+function buildReconnectHint(rows: Array<{ provider?: string; status?: string }>): string | null {
+	const broken = new Map<string, string>()
+	for (const row of rows) {
+		if (!row.provider || !row.status || row.status === 'active' || row.status === 'pending') {
+			continue
+		}
+		if (!broken.has(row.provider)) broken.set(row.provider, row.status)
+	}
+	if (broken.size === 0) return null
+	const list = [...broken].map(([provider, status]) => `${provider} (${status})`).join(', ')
+	return `Needs reconnecting: ${list}. To put a one-click Reconnect card in the chat, call connect_integration with that provider and end your turn. Do not tell the user to go to Settings.`
+}
+
 /** Default page size when the caller did not pass an explicit limit. Kept
  *  in sync with `HERO_CARD_UI_PAGE_SIZE` — the UI has been paging at 25 for
  *  months, so an agent gets responses shaped like what a human sees in the
@@ -6309,12 +6327,14 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.createdAt ?? null,
 				getId: (row) => row.id,
 			})
+			const reconnectHint = buildReconnectHint(pagedRows)
+			const listText = buildListContentText({ integrations: pagedRows })
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText({ integrations: pagedRows }),
+						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
 					},
 				],
 				structuredContent: {
