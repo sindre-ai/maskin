@@ -38,7 +38,7 @@ struct ObjectsStoreTests {
 		await store.load()
 		#expect(store.phase == .loaded)
 		#expect(store.objects.count == 5)
-		#expect(store.grouping == .status)
+		store.grouping = .status
 		let groups = store.groups
 		// Product order across types (Bets, Insights, Tasks), each type's own statuses under it.
 		#expect(groups.map(\.id) == ["bet/active", "insight/new", "task/todo", "task/in_progress"])
@@ -362,6 +362,7 @@ struct ObjectsStoreScopeTests {
 		#expect(store.typeSummaries.first { $0.id == "bet" }?.needsYou == 1)
 		#expect(store.typeSummaries.first { $0.id == "task" }?.needsYou == 1)
 
+		store.grouping = .status
 		await store.setScope(.needsYou)
 		#expect(store.title == "Needs you")
 		#expect(store.isFiltered)
@@ -426,6 +427,7 @@ struct ObjectsStoreScopeTests {
 		let directory = ObjectsDirectory(remote: remote, actors: Fixtures.actors)
 		let store = ObjectsStore(remote: remote, directory: directory, displayStorage: storage, defaults: isolatedDefaults())
 		await store.load()
+		store.grouping = .status
 		store.toggleGroup("task/todo")
 		#expect(store.display.isCollapsed("task/todo"))
 		store.grouping = .type
@@ -585,7 +587,7 @@ struct ObjectTypeCatalogTests {
 		let options = try JSONDecoder().decode(ObjectsDisplay.self, from: data)
 		#expect(options.layout == .board)
 		#expect(options.sort == .name)
-		#expect(options.groupBy == .status)
+		#expect(options.groupBy == ObjectsDisplay.defaultGrouping)
 		#expect(options.shown == Set(ObjectsProperty.allCases))
 		var round = options
 		round.toggleCollapsed("x")

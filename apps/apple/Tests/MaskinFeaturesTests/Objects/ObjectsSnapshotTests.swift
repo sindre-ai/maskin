@@ -172,7 +172,7 @@ struct ObjectsSnapshotTests {
 				.padding(.vertical, MaskinSpace.s9)
 			}
 		}
-		#expect(store.groups.map(\.title).contains("Tasks · In review"))
+		#expect(store.groups.map(\.title).contains("Needs you"))
 		#expect(ObjectTypeTab.tabs(for: store).map(\.label) == ["Needs you", "All", "Bets", "Insights", "Tasks"])
 		// t1 is unread and t4 carries the ask (and is in review): two objects need the reader.
 		#expect(ObjectTypeTab.tabs(for: store).first?.count == "2")
