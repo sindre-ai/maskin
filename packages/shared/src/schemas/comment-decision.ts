@@ -98,6 +98,56 @@ export const decisionOptionSchema = z.object({
 		),
 })
 
+/**
+ * The text an agent proposes to send, shown on the card above the buttons so the
+ * human reads it before choosing. It is deliberately NOT part of the prose rules
+ * in `validateDecisionProse`: those police the agent's own wording, and a human's
+ * words (a dash, a number-free sentence, an emoji) must reach the card untouched.
+ *
+ * The draft is normally an object whose description is the draft and nothing
+ * else (`object_id`), and the feed reads that description live, so an edit made
+ * after the card was posted shows on the card. `body` is only for a draft that
+ * is not an object. The feed always sends `body` to the client, filled from the
+ * object when there is one.
+ */
+export const decisionDraftSchema = z
+	.object({
+		object_id: z
+			.string()
+			.uuid()
+			.optional()
+			.describe(
+				'The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.',
+			),
+		label: z
+			.string()
+			.min(1)
+			.max(30)
+			.optional()
+			.describe(
+				'What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".',
+			),
+		to: z
+			.string()
+			.min(1)
+			.max(300)
+			.optional()
+			.describe(
+				'Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.',
+			),
+		body: z
+			.string()
+			.min(1)
+			.max(20_000)
+			.optional()
+			.describe(
+				'Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.',
+			),
+	})
+	.refine((draft) => draft.object_id !== undefined || draft.body !== undefined, {
+		message: 'A draft needs object_id (preferred) or body',
+	})
+
 export const commentDecisionSchema = z
 	.object({
 		title: z
@@ -125,11 +175,16 @@ export const commentDecisionSchema = z
 			.describe(
 				`${OPTIONS_MIN} or ${OPTIONS_MAX} options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.`,
 			),
+		draft: decisionDraftSchema
+			.optional()
+			.describe(
+				"Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.",
+			),
 	})
 	.describe(
 		[
 			'Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.',
-			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.',
+			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.',
 			'',
 			'The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:',
 			'title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;',
@@ -152,6 +207,7 @@ export const commentDecisionSchema = z
 	)
 
 export type CommentDecision = z.infer<typeof commentDecisionSchema>
+export type DecisionDraft = z.infer<typeof decisionDraftSchema>
 export type CommentDecisionOption = z.infer<typeof decisionOptionSchema>
 
 export interface DecisionProseViolation {
