@@ -150,6 +150,10 @@ export const actorListItemSchema = z.object({
 	workspaces: z
 		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
 		.optional(),
+	// Skill names only (valid skills of the requested workspace, sorted). Present
+	// only under `include=skills` on a workspace-scoped list, and only on agents
+	// that have at least one.
+	skills: z.array(z.string()).optional(),
 })
 
 export type ActorListItem = z.infer<typeof actorListItemSchema>
