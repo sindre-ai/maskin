@@ -614,6 +614,72 @@ ${surviving}
 		).toBe(trigger.id)
 	})
 
+	it('posts the reply in the thread when the turn was triggered by a thread reply', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'dry run finished' })
+			.returning()
+		if (!root) throw new Error('no root message')
+		const [reply] = await db
+			.insert(messages)
+			.values({
+				conversationId,
+				actorId: humanId,
+				content: 'keep Qualifier',
+				threadRootId: root.id,
+			})
+			.returning()
+		if (!reply) throw new Error('no reply message')
+
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'keep Qualifier' },
+				maskin_message_id: reply.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBe(root.id)
+		expect(posted?.threadAlsoInChannel).toBe(false)
+	})
+
+	it('keeps a reply to a top-level message in the main timeline', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+		const [trigger] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'top level question' })
+			.returning()
+		if (!trigger) throw new Error('no trigger message')
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'top level question' },
+				maskin_message_id: trigger.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBeNull()
+	})
+
 	// The transport that fills session_logs must preserve the trailing newline
 	// on every row. onStdout re-splits what it is given with splitLines(), which
 	// pops the final segment as an incomplete "remainder" — so a row that does

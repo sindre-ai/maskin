@@ -721,9 +721,22 @@ export const messages = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		// Set when the author edits the message; null for never-edited messages.
 		editedAt: timestamp('edited_at', { withTimezone: true }),
+		// Set on a reply inside a thread: the id of the thread's root message in the
+		// same conversation. Roots are never replies themselves (one level only), so
+		// this never chains. Cascades with the root.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'cascade' },
+		),
+		// A thread reply the author also posted to the main timeline ("also send to
+		// channel"). Only meaningful when thread_root_id is set.
+		threadAlsoInChannel: boolean('thread_also_in_channel').notNull().default(false),
 	},
 	(t) => [
 		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		index('messages_thread_root_idx')
+			.on(t.threadRootId, t.id)
+			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
@@ -738,6 +751,24 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
+
+// Per-actor read cursor for one thread. Advance-only (GREATEST on write), like
+// conversation_participants.last_read_message_id. A missing row means the actor
+// has not opened the thread; replies by others then all count as unread.
+export const messageThreadReads = pgTable(
+	'message_thread_reads',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		rootMessageId: bigint('root_message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }).notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.actorId, t.rootMessageId] })],
+)
 
 // Chat turns waiting for an agent's interactive conversation session to
 // become writable. A message that arrives while the (conversation, agent)
