@@ -108,6 +108,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/conversations/:id/me',
 		"Group E, personal state: the caller's own pin, archive and read marker",
 	],
+	[
+		'PUT',
+		'/api/conversations/:id/messages/:messageId/thread/read',
+		"Group E, personal state: the caller's own thread read marker",
+	],
 	['POST', '/api/subscriptions', 'Group E, personal state'],
 	['DELETE', '/api/subscriptions', 'Group E, personal state'],
 	['POST', '/api/subscriptions/read', 'Group E, personal state'],

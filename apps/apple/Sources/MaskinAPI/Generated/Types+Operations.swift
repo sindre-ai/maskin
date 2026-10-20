@@ -43947,6 +43947,8 @@ public enum Operations {
                         public var threadRootId: Swift.Double?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/threadAlsoInChannel`.
                         public var threadAlsoInChannel: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/unresolved_mentions`.
+                        public var unresolved_mentions: [Swift.String]?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -43963,6 +43965,7 @@ public enum Operations {
                         ///   - editedAt:
                         ///   - threadRootId:
                         ///   - threadAlsoInChannel:
+                        ///   - unresolved_mentions:
                         public init(
                             id: Swift.Double,
                             conversationId: Swift.String,
@@ -43976,7 +43979,8 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             editedAt: Swift.String? = nil,
                             threadRootId: Swift.Double? = nil,
-                            threadAlsoInChannel: Swift.Bool
+                            threadAlsoInChannel: Swift.Bool,
+                            unresolved_mentions: [Swift.String]? = nil
                         ) {
                             self.id = id
                             self.conversationId = conversationId
@@ -43991,6 +43995,7 @@ public enum Operations {
                             self.editedAt = editedAt
                             self.threadRootId = threadRootId
                             self.threadAlsoInChannel = threadAlsoInChannel
+                            self.unresolved_mentions = unresolved_mentions
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -44006,6 +44011,7 @@ public enum Operations {
                             case editedAt
                             case threadRootId
                             case threadAlsoInChannel
+                            case unresolved_mentions
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/application\/json`.
@@ -46020,6 +46026,7 @@ public enum Operations {
                     case completed = "completed"
                     case failed = "failed"
                     case timeout = "timeout"
+                    case user_stopped = "user_stopped"
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/status`.
                 public var status: Operations.get_sol_api_sol_sessions.Input.Query.statusPayload?
@@ -46299,6 +46306,7 @@ public enum Operations {
                                 case completed = "completed"
                                 case failed = "failed"
                                 case timeout = "timeout"
+                                case user_stopped = "user_stopped"
                             }
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/status`.
                             public var status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload

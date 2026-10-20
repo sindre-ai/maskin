@@ -29134,6 +29134,13 @@
 										},
 										"threadAlsoInChannel": {
 											"type": "boolean"
+										},
+										"unresolved_mentions": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
 										}
 									},
 									"required": [
@@ -30459,7 +30466,8 @@
 								"waiting_for_input",
 								"completed",
 								"failed",
-								"timeout"
+								"timeout",
+								"user_stopped"
 							]
 						},
 						"required": false,
@@ -30725,7 +30733,8 @@
 															"waiting_for_input",
 															"completed",
 															"failed",
-															"timeout"
+															"timeout",
+															"user_stopped"
 														]
 													},
 													"updated_at": {
