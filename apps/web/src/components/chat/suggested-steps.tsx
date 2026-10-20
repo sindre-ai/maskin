@@ -64,6 +64,8 @@ export function SuggestedSteps({
 						// biome-ignore lint/suspicious/noArrayIndexKey: fixed snapshot, never reorders
 						key={index}
 						type="button"
+						// One explicit name: "{label}, sends now" or "{label}…, fills the message box".
+						aria-label={`${step.label}${sends ? '' : '…'}, ${sends ? 'sends now' : 'fills the message box'}`}
 						disabled={disabled || (sends && sending)}
 						onClick={() => tap(step, index)}
 						className={cn(
@@ -77,7 +79,6 @@ export function SuggestedSteps({
 							{step.label}
 							{sends ? '' : '…'}
 						</span>
-						<span className="sr-only">{sends ? ', sends now' : ', fills the message box'}</span>
 					</button>
 				)
 			})}

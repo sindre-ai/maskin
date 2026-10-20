@@ -89,7 +89,7 @@ function mockMessages(...newestFirst: MessageResponse[]) {
 function renderThread(props: Partial<React.ComponentProps<typeof ThreadMessages>> = {}) {
 	const onPickStep = vi.fn()
 	const onSendStep = vi.fn()
-	render(
+	const view = render(
 		<ThreadMessages
 			workspaceId="ws-1"
 			conversationId="conv-1"
@@ -100,7 +100,7 @@ function renderThread(props: Partial<React.ComponentProps<typeof ThreadMessages>
 		/>,
 		{ wrapper: TestWrapper },
 	)
-	return { onPickStep, onSendStep }
+	return { onPickStep, onSendStep, unmount: view.unmount }
 }
 
 describe('ThreadMessages — agent intro steps and tools', () => {
