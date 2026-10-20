@@ -123,6 +123,7 @@ const EXEC_MAX_COMMAND_CHARS = 100_000
 const EXEC_DISCOVERY = new Set(['help', 'tools', 'search', 'info', 'schema', 'learn'])
 const EXEC_DISCOVERY_TAIL = /^[A-Za-z0-9 -]*$/
 // Control characters other than tab, plus the Unicode line separators.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
 const EXEC_FORBIDDEN_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/
 const EXEC_TOOL_NAME = /^[a-z0-9][a-z0-9-]*$/
 

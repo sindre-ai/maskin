@@ -514,7 +514,8 @@ describe('PostHog exec through the gateway (Integration)', () => {
 	it('judges a repeated command key by its last value, and forwards the message it judged', async () => {
 		const s = await setupPosthog()
 		const app = appFor(s.reader.id)
-		const head = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exec","arguments":'
+		const head =
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exec","arguments":'
 
 		// First read, last write: judged a write, nothing is forwarded.
 		const writeLast = `${head}{"command":"call query-trends {}","command":"call dashboard-create {}"}}}`
