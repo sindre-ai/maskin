@@ -946,6 +946,10 @@ export const messages = pgTable(
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
 		// re-post every past turn of every live chat. See migration 0061.
+		// A comment copied into an object's chat lands once, however often the copy runs.
+		uniqueIndex('messages_comment_event_uniq')
+			.on(t.conversationId, sql`((${t.metadata}->>'comment_event_id'))`)
+			.where(sql`(${t.metadata}->>'comment_event_id') IS NOT NULL`),
 		uniqueIndex('messages_final_output_dedupe_uniq')
 			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
 			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),

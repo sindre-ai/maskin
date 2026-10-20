@@ -248,6 +248,8 @@ export const messageMetadataSchema = z.object({
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/** Backend-owned: the `commented` event this message was copied from (object chats). */
+	comment_event_id: z.number().int().optional(),
 })
 
 /**
@@ -267,6 +269,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		integration_connect: _integrationConnect,
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
+		comment_event_id: _commentEventId,
 		...rest
 	} = metadata
 	return rest as T

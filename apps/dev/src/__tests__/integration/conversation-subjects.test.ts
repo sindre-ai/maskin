@@ -4,11 +4,13 @@ import {
 	events,
 	conversationParticipants,
 	conversations,
+	messages,
 	subscriptions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
+import { postComment } from '../../lib/comments'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -225,6 +227,119 @@ describe('Conversation subjects', () => {
 				jsonRequest('POST', `/api/conversations/${id}/messages`, { content: 'hello' }, ws()),
 			)
 			expect(await commentsOn(objectId)).toHaveLength(0)
+		})
+	})
+
+	describe('comments already on the object', () => {
+		const chatMessages = async (conversationId: string) =>
+			db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversationId))
+				.orderBy(messages.id)
+
+		it('opens a new chat with the old comments as history, with replies as thread replies', async () => {
+			const first = await postComment(db, {
+				workspaceId,
+				actorId: otherId,
+				entityId: objectId,
+				content: 'Looks good to me',
+			})
+			await postComment(db, {
+				workspaceId,
+				actorId: ownerId,
+				entityId: objectId,
+				content: 'Thanks',
+				parentEventId: first.comment.id,
+			})
+
+			const res = await open(ownerId, {
+				title: 'Tom',
+				participant_actor_ids: [],
+				subject: { type: 'object', id: objectId },
+			})
+			const { id } = (await res.json()) as { id: string }
+			const rows = await chatMessages(id)
+
+			expect(rows.map((m) => m.content)).toEqual(['Looks good to me', 'Thanks'])
+			expect(rows[0]?.actorId).toBe(otherId)
+			expect(rows[1]?.threadRootId).toBe(rows[0]?.id)
+			// The people who commented are in the chat, and the history is read.
+			const [theirs] = await db
+				.select()
+				.from(conversationParticipants)
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, id),
+						eq(conversationParticipants.actorId, otherId),
+					),
+				)
+			expect(theirs?.lastReadMessageId).toBe(rows[1]?.id)
+			// Nothing was echoed back as a second comment.
+			const comments = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, objectId), eq(events.action, 'commented')))
+			expect(comments).toHaveLength(2)
+		})
+
+		it('shows a comment posted later in the chat, once, and does not echo chat messages back', async () => {
+			const res = await open(ownerId, {
+				title: 'Tom',
+				participant_actor_ids: [],
+				subject: { type: 'object', id: objectId },
+			})
+			const { id } = (await res.json()) as { id: string }
+
+			await postComment(db, {
+				workspaceId,
+				actorId: otherId,
+				entityId: objectId,
+				content: 'From the old comment box',
+			})
+			await appFor(ownerId).request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${id}/messages`,
+					{ content: 'From the chat' },
+					ws(),
+				),
+			)
+
+			expect((await chatMessages(id)).map((m) => m.content)).toEqual([
+				'From the old comment box',
+				'From the chat',
+			])
+			const comments = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, objectId), eq(events.action, 'commented')))
+			expect(comments).toHaveLength(2)
+		})
+
+		it('does not copy the same comment into the chat twice', async () => {
+			const res = await open(ownerId, {
+				title: 'Tom',
+				participant_actor_ids: [],
+				subject: { type: 'object', id: objectId },
+			})
+			const { id } = (await res.json()) as { id: string }
+			const { comment } = await postComment(db, {
+				workspaceId,
+				actorId: otherId,
+				entityId: objectId,
+				content: 'Once',
+			})
+			const { mirrorCommentIntoChat } = await import('../../services/object-chat-sync')
+			await mirrorCommentIntoChat(db, {
+				id: comment.id,
+				actorId: comment.actorId,
+				createdAt: comment.createdAt,
+				data: comment.data,
+				workspaceId,
+				entityId: objectId,
+			})
+			expect(await chatMessages(id)).toHaveLength(1)
 		})
 	})
 })

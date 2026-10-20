@@ -52,6 +52,7 @@ import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
+import { importObjectComments } from '../services/object-chat-sync'
 import type { SessionManager } from '../services/session-manager'
 import {
 	anchorSpawnedSessionsToMessage,
@@ -413,6 +414,14 @@ app.openapi(createConversationRoute, (async (c) => {
 		return c.json(await joinSubjectConversation(db, existing, participantIds, callerId), 200)
 	}
 	const { conversation, initialMessage } = txResult
+	if (body.subject?.type === 'object') {
+		await importObjectComments(db, {
+			conversationId: conversation.id,
+			workspaceId,
+			objectId: body.subject.id,
+			actorId: callerId,
+		})
+	}
 
 	async function createInTransaction() {
 		return db.transaction(async (tx) => {
