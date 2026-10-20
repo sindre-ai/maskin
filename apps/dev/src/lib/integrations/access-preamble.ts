@@ -1,5 +1,6 @@
 import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS } from '@maskin/shared'
 import type { ActorIntegrationAccess, AgentAccess } from './agent-access'
+import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
 import { getProvider } from './registry'
 
 const LEVEL_TEXT: Record<AgentAccess, string> = {
@@ -29,6 +30,8 @@ export function buildAccessPreamble(rows: ActorIntegrationAccess[]): string {
 	const byProvider = new Map<string, Set<AgentAccess>>()
 	for (const row of rows) {
 		if (row.providerMode !== 'registered') continue
+		// A custom tool server is simply there or not; it has no levels to explain.
+		if (row.provider === CUSTOM_MCP_PROVIDER) continue
 		const levels = byProvider.get(row.provider) ?? new Set<AgentAccess>()
 		levels.add(row.access)
 		byProvider.set(row.provider, levels)

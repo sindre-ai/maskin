@@ -4,6 +4,7 @@ import {
 	ResendConnectDialog,
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
+import { ToolsSection } from '@/components/integrations/tools-section'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -131,6 +132,7 @@ function IntegrationsPage() {
 					)}
 				</div>
 			)}
+			<ToolsSection workspaceId={workspaceId} />
 			<SelectGithubInstallationDialog
 				workspaceId={workspaceId}
 				integrationId={selectGithubId ?? null}

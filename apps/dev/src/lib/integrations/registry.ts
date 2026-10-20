@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -152,6 +153,10 @@ providers.set('posthog', {
 // spells the same warning out at the source of truth (spec §12.3).
 providers.set('resend', {
 	config: resendConfig,
+})
+
+providers.set('custom-mcp', {
+	config: customMcpConfig,
 })
 
 providers.set('skjald', {

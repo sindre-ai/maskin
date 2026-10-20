@@ -77,6 +77,7 @@ async function stub(page: Page, workspaceId: string, creator: string, state: Sta
 		const access = own?.access ?? state.defaultAgentAccess
 		return route.fulfill({
 			json: {
+				maskin_mcp: { name: 'Maskin', access: 'read_write', locked: true },
 				integrations: [
 					{
 						integration_id: LINEAR_ID,
@@ -87,6 +88,7 @@ async function stub(page: Page, workspaceId: string, creator: string, state: Sta
 						default_access: state.defaultAgentAccess,
 						server_attached: access !== 'none',
 						created_by: creator,
+						kind: 'integration',
 					},
 				],
 				credentials: [],
@@ -115,7 +117,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.goto(`/${account.workspaceId}/agents/${reviewer.id}`)
 		const access = page.getByRole('combobox', { name: 'Access to Linear' })
 		await expect(access).toContainText('Read & write', { timeout: 15_000 })
-		await expect(page.getByText('Tools attached')).toBeVisible()
 
 		// Change it there; the Integrations page follows.
 		await access.click()
@@ -141,7 +142,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			'No access',
 		)
 		expect(state.grants).toEqual([{ actorId: reviewer.id, access: 'none' }])
-		await expect(page.getByText('No tools attached')).toBeVisible()
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(

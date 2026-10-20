@@ -1,4 +1,5 @@
 import type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
@@ -14,9 +15,11 @@ import type {
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 } from '@maskin/shared'
 
 export type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
@@ -31,6 +34,7 @@ export type {
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -324,6 +328,15 @@ export const api = {
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
+	account: {
+		deletionPreview: (deleteSoleWorkspaces = false) =>
+			request<AccountDeletionPreview>(
+				`/account/deletion-preview${deleteSoleWorkspaces ? '?delete_sole_workspaces=true' : ''}`,
+			),
+		delete: (data: { password: string; delete_sole_workspaces?: boolean }) =>
+			request<{ deleted: true }>('/account/delete', { method: 'POST', body: data }),
+	},
+
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
@@ -451,6 +464,13 @@ export const api = {
 					method: 'DELETE',
 				}),
 		},
+		deletionPreview: (workspaceId: string) =>
+			request<WorkspaceDeletionPreview>(`/workspaces/${workspaceId}/deletion-preview`),
+		delete: (workspaceId: string, confirmName: string) =>
+			request<{ deleted: true }>(`/workspaces/${workspaceId}/delete`, {
+				method: 'POST',
+				body: { confirm_name: confirmName },
+			}),
 		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
 			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
 				method: 'POST',
@@ -503,6 +523,27 @@ export const api = {
 			}),
 	},
 
+	/** Custom MCP servers: a workspace's own tool servers, shared with agents through grants. */
+	customMcpServers: {
+		get: (id: string, workspaceId: string) =>
+			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, { workspaceId }),
+		create: (workspaceId: string, body: { name: string; server: CustomMcpServerSpec }) =>
+			request<CustomMcpServerResponse>('/custom-mcp-servers', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		update: (
+			id: string,
+			workspaceId: string,
+			body: { name: string; server: CustomMcpServerSpec },
+		) =>
+			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
@@ -2227,6 +2268,22 @@ export interface MessageIntegrationConnect {
 	provider: string
 }
 
+/** A custom MCP server definition. Env and header values come back masked on read. */
+export interface CustomMcpServerSpec {
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	env?: Record<string, string>
+	url?: string
+	headers?: Record<string, string>
+}
+
+export interface CustomMcpServerResponse {
+	id: string
+	name: string
+	server: CustomMcpServerSpec
+}
+
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
@@ -2238,6 +2295,8 @@ export interface MessageKeychainRequest {
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
 /** What an agent can use: the one description every screen and the launch prompt share. */
 export interface AgentAccessView {
+	/** The Maskin MCP server: on every agent, read & write, and not changeable. */
+	maskin_mcp: { name: string; access: 'read_write'; locked: true }
 	integrations: Array<{
 		integration_id: string
 		provider: string
@@ -2247,6 +2306,10 @@ export interface AgentAccessView {
 		default_access: 'read' | 'none'
 		server_attached: boolean
 		created_by: string
+		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
+		kind: 'integration' | 'tool_server'
+		/** Tool server Maskin sits in front of: Read / Read & write / No access, not just on or off. */
+		gated: boolean
 	}>
 	credentials: Array<{
 		integration_id: string
