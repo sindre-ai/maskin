@@ -38,15 +38,10 @@ const config = {
 }
 
 // Tools whose `registerAppTool` calls are intentionally commented out in
-// server.ts (notification MCP tools are temporarily hidden). Keep the tool
-// *definitions* in `tools.ts` so re-enabling stays a one-line change.
-const HIDDEN_TOOL_NAMES = new Set([
-	'create_notification',
-	'list_notifications',
-	'get_notification',
-	'update_notification',
-	'delete_notification',
-])
+// server.ts (get/delete notification stay hidden; create/list/update are live for
+// the Chief of Staff's For You list). Keep the tool *definitions* in `tools.ts`
+// so re-enabling stays a one-line change.
+const HIDDEN_TOOL_NAMES = new Set(['get_notification', 'delete_notification'])
 
 describe('createMcpServer', () => {
 	beforeEach(() => {
@@ -3086,9 +3081,8 @@ describe('tool handlers', () => {
 		})
 	})
 
-	// Notification MCP tools are temporarily hidden — see server.ts. Skip the
-	// handler tests until the tools are re-enabled.
-	describe.skip('create_notification handler', () => {
+	// create_notification is registered again (the Chief of Staff writes the For You list).
+	describe('create_notification handler', () => {
 		it('passes native array metadata.actions through unchanged', async () => {
 			const mockResult = { id: 'notif-1' }
 			mockFetchSuccess(mockResult)

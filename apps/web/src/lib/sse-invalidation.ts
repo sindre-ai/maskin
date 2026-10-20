@@ -133,6 +133,8 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, {
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
+		// A reply on a thread can settle a curated For You item.
+		invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})
@@ -274,6 +276,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 			break
 		case 'actor':
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
