@@ -103,19 +103,16 @@ describe('buildActorInsert', () => {
 		expect(fromPublisherKey.apiKey).not.toBe('ank_publisherleak')
 	})
 
-	it("expands the snapshot's browser capability into a real MCP entry", () => {
-		// Publishing strips mcpServers (secrets), leaving only tools.browser.
-		// Without this expansion the installed agent has no @playwright/mcp and
-		// session-manager.ts never provisions a Chromium sidecar for it.
+	it('drops the legacy tools.browser flag from an old snapshot', () => {
 		const out = buildActorInsert(
 			{ name: 'Event Producer', tools: { browser: true } },
 			{ installed_loop_id: 'i' },
 			null,
 		)
-		expect(JSON.stringify(out.tools)).toContain('${BROWSER_CDP_URL}')
+		expect(out.tools).toEqual({})
 	})
 
-	it('leaves tools alone for actors without the browser capability', () => {
+	it('leaves tools alone for actors without the legacy flag', () => {
 		const out = buildActorInsert({ name: 'A', tools: {} }, { installed_loop_id: 'i' }, null)
 		expect(out.tools).toEqual({})
 	})

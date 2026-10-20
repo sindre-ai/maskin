@@ -13,11 +13,14 @@ import {
 	DNS_UDP_RULE,
 	type MicrosandboxDeps,
 	PUBLIC_EGRESS_RULE,
+	type SshRelay,
 	assertValidSessionId,
 	defaultRunner,
 	defaultSleep,
 	findFreeHostPort,
 	releaseHostPort,
+	reserveHostPort,
+	startSshRelay,
 	waitForRunning,
 } from './microsandbox'
 
@@ -35,7 +38,7 @@ import {
 // The prefix is load-bearing. reconcileOnBoot (index.ts) reports every sandbox
 // name it doesn't recognise to apps/dev, which treats any unclaimed one as an
 // orphan and removes it. Desktops have no session row, so they must be
-// excluded from that report by this prefix, exactly like BROWSER_SIDECAR_PREFIX.
+// excluded from that report by this prefix, so reconcile never reports them as session sandboxes.
 export const DESKTOP_PREFIX = 'anko-desktop-'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -78,6 +81,11 @@ export type WorkspaceDesktop = {
 	// `suspended`: the VM is gone and its whole state — memory included — sits in
 	// a snapshot archive. ensure() (or any control call or stream) wakes it.
 	status: DesktopStatus
+	// First host-loopback port of the block this computer's firewall allows it to
+	// reach (see DesktopRelayConfig). Undefined for a computer created before
+	// port exposure existed, or when the pool had no block left: its firewall has
+	// no such rule and can't be given one without recreating it.
+	relayBlockStart?: number
 }
 
 export function isValidWorkspaceId(workspaceId: string): boolean {
@@ -127,6 +135,25 @@ export type DesktopSnapshotConfig = {
 	idleSuspendMs: number
 }
 
+export type DesktopRelayConfig = {
+	// Host-loopback ports [portStart, portEnd] are cut into blocks of blockSize,
+	// one block per computer, so a computer can reach only its own agent's tunnels.
+	portStart: number
+	portEnd: number
+	blockSize: number
+	sshKeyPath: string
+}
+
+export type ExposedPort = { guestPort: number; relayPort: number; sessionId: string }
+
+export type ExposePortResult =
+	| { ok: true; port: ExposedPort }
+	| {
+			ok: false
+			reason: 'no_desktop' | 'no_relay_block' | 'too_many_ports' | 'relay_failed'
+			message: string
+	  }
+
 export type WorkspaceDesktopRegistryDeps = {
 	msb: MicrosandboxDeps
 	image: string
@@ -140,6 +167,9 @@ export type WorkspaceDesktopRegistryDeps = {
 	// Needs msb >= 0.7 (`msb snapshot create --full`). Leave unset on older msb:
 	// the desktop is then created and started exactly as before.
 	snapshots?: DesktopSnapshotConfig
+	// Tunnels from a computer to dev servers in its agent's session sandbox. Unset
+	// means no computer gets a port block and exposing a port is refused.
+	relay?: DesktopRelayConfig
 }
 
 type PersistedDesktop = {
@@ -147,6 +177,7 @@ type PersistedDesktop = {
 	controlPort?: number
 	password: string
 	status?: DesktopStatus
+	relayBlockStart?: number
 }
 
 export class WorkspaceDesktopRegistry {
@@ -161,6 +192,9 @@ export class WorkspaceDesktopRegistry {
 	private readonly queues = new Map<string, Promise<unknown>>()
 	private readonly lastActivity = new Map<string, number>()
 	private readonly viewers = new Map<string, number>()
+	// Live tunnels per desktop. In memory only: a restarted agent-server loses its
+	// tunnel processes, and the agent simply exposes the port again.
+	private readonly relays = new Map<string, Map<number, { relay: SshRelay; sessionId: string }>>()
 	private sweepTimer: NodeJS.Timeout | undefined
 	private readonly bridgeGateway: string
 
@@ -219,6 +253,7 @@ export class WorkspaceDesktopRegistry {
 		const key = desktopKey(workspaceId, agentId)
 		const name = desktopName(workspaceId, agentId)
 		return this.enqueue(key, async () => {
+			this.stopAllRelays(key)
 			const had = this.desktops.delete(key)
 			this.lastActivity.delete(key)
 			await this.persist()
@@ -309,6 +344,9 @@ export class WorkspaceDesktopRegistry {
 						controlPort: entry.controlPort,
 						password: entry.password,
 						status: 'suspended',
+						...(typeof entry.relayBlockStart === 'number' && {
+							relayBlockStart: entry.relayBlockStart,
+						}),
 					})
 					this.lastActivity.set(key, this.now())
 				} else {
@@ -336,6 +374,9 @@ export class WorkspaceDesktopRegistry {
 				controlPort: entry.controlPort,
 				password: entry.password,
 				status: 'running',
+				...(typeof entry.relayBlockStart === 'number' && {
+					relayBlockStart: entry.relayBlockStart,
+				}),
 			})
 			// A restart must not make every adopted desktop look idle at once.
 			this.lastActivity.set(key, this.now())
@@ -503,6 +544,10 @@ export class WorkspaceDesktopRegistry {
 					`${this.bridgeGateway}:${desktop.hostPort}:${DESKTOP_GUEST_PORT}`,
 					'-p',
 					`${this.bridgeGateway}:${desktop.controlPort}:${DESKTOP_CONTROL_GUEST_PORT}`,
+					// The firewall is not part of a snapshot either, and a restore takes
+					// the complete policy or none. Stated in full so the port block the
+					// computer was created with still applies after every wake.
+					...this.restoreNetworkArgs(desktop.relayBlockStart),
 				],
 				{ timeoutMs: DESKTOP_RESTORE_TIMEOUT_MS },
 			)
@@ -589,6 +634,13 @@ export class WorkspaceDesktopRegistry {
 			return null
 		}
 		const password = randomBytes(18).toString('base64url')
+		const relayBlockStart = this.allocateRelayBlock()
+		if (this.deps.relay && relayBlockStart === undefined) {
+			logger.warn(
+				'workspace desktop: no relay port block left, agent cannot expose dev servers',
+				ref,
+			)
+		}
 
 		const options = [
 			'--name',
@@ -606,14 +658,7 @@ export class WorkspaceDesktopRegistry {
 			`${this.bridgeGateway}:${hostPort}:${DESKTOP_GUEST_PORT}`,
 			'-p',
 			`${this.bridgeGateway}:${controlPort}:${DESKTOP_CONTROL_GUEST_PORT}`,
-			'--net-rule',
-			DENY_HOST_ALIAS_IPV6_RESET_RULE,
-			'--net-rule',
-			PUBLIC_EGRESS_RULE,
-			'--net-rule',
-			DNS_UDP_RULE,
-			'--net-rule',
-			DNS_TCP_RULE,
+			...this.createNetworkArgs(relayBlockStart),
 			'-e',
 			`VNC_PASSWORD=${password}`,
 			image,
@@ -656,7 +701,197 @@ export class WorkspaceDesktopRegistry {
 			controlPort,
 			password,
 			status: 'running',
+			...(relayBlockStart !== undefined && { relayBlockStart }),
 		}
+	}
+
+	// The host-loopback ports this computer may reach, as an msb rule target.
+	private relayRange(blockStart: number): string {
+		const size = this.deps.relay?.blockSize ?? 1
+		return size === 1 ? String(blockStart) : `${blockStart}-${blockStart + size - 1}`
+	}
+
+	// Rules in order (first match wins): the IPv6 host-alias deny must precede any
+	// allow@host rule. The one allow@host:tcp rule covers ONLY this computer's own
+	// block — never allow@private, which would open the whole msb bridge.
+	private networkRules(blockStart?: number): string[] {
+		return [
+			DENY_HOST_ALIAS_IPV6_RESET_RULE,
+			...(blockStart !== undefined && this.deps.relay
+				? [`allow@host:tcp:${this.relayRange(blockStart)}`]
+				: []),
+			PUBLIC_EGRESS_RULE,
+			DNS_UDP_RULE,
+			DNS_TCP_RULE,
+		]
+	}
+
+	private createNetworkArgs(blockStart?: number): string[] {
+		return this.networkRules(blockStart).flatMap((rule) => ['--net-rule', rule])
+	}
+
+	// `msb snapshot restore` replaces the whole policy and needs a default. Egress
+	// is denied by default exactly as on create, and ingress is allowed so the
+	// published noVNC and control ports keep working (verified on msb 0.7.8).
+	private restoreNetworkArgs(blockStart?: number): string[] {
+		const rules = this.networkRules(blockStart).map((rule) =>
+			rule === DENY_HOST_ALIAS_IPV6_RESET_RULE ? rule : rule.replace('@', ':egress@'),
+		)
+		return [
+			'--net-default',
+			'deny',
+			'--net-rule',
+			'allow:ingress@any',
+			...rules.flatMap((rule) => ['--net-rule', rule]),
+		]
+	}
+
+	// Lowest block no other computer holds, or undefined when relays are off or
+	// the pool is used up.
+	private allocateRelayBlock(): number | undefined {
+		const relay = this.deps.relay
+		if (!relay) return undefined
+		const blocks = Math.floor((relay.portEnd - relay.portStart + 1) / relay.blockSize)
+		const taken = new Set(
+			[...this.desktops.values()].flatMap((d) =>
+				d.relayBlockStart === undefined ? [] : [d.relayBlockStart],
+			),
+		)
+		for (let i = 0; i < blocks; i++) {
+			const start = relay.portStart + i * relay.blockSize
+			if (!taken.has(start)) return start
+		}
+		return undefined
+	}
+
+	/**
+	 * Opens (or returns the existing) tunnel from this agent's computer to a TCP
+	 * port in one of the agent's running session sandboxes. The sandbox must be
+	 * on this server; the caller (apps/dev) has already checked the session
+	 * belongs to the agent. Idempotent per (session, guestPort). The relay port is
+	 * chosen here from the computer's own block, never by the caller.
+	 */
+	async exposePort(
+		workspaceId: string,
+		agentId: string,
+		sessionId: string,
+		guestPort: number,
+	): Promise<ExposePortResult> {
+		const key = desktopKey(workspaceId, agentId)
+		const desktop = this.desktops.get(key)
+		const relayConfig = this.deps.relay
+		if (!desktop) {
+			return {
+				ok: false,
+				reason: 'no_desktop',
+				message: 'This agent has no computer on this server.',
+			}
+		}
+		if (!relayConfig || desktop.relayBlockStart === undefined) {
+			return {
+				ok: false,
+				reason: 'no_relay_block',
+				message:
+					'This computer was created before port exposure existed, or no port block was free. It has to be recreated to expose ports.',
+			}
+		}
+		const blockStart = desktop.relayBlockStart
+		return this.enqueueRelay(key, async () => {
+			const mine = this.relays.get(key) ?? new Map()
+			for (const [relayPort, entry] of mine) {
+				if (entry.sessionId === sessionId && entry.relay.targetGuestPort === guestPort) {
+					return { ok: true as const, port: { guestPort, relayPort, sessionId } }
+				}
+			}
+			let relayPort: number | undefined
+			for (let i = 0; i < relayConfig.blockSize; i++) {
+				const candidate = blockStart + i
+				if (mine.has(candidate)) continue
+				// Bound and held so a concurrent expose can't take it; also skips a port
+				// something else on the host already listens on.
+				if (await reserveHostPort('127.0.0.1', candidate)) {
+					relayPort = candidate
+					break
+				}
+			}
+			if (relayPort === undefined) {
+				return {
+					ok: false as const,
+					reason: 'too_many_ports' as const,
+					message: `All ${relayConfig.blockSize} ports for this computer are in use. Close one first.`,
+				}
+			}
+			const relay = await startSshRelay(
+				sessionId,
+				guestPort,
+				relayPort,
+				relayConfig.sshKeyPath,
+				this.deps.msb,
+			)
+			if (!relay) {
+				return {
+					ok: false as const,
+					reason: 'relay_failed' as const,
+					message: 'The tunnel could not be opened. Is the session still running?',
+				}
+			}
+			mine.set(relayPort, { relay, sessionId })
+			this.relays.set(key, mine)
+			return { ok: true as const, port: { guestPort, relayPort, sessionId } }
+		})
+	}
+
+	/** Tunnels currently open for one computer. */
+	listPorts(workspaceId: string, agentId: string): ExposedPort[] {
+		const mine = this.relays.get(desktopKey(workspaceId, agentId))
+		if (!mine) return []
+		return [...mine.entries()].map(([relayPort, e]) => ({
+			guestPort: e.relay.targetGuestPort,
+			relayPort,
+			sessionId: e.sessionId,
+		}))
+	}
+
+	/** Closes one tunnel by its relay port. Returns whether there was one. */
+	closePort(workspaceId: string, agentId: string, relayPort: number): boolean {
+		const key = desktopKey(workspaceId, agentId)
+		const entry = this.relays.get(key)?.get(relayPort)
+		if (!entry) return false
+		entry.relay.stop()
+		this.relays.get(key)?.delete(relayPort)
+		return true
+	}
+
+	/** A session ended: its sandbox is gone, so every tunnel into it is dead weight. */
+	closeSessionRelays(sessionId: string): void {
+		for (const [key, mine] of this.relays) {
+			for (const [relayPort, entry] of mine) {
+				if (entry.sessionId !== sessionId) continue
+				entry.relay.stop()
+				mine.delete(relayPort)
+			}
+			if (mine.size === 0) this.relays.delete(key)
+		}
+	}
+
+	private stopAllRelays(key: string): void {
+		for (const entry of this.relays.get(key)?.values() ?? []) entry.relay.stop()
+		this.relays.delete(key)
+	}
+
+	// Exposes for one computer run one at a time, so two calls can't both pick the
+	// same free port. Separate from the lifecycle queue: opening a tunnel must not
+	// wait behind a multi-second suspend or wake.
+	private readonly relayQueues = new Map<string, Promise<unknown>>()
+	private enqueueRelay<T>(key: string, fn: () => Promise<T>): Promise<T> {
+		const previous = this.relayQueues.get(key) ?? Promise.resolve()
+		const run = previous.then(fn, fn)
+		const tail = run.catch(() => undefined)
+		this.relayQueues.set(key, tail)
+		tail.then(() => {
+			if (this.relayQueues.get(key) === tail) this.relayQueues.delete(key)
+		})
+		return run
 	}
 
 	// `msb create` boots the VM but does not run ENTRYPOINT — `msb exec` does.
@@ -776,6 +1011,7 @@ export class WorkspaceDesktopRegistry {
 				controlPort: d.controlPort,
 				password: d.password,
 				status: d.status,
+				...(d.relayBlockStart !== undefined && { relayBlockStart: d.relayBlockStart }),
 			}
 		}
 		try {

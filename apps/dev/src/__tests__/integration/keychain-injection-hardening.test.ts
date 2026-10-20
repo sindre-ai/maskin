@@ -116,7 +116,6 @@ function expandMcpConfig(env: Record<string, string>) {
 	try {
 		const script = [
 			'set -e',
-			`eval "$(sed -n '/^setup_cdp_retry_proxy()/,/^}/p' "${AGENT_RUN}")"`,
 			`eval "$(sed -n '/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
 			'setup_mcps',
 			'cat "$MCP_CONFIG_FILE"',

@@ -2092,4 +2092,35 @@ export const tools = {
 			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
 		}),
 	},
+	desktop_expose_port: {
+		description:
+			'Make a dev server running in YOUR session sandbox (for example Vite on 5173) openable in your computer\'s browser. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003 to open in Chromium on your computer (desktop_key ["ctrl+l"], desktop_type the URL, desktop_key ["Return"]). Your computer is a separate machine, so localhost there is NOT your sandbox: always use the returned URL. Idempotent: asking again for the same port returns the same URL. You have a small fixed number of ports at once; close one with desktop_close_port to free a slot. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			guest_port: z
+				.number()
+				.int()
+				.min(1)
+				.max(65535)
+				.describe('The port your server listens on inside your sandbox, e.g. 5173.'),
+		}),
+	},
+	desktop_list_ports: {
+		description:
+			'List the dev-server ports currently open from your computer: your sandbox port, the URL to open on your computer, and the session it belongs to. Does not start your computer.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_close_port: {
+		description:
+			'Close one open dev-server port to free a slot. Pass the number after the colon in the URL desktop_expose_port or desktop_list_ports gave you (relay_port).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			relay_port: z.number().int().min(1).max(65535),
+		}),
+	},
 } as const

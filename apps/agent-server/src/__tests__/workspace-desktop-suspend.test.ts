@@ -76,7 +76,6 @@ function makeSnapshotMsb(opts: { failSnapshot?: boolean; failRestore?: boolean }
 		sleep: async () => {},
 		now: () => clock.t,
 		findPort: async () => nextPort++,
-		tcpPollReady: async () => {},
 		spawnProcess,
 	}
 	return { msb, calls, sandboxes, execs, clock }

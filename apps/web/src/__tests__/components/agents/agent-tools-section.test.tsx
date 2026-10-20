@@ -53,7 +53,7 @@ describe('AgentToolsSection', () => {
 		expect(screen.getByText('npx -y @modelcontextprotocol/server-github')).toBeInTheDocument()
 
 		// Glyphs are lucide SVGs rendered inside each row; each transport draws its
-		// own. The Add Browser control carries a globe too, so scope the count to
+		// own. The Add Maskin control carries a globe too, so scope the count to
 		// the rows rather than the whole section.
 		const region = screen.getByRole('region', { name: 'Tools' })
 		expect(region.querySelectorAll('svg.lucide-terminal')).toHaveLength(1)

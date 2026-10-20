@@ -127,12 +127,6 @@ const strategistTools = {
 			type: 'http',
 			headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 		},
-		playwright: {
-			env: {},
-			args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-			type: 'stdio',
-			command: 'npx',
-		},
 	},
 }
 
@@ -140,13 +134,6 @@ const exaTool = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http',
 	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
-}
-
-const playwrightTool = {
-	env: {},
-	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-	type: 'stdio',
-	command: 'npx',
 }
 
 const insightsTriageTools = {
@@ -171,7 +158,6 @@ const researchAgentTools = {
 			type: 'http',
 			headers: { 'x-api-token': '${SUPADATA_API_TOKEN}' },
 		},
-		playwright: playwrightTool,
 	},
 }
 
@@ -2026,8 +2012,7 @@ Every bet must be linked: \`relates_to\` customer, \`informs\` from ≥3 insight
 
 - **maskin MCP** — all workspace operations (list_objects, search_objects, get_objects, create_objects, update_objects, get_workspace_skill, create_comment)
 - **github MCP** — check PR status, verify merges, inspect open PRs on active bets, verify ship-metric event emitters at the measurement gate. Use this instead of Playwright for anything GitHub-related.
-- **exa MCP** — deep web research. Use per the \`deep-research\` skill.
-- **playwright** — external research only when exa is insufficient (non-GitHub web content, pages requiring interaction).`,
+- **exa MCP** — deep web research. Use per the \`deep-research\` skill.`,
 	},
 	{
 		$id: 'insights_triage',
@@ -2128,7 +2113,6 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 - **maskin** — \`create_objects\`, \`update_objects\`, \`search_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_session\`, \`list_actors\`
 - **exa MCP** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
 - **sindre** — \`Sindre:query_meetings\` (meeting harvest mode only)
-- **playwright** — browser automation for JS-rendered sites (competitive scan when exa/web_search is insufficient)
 - **supadata** — \`supadata_transcript\`, \`supadata_check_transcript_status\` (video extraction, social-extraction mode)
 - **web_search / web_fetch** — general web research and text content fetching
 - **slack** — \`slack_send_message\` (Slack DM replies, social-extraction mode), \`slack_list_channels\` / \`slack_list_users\` to resolve a channel or person to an ID, \`slack_join_channel\`, \`slack_add_reaction\`, \`slack_get_permalink\`, \`slack_get_channel_history\` to read backlog before drafting a reply, \`slack_get_thread_replies\` to expand a thread parent, \`slack_update_message\` to edit your own progress messages instead of posting new ones (bot can only edit its own posts), \`slack_delete_message\` to retract a mistake you posted (bot can only delete its own posts), \`slack_open_conversation\` to start a 1:1 DM with a user for private handoff (find the user id via \`slack_list_users\`), \`slack_conversations_info\` to read a channel's topic/purpose/membership before deciding how to reply.

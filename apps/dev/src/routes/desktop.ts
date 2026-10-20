@@ -1,10 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
+import { sessions } from '@maskin/db/schema'
 import {
 	desktopExecBodySchema,
 	desktopExecResultSchema,
 	desktopInputActionSchema,
 } from '@maskin/shared'
+import { eq } from 'drizzle-orm'
 import { resolveDesktopAgent } from '../lib/desktop-access'
 import { signDesktopTicket } from '../lib/desktop-ticket'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -365,6 +367,213 @@ app.openapi(
 app.openapi(
 	execRoute,
 	(c) => forwardControl(c as unknown as Ctx, 'exec', c.req.valid('json')) as never,
+)
+
+// Dev servers an agent's computer can open. The agent starts a server in its own
+// session sandbox and asks for a URL its computer's browser can use. The relay
+// port comes from the computer's own block on the agent-server; the caller never
+// names a host port.
+
+const portSchema = z.object({
+	guest_port: z.number().int(),
+	relay_port: z.number().int(),
+	url: z.string().openapi({ example: 'http://host.microsandbox.internal:20003' }),
+})
+
+const exposePortRoute = createRoute({
+	method: 'post',
+	path: '/ports',
+	tags: ['Desktop'],
+	summary: "Open a port in the agent's session sandbox from its computer",
+	description:
+		"Idempotent per (session, port). Returns a URL the computer's browser can open. The session must be the agent's own and running on the same server as its computer.",
+	request: {
+		headers: workspaceIdHeader,
+		query: agentQuery,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						session_id: z.string().uuid(),
+						guest_port: z.number().int().min(1).max(65535),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: { description: 'Exposed', content: { 'application/json': { schema: portSchema } } },
+		...controlResponses,
+		503: {
+			description: 'No desktop could be started',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Session not running here, no free port, or the computer cannot be given one',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const listPortsRoute = createRoute({
+	method: 'get',
+	path: '/ports',
+	tags: ['Desktop'],
+	summary: "Ports currently open from the agent's computer",
+	request: { headers: workspaceIdHeader, query: agentQuery },
+	responses: {
+		200: {
+			description: 'Open ports',
+			content: {
+				'application/json': {
+					schema: z.object({ ports: z.array(portSchema.extend({ session_id: z.string() })) }),
+				},
+			},
+		},
+		...controlResponses,
+	},
+})
+
+const closePortRoute = createRoute({
+	method: 'delete',
+	path: '/ports/{relay_port}',
+	tags: ['Desktop'],
+	summary: 'Close an open port to free a slot',
+	request: {
+		headers: workspaceIdHeader,
+		query: agentQuery,
+		params: z.object({ relay_port: z.coerce.number().int().min(1).max(65535) }),
+	},
+	responses: {
+		200: {
+			description: 'Closed (or it was not open)',
+			content: { 'application/json': { schema: z.object({ closed: z.boolean() }) } },
+		},
+		...controlResponses,
+	},
+})
+
+const LIVE_SESSION_STATUSES = new Set(['starting', 'running', 'waiting_for_input'])
+
+async function exposePort(c: Ctx, input: { sessionId: string; guestPort: number }) {
+	const gated = await gate(c)
+	if (isResponse(gated)) return gated
+	const { workspaceId, actorId, agentId } = gated
+	const { sessionId, guestPort } = input
+	const db = c.get('db') as Database
+
+	const [session] = await db
+		.select({
+			id: sessions.id,
+			actorId: sessions.actorId,
+			workspaceId: sessions.workspaceId,
+			status: sessions.status,
+			agentServerId: sessions.agentServerId,
+		})
+		.from(sessions)
+		.where(eq(sessions.id, sessionId))
+		.limit(1)
+	// Same answer for "not yours" and "does not exist": a session id proves nothing.
+	if (!session || session.workspaceId !== workspaceId || session.actorId !== agentId) {
+		return c.json(createApiError('NOT_FOUND', 'No such session for this agent'), 404)
+	}
+	if (!LIVE_SESSION_STATUSES.has(session.status)) {
+		return c.json(createApiError('CONFLICT', 'That session is not running any more'), 409)
+	}
+	if (!session.agentServerId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This session does not run on an agent-server, so its computer cannot reach it',
+			),
+			409,
+		)
+	}
+
+	const service = serviceFor(c as never)
+	let located: Awaited<ReturnType<WorkspaceDesktopService['ensure']>>
+	try {
+		located = await service.ensure(workspaceId, agentId, { preferServerId: session.agentServerId })
+	} catch (err) {
+		logger.error('desktop ensure failed', { workspaceId, agentId, error: String(err) })
+		located = null
+	}
+	if (!located) return c.json(createApiError('INTERNAL_ERROR', 'No desktop could be started'), 503)
+	if (located.server.id !== session.agentServerId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				"This agent's computer runs on a different server than this session, and a computer can only reach sessions on its own server. Start a new session to get one on the same server, or remove the computer so it is recreated next to this session.",
+			),
+			409,
+		)
+	}
+
+	let result: Awaited<ReturnType<WorkspaceDesktopService['ports']>>
+	try {
+		result = await service.ports(located.server, workspaceId, agentId, {
+			type: 'expose',
+			sessionId,
+			guestPort,
+		})
+	} catch (err) {
+		logger.error('desktop expose port failed', { workspaceId, agentId, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
+	}
+	if (result.status === 200) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'workspace_desktop',
+			entityId: workspaceId,
+			data: { agent_id: agentId, control: 'expose_port', guest_port: guestPort },
+		}).catch((err) => logger.warn('desktop expose event failed', { error: String(err) }))
+	}
+	c.header('Cache-Control', 'no-store')
+	return c.json(result.body, result.status)
+}
+
+app.openapi(
+	exposePortRoute,
+	(c) =>
+		exposePort(c as unknown as Ctx, {
+			sessionId: c.req.valid('json').session_id,
+			guestPort: c.req.valid('json').guest_port,
+		}) as never,
+)
+
+async function forwardPorts(
+	c: Ctx,
+	action: { type: 'list' } | { type: 'close'; relayPort: number },
+) {
+	const gated = await gate(c)
+	if (isResponse(gated)) return gated
+	const { workspaceId, agentId } = gated
+	const service = serviceFor(c as never)
+	const located = await service.locate(workspaceId, agentId)
+	if (!located) {
+		// No computer yet means nothing is open; listing must not start one.
+		return action.type === 'list' ? c.json({ ports: [] }, 200) : c.json({ closed: false }, 200)
+	}
+	try {
+		const result = await service.ports(located.server, workspaceId, agentId, action)
+		c.header('Cache-Control', 'no-store')
+		return c.json(result.body, result.status)
+	} catch (err) {
+		logger.error('desktop ports failed', { workspaceId, agentId, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
+	}
+}
+
+app.openapi(listPortsRoute, (c) => forwardPorts(c as unknown as Ctx, { type: 'list' }) as never)
+app.openapi(
+	closePortRoute,
+	(c) =>
+		forwardPorts(c as unknown as Ctx, {
+			type: 'close',
+			relayPort: c.req.valid('param').relay_port,
+		}) as never,
 )
 
 export default app

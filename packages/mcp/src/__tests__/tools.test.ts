@@ -106,6 +106,9 @@ const ALL_TOOL_NAMES = [
 	'desktop_type',
 	'desktop_key',
 	'desktop_run',
+	'desktop_expose_port',
+	'desktop_list_ports',
+	'desktop_close_port',
 	// No linkedin__* entries: those three tools moved to the provider's own MCP
 	// server (apps/dev/src/lib/integrations/providers/linkedin-unipile/
 	// mcp-server.ts) so they appear only when LinkedIn is connected. Their

@@ -58,7 +58,6 @@ function makeMsb(opts: { failCreate?: boolean } = {}) {
 		},
 		sleep: async () => {},
 		findPort: async () => nextPort++,
-		tcpPollReady: async () => {},
 		spawnProcess,
 	}
 	return { msb, calls, sandboxes, execs }

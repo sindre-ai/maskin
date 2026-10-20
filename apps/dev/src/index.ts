@@ -165,9 +165,6 @@ const sessionManager = new SessionManager(db, storageProvider, runtimeTelemetry)
 sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
 )
-sessionManager.setBrowserSidecarBuildContext(
-	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
-)
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
 // The one entry point for starting a session — every wrapper (chat, trigger,
@@ -370,8 +367,6 @@ if (process.env.NODE_ENV === 'production') {
 				env: spec.env,
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
-				...(spec.browserRequired && { browserRequired: true }),
-				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 				// Layer 1 skills provisioning — agent-server materialises the
 				// manifest into `<sessionDir>/skills/<name>/` after the S3
@@ -525,18 +520,13 @@ ${mcpSetup}
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
 	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
-	// no Docker socket exists; the two warm calls below could only fail there.
+	// no Docker socket exists; the warm call below could only fail there.
 	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
-		logger.warn('Docker unavailable; skipping agent-base and browser-sidecar image warm-up')
+		logger.warn('Docker unavailable; skipping agent-base image warm-up')
 		return
 	}
 	sessionManager.warmAgentBaseImage().catch((err) => {
 		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
-			error: err instanceof Error ? err.message : String(err),
-		})
-	})
-	sessionManager.warmBrowserSidecarImage().catch((err) => {
-		logger.error('Failed to prepare browser-sidecar image; browser sessions will retry on demand', {
 			error: err instanceof Error ? err.message : String(err),
 		})
 	})

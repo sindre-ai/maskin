@@ -7827,6 +7827,93 @@ ${claudeCredsBlock}`,
 		},
 	)
 
+	registerAppTool(
+		server,
+		'desktop_expose_port',
+		{
+			description: tools.desktop_expose_port.description,
+			inputSchema: tools.desktop_expose_port.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId) {
+				return {
+					_meta: meta('desktop_expose_port', config, args.workspace_id),
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'This only works from inside an agent session: there is no sandbox to reach.',
+						},
+					],
+				}
+			}
+			const result = (await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/ports', args.agent_id),
+				{ session_id: sessionId, guest_port: args.guest_port },
+				{ workspaceId: args.workspace_id },
+			)) as { guest_port: number; relay_port: number; url: string }
+			return {
+				_meta: meta('desktop_expose_port', config, args.workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: `Port ${result.guest_port} in your sandbox is open on your computer at ${result.url}. Open that URL in Chromium on your computer (not localhost). To free the slot later, call desktop_close_port with relay_port ${result.relay_port}.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_list_ports',
+		{
+			description: tools.desktop_list_ports.description,
+			inputSchema: tools.desktop_list_ports.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				desktopPath('/api/desktop/ports', args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_list_ports', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_close_port',
+		{
+			description: tools.desktop_close_port.description,
+			inputSchema: tools.desktop_close_port.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'DELETE',
+				desktopPath(`/api/desktop/ports/${args.relay_port}`, args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_close_port', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
 	// Expose the collected handlers so `getServerHandlers(server)` (and
 	// `createInvokeTool` in ./invoke.ts) can dispatch tools by name without a
 	// transport. Set after every registration completes so partial builds are

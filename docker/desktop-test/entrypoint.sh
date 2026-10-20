@@ -10,8 +10,7 @@ if [ "$(id -u)" = 0 ]; then
 fi
 
 # `msb exec` re-invokes ENTRYPOINT rather than attaching, so guard against a
-# second copy colliding on the X display lock (same reasoning as
-# docker/browser-sidecar/entrypoint.sh).
+# second copy colliding on the X display lock.
 XVFB_PIDFILE=/tmp/xvfb.pid
 if [ -f "$XVFB_PIDFILE" ] && kill -0 "$(cat "$XVFB_PIDFILE")" 2>/dev/null; then
 	echo "desktop already running, blocking instead of re-starting" >&2

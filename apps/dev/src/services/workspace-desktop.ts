@@ -44,6 +44,8 @@ const LOOKUP_TIMEOUT_MS = 5_000
 const ENSURE_TIMEOUT_MS = 200_000
 // exec may run up to 120s in the VM; leave headroom for the extra hop.
 const CONTROL_TIMEOUT_MS = 150_000
+// Opening a tunnel starts two processes and waits for both to listen.
+const PORTS_TIMEOUT_MS = 40_000
 
 function joinUrl(base: string, path: string): string {
 	return `${base.replace(/\/+$/, '')}${path}`
@@ -134,15 +136,22 @@ export class WorkspaceDesktopService {
 		return perServer.flat()
 	}
 
-	/** Existing desktop, or provision one on the first active server. */
-	async ensure(workspaceId: string, agentId: string): Promise<LocatedDesktop | null> {
+	/**
+	 * Existing desktop, or provision one on the first active server. A new one goes
+	 * to `preferServerId` when that server is active: a computer can only tunnel
+	 * into sandboxes on its own box, so it should start where the agent's session is.
+	 */
+	async ensure(
+		workspaceId: string,
+		agentId: string,
+		opts: { preferServerId?: string } = {},
+	): Promise<LocatedDesktop | null> {
 		const existing = await this.locate(workspaceId, agentId)
 		// A suspended desktop is woken by PUT, which is idempotent and returns the
 		// running desktop; a running one is returned as found.
 		if (existing && existing.status !== 'suspended') return existing
 
-		const target =
-			existing?.server ?? (await this.deps.listServers()).find((s) => s.status === 'active')
+		const target = existing?.server ?? (await this.pickNewServer(opts.preferServerId))
 		if (!target) return null
 		const res = await this.call(target, 'PUT', workspaceId, agentId, ENSURE_TIMEOUT_MS)
 		if (!res.ok) {
@@ -161,6 +170,49 @@ export class WorkspaceDesktopService {
 					...(existing ? {} : { created: true }),
 				}
 			: null
+	}
+
+	private async pickNewServer(preferServerId?: string): Promise<DesktopServer | undefined> {
+		const active = (await this.deps.listServers()).filter((s) => s.status === 'active')
+		return active.find((s) => s.id === preferServerId) ?? active[0]
+	}
+
+	/**
+	 * Dev servers an agent's computer can open: tunnels from the computer into a
+	 * port in one of the agent's session sandboxes. Forwarded to the agent-server
+	 * that hosts the computer, which picks the relay port from the computer's own
+	 * block. Caller has already checked the session belongs to the agent.
+	 */
+	async ports(
+		server: DesktopServer,
+		workspaceId: string,
+		agentId: string,
+		action:
+			| { type: 'expose'; sessionId: string; guestPort: number }
+			| { type: 'list' }
+			| { type: 'close'; relayPort: number },
+	): Promise<{ status: number; body: unknown }> {
+		const base = joinUrl(server.url, `/desktops/${workspaceId}/${agentId}/ports`)
+		const headers: Record<string, string> = { Authorization: `Bearer ${server.secret}` }
+		let res: Response
+		if (action.type === 'expose') {
+			res = await this.fetchImpl(base, {
+				method: 'POST',
+				headers: { ...headers, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ session_id: action.sessionId, guest_port: action.guestPort }),
+				signal: AbortSignal.timeout(PORTS_TIMEOUT_MS),
+			})
+		} else if (action.type === 'list') {
+			res = await this.fetchImpl(base, { headers, signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) })
+		} else {
+			res = await this.fetchImpl(`${base}/${action.relayPort}`, {
+				method: 'DELETE',
+				headers,
+				signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+			})
+		}
+		const parsed: unknown = await res.json().catch(() => ({ error: 'bad_gateway' }))
+		return { status: res.status, body: parsed }
 	}
 
 	/**

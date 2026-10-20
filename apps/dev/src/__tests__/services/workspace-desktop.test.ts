@@ -253,4 +253,70 @@ describe('WorkspaceDesktopService.control', () => {
 			body: { error: 'invalid_request' },
 		})
 	})
+
+	it('provisions a new desktop on the preferred server when it is active', async () => {
+		const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) =>
+			init?.method === 'PUT' ? res(200, { password: 'pw' }) : res(404),
+		)
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		const found = await svc.ensure(WS, AGENT, { preferServerId: 'b' })
+
+		expect(found?.server.id).toBe('b')
+	})
+
+	it('ignores a preferred server that is draining and falls back to the first active one', async () => {
+		const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+			init?.method === 'PUT' ? res(200, { password: 'pw' }) : res(404),
+		)
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b', 'draining')],
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		expect((await svc.ensure(WS, AGENT, { preferServerId: 'b' }))?.server.id).toBe('a')
+	})
+
+	it('does not move an existing desktop to the preferred server', async () => {
+		const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+			String(url).includes('a.example') ? res(200, { password: 'pw' }) : res(404),
+		) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl,
+		})
+
+		expect((await svc.ensure(WS, AGENT, { preferServerId: 'b' }))?.server.id).toBe('a')
+	})
+
+	it('ports forwards expose, list and close to the hosting server with its secret', async () => {
+		const fetchImpl = vi.fn(async () => res(200, { ok: true }))
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a')],
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		const a = server('a')
+
+		await svc.ports(a, WS, AGENT, { type: 'expose', sessionId: 'sess-1', guestPort: 5173 })
+		await svc.ports(a, WS, AGENT, { type: 'list' })
+		await svc.ports(a, WS, AGENT, { type: 'close', relayPort: 20003 })
+
+		const calls = fetchImpl.mock.calls as unknown as Array<[string, RequestInit]>
+		const base = `https://a.example/desktops/${WS}/${AGENT}/ports`
+		expect(calls[0]?.[0]).toBe(base)
+		expect(calls[0]?.[1].method).toBe('POST')
+		expect(JSON.parse(String(calls[0]?.[1].body))).toEqual({
+			session_id: 'sess-1',
+			guest_port: 5173,
+		})
+		expect(calls[1]?.[0]).toBe(base)
+		expect(calls[2]?.[0]).toBe(`${base}/20003`)
+		expect(calls[2]?.[1].method).toBe('DELETE')
+		for (const [, init] of calls) {
+			expect((init.headers as Record<string, string>).Authorization).toBe('Bearer secret-a')
+		}
+	})
 })

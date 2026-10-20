@@ -48,12 +48,6 @@ const PLATFORM_MCP_PRESET: McpServer = {
 	},
 }
 
-const BROWSER_MCP_PRESET: McpServer = {
-	type: 'stdio',
-	command: 'npx',
-	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-}
-
 function isHttpServer(server: McpServer): boolean {
 	return !!server.url
 }
@@ -109,13 +103,7 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 		onUpdate({ mcpServers: updated })
 	}, [servers, onUpdate])
 
-	const handleAddBrowser = useCallback(() => {
-		const updated = { ...servers, playwright: BROWSER_MCP_PRESET }
-		onUpdate({ mcpServers: updated })
-	}, [servers, onUpdate])
-
 	const hasMaskin = !!servers.maskin
-	const hasBrowser = !!servers.playwright
 
 	return (
 		<div>
@@ -165,12 +153,6 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 								<Button size="sm" variant="outline" onClick={handleAddMaskin}>
 									<Globe className="h-3.5 w-3.5 mr-1" />
 									Add Maskin
-								</Button>
-							)}
-							{!hasBrowser && (
-								<Button size="sm" variant="outline" onClick={handleAddBrowser}>
-									<Globe className="h-3.5 w-3.5 mr-1" />
-									Add Browser
 								</Button>
 							)}
 							<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>
