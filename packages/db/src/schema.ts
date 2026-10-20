@@ -1130,6 +1130,11 @@ export const files = pgTable(
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		storageKey: text('storage_key').notNull(),
+		// What the file is *for*, when that matters beyond its mime type. `'briefing'`
+		// marks an HTML page written to be read in For you; nothing else is surfaced
+		// there, so a loop's incidental output files stay out of the row. Null for
+		// ordinary files.
+		kind: text('kind'),
 		// Pinned review annotations (humans pin comments on rendered HTML files).
 		// Stored on the row so they round-trip with the file for every reader —
 		// UI and MCP get_file — without an extra S3 fetch.
@@ -1143,6 +1148,7 @@ export const files = pgTable(
 	(t) => [
 		index('files_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('files_ws_name_idx').on(t.workspaceId, t.name),
+		index('files_ws_kind_created_at_idx').on(t.workspaceId, t.kind, t.createdAt),
 	],
 )
 
