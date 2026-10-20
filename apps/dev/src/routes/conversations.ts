@@ -31,6 +31,7 @@ import {
 	idParamSchema,
 	messageResponseSchema,
 	messageWithSpawnedSessionsSchema,
+	postMessageResponseSchema,
 	spawnedSessionResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
@@ -825,7 +826,7 @@ const postMessageRoute = createRoute({
 	},
 	responses: {
 		201: {
-			content: { 'application/json': { schema: messageResponseSchema } },
+			content: { 'application/json': { schema: postMessageResponseSchema } },
 			description: 'Message posted',
 		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
@@ -956,6 +957,10 @@ app.openapi(postMessageRoute, (async (c) => {
 	// evaluateAndRespond runs, so the freshly-mentioned agent is already a
 	// candidate for this very message.
 	const mentionedIds = metadata?.mentions ?? []
+	// Ids that are neither already in the conversation nor workspace members:
+	// nothing joins them and nothing wakes them. Reported back so a mistyped
+	// UUID doesn't fail silently (same contract as POST /events comments).
+	let unresolvedMentions: string[] = []
 	if (mentionedIds.length > 0) {
 		const activeParticipants = await loadParticipantsByConversation(db, [id])
 		const activeIds = new Set((activeParticipants.get(id) ?? []).map((p) => p.actorId))
@@ -963,6 +968,7 @@ app.openapi(postMessageRoute, (async (c) => {
 		if (notYetJoined.length > 0) {
 			const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
 			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
+			unresolvedMentions = Array.from(new Set(notYetJoined.filter((id) => !memberIds.has(id))))
 			if (toAdd.length > 0) {
 				await addParticipantsToConversation(db, id, toAdd, callerId)
 				await recordEvent(db, {
@@ -1003,7 +1009,8 @@ app.openapi(postMessageRoute, (async (c) => {
 			...created,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
-		}) as z.infer<typeof messageResponseSchema>,
+			...(unresolvedMentions.length > 0 ? { unresolved_mentions: unresolvedMentions } : {}),
+		}) as z.infer<typeof postMessageResponseSchema>,
 		201,
 	)
 }) as RouteHandler<typeof postMessageRoute, Env>)
