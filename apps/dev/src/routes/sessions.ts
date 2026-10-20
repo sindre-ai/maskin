@@ -1,16 +1,26 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	integrations,
+	sessionLogs,
+	sessions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
+	formatIntegrationAttachAsMarkdown,
 	formatIntegrationConnectAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionActivityQuerySchema,
 	sessionActivityResponseSchema,
 	sessionAskSchema,
+	sessionAttachCardSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
 	sessionLeanRowSchema,
@@ -25,6 +35,7 @@ import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { presetAttached, resolveMcpPresets } from '../lib/integrations/mcp-presets'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -1268,6 +1279,149 @@ app.openapi(connectCardRoute, (async (c) => {
 
 	return c.json({ posted: true, message_id: created.id })
 }) as RouteHandler<typeof connectCardRoute, Env>)
+
+// POST /:id/attach-card - Surface an "allow this agent to use this integration"
+// Approve card in the chat
+//
+// Called by the `propose_integration_attach` MCP tool when it runs inside a chat
+// session. It NEVER writes to the target actor: it only posts the card. The
+// write happens when a human workspace admin clicks Approve, which calls
+// POST /api/actors/:id/integration-mcp/:presetId and re-derives the entry from
+// active integrations, so an agent cannot grant itself or a peer tools by
+// asking. Same gates as /connect-card: only the agent that owns an interactive
+// chat session may post, and anything else gets a 409 so the tool can say there
+// is nobody to ask.
+const attachCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/attach-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post an integration Approve card into the session chat',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionAttachCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						posted: z.boolean(),
+						message_id: z.number().optional(),
+						already_attached: z.boolean().optional(),
+					}),
+				},
+			},
+			description: 'Card posted, or the agent already holds the entry and nothing was posted',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session, target agent or preset not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session, so there is no human to ask',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(attachCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { actor_id: targetId, preset_id: presetId } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is no human to approve a card',
+			),
+			409,
+		)
+	}
+
+	const [target] = await db
+		.select({ name: actors.name, tools: actors.tools })
+		.from(actors)
+		.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+		.where(
+			and(
+				eq(actors.id, targetId),
+				eq(actors.type, 'agent'),
+				eq(workspaceMembers.workspaceId, session.workspaceId),
+			),
+		)
+		.limit(1)
+	if (!target) return c.json(createApiError('NOT_FOUND', 'Agent not found in this workspace'), 404)
+
+	// Live status, not cached registration: a preset exists only while an
+	// ACTIVE integration offers it.
+	const preset = (await resolveMcpPresets(db, session.workspaceId)).find(
+		(p) => p.preset_id === presetId,
+	)
+	if (!preset) {
+		return c.json(
+			createApiError(
+				'NOT_FOUND',
+				'No active integration in this workspace offers that preset. Call list_integration_mcp_presets for what can be attached.',
+			),
+			404,
+		)
+	}
+	if (presetAttached(preset, target.tools)) return c.json({ posted: false, already_attached: true })
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatIntegrationAttachAsMarkdown(target.name, preset.label),
+		metadata: {
+			integration_attach: { session_id: session.id, actor_id: targetId, preset_id: presetId },
+		},
+		sessionId: session.id,
+	})
+
+	// Null means a unique constraint suppressed the insert, which this caller has
+	// no dedupe key to trigger. Surface it as a 500, never a 409 (see /ask).
+	if (!created) {
+		logger.error('Integration attach card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			presetId,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Attach card could not be posted'), 500)
+	}
+
+	logger.info('Posted integration attach card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		presetId,
+		targetActorId: targetId,
+	})
+
+	return c.json({ posted: true, message_id: created.id })
+}) as RouteHandler<typeof attachCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

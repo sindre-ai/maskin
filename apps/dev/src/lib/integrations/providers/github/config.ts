@@ -1,5 +1,5 @@
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
-import type { ProviderConfig } from '../../types'
+import type { McpEntryOwner, ProviderConfig } from '../../types'
 
 // Spawn spec for GitHub's official MCP server (github/github-mcp-server), baked
 // into the agent-base image. Toolsets are always explicit: the default set and
@@ -7,6 +7,12 @@ import type { ProviderConfig } from '../../types'
 export const GITHUB_MCP_SERVER_SPEC = {
 	command: 'github-mcp-server',
 	args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+}
+
+/** The installation's owner login, as GitHub names it. Null on a row that never resolved one. */
+function ownerLoginOf(owner: McpEntryOwner): string | null {
+	const login = (owner.config as { owner_login?: unknown } | null)?.owner_login
+	return typeof login === 'string' && login ? login : null
 }
 
 export const config: ProviderConfig = {
@@ -68,15 +74,30 @@ export const config: ProviderConfig = {
 		envKey: 'GITHUB_TOKEN',
 		autoInject: true,
 		// An agent's copy is a stdio entry whose token env points at
-		// `${GITHUB_TOKEN_<OWNER>}` (mcp-servers.tsx, handleAddGithub), so it is
+		// `${GITHUB_TOKEN_<OWNER>}` (built by `entry.server` below), so it is
 		// recognised by that variable, not by a URL.
 		entry: {
 			kind: 'per-installation',
 			envKey: (owner) => {
-				const login = (owner.config as { owner_login?: unknown } | null)?.owner_login
-				return typeof login === 'string' && login
-					? `GITHUB_TOKEN_${githubOwnerLoginToEnvKey(login)}`
-					: null
+				const login = ownerLoginOf(owner)
+				return login ? `GITHUB_TOKEN_${githubOwnerLoginToEnvKey(login)}` : null
+			},
+			key: (owner) => {
+				const login = ownerLoginOf(owner)
+				return login ? `github-${login.toLowerCase()}` : null
+			},
+			label: ownerLoginOf,
+			server: (owner) => {
+				const login = ownerLoginOf(owner)
+				if (!login) return null
+				return {
+					type: 'stdio',
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					env: {
+						GITHUB_PERSONAL_ACCESS_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(login)}}`,
+					},
+				}
 			},
 		},
 	},

@@ -1,38 +1,81 @@
 import { McpServers } from '@/components/agents/mcp-servers'
-import type { LinkedInIdentitySummary } from '@/lib/api'
+import type { McpPresetResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { buildIntegrationResponse } from '../../factories'
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const mockIntegrations = vi.fn()
-const mockLinkedInIdentities = vi.fn()
+const mockPresets = vi.fn()
 
 vi.mock('@/hooks/use-integrations', () => ({
-	useIntegrations: () => ({ data: mockIntegrations() }),
-	useLinkedInIdentities: () => ({ data: mockLinkedInIdentities() }),
+	useMcpPresets: () => ({ data: { presets: mockPresets() } }),
 }))
 
-const sebastianIdentity: LinkedInIdentitySummary = {
-	instanceSlug: 'linkedin-sebastianbille-personal',
-	displayName: 'Sebastian Bille',
-	identityType: 'personal',
-	identitySlug: 'personal',
-	unipileAccSlug: 'sebastianbille',
-	integrationId: 'lu-1',
+function preset(overrides: Partial<McpPresetResponse> & { key: string }): McpPresetResponse {
+	return {
+		preset_id: overrides.key,
+		provider: overrides.key,
+		provider_label: overrides.key,
+		label: overrides.key,
+		integration_id: `int-${overrides.key}`,
+		auto_injected: false,
+		server: { type: 'http', url: `https://example.com/${overrides.key}` },
+		...overrides,
+	}
 }
 
-const magnusIdentity: LinkedInIdentitySummary = {
-	instanceSlug: 'linkedin-magnus-noeddegaard-personal',
-	displayName: 'Magnus Nødegaard',
-	identityType: 'personal',
-	identitySlug: 'personal',
-	unipileAccSlug: 'magnus-noeddegaard',
-	integrationId: 'lu-2',
-}
+const slackPreset = preset({
+	key: 'slack',
+	label: 'Slack',
+	server: {
+		type: 'http',
+		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
+	},
+})
+
+const sebastianPreset = preset({
+	key: 'linkedin-sebastianbille-personal',
+	provider: 'linkedin-unipile',
+	label: 'Sebastian Bille',
+	server: {
+		type: 'http',
+		url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/linkedin-sebastianbille-personal',
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
+	},
+})
+
+const magnusPreset = preset({
+	key: 'linkedin-magnus-noeddegaard-personal',
+	provider: 'linkedin-unipile',
+	label: 'Magnus Nødegaard',
+})
+
+const githubSindre = preset({
+	key: 'github-sindre-ai',
+	provider: 'github',
+	label: 'GitHub sindre-ai',
+	server: {
+		type: 'stdio',
+		command: 'npx',
+		args: ['-y', '@modelcontextprotocol/server-github'],
+		env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+	},
+})
+
+const githubVaerksted = preset({
+	key: 'github-vaerksted-ai',
+	provider: 'github',
+	label: 'GitHub vaerksted-ai',
+})
 
 const stdioTools = {
 	mcpServers: {
@@ -58,8 +101,7 @@ const httpTools = {
 describe('McpServers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockIntegrations.mockReturnValue([])
-		mockLinkedInIdentities.mockReturnValue([])
+		mockPresets.mockReturnValue([])
 	})
 
 	it('shows empty message when no servers configured', () => {
@@ -109,173 +151,75 @@ describe('McpServers', () => {
 		expect(screen.getByText(/2 headers/)).toBeInTheDocument()
 	})
 
-	it('shows quick-add button for active integration with MCP preset', () => {
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'slack', status: 'active' }),
-		])
+	it('shows a quick-add button for each preset the API offers', () => {
+		mockPresets.mockReturnValue([slackPreset])
 		render(<McpServers tools={null} onUpdate={vi.fn()} />)
-		expect(screen.getByRole('button', { name: /Add slack/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Add Slack/ })).toBeInTheDocument()
 	})
 
-	it('does not show quick-add for integration already added as server', () => {
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'slack', status: 'active' }),
-		])
-		const slackTools = {
-			mcpServers: {
-				slack: {
-					type: 'stdio',
-					command: 'npx',
-					args: ['-y', '@modelcontextprotocol/server-slack'],
-					env: { SLACK_BOT_TOKEN: 'tok' },
-				},
-			},
-		}
+	it('does not show quick-add for a preset whose key is already on the agent', () => {
+		mockPresets.mockReturnValue([slackPreset])
+		const slackTools = { mcpServers: { slack: { type: 'http', url: 'https://example.com' } } }
 		render(<McpServers tools={slackTools} onUpdate={vi.fn()} />)
-		expect(screen.queryByRole('button', { name: /Add slack/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Add Slack/ })).not.toBeInTheDocument()
 	})
 
-	it('shows a single "Add github" button when any GitHub installation has owner_login', () => {
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({
-				id: 'g1',
-				provider: 'github',
-				status: 'active',
-				config: { owner_login: 'sindre-ai' },
-			}),
-			buildIntegrationResponse({
-				id: 'g2',
-				provider: 'github',
-				status: 'active',
-				config: { owner_login: 'vaerksted-ai' },
-			}),
-		])
+	it('shows no quick-add when the API offers nothing', () => {
 		render(<McpServers tools={null} onUpdate={vi.fn()} />)
-		expect(screen.getAllByRole('button', { name: /Add github/ })).toHaveLength(1)
+		expect(
+			screen.queryByRole('button', { name: /^Add (?!Server|Maskin|Browser)/ }),
+		).not.toBeInTheDocument()
 	})
 
-	it('does not show "Add github" when no installation has owner_login', () => {
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'github', status: 'active', config: {} }),
-		])
-		render(<McpServers tools={null} onUpdate={vi.fn()} />)
-		expect(screen.queryByRole('button', { name: /Add github/ })).not.toBeInTheDocument()
-	})
-
-	it('does not show "Add github" when all installations are already added', () => {
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({
-				provider: 'github',
-				status: 'active',
-				config: { owner_login: 'sindre-ai' },
-			}),
-		])
-		const tools = {
-			mcpServers: {
-				'github-sindre-ai': {
-					type: 'stdio',
-					command: 'npx',
-					args: ['-y', '@modelcontextprotocol/server-github'],
-					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
-				},
-			},
-		}
-		render(<McpServers tools={tools} onUpdate={vi.fn()} />)
-		expect(screen.queryByRole('button', { name: /Add github/ })).not.toBeInTheDocument()
-	})
-
-	it('adds all GitHub installations as separate server entries on click', async () => {
+	it('renders one button per GitHub installation and writes only the clicked one', async () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({
-				id: 'g1',
-				provider: 'github',
-				status: 'active',
-				config: { owner_login: 'sindre-ai' },
-			}),
-			buildIntegrationResponse({
-				id: 'g2',
-				provider: 'github',
-				status: 'active',
-				config: { owner_login: 'vaerksted-ai' },
-			}),
-		])
+		mockPresets.mockReturnValue([githubSindre, githubVaerksted])
 		render(<McpServers tools={null} onUpdate={onUpdate} />)
 
-		await user.click(screen.getByRole('button', { name: /Add github/ }))
+		expect(screen.getAllByRole('button', { name: /Add GitHub/ })).toHaveLength(2)
+		await user.click(screen.getByRole('button', { name: /Add GitHub sindre-ai/ }))
 
 		expect(onUpdate).toHaveBeenCalledWith({
-			mcpServers: expect.objectContaining({
+			mcpServers: {
 				'github-sindre-ai': expect.objectContaining({
 					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
 				}),
-				'github-vaerksted-ai': expect.objectContaining({
-					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
-				}),
-			}),
+			},
 		})
 	})
 
 	describe('LinkedIn per-identity Quick Add', () => {
-		it('renders one button per connected identity, sorted alphabetically by display name', () => {
-			mockLinkedInIdentities.mockReturnValue([sebastianIdentity, magnusIdentity])
+		it('renders one button per connected identity, sorted alphabetically by label', () => {
+			mockPresets.mockReturnValue([sebastianPreset, magnusPreset])
 			render(<McpServers tools={null} onUpdate={vi.fn()} />)
 
 			const magnusBtn = screen.getByRole('button', { name: /Add Magnus Nødegaard/ })
 			const sebastianBtn = screen.getByRole('button', { name: /Add Sebastian Bille/ })
-			expect(magnusBtn).toBeInTheDocument()
-			expect(sebastianBtn).toBeInTheDocument()
 			// DOM order = alphabetical.
-			// eslint-disable-next-line no-bitwise
 			expect(
 				magnusBtn.compareDocumentPosition(sebastianBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
 			).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
 		})
 
-		it('never renders the deprecated auto-injected read-only row', () => {
-			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
-			])
-			mockLinkedInIdentities.mockReturnValue([sebastianIdentity])
-			render(<McpServers tools={null} onUpdate={vi.fn()} />)
-
-			expect(
-				screen.queryByRole('list', { name: /Auto-injected MCP servers/ }),
-			).not.toBeInTheDocument()
-		})
-
 		it('writes only the clicked identity to mcpServers, keyed on its instance slug', async () => {
 			const user = userEvent.setup()
 			const onUpdate = vi.fn()
-			mockLinkedInIdentities.mockReturnValue([sebastianIdentity, magnusIdentity])
+			mockPresets.mockReturnValue([sebastianPreset, magnusPreset])
 			render(<McpServers tools={null} onUpdate={onUpdate} />)
 
 			await user.click(screen.getByRole('button', { name: /Add Sebastian Bille/ }))
 
 			expect(onUpdate).toHaveBeenCalledWith({
-				mcpServers: {
-					[sebastianIdentity.instanceSlug]: {
-						type: 'http',
-						url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${sebastianIdentity.instanceSlug}`,
-						headers: {
-							Authorization: 'Bearer ${MASKIN_API_KEY}',
-							'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-						},
-					},
-				},
+				mcpServers: { [sebastianPreset.key]: sebastianPreset.server },
 			})
 		})
 
 		it('hides an identity button once its instance slug is present in mcpServers', () => {
-			mockLinkedInIdentities.mockReturnValue([sebastianIdentity, magnusIdentity])
+			mockPresets.mockReturnValue([sebastianPreset, magnusPreset])
 			const tools = {
 				mcpServers: {
-					[sebastianIdentity.instanceSlug]: {
-						type: 'http',
-						url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${sebastianIdentity.instanceSlug}`,
-						headers: {},
-					},
+					[sebastianPreset.key]: { type: 'http', url: 'https://example.com', headers: {} },
 				},
 			}
 			render(<McpServers tools={tools} onUpdate={vi.fn()} />)
@@ -283,37 +227,6 @@ describe('McpServers', () => {
 			expect(screen.queryByRole('button', { name: /Add Sebastian Bille/ })).not.toBeInTheDocument()
 			expect(screen.getByRole('button', { name: /Add Magnus Nødegaard/ })).toBeInTheDocument()
 		})
-
-		it('renders no LinkedIn buttons when zero identities are connected', () => {
-			mockLinkedInIdentities.mockReturnValue([])
-			render(<McpServers tools={null} onUpdate={vi.fn()} />)
-
-			expect(screen.queryByRole('button', { name: /Add Sebastian Bille/ })).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Add Magnus Nødegaard/ })).not.toBeInTheDocument()
-			// And no generic "Add linkedin-unipile" from the integration-based
-			// preset path either — LinkedIn skips the generic branch entirely.
-			expect(screen.queryByRole('button', { name: /Add linkedin-unipile/ })).not.toBeInTheDocument()
-		})
-
-		it('never emits a generic "Add linkedin-unipile" preset button even when the integration is active', () => {
-			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
-			])
-			mockLinkedInIdentities.mockReturnValue([sebastianIdentity])
-			render(<McpServers tools={null} onUpdate={vi.fn()} />)
-
-			expect(screen.queryByRole('button', { name: /Add linkedin-unipile/ })).not.toBeInTheDocument()
-			// Only the per-identity button appears.
-			expect(screen.getByRole('button', { name: /Add Sebastian Bille/ })).toBeInTheDocument()
-		})
-	})
-
-	it('does not show quick-add for integration without MCP preset', () => {
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'jira', status: 'active' }),
-		])
-		render(<McpServers tools={null} onUpdate={vi.fn()} />)
-		expect(screen.queryByRole('button', { name: /Add jira/ })).not.toBeInTheDocument()
 	})
 
 	it('calls onUpdate with maskin server when "Add Maskin" clicked', async () => {
@@ -330,15 +243,13 @@ describe('McpServers', () => {
 		})
 	})
 
-	it('calls onUpdate with preset server on quick-add click', async () => {
+	it('calls onUpdate with the preset server on quick-add click', async () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()
-		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'slack', status: 'active' }),
-		])
+		mockPresets.mockReturnValue([slackPreset])
 		render(<McpServers tools={null} onUpdate={onUpdate} />)
 
-		await user.click(screen.getByRole('button', { name: /Add slack/ }))
+		await user.click(screen.getByRole('button', { name: /Add Slack/ }))
 
 		expect(onUpdate).toHaveBeenCalledWith({
 			mcpServers: expect.objectContaining({

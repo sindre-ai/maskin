@@ -6,9 +6,8 @@ import type { ProviderConfig } from '../../types'
  * Webhook delivery is handled as `type: 'custom'`: Google's Pub/Sub push signs
  * each request with an OIDC JWT in the Authorization header (verified in webhooks.ts).
  *
- * MCP wiring lives entirely on the frontend (INTEGRATION_MCP_PRESETS in mcp-servers.tsx);
- * the backend `mcp.envKey` only tells session-manager which env var to inject the
- * access token as. We forward our access token to Google's hosted MCP at
+ * The agent-facing entry is `mcp.server` below (the quick-add button derives from it);
+ * `mcp.envKey` tells session-manager which env var to inject the access token as. We forward our access token to Google's hosted MCP at
  * https://gmailmcp.googleapis.com/mcp/v1 — no second OAuth flow inside the container.
  */
 export const config: ProviderConfig = {

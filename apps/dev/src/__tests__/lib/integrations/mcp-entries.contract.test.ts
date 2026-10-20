@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { entryMatcherFor } from '../../../lib/integrations/mcp-entries'
+import { IDENTITY_ENUMERATORS } from '../../../lib/integrations/mcp-presets'
 import { listProviders } from '../../../lib/integrations/registry'
-import type { McpEntryOwner, ProviderConfig } from '../../../lib/integrations/types'
+import type { McpEntryOwner, McpServerSpec, ProviderConfig } from '../../../lib/integrations/types'
 
 /**
  * Contract: every provider that declares an MCP surface must declare it in a
@@ -20,28 +21,26 @@ const OTHER: McpEntryOwner = { config: { owner_login: 'other-co' }, unipileAccSl
 
 type Entry = Record<string, unknown>
 
-/** The entry an agent holds for `owner`, built only from what the config declares. */
+/**
+ * The entry an agent holds for `owner`, built the way the attach flow builds it
+ * (mcp-presets.ts): only from what the config declares.
+ */
 function entryFor(config: ProviderConfig, owner: McpEntryOwner): Entry {
 	const mcp = config.mcp
 	if (!mcp) throw new Error(`${config.name} declares no mcp`)
 	const decl = mcp.entry ?? { kind: 'shared' as const }
+	let server: McpServerSpec | null | undefined
 	if (decl.kind === 'per-identity') {
 		const prefix = decl.slugPrefix(owner)
 		if (!prefix) throw new Error(`${config.name}: ${JSON.stringify(owner)} owns no slug`)
-		return { type: 'http', url: `\${MASKIN_API_URL}${decl.urlPath}/${prefix}personal` }
+		server = decl.server(`${prefix}personal`)
+	} else if (decl.kind === 'per-installation') {
+		server = decl.server(owner)
+	} else {
+		server = mcp.server
 	}
-	if (decl.kind === 'per-installation') {
-		const envKey = decl.envKey(owner)
-		if (!envKey) throw new Error(`${config.name}: ${JSON.stringify(owner)} owns no env key`)
-		return {
-			type: 'stdio',
-			command: 'npx',
-			args: ['-y', '@modelcontextprotocol/server-github'],
-			env: { GITHUB_PERSONAL_ACCESS_TOKEN: `\${${envKey}}` },
-		}
-	}
-	if (!mcp.server) throw new Error(`${config.name}: shared entry needs mcp.server`)
-	return JSON.parse(JSON.stringify(mcp.server)) as Entry
+	if (!server) throw new Error(`${config.name}: no entry can be built for ${JSON.stringify(owner)}`)
+	return JSON.parse(JSON.stringify(server)) as Entry
 }
 
 const withMcp = listProviders()
@@ -89,6 +88,13 @@ describe('provider MCP entries are recognisable by disconnect', () => {
 			})
 		})
 	}
+
+	it('has a live identity source for every per-identity provider', () => {
+		for (const config of withMcp) {
+			if (config.mcp?.entry?.kind !== 'per-identity') continue
+			expect(IDENTITY_ENUMERATORS[config.name], `${config.name} needs an enumerator`).toBeDefined()
+		}
+	})
 
 	it('never claims an entry belonging to another provider', () => {
 		for (const mine of withMcp) {

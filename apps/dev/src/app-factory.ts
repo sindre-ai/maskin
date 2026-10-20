@@ -24,6 +24,7 @@ import {
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import actorIntegrationMcpRoutes from './routes/actor-integration-mcp'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -43,6 +44,7 @@ import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
+import integrationMcpPresetsRoutes from './routes/integration-mcp-presets'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
@@ -392,6 +394,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
+	app.route('/api/actors', actorIntegrationMcpRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
 	app.route('/api/workspaces', workspaceSkillsRoutes)
 	app.route('/api/invites', workspaceInvitationsRoutes)
@@ -413,6 +416,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	// The attachable-preset list sits beside the catch-all for the same reason.
+	app.route('/api/integrations/mcp-presets', integrationMcpPresetsRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations

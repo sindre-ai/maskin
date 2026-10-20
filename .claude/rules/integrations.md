@@ -53,20 +53,14 @@ Document the required env vars in the provider's config.ts comments and add them
 
 **Critical: Add to `turbo.json` `globalPassThroughEnv`** — Turbo only passes explicitly listed env vars to child processes. If you skip this step, the env vars will be silently unavailable at runtime even if they are set in `.env`. Add all new provider env vars to the `globalPassThroughEnv` array in `turbo.json`.
 
-### 5. Add frontend MCP preset (if MCP server exists)
+### 5. Declare the MCP entry (if an MCP server exists)
 
-If the provider has an `mcp` field in its config, add a matching entry to `INTEGRATION_MCP_PRESETS` in `apps/web/src/components/agents/mcp-servers.tsx`:
+If the provider has an `mcp` field in its config, that is the only place to state it. The "Add {Provider}" quick-add button, the `list_integration_mcp_presets` and `propose_integration_attach` agent tools, and disconnect's cleanup of agents' entries all derive from it, so there is no frontend preset to add:
 
-```typescript
-'provider-name': {
-  type: 'stdio',
-  command: 'npx',
-  args: ['-y', '@some-org/mcp-server-provider'],
-  env: { PROVIDER_ACCESS_TOKEN: '${PROVIDER_TOKEN}' },
-},
-```
+- One shared entry: give `mcp.server` (the exact value that belongs under an agent's `tools.mcpServers`, with `${TOKEN}` placeholders).
+- One entry per identity or installation: give `mcp.entry` (`per-identity` or `per-installation`) with the builders, as LinkedIn and GitHub do.
 
-The env value `${PROVIDER_TOKEN}` is a placeholder — at runtime the session manager injects `{PROVIDER}_TOKEN` (uppercase provider name + `_TOKEN`) from OAuth credentials into the container environment.
+`apps/dev/src/__tests__/lib/integrations/mcp-entries.contract.test.ts` fails when a declared entry cannot be recognised on an agent. A per-identity provider also needs a live identity source in `IDENTITY_ENUMERATORS` (`lib/integrations/mcp-presets.ts`).
 
 ### MCP decision rule — hosted before custom
 
@@ -91,9 +85,9 @@ mcp: {
   envKey: 'PROVIDER_TOKEN',
 },
 ```
-And the `INTEGRATION_MCP_PRESETS` entry is:
+And add the paste-ready entry as `mcp.server` (the quick-add button derives from it):
 ```typescript
-'provider-name': {
+server: {
   type: 'http',
   url: 'https://<provider>mcp.googleapis.com/mcp/v1',
   headers: { Authorization: 'Bearer ${PROVIDER_TOKEN}' },
@@ -171,7 +165,8 @@ Handle provider-specific behavior through these escape hatches:
 | `apps/dev/src/lib/integrations/events/normalizer.ts` | Event normalization |
 | `apps/dev/src/lib/integrations/providers/` | Provider configs |
 | `apps/dev/src/routes/integrations.ts` | Route handlers |
-| `apps/web/src/components/agents/mcp-servers.tsx` | Frontend MCP presets & quick-add UI |
+| `apps/dev/src/lib/integrations/mcp-presets.ts` | Attachable MCP entries, derived from provider configs + live integrations |
+| `apps/web/src/components/agents/mcp-servers.tsx` | Quick-add UI (reads `GET /api/integrations/mcp-presets`) |
 
 ## Testing
 

@@ -59,7 +59,7 @@ Owner: CTO. Any change to a principle here must be mirrored back to that doc.
   that identity's endpoint only — no shared endpoint, no hidden filter
   param, no cross-identity leakage.
 - **Per-installation fan-out for multi-account providers.** GitHub's
-  `handleAddGithub` in `apps/web/src/components/agents/mcp-servers.tsx` is
+  `mcp.entry` (`kind: 'per-installation'`) in its `config.ts` is
   the reference shape: enumerate integrations, write one
   `{provider}-{external_slug}` `mcpServers` row per install with a
   per-installation discriminator. Never dedupe distinct installations under

@@ -2,7 +2,6 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
-import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import {
 	NATIVE_OAUTH_RETURN_URLS,
 	type NativeOAuthOutcome,
@@ -24,7 +23,7 @@ import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
-import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
+import { listLinkedInIdentities } from '../lib/integrations/providers/linkedin-unipile/identities'
 import {
 	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
@@ -871,43 +870,7 @@ app.get('/identities', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
 	}
 
-	const credentialRows = await db
-		.select({
-			id: integrations.id,
-			workspaceId: integrations.workspaceId,
-			actorId: integrations.actorId,
-			createdBy: integrations.createdBy,
-			externalId: integrations.externalId,
-			status: integrations.status,
-		})
-		.from(integrations)
-		.where(
-			and(
-				eq(integrations.workspaceId, workspaceId),
-				eq(integrations.provider, 'linkedin-unipile'),
-				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
-			),
-		)
-
-	// Same self-heal path the /mcp endpoint uses — the identities list must
-	// match what the MCP server would expose, so a workspace connecting
-	// LinkedIn for the first time sees Quick Add buttons appear on the next
-	// panel refresh rather than after a boot repopulation window.
-	await Promise.all(credentialRows.map(selfHealLinkedInMcpCredential))
-
-	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
-	const identities = instances
-		.map((cfg) => ({
-			instanceSlug: instanceSlug(cfg),
-			displayName: cfg.displayName,
-			identityType: cfg.identityType,
-			identitySlug: cfg.identitySlug,
-			unipileAccSlug: cfg.unipileAccSlug,
-			integrationId: cfg.integrationId,
-		}))
-		.sort((a, b) => a.displayName.localeCompare(b.displayName))
-
-	return c.json(identities)
+	return c.json(await listLinkedInIdentities(db, workspaceId))
 })
 
 // ── POST /api/integrations/linkedin-unipile/send-message ─────────────

@@ -11,8 +11,8 @@ export const config: ProviderConfig = {
 	// already holds — no custom in-process MCP route (see .claude/rules/integrations.md).
 	//
 	// `envKey` is what session-manager actually reads to name the injected env
-	// var. It matches the `${UBERSUGGEST_TOKEN}` placeholder in the frontend's
-	// INTEGRATION_MCP_PRESETS entry; stating it here makes that contract explicit
+	// var. It matches the `${UBERSUGGEST_TOKEN}` placeholder in `server` below;
+	// stating it here makes that contract explicit
 	// rather than leaning on the uppercase-provider-name fallback happening to
 	// produce the same string.
 	//
@@ -25,8 +25,8 @@ export const config: ProviderConfig = {
 		envKey: 'UBERSUGGEST_TOKEN',
 		// Stated even though autoInject is off: this is what
 		// GET /api/integrations/providers serves so an agent adding Ubersuggest
-		// to another agent via update_actor knows what to write. Must stay in
-		// sync with INTEGRATION_MCP_PRESETS in apps/web's mcp-servers.tsx.
+		// to another agent via update_actor knows what to write. The quick-add
+		// button is derived from it too (GET /api/integrations/mcp-presets).
 		server: {
 			type: 'http',
 			url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',

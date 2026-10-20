@@ -173,6 +173,60 @@ function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
 }
 
+type IntegrationDrift = {
+	missing_presets: Array<{ preset_id: string; label: string }>
+	stale_entries: Array<{ key: string; provider: string }>
+	hint: string
+}
+
+/**
+ * What an agent is missing or holds dead, from the attachable-preset list.
+ * Null when it is in step, or when the list could not be read.
+ */
+async function readIntegrationDrift(
+	config: McpConfig,
+	workspaceId: string,
+	actorId: string,
+): Promise<IntegrationDrift | null> {
+	try {
+		const res = (await apiCall(
+			config,
+			'GET',
+			`/api/integrations/mcp-presets?actor_id=${actorId}`,
+			undefined,
+			{ workspaceId },
+		)) as {
+			presets?: Array<{ preset_id: string; label: string }>
+			drift?: {
+				missing_preset_ids: string[]
+				stale_entries: Array<{ key: string; provider: string }>
+			}
+		}
+		const drift = res.drift
+		if (!drift || (drift.missing_preset_ids.length === 0 && drift.stale_entries.length === 0)) {
+			return null
+		}
+		const labels = new Map((res.presets ?? []).map((p) => [p.preset_id, p.label]))
+		return {
+			missing_presets: drift.missing_preset_ids.map((id) => ({
+				preset_id: id,
+				label: labels.get(id) ?? id,
+			})),
+			stale_entries: drift.stale_entries,
+			hint: 'missing_presets are connected integrations this agent has no entry for; stale_entries point at a connection that is no longer active and fail every call. To get a missing one onto the agent call propose_integration_attach (a human admin approves in the chat); stale entries need an admin to remove them with update_actor.',
+		}
+	} catch {
+		return null
+	}
+}
+
+/** What propose_integration_attach answers when no human is in the session to ask. */
+const NO_HUMAN_TO_ASK = {
+	posted: false,
+	message:
+		'There is no human in this session to approve a card, so nothing was posted and the agent was not changed. Leave a comment for a workspace admin on the object you are working on, naming the agent and the preset_id.',
+}
+
 /**
  * One line telling the agent which listed integrations are not live and how to
  * get them reconnected, or null when every row is active. `pending` rows are an
@@ -3880,6 +3934,15 @@ export function createMcpServer(config: McpConfig) {
 					setupApiCaller(config),
 				)
 				withUrl = { ...withUrl, setup }
+
+				// Drift between the integrations the workspace has connected and the
+				// entries this agent holds. Best-effort: a failure here must not cost
+				// the caller the actor record they asked for. Present only when there
+				// is something to act on, so a healthy agent's record is unchanged.
+				if (wsId) {
+					const drift = await readIntegrationDrift(config, wsId, result.id)
+					if (drift) withUrl = { ...withUrl, integration_drift: drift }
+				}
 			}
 
 			const heroCard: HeroCardPayload = {
@@ -6440,6 +6503,79 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: { providers: rows },
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_integration_mcp_presets',
+		{
+			description: tools.list_integration_mcp_presets.description,
+			inputSchema: tools.list_integration_mcp_presets.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const query = new URLSearchParams()
+			if (args.actor_id) query.set('actor_id', args.actor_id)
+			if (args.include_affected) query.set('include', 'affected')
+			const qs = query.toString()
+			const result = (await apiCall(
+				config,
+				'GET',
+				`/api/integrations/mcp-presets${qs ? `?${qs}` : ''}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)) as Record<string, unknown>
+			// One payload on both channels: a caller comparing them must never see
+			// a response that looks truncated.
+			return {
+				_meta: meta('list_integration_mcp_presets', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				structuredContent: result,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'propose_integration_attach',
+		{
+			description: tools.propose_integration_attach.description,
+			inputSchema: tools.propose_integration_attach.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// Only a card: the agent is never written to from here. The write is the
+			// human's click on the approve route.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			let payload: Record<string, unknown>
+			if (sessionId && UUID_RE.test(sessionId)) {
+				try {
+					const card = (await apiCall(
+						config,
+						'POST',
+						`/api/sessions/${sessionId}/attach-card`,
+						{ actor_id: args.actor_id, preset_id: args.preset_id },
+						{ workspaceId: args.workspace_id },
+					)) as { posted: boolean; message_id?: number; already_attached?: boolean }
+					payload = {
+						...card,
+						message: card.already_attached
+							? 'That agent already holds this integration. Nothing to approve, carry on.'
+							: 'An Approve card is now in the chat. A workspace admin approves it there. Do not ask the user to edit tools by hand. End your turn now without a closing message; they will tell you when it is approved.',
+					}
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 409) throw err
+					payload = NO_HUMAN_TO_ASK
+				}
+			} else {
+				payload = NO_HUMAN_TO_ASK
+			}
+			return {
+				_meta: meta('propose_integration_attach', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)

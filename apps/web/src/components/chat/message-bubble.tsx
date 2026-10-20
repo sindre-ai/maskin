@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -17,6 +18,7 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
+import { IntegrationAttachCard } from './integration-attach-card'
 import { IntegrationConnectCard } from './integration-connect-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
@@ -71,6 +73,9 @@ export function MessageBubble({
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
 	const threadsPane = useThreadsPane()
+	// The one read of `integration-attach-card`: off renders no card, and the
+	// message's markdown still says what the agent asked for.
+	const attachCardEnabled = useFeatureFlag('integration-attach-card')
 	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
 	const actorLookup = useMemo(() => {
 		const map = new Map<string, { id: string; name: string; type: string }>()
@@ -323,6 +328,16 @@ export function MessageBubble({
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
 						provider={message.metadata.integration_connect.provider}
+					/>
+				) : null}
+				{/* An agent's propose_integration_attach call, surfaced as an Approve card
+				    a workspace admin answers. The agent only asked; nothing is written
+				    until that click. */}
+				{attachCardEnabled && message.metadata?.integration_attach ? (
+					<IntegrationAttachCard
+						workspaceId={workspaceId}
+						actorId={message.metadata.integration_attach.actor_id}
+						presetId={message.metadata.integration_attach.preset_id}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip
