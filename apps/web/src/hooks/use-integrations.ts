@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api } from '../lib/api'
+import { type AgentGrantAccess, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -266,4 +266,50 @@ export function useCredentialAuditLog(workspaceId: string, integrationId: string
 		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
 		enabled: !!workspaceId && !!integrationId,
 	})
+}
+
+/**
+ * Agent access: the three changes the Integrations page makes to who may use an
+ * integration. Each refetches the list, which carries `defaultAgentAccess` and
+ * `agentGrants` per integration. The audit trail and SSE event are written server-side.
+ */
+function useGrantMutation<V>(
+	workspaceId: string,
+	mutationFn: (variables: V) => Promise<unknown>,
+	successMessage: string,
+) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn,
+		onSuccess: () => {
+			toast.success(successMessage)
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+export function useSetAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(v: { actorId: string; access: AgentGrantAccess }) =>
+			api.integrations.setGrant(integrationId, workspaceId, v.actorId, v.access),
+		'Agent access updated',
+	)
+}
+
+export function useRemoveAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(actorId: string) => api.integrations.removeGrant(integrationId, workspaceId, actorId),
+		'Agent access removed',
+	)
+}
+
+export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(defaultAgentAccess: 'read' | 'none') =>
+			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
+		'Default access updated',
+	)
 }

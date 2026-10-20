@@ -341,8 +341,13 @@ function rewriteNotInChannel(err: unknown, channelRef: string): Error {
  * rewrite `cant_update_message` / `cant_delete_message` into an actionable
  * hint.
  */
-export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
+export function createSlackMcpServer(
+	ctx: SlackPostContext,
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
+): McpServer {
 	const server = new McpServer({ name: 'maskin-slack', version: '0.1.0' })
+	onServer?.(server)
 
 	server.registerTool(
 		'slack_send_message',

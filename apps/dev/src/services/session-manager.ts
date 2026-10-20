@@ -79,6 +79,8 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { buildAccessPreamble } from '../lib/integrations/access-preamble'
+import { listAgentAccess } from '../lib/integrations/agent-access'
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CredentialUndoneError,
@@ -2227,9 +2229,12 @@ export class SessionManager extends EventEmitter {
 			sessionConfig.stop_on_result === true
 				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
 				: ''
+		// What the agent may do with each connected integration, told up front so it does
+		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
+		const accessPreamble = await this.buildAccessPreamble(session)
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${HUMAN_MESSAGE_STYLE}`
+${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -3057,6 +3062,20 @@ ${HUMAN_MESSAGE_STYLE}`
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
+	private async buildAccessPreamble(session: typeof sessions.$inferSelect): Promise<string> {
+		try {
+			return buildAccessPreamble(
+				await listAgentAccess(this.db, session.workspaceId, session.actorId),
+			)
+		} catch (err) {
+			logger.warn('Could not build the integration access preamble', {
+				sessionId: session.id,
+				error: err instanceof Error ? err.name : 'unknown',
+			})
+			return ''
+		}
+	}
+
 	private async buildKeychainEnv(
 		session: typeof sessions.$inferSelect,
 	): Promise<Record<string, string>> {

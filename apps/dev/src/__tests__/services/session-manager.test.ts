@@ -59,6 +59,13 @@ vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
 
+// The launch reads the agent's integration access with a query of its own. These tests queue
+// db.select() results by position, so the lookup is stubbed here and covered against real
+// Postgres in integration/agent-access-launch.test.ts.
+vi.mock('../../lib/integrations/agent-access', () => ({
+	listAgentAccess: vi.fn(async () => []),
+}))
+
 vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
