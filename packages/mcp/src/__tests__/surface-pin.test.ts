@@ -35,10 +35,10 @@ const NON_TOOL_TOKENS = new Set<string>(['create_relationship', 'delete_relation
 // on another MCP server, so they are never in the Maskin tool list.
 const EXTERNAL_TEMPLATE_TOOLS = new Set<string>(['get_pull_request'])
 
-// create_notification is temporarily hidden from the MCP surface (see server.ts),
-// so no template may tell an agent to call it. The watchdog prompt only says
-// "Do NOT call create_notification", which stays correct once the tool returns.
-const PROHIBITED_TEMPLATE_TOOLS = new Set<string>(['create_notification'])
+// Registered tools that no template may tell an agent to call. Empty today:
+// create/list/update_notification are live for the Chief of Staff's For You list.
+// The watchdog prompt says "Do NOT call create_notification", which is still fine.
+const PROHIBITED_TEMPLATE_TOOLS = new Set<string>()
 
 function collectStrings(value: unknown, out: string[] = []): string[] {
 	if (typeof value === 'string') out.push(value)

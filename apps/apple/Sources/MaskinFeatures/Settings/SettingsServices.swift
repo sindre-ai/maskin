@@ -5,7 +5,7 @@ import SwiftUI
 /// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, workspace, skills, objectTypes
+	case profile, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -77,7 +77,13 @@ struct SettingsServices {
 	}
 
 	func integrationsStore() -> IntegrationsStore {
-		IntegrationsStore(api: source ?? NoSettingsSource(), currentRole: role)
+		#if os(iOS) || os(macOS)
+			let webAuth: (any WebAuthenticating)? = SystemWebAuthenticator()
+		#else
+			let webAuth: (any WebAuthenticating)? = nil  // connecting stays on the web
+		#endif
+		return IntegrationsStore(
+			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
 	}
 
 	func apiKeyStore() -> APIKeyStore {
@@ -88,6 +94,28 @@ struct SettingsServices {
 			api: source ?? NoSettingsSource(), actorId: actorId,
 			adopt: { try auth.adoptRotatedKey($0) },
 			willRotate: { auth.beginKeyRotation() }, didFailRotation: { auth.cancelKeyRotation() })
+	}
+
+	var deletionSource: APIDeletionSource {
+		APIDeletionSource(
+			baseURL: environment.baseURL, clientSource: environment.clientSource,
+			credentials: environment.auth.credentialsProvider)
+	}
+
+	/// `didDelete` ends the session and wipes local state (the runtime's sign-out path).
+	func accountDeletionStore(didDelete: @escaping @MainActor () async -> Void) -> AccountDeletionStore {
+		AccountDeletionStore(api: deletionSource, didDelete: didDelete)
+	}
+
+	func workspaceDeletionStore(workspaceId: String) -> WorkspaceDeletionStore {
+		let workspaces = environment.workspaces
+		return WorkspaceDeletionStore(
+			api: deletionSource, workspaceId: workspaceId,
+			isLastWorkspace: workspaces.isLast(workspaceId),
+			didDelete: {
+				workspaces.removed(workspaceId)
+				await workspaces.refresh()
+			})
 	}
 
 	func billingStore() -> BillingStore { BillingStore(api: source ?? NoSettingsSource()) }
@@ -131,6 +159,15 @@ struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integrations
 	func providers() async throws -> [IntegrationProvider] { throw failure }
 	func connected() async throws -> [ConnectedIntegration] { throw failure }
 	func disconnect(id: String, idempotencyKey: String) async throws { throw failure }
+	func startConnect(provider: String, idempotencyKey: String) async throws -> IntegrationConnectStart {
+		throw failure
+	}
+	func pendingInstallations(integrationId: String) async throws -> [GitHubInstallationChoice] {
+		throw failure
+	}
+	func selectInstallation(integrationId: String, installationId: String, idempotencyKey: String)
+		async throws
+	{ throw failure }
 	func regenerate(actorId: String) async throws -> SecretValue {
 		throw failure
 	}

@@ -90,11 +90,12 @@ private struct DecisionTitle: View {
 	let decision: WidgetSnapshot.Decision
 	var lines: Int = 2
 	var font: Font = MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote)
+	var color: Color = MaskinColor.ink
 
 	var body: some View {
 		Text(decision.title)
 			.font(font)
-			.foregroundStyle(MaskinColor.ink)
+			.foregroundStyle(color)
 			.lineLimit(lines)
 			.multilineTextAlignment(.leading)
 			.privacySensitive()
@@ -177,7 +178,8 @@ private struct SmallView: View {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 					DecisionTitle(
 						decision: top, lines: 2,
-						font: MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .footnote))
+						font: MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .footnote),
+						color: MaskinColor.ink3)
 					AgentLine(decision: top, now: now)
 				}
 			}
@@ -232,7 +234,7 @@ private struct MediumView: View {
 	/// Chief of Staff on the left, the count as a badge on the right.
 	private var header: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			MaskinLogoTile(size: 22)
+			ActorAvatar(name: decision?.agentName ?? "Chief of Staff", kind: .agent, size: 22)
 			Text(decision?.agentName ?? "Chief of Staff")
 				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
 				.foregroundStyle(MaskinColor.ink)
@@ -240,11 +242,11 @@ private struct MediumView: View {
 				.privacySensitive()
 			Spacer(minLength: MaskinSpace.s3)
 			Text("\(snapshot.needsCount)")
-				.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold, relativeTo: .caption))
-				.foregroundStyle(MaskinColor.sigInk)
-				.padding(.horizontal, MaskinSpace.s4)
-				.padding(.vertical, MaskinSpace.s1)
-				.background(MaskinColor.sigTint, in: Capsule())
+				.font(MaskinTypeface.mono(MaskinFontSize.t11, weight: .semibold, relativeTo: .caption2))
+				.foregroundStyle(MaskinColor.badgeFg)
+				.frame(minWidth: 20, minHeight: 20)
+				.padding(.horizontal, MaskinSpace.s2)
+				.background(MaskinGradient.badge, in: Capsule())
 				.widgetAccentable()
 				.accessibilityLabel("\(snapshot.needsCount) need you")
 		}
@@ -287,25 +289,29 @@ private struct MediumView: View {
 	}
 }
 
-/// A medium-widget button: the recommended one is the ink capsule, the other a quiet fill.
+/// A medium-widget button: the recommended one is the ink capsule (a light one in dark mode), the
+/// other a quiet fill. 38pt tall, fully round, as in the mockup.
 private struct OptionButtonLabel: View {
 	let label: String
 	let recommended: Bool
 	@Environment(\.widgetRenderingMode) private var renderingMode
 
 	var body: some View {
-		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
 		Text(label)
-			.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
+			.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .footnote))
+			.foregroundStyle(recommended ? MaskinPatina.decisionInkText : MaskinColor.ink3)
 			.lineLimit(1)
 			.minimumScaleFactor(0.8)
-			.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
+			.frame(maxWidth: .infinity, minHeight: 38)
 			.background {
 				if renderingMode == .fullColor {
-					shape.fill(recommended ? MaskinSurface.inverse : MaskinSurface.fill)
+					if recommended {
+						Capsule().fill(MaskinGradient.decisionInk)
+					} else {
+						Capsule().fill(MaskinSurface.fill)
+					}
 				} else if recommended {
-					shape.stroke(lineWidth: 1)
+					Capsule().stroke(lineWidth: 1)
 				}
 			}
 			.widgetAccentable(recommended)
@@ -322,7 +328,7 @@ private struct ChosenView: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			HStack(spacing: MaskinSpace.s4) {
-				MaskinLogoTile(size: 22)
+				ActorAvatar(name: record.agentName ?? "Chief of Staff", kind: .agent, size: 22)
 				Text(record.agentName ?? "Chief of Staff")
 					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
 					.foregroundStyle(MaskinColor.ink)
@@ -350,10 +356,10 @@ private struct ChosenView: View {
 				Button(intent: UndoWidgetDecisionIntent(objectId: record.objectId)) {
 					Text("Undo")
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-						.foregroundStyle(MaskinColor.ink3)
-						.padding(.horizontal, MaskinSpace.s9)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+						.underline()
+						.foregroundStyle(MaskinColor.ink)
+						.frame(minHeight: 32, alignment: .leading)
+						.contentShape(Rectangle())
 				}
 				.buttonStyle(.plain)
 			}
@@ -462,14 +468,18 @@ private struct RowCapsule: View {
 		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
 		Text(label)
 			.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-			.foregroundStyle(recommended ? MaskinSurface.onInverse : MaskinColor.ink3)
+			.foregroundStyle(recommended ? MaskinPatina.decisionInkText : MaskinColor.ink3)
 			.lineLimit(1)
 			.frame(maxWidth: 96)
 			.padding(.horizontal, MaskinSpace.s6)
 			.frame(minHeight: MaskinSpace.touchMin)
 			.background {
 				if renderingMode == .fullColor {
-					shape.fill(recommended ? MaskinSurface.inverse : MaskinSurface.fill)
+					if recommended {
+						shape.fill(MaskinGradient.decisionInk)
+					} else {
+						shape.fill(MaskinSurface.fill)
+					}
 				} else if recommended {
 					shape.stroke(lineWidth: 1)
 				}

@@ -92,6 +92,13 @@ vi.mock('../../../lib/claude-oauth', async (importOriginal) => {
 	}
 })
 
+// The launch reads the agent's integration access with a query of its own, which would
+// take a queued select result below. Covered against real Postgres instead.
+vi.mock('../../../lib/integrations/agent-access', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../lib/integrations/agent-access')>()),
+	listAgentAccess: vi.fn(async () => []),
+}))
+
 vi.mock('../../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
@@ -117,6 +124,7 @@ vi.mock('../../../services/workspace-briefing', () => ({
 
 vi.mock('../../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: vi.fn(),
+	classifySessionExit: vi.fn(),
 }))
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────

@@ -14,6 +14,15 @@ public protocol AgentsActivityHosting: AnyObject {
 	func end(_ identity: AgentsActivityIdentity, state: AgentsActivityState, dismissAfter: TimeInterval) async
 	/// Ends every activity at once, with no lingering card (sign-out, workspace switch).
 	func endAll() async
+	/// Every activity of ours on the device, active or stale (for the sweep).
+	func cards() -> [AgentsActivityCard]
+	/// Ends one activity with no lingering.
+	func endNow(cardID: String) async
+}
+
+extension AgentsActivityHosting {
+	public func cards() -> [AgentsActivityCard] { [] }
+	public func endNow(cardID: String) async {}
 }
 
 public enum LiveActivityTokenKind: String, Codable, Sendable {
@@ -81,6 +90,9 @@ public final class AgentsActivityCoordinator {
 	/// Agents on the card when the user dismissed it; the card does not come back for them.
 	private var dismissedFor: Set<String>?
 
+	/// True once the workspace's session list has arrived: before that, "no agents" is unknown.
+	private var feedLoaded = false
+
 	private var deviceId: String?
 	private var pushToStartToken: String?
 	private var updateToken: String?
@@ -112,6 +124,7 @@ public final class AgentsActivityCoordinator {
 		guard next != identity else { return }
 		identity = next
 		feedAgents = []
+		feedLoaded = false
 		overlays = [:]
 		dismissedFor = nil
 		pendingUpdate?.cancel()
@@ -124,7 +137,24 @@ public final class AgentsActivityCoordinator {
 	/// The workspace-wide session list refreshed.
 	public func feedChanged(_ agents: [WorkingAgent]) async {
 		feedAgents = agents
+		feedLoaded = true
 		await apply()
+	}
+
+	/// Ends cards that cannot be showing live work: another workspace's, orphans nobody ended
+	/// (a push-to-start whose end push never came), and duplicates. Safe to call often.
+	public func sweep() async {
+		let plan = AgentsActivitySweep.plan(
+			cards: host.cards(), workspaceId: identity?.workspaceId, feedLoaded: feedLoaded,
+			hasWorkingAgents: !state().isEmpty)
+		guard !plan.ends.isEmpty else { return }
+		for end in plan.ends { await host.endNow(cardID: end.cardID) }
+		if plan.ends.contains(where: { $0.reason != .duplicate }), host.cards().isEmpty {
+			pendingUpdate?.cancel()
+			pendingUpdate = nil
+			shown = nil
+			lastUpdateAt = nil
+		}
 	}
 
 	/// Call with the turns of one conversation whenever its sessions refresh.

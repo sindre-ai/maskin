@@ -44,6 +44,14 @@ export function IntegrationConnectCard({
 		(i) => i.provider === provider && i.status === 'active',
 	)
 
+	// A row that is no longer live (revoked, expired) means the user is signing in
+	// again, not for the first time. A pending row is just an unfinished connect.
+	const reconnect =
+		installations.length === 0 &&
+		(integrations ?? []).some(
+			(i) => i.provider === provider && i.status !== 'active' && i.status !== 'pending',
+		)
+
 	return (
 		<div className="mt-2">
 			<ProviderConnectRow
@@ -52,6 +60,7 @@ export function IntegrationConnectCard({
 				workspaceId={workspaceId}
 				returnTo={`/${workspaceId}/chats/${conversationId}`}
 				variant="chat"
+				reconnect={reconnect}
 			/>
 		</div>
 	)

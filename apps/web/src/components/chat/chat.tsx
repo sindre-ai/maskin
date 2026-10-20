@@ -1,3 +1,5 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
+import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
 import {
 	MentionPicker,
 	type MentionPickerActor,
@@ -5,6 +7,7 @@ import {
 	detectMentionTrigger,
 	reduceMentionPickerKey,
 } from '@/components/chat/mention-picker'
+import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
 	type SlashKindId,
@@ -15,6 +18,7 @@ import {
 	UnifiedChatSlashPicker,
 	type UnifiedChatSlashPickerHandle,
 } from '@/components/chat/unified-slash-picker'
+import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
@@ -45,9 +49,12 @@ import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
+import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import { type SecretMatch, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
+	type ClipboardEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	useCallback,
@@ -201,6 +208,27 @@ export interface ComposerProps {
 	 * survives that, and dies with the tab so an unsent prompt never outlives it.
 	 */
 	draftKey?: string
+	/**
+	 * Where a pasted provider secret can be vaulted: the live session of this
+	 * conversation and the agent running it. Omit on a composer with no session; the
+	 * guard still blocks the send and the card offers Cancel only.
+	 */
+	secretCapture?: {
+		sessionId: string
+		/** Lets the vault card watch the relaunched session come up. */
+		conversationId?: string
+		agent: { id: string; name: string }
+	} | null
+	/** The agent is restarting after a vault, so vaulting another secret waits for it. */
+	secretRestarting?: boolean
+	/**
+	 * Vault mode (the ! prefix) opens but cannot vault: the conversation has no running
+	 * session, or one that is still coming up.
+	 */
+	vaultModeBlocked?: boolean
+	/** When set, a Call button for this agent sits beside the mic. Callers pass it
+	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
+	callAgent?: VoiceCallAgent | null
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -257,6 +285,10 @@ export function Composer({
 	value: controlledValue,
 	onValueChange,
 	draftKey,
+	secretCapture,
+	secretRestarting,
+	vaultModeBlocked,
+	callAgent,
 }: ComposerProps) {
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
@@ -275,6 +307,22 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
+	const [secretFlow, setSecretFlow] = useState<{
+		content: string
+		matches: SecretMatch[]
+		/** True until the user decides. False keeps only the receipts on screen. */
+		blocking: boolean
+	} | null>(null)
+	const mutedPatternIds = useRef(new Set<string>())
+	// Vault mode (the ! prefix) is part of the same feature, under the same flag. The
+	// secret never enters this component: a pasted one waits in the seed ref until the
+	// flow takes it, and what is typed afterwards lives in the flow's own field.
+	const [vaultFlow, setVaultFlow] = useState<{ blocking: boolean; key: number } | null>(null)
+	const vaultSeedRef = useRef('')
+	const enterVault = useCallback((seed: string) => {
+		vaultSeedRef.current = seed
+		setVaultFlow((prev) => ({ blocking: true, key: (prev?.key ?? 0) + 1 }))
+	}, [])
 	// Mirror the draft into sessionStorage. The chat route swaps `draftKey`
 	// without remounting the composer, so on a key change load the incoming
 	// key's stored draft instead of writing the outgoing text under it.
@@ -286,8 +334,24 @@ export function Composer({
 			setValue(readDraft(draftKey))
 			return
 		}
+		// Draft autosave is off while vault mode is open.
+		if (vaultFlow?.blocking) return
+		// A pasted secret must never reach sessionStorage: not while the card is open,
+		// and not in the keystrokes before Send either.
+		if (secretFlow?.blocking || hasHighConfidenceSecret(value, workspaceId)) {
+			writeDraft(draftKey, '')
+			return
+		}
 		writeDraft(draftKey, value)
-	}, [draftKey, value, controlledValue, setValue])
+	}, [
+		draftKey,
+		value,
+		controlledValue,
+		setValue,
+		secretFlow?.blocking,
+		vaultFlow?.blocking,
+		workspaceId,
+	])
 	// Mobile soft keyboards have no Shift key, so the desktop `Shift+Enter`
 	// newline shortcut is unreachable on a phone — plain Enter sends instead.
 	// On touch viewports we let the browser insert a newline and rely on the
@@ -432,6 +496,18 @@ export function Composer({
 			e?.preventDefault()
 			if (!canSend) return
 			const content = value.trim()
+			const matches = scanComposerText(content, {
+				workspaceId,
+				mutedPatternIds: mutedPatternIds.current,
+			})
+			if (matches.length > 0) {
+				// Before any network call. The text leaves the draft and the input and
+				// lives only in the card's state until the user decides.
+				if (draftKey !== undefined) writeDraft(draftKey, '')
+				setSecretFlow({ content, matches, blocking: true })
+				setValue('')
+				return
+			}
 			setSending(true)
 			setSendError(null)
 			onDismissExternalError?.()
@@ -449,7 +525,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, onDismissExternalError, onSend, setValue, value],
+		[canSend, draftKey, onDismissExternalError, onSend, setValue, value, workspaceId],
 	)
 
 	// Commits the picker's highlighted row into a mention pill: strips the
@@ -582,6 +658,15 @@ export function Composer({
 	const handleChange = useCallback(
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const next = e.target.value
+			// The prefix as the first character of an empty composer opens vault mode and
+			// is consumed: setValue never sees it, so neither does the draft mirror.
+			if (!vaultFlow?.blocking && valueRef.current === '') {
+				const seed = vaultSeedFrom(next)
+				if (seed !== null) {
+					enterVault(seed)
+					return
+				}
+			}
 			setValue(next)
 			const pos = e.target.selectionStart
 			if (typeof pos !== 'number' || pos < 0) {
@@ -662,7 +747,21 @@ export function Composer({
 			slashPosRef.current = pos - 1
 			setTurnIntoOpen(true)
 		},
-		[setValue, unifiedPickerEnabled, slashStart, typeFilterChip],
+		[setValue, unifiedPickerEnabled, slashStart, typeFilterChip, vaultFlow?.blocking, enterVault],
+	)
+
+	// A paste that starts with the prefix and has no whitespace, into an empty composer,
+	// goes straight to the vault field. Intercepted before the textarea takes it, so the
+	// secret is never in the composer's value, not even for a frame.
+	const handlePaste = useCallback(
+		(e: ClipboardEvent<HTMLTextAreaElement>) => {
+			if (vaultFlow?.blocking || valueRef.current !== '') return
+			const seed = vaultSeedFrom(e.clipboardData.getData('text'))
+			if (seed === null) return
+			e.preventDefault()
+			enterVault(seed)
+		},
+		[vaultFlow?.blocking, enterVault],
 	)
 
 	const openPickerForKind = useCallback((kind: SlashKindId) => {
@@ -924,6 +1023,7 @@ export function Composer({
 		<div
 			className={cn(
 				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
+				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>
 			<SlashPicker
@@ -1089,16 +1189,69 @@ export function Composer({
 				aria-hidden
 				tabIndex={-1}
 			/>
-			<form onSubmit={handleSubmit}>
+			{secretFlow ? (
+				<SecretCaptureFlow
+					workspaceId={workspaceId}
+					content={secretFlow.content}
+					matches={secretFlow.matches}
+					capture={secretCapture ?? null}
+					agentName={secretCapture?.agent.name ?? 'the agent'}
+					restarting={secretRestarting}
+					onSend={onSend}
+					onCancel={() => {
+						// The message is dropped, not the person's words: the text comes back
+						// without the secret, so cancelling never costs them what they wrote.
+						const restored = withoutSecrets(secretFlow.content, secretFlow.matches)
+						setSecretFlow(null)
+						setValue(restored)
+						textareaRef.current?.focus()
+					}}
+					onEdit={() => {
+						const restored = secretFlow.content
+						setSecretFlow(null)
+						setValue(restored)
+						textareaRef.current?.focus()
+					}}
+					onDone={(keepReceipts) =>
+						setSecretFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
+					}
+					onMute={(ids) => {
+						for (const id of ids) mutedPatternIds.current.add(id)
+					}}
+				/>
+			) : null}
+			{vaultFlow ? (
+				<VaultPrefixFlow
+					key={vaultFlow.key}
+					workspaceId={workspaceId}
+					seedRef={vaultSeedRef}
+					capture={secretCapture ?? null}
+					unavailable={!secretCapture || vaultModeBlocked === true}
+					agentName={secretCapture?.agent.name ?? 'the agent'}
+					onSend={onSend}
+					onLeave={() => {
+						setVaultFlow(null)
+						requestAnimationFrame(() => textareaRef.current?.focus())
+					}}
+					onDone={(keepReceipts) => {
+						setVaultFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
+						requestAnimationFrame(() => textareaRef.current?.focus())
+					}}
+				/>
+			) : null}
+			{/* Hidden rather than unmounted while vault mode is open, so the composer's own
+			    state is untouched when the user comes back to it. */}
+			<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
 				<Textarea
 					autoResize
 					ref={textareaRef}
 					value={value}
 					onChange={handleChange}
+					onPaste={handlePaste}
 					onKeyDown={handleKeyDown}
 					placeholder={placeholder}
 					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-					disabled={disabled}
+					disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
 					rows={1}
 					aria-label={textareaLabel}
 					// Screen readers announce the picker's active row while focus
@@ -1204,12 +1357,18 @@ export function Composer({
 							<Mic size={14} aria-hidden />
 						</Button>
 					) : null}
+					{callAgent ? (
+						// `ml-auto` here only when the mic didn't already claim the gap.
+						<span className={cn('inline-flex', dictation.supported ? '' : 'ml-auto')}>
+							<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
+						</span>
+					) : null}
 					<Button
 						type="submit"
 						size="icon"
 						className={cn(
 							'h-7 w-7 shrink-0 rounded-full',
-							dictation.supported ? '' : 'ml-auto',
+							dictation.supported || callAgent ? '' : 'ml-auto',
 							canSend
 								? 'bg-primary text-primary-foreground'
 								: 'bg-muted text-muted-foreground hover:bg-muted',

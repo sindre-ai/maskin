@@ -449,6 +449,46 @@ describe('applyResponseTokenCap', () => {
 		expect(capped.structuredContent.heroCard.page.hasMore).toBe(true)
 	})
 
+	it('names only the shipped rows on the card after a trim, and keeps the real totalCount', () => {
+		// The tool builds the card from the whole page before the cap runs, so
+		// without a sync it names rows that never ship and then repeats them on
+		// the next page.
+		const rows = Array.from({ length: 30 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = {
+			content: [{ type: 'text', text: 'x' }],
+			structuredContent: {
+				heroCard: {
+					kind: 'list',
+					tool: 'list_objects',
+					objects: rows.map((r) => ({ id: r.id, type: r.type, title: r.title })),
+					totalCount: 34,
+					page: { limit: rows.length, offset: 0, hasMore: false },
+				},
+				objects: rows,
+				page: { limit: 30, returned: rows.length },
+			},
+			[RESUME_CURSOR]: (last: unknown) => `after:${(last as { id: string }).id}`,
+		}
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 2500 })
+		expect(result.truncated).toBe(true)
+		const capped = result.response as {
+			structuredContent: {
+				heroCard: {
+					objects: Array<{ id: string }>
+					totalCount: number
+					page: { limit: number; hasMore: boolean }
+				}
+				objects: Array<{ id: string }>
+			}
+		}
+		const shippedIds = capped.structuredContent.objects.map((r) => r.id)
+		expect(shippedIds.length).toBeLessThan(rows.length)
+		expect(capped.structuredContent.heroCard.objects.map((o) => o.id)).toEqual(shippedIds)
+		expect(capped.structuredContent.heroCard.totalCount).toBe(34)
+		expect(capped.structuredContent.heroCard.page.limit).toBe(shippedIds.length)
+		expect(capped.structuredContent.heroCard.page.hasMore).toBe(true)
+	})
+
 	it('leaves next_cursor untouched when the pre-trim payload had no cursor', () => {
 		// No cursor in the pre-trim payload → the pagination upper bound
 		// wasn't hit → there is no "past the omitted tail" to worry about.

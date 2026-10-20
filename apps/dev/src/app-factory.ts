@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { type NodeWebSocket, createNodeWebSocket } from '@hono/node-ws'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
 import type { Database } from '@maskin/db'
@@ -10,9 +11,11 @@ import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
+import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
+import { redactLogLine } from './lib/redact-path'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -21,6 +24,7 @@ import {
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import accountRoutes from './routes/account'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -32,19 +36,25 @@ import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
+import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
 import filesRoutes from './routes/files'
+import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsGrantsRoutes from './routes/integrations-grants'
+import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -62,6 +72,7 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import voiceSessionsRoutes from './routes/voice-sessions'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
@@ -111,6 +122,13 @@ export interface CreateAppOptions {
 	 * side effects for no benefit when we just want the spec.
 	 */
 	includeExtensions?: boolean
+	/**
+	 * Receives the Node WebSocket handle created for this app. The server boot
+	 * (index.ts) calls `injectWebSocket(server)` on it once `serve()` returns —
+	 * upgrade requests are only routed to the app after that. Optional so tests
+	 * and spec-export paths, which never open a socket, can ignore it.
+	 */
+	onNodeWebSocket?: (nodeWebSocket: NodeWebSocket) => void
 }
 
 const OPENAPI_INFO = {
@@ -137,6 +155,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			: ['http://localhost:5173'])
 
 	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+	const nodeWebSocket = createNodeWebSocket({ app })
+	options.onNodeWebSocket?.(nodeWebSocket)
 
 	app.onError((err, c) => {
 		if (err instanceof PlanCapExceededError) {
@@ -243,7 +263,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use(
 		'*',
-		honoLogger((line, ...rest) => console.log(line.replace(/\?\S*/, ''), ...rest)),
+		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
 	)
 
 	app.use('*', async (c, next) => {
@@ -266,6 +286,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/auth/login: pre-auth credential exchange
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
 	//   - POST /api/public/landing-events: landing-page funnel event ingest
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
@@ -291,6 +312,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/invites/preview' && method === 'GET') return next()
 		if (method === 'POST' && /^\/api\/invites\/[^/]+\/accept$/.test(path)) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// Native connect: the web-auth browser has no API key either. The sealed, 2-minute
+		// ticket is the credential; it sets the state-binding cookie then 302s to the provider.
+		if (method === 'GET' && /^\/api\/integrations\/[^/]+\/native-launch$/.test(path)) return next()
 		// The Skjald app trades its one-time connect code here. It has no API key, so the code and its PKCE
 		// verifier are the credential (routes/integrations-skjald-connect.ts).
 		if (path === '/api/integrations/skjald/exchange' && method === 'POST') return next()
@@ -371,6 +395,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/admin/linkedin-unipile', adminLinkedinUnipileRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
+	app.route('/api/account', accountRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
@@ -394,6 +419,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsGrantsRoutes)
+	app.route('/api/integrations', integrationsGatewayRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
@@ -414,6 +442,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/conversations', conversationsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
+	app.route('/api/for-you', forYouRoutes)
+	app.route('/api/devices', devicesRoutes)
+	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
@@ -427,6 +458,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
+	app.route('/api/voice-sessions', voiceSessionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
@@ -453,6 +485,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// `lib/analytics/method-site-pageview` in every rendered page so T2's
 	// ship metric keeps firing.
 	app.route('/method', methodRoutes)
+
+	// Universal links for the native app. Served here (not from web/dist) so the SPA catch-all
+	// below can never shadow it. 404 until APPLE_TEAM_ID is set, so nothing is advertised half-configured.
+	app.get('/.well-known/apple-app-site-association', (c) => {
+		const body = buildAppleAppSiteAssociation(process.env.APPLE_TEAM_ID)
+		if (!body) return c.json(createApiError('NOT_FOUND', 'Not configured'), 404)
+		return c.body(JSON.stringify(body), 200, { 'Content-Type': 'application/json' })
+	})
 
 	app.doc31('/api/openapi.json', getOpenApiConfig(port))
 

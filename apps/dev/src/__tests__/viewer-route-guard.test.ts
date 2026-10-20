@@ -40,7 +40,7 @@ function buildApp() {
 const audit = auditWriteRoutes(listWriteRoutes(buildApp()))
 
 describe('viewer read-only route table', () => {
-	it('accounts for every write route: tagged writer, open, or pending', () => {
+	it('accounts for every write route: tagged writer, hand-gated, or open', () => {
 		expect(audit.unaccounted).toEqual([])
 	})
 
@@ -48,24 +48,16 @@ describe('viewer read-only route table', () => {
 		expect(audit.badTag).toEqual([])
 	})
 
-	it('removes a tagged route from the pending list', () => {
-		expect(audit.taggedAndPending).toEqual([])
-	})
-
 	it('keeps a tagged route off the open list', () => {
 		expect(audit.taggedAndOpen).toEqual([])
 	})
 
-	it('keeps a hand-gated route untagged and off the open and pending lists', () => {
+	it('keeps a hand-gated route untagged and off the open list', () => {
 		expect(audit.taggedAndHandGated).toEqual([])
-		expect(audit.handGatedAndOpenOrPending).toEqual([])
+		expect(audit.handGatedAndOpen).toEqual([])
 	})
 
-	it('keeps a route off both the open and the pending list', () => {
-		expect(audit.openAndPending).toEqual([])
-	})
-
-	it('has no open or pending entry for a route that does not exist', () => {
+	it('has no open or hand-gated entry for a route that does not exist', () => {
 		expect(audit.staleEntries).toEqual([])
 	})
 
@@ -78,13 +70,9 @@ describe('viewer read-only route table', () => {
 		expect(withDb).toEqual([])
 	})
 
-	it('prints the routes still pending, per group', () => {
-		const groups = Object.entries(audit.pendingByGroup).sort(([a], [b]) => a.localeCompare(b))
-		const total = groups.reduce((sum, [, n]) => sum + n, 0)
+	it('prints how the write routes are accounted for', () => {
 		console.info(
-			`Write routes: ${audit.taggedCount} writer-gated, ${audit.handGatedCount} hand-gated, ${audit.openCount} open, ${total} pending (${groups
-				.map(([g, n]) => `${g}: ${n}`)
-				.join(', ')})`,
+			`Write routes: ${audit.taggedCount} writer-gated, ${audit.handGatedCount} hand-gated, ${audit.openCount} open`,
 		)
 	})
 })

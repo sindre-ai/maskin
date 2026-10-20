@@ -29,6 +29,7 @@ import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DraftPreview } from './draft-preview'
 
 export interface DecidedOption {
 	id: string
@@ -274,6 +275,7 @@ export function FeedCard({
 						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
 							{decision.ask}
 						</p>
+						{decision.draft ? <DraftPreview draft={decision.draft} /> : null}
 					</div>
 				) : (
 					mentionBody && (

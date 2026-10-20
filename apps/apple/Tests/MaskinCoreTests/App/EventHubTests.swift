@@ -212,4 +212,47 @@ struct EventHubAuthTests {
 		#expect(hub.failure == .badStatus(404))
 		#expect(called == 0)
 	}
+
+	@Test("a failure that isn't a credentials rejection is retried by itself")
+	func retriesAfterNonAuthFailure() async {
+		let opens = OpenCounter()
+		let client = SSEClient(open: { _ in
+			if await opens.next() == 1 { throw SSEError.badStatus(404) }
+			return AsyncThrowingStream { _ in }  // holds open
+		})
+		let hub = EventHub(client: client, retryAfterFailure: .milliseconds(5))
+		hub.connect(workspaceId: "w1")
+		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+		while hub.connection != .live, ContinuousClock.now < deadline {
+			try? await Task.sleep(for: .milliseconds(5))
+		}
+		#expect(hub.connection == .live)
+		#expect(await opens.count == 2)
+		hub.disconnect()
+	}
+
+	@Test("a 401 or 403 is final: the stream is not retried")
+	func authRejectionIsFinal() async {
+		for status in [401, 403] {
+			let opens = OpenCounter()
+			let client = SSEClient(open: { _ in
+				_ = await opens.next()
+				throw SSEError.badStatus(status)
+			})
+			let hub = EventHub(client: client, retryAfterFailure: .milliseconds(5))
+			hub.connect(workspaceId: "w1")
+			let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+			while hub.connection != .failed, ContinuousClock.now < deadline {
+				try? await Task.sleep(for: .milliseconds(5))
+			}
+			try? await Task.sleep(for: .milliseconds(100))
+			#expect(await opens.count == 1)
+			hub.disconnect()
+		}
+	}
+}
+
+private actor OpenCounter {
+	private(set) var count = 0
+	func next() -> Int { count += 1; return count }
 }
