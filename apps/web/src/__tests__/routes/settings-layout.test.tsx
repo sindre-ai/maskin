@@ -57,6 +57,7 @@ describe('SettingsLayout', () => {
 			'Skills',
 			'MCP',
 			'Billing',
+			'Keychain',
 		])
 	})
 
