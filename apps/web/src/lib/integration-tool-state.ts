@@ -8,7 +8,8 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
  *   list does not hold it (connecting never adds it; an admin does that).
  * - sharing_off: connected, injected into agent sessions by default, but the
  *   workspace switched sharing off.
- * - needs_reconnect: a row exists that is no longer live (revoked, expired).
+ * - needs_reconnect: a row exists that is no longer live (revoked, expired), or
+ *   the live row's sign-in lacks permissions the provider now asks for.
  * - missing: no row, or only an unfinished (pending) connect.
  */
 export type IntegrationToolState =
@@ -51,6 +52,7 @@ export function integrationToolState({
 	if (!active) {
 		return rows.some((i) => i.status !== 'pending') ? 'needs_reconnect' : 'missing'
 	}
+	if (active.needsReconnect && (active.missingScopes?.length ?? 0) > 0) return 'needs_reconnect'
 	if (agentHasServer(provider, agentMcpServers)) return 'ready'
 	if (provider.mcp?.autoInject) {
 		return active.config?.expose_to_agent_sessions === false ? 'sharing_off' : 'ready'

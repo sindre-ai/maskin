@@ -65,6 +65,29 @@ describe('integrationToolState', () => {
 		}
 	})
 
+	it('needs a reconnect when the live row is missing permissions, even if the agent has the tool', () => {
+		expect(
+			integrationToolState({
+				provider: provider(),
+				integrations: [row({ needsReconnect: true, missingScopes: ['read'] })],
+				agentMcpServers: { linear: { type: 'http', url: LINEAR_URL } },
+			}),
+		).toBe('needs_reconnect')
+		const slack = provider({
+			name: 'slack',
+			mcp: { envKey: 'SLACK_TOKEN', autoInject: true },
+		})
+		expect(
+			integrationToolState({
+				provider: slack,
+				integrations: [
+					row({ provider: 'slack', needsReconnect: true, missingScopes: ['channels:history'] }),
+				],
+				agentMcpServers: {},
+			}),
+		).toBe('needs_reconnect')
+	})
+
 	it('is connected but not on the agent when the agent has no matching server', () => {
 		expect(
 			integrationToolState({ provider: provider(), integrations: [row()], agentMcpServers: {} }),
