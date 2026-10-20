@@ -655,6 +655,72 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
+		it('reports mentioned ids that are neither participants nor workspace members, and still posts', async () => {
+			// A mistyped or foreign UUID used to be dropped without a word, so the
+			// author never learned nobody was pulled in. It must come back in
+			// `unresolved_mentions`, while a real workspace member in the same
+			// message still joins and is not reported.
+			const agent = await insertActor(db, { type: 'agent' })
+			const outsider = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const typo = '00000000-0000-4000-8000-000000000000'
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Bad mentions', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'hello', metadata: { mentions: [agent.id, typo, outsider.id, typo] } },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+			const body = (await messageRes.json()) as { id: number; unresolved_mentions?: string[] }
+			expect(body.id).toBeGreaterThan(0)
+			expect([...(body.unresolved_mentions ?? [])].sort()).toEqual([outsider.id, typo].sort())
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId)).toContain(agent.id)
+			expect(detailBody.participants.map((p) => p.actorId)).not.toContain(outsider.id)
+		})
+
+		it('omits unresolved_mentions when every mention resolves', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Good mentions', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'hello', metadata: { mentions: [agent.id] } },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+			expect(await messageRes.json()).not.toHaveProperty('unresolved_mentions')
+		})
+
 		it('auto-joins both actors in a two-actor mention and lets both responders see wasMentioned=true', async () => {
 			// Two-actor mention case: neither is a participant, both must be
 			// promoted, both must be handed to `evaluateAndRespond` with the

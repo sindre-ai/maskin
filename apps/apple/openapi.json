@@ -28591,6 +28591,13 @@
 												"string",
 												"null"
 											]
+										},
+										"unresolved_mentions": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
 										}
 									},
 									"required": [

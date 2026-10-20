@@ -367,6 +367,13 @@ export const messageResponseSchema = z.object({
 	editedAt: z.string().nullable(),
 })
 
+// POST /conversations/:id/messages only: best-effort warning when some
+// `metadata.mentions` ids are neither participants nor workspace members. The
+// message still posts, but nobody was pulled in or woken for those ids.
+export const postMessageResponseSchema = messageResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
+})
+
 /**
  * Sub-session delegation strip (bet/444b-handed-off-strip). Shape served on the
  * `spawned_sessions` embed of `GET /conversations/:id/messages`. Casing matches

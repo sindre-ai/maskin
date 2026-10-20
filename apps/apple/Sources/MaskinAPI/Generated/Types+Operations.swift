@@ -42970,6 +42970,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/editedAt`.
                         public var editedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/unresolved_mentions`.
+                        public var unresolved_mentions: [Swift.String]?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -42984,6 +42986,7 @@ public enum Operations {
                         ///   - sessionId:
                         ///   - createdAt:
                         ///   - editedAt:
+                        ///   - unresolved_mentions:
                         public init(
                             id: Swift.Double,
                             conversationId: Swift.String,
@@ -42995,7 +42998,8 @@ public enum Operations {
                             metadata: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.metadataPayload? = nil,
                             sessionId: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
-                            editedAt: Swift.String? = nil
+                            editedAt: Swift.String? = nil,
+                            unresolved_mentions: [Swift.String]? = nil
                         ) {
                             self.id = id
                             self.conversationId = conversationId
@@ -43008,6 +43012,7 @@ public enum Operations {
                             self.sessionId = sessionId
                             self.createdAt = createdAt
                             self.editedAt = editedAt
+                            self.unresolved_mentions = unresolved_mentions
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -43021,6 +43026,7 @@ public enum Operations {
                             case sessionId
                             case createdAt
                             case editedAt
+                            case unresolved_mentions
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/application\/json`.
