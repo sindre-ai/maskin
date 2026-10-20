@@ -749,7 +749,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
+			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. When the agent holds an integration entry that points at a revoked connection, or a connected integration has no entry on it, `integration_drift` is present with `missing_presets`, `stale_entries` and what to do (propose_integration_attach). This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -1744,7 +1744,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). Connecting alone gives an agent no tools: once it is connected, list_integration_mcp_presets and propose_integration_attach get them onto an agent. Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
@@ -1758,6 +1758,35 @@ export const tools = {
 				.describe(
 					'Only for the non-chat fallback: the API key for providers whose auth type is "api_key" (e.g. "posthog"). Ignored in a chat — the user types the key into the card — so never ask the user for one.',
 				),
+		}),
+	},
+	list_integration_mcp_presets: {
+		description:
+			"List the MCP entries this workspace can attach to an agent, one per active integration (one per GitHub installation and per LinkedIn identity). Each preset has `preset_id`, a human `label`, and the paste-ready `server`. Derived live from connected integrations, so a disconnected one is not offered. With `actor_id`, each preset also says whether that agent already holds it (`attached`), and `drift` lists `missing_preset_ids` (active integrations the agent has no entry for) and `stale_entries` (entries that point at a revoked connection and will fail every call). With `include_affected`, each preset lists the agents a disconnect stripped it from. This tool is read-only and does not change any agent. To get a preset onto an agent, call propose_integration_attach: it puts an Approve card in the chat and a human admin decides. You cannot attach tools yourself, and changing another agent's tools with update_actor needs a human admin or owner.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Agent to check the presets against. Adds attached and drift.'),
+			include_affected: z
+				.boolean()
+				.optional()
+				.describe('List, per preset, the agents a disconnect stripped it from.'),
+		}),
+	},
+	propose_integration_attach: {
+		description:
+			"Ask a human to let an agent use an integration. In a chat this puts an Approve card in the conversation naming the agent and the integration; a workspace admin or owner approves with one click (and can attach it to every agent a disconnect stripped it from). This tool NEVER changes the agent: it only asks, so it needs no admin rights. Use it after list_integration_mcp_presets or when get_actor reports an integration the agent is missing, then end your turn. Never ask the user to edit tools by hand and never call update_actor on someone else's tools. Outside a chat (an autonomous session) there is nobody to ask, so it posts nothing and says so: leave a comment on the relevant object for an admin instead. This is the write counterpart of list_integration_mcp_presets.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			actor_id: z.string().uuid().describe('The agent that should receive the integration.'),
+			preset_id: z
+				.string()
+				.min(1)
+				.max(200)
+				.describe('A preset_id from list_integration_mcp_presets.'),
 		}),
 	},
 	disconnect_integration: {

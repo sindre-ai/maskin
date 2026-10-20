@@ -87,6 +87,8 @@ const ALL_TOOL_NAMES = [
 	'list_unread',
 	'list_integrations',
 	'list_integration_providers',
+	'list_integration_mcp_presets',
+	'propose_integration_attach',
 	'connect_integration',
 	'disconnect_integration',
 	'list_extensions',
