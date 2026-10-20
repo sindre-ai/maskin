@@ -65,7 +65,7 @@ import {
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifySessionExit } from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -440,6 +440,16 @@ export interface SessionLogEvent extends LogChunk {
 }
 
 /**
+ * In-process turn boundary for interactive sessions, emitted as `'turn'`.
+ * `started`: a user turn was written to the CLI's stdin (a human message, a
+ * seed turn, or a replay). `finished`: the turn's closing message was posted.
+ * Consumed by the Live Activity fan-out; never persisted.
+ */
+export type SessionTurnEvent =
+	| { sessionId: string; phase: 'started' }
+	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
+
+/**
  * §17.5 companion parser at the two completion paths: convert the classifier's
  * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
  * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
@@ -620,6 +630,8 @@ export class SessionManager extends EventEmitter {
 			// still retries and still tells the human.
 			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
 			fallbackModel: readEmptyTurnFallbackModel(),
+			onTurnFinished: (sessionId, outcome) =>
+				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
 		})
 	}
@@ -1345,6 +1357,7 @@ export class SessionManager extends EventEmitter {
 				data: log.content,
 			} satisfies SessionLogEvent)
 		}
+		this.emit('turn', { sessionId, phase: 'started' } satisfies SessionTurnEvent)
 	}
 
 	/**
@@ -3639,9 +3652,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
-			exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (classifiedFailureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
@@ -5838,9 +5849,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,
@@ -5854,6 +5863,42 @@ ${HUMAN_MESSAGE_STYLE}`
 		// only the CLI-banner tail is available on this side, same as handleCompletion.
 		const scheduledRetryAt = pickRetryAt(failureReason)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+
+		// Add this segment's usage onto the stored totals, like handleCompletion does
+		// through accumulateSessionUsage: a session that was paused and resumed
+		// already carries the earlier segments' usage, and the result envelope in
+		// the logs only reports the last segment. stopSession()'s provisional write
+		// carries no usage: the genuine report that follows reads the same logs, so
+		// adding on both would count one envelope twice. The genuine report adds.
+		const segmentUsageSet =
+			usage && !stoppedByUser
+				? {
+						totalCostUsd:
+							resolvedCostUsd != null
+								? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
+								: undefined,
+						inputTokens:
+							usage.inputTokens != null
+								? sql`COALESCE(${sessions.inputTokens}, 0) + ${usage.inputTokens}`
+								: undefined,
+						outputTokens:
+							usage.outputTokens != null
+								? sql`COALESCE(${sessions.outputTokens}, 0) + ${usage.outputTokens}`
+								: undefined,
+						cacheCreationInputTokens:
+							usage.cacheCreationInputTokens != null
+								? sql`COALESCE(${sessions.cacheCreationInputTokens}, 0) + ${usage.cacheCreationInputTokens}`
+								: undefined,
+						cacheReadInputTokens:
+							usage.cacheReadInputTokens != null
+								? sql`COALESCE(${sessions.cacheReadInputTokens}, 0) + ${usage.cacheReadInputTokens}`
+								: undefined,
+						durationMs:
+							usage.durationMs != null
+								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
+								: undefined,
+					}
+				: {}
 
 		const result: SessionResult = stoppedByUser
 			? { exit_code: exitCode, stopped_by_user: true }
@@ -5891,16 +5936,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						updatedAt: new Date(),
 						currentActivity: null,
 						...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
-						...(usage
-							? {
-									totalCostUsd: resolvedCostUsd?.toString() ?? null,
-									inputTokens: usage.inputTokens,
-									outputTokens: usage.outputTokens,
-									cacheCreationInputTokens: usage.cacheCreationInputTokens,
-									cacheReadInputTokens: usage.cacheReadInputTokens,
-									durationMs: usage.durationMs,
-								}
-							: {}),
+						...segmentUsageSet,
 					})
 					.where(
 						and(
@@ -6003,16 +6039,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
-						...(usage
-							? {
-									totalCostUsd: resolvedCostUsd?.toString() ?? null,
-									inputTokens: usage.inputTokens,
-									outputTokens: usage.outputTokens,
-									cacheCreationInputTokens: usage.cacheCreationInputTokens,
-									cacheReadInputTokens: usage.cacheReadInputTokens,
-									durationMs: usage.durationMs,
-								}
-							: {}),
+						...segmentUsageSet,
 					})
 					.where(eq(sessions.id, sessionId))
 			} catch (err) {

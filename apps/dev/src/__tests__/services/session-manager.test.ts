@@ -89,6 +89,11 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Same call the real helper makes for an exit with no final result message,
+	// so the assertions below keep reading the tail + option the classifier got.
+	// The helper's own rule is covered in lib/credit-classifier.test.ts.
+	classifySessionExit: (tail: string, exitCode: number) =>
+		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
 }))
 
 import { execFile } from 'node:child_process'
@@ -3484,12 +3489,15 @@ describe('SessionManager', () => {
 					typeof v === 'object' && v !== null && 'totalCostUsd' in v,
 			)
 			const fallbackUpdate = sessionUpdates.at(-1) as Record<string, unknown>
-			expect(fallbackUpdate.totalCostUsd).toBe('0.1234')
-			expect(fallbackUpdate.inputTokens).toBe(100)
-			expect(fallbackUpdate.outputTokens).toBe(200)
-			expect(fallbackUpdate.cacheCreationInputTokens).toBe(10)
-			expect(fallbackUpdate.cacheReadInputTokens).toBe(20)
-			expect(fallbackUpdate.durationMs).toBe(5000)
+			// Usage is added onto the stored totals, so each field is a SQL
+			// expression carrying the segment's value rather than the bare value.
+			const addedValue = (field: unknown) => (field as { queryChunks: unknown[] }).queryChunks
+			expect(addedValue(fallbackUpdate.totalCostUsd)).toContain(0.1234)
+			expect(addedValue(fallbackUpdate.inputTokens)).toContain(100)
+			expect(addedValue(fallbackUpdate.outputTokens)).toContain(200)
+			expect(addedValue(fallbackUpdate.cacheCreationInputTokens)).toContain(10)
+			expect(addedValue(fallbackUpdate.cacheReadInputTokens)).toContain(20)
+			expect(addedValue(fallbackUpdate.durationMs)).toContain(5000)
 		})
 
 		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
@@ -3640,6 +3648,20 @@ describe('SessionManager', () => {
 					data: '{"type":"user","message":{"role":"user","content":"hello"}}',
 				},
 			])
+		})
+
+		it('emits a turn-started event once the user turn is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockResults.insert = [{ id: 7, sessionId: session.id, stream: 'stdout', content: '{}' }]
+			const turns: unknown[] = []
+			manager.on('turn', (e) => turns.push(e))
+
+			await manager.writeInput(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+
+			expect(turns).toEqual([{ sessionId: session.id, phase: 'started' }])
 		})
 
 		// AC-T2: the persisted `session_logs` envelope tacks a
