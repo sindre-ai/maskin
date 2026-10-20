@@ -35,12 +35,11 @@ describe('google-meet provider config', () => {
 		})
 	})
 
-	it('requests only the five locked scopes — openid + userinfo.email + userinfo.profile + meetings.space.readonly + meetings.space.created', () => {
+	it('requests only the four locked scopes — openid + userinfo.email + meetings.space.readonly + meetings.space.created', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
 		expect(config.auth.config.scopes).toEqual([
 			'openid',
 			'https://www.googleapis.com/auth/userinfo.email',
-			'https://www.googleapis.com/auth/userinfo.profile',
 			'https://www.googleapis.com/auth/meetings.space.readonly',
 			'https://www.googleapis.com/auth/meetings.space.created',
 		])
