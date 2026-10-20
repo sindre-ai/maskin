@@ -5,13 +5,12 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
-const flags = vi.hoisted(() => ({ on: true }))
 const chatCaptureMock = vi.hoisted(() => vi.fn())
 const undoMock = vi.hoisted(() => vi.fn())
 const trackEventMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => (id === 'keychain-chat-capture' ? flags.on : false),
+	useFeatureFlag: () => false,
 }))
 vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/lib/analytics', () => ({
@@ -95,7 +94,6 @@ function storageHolds(needle: string) {
 }
 
 beforeEach(() => {
-	flags.on = true
 	sessionStorage.clear()
 	chatCaptureMock.mockReset()
 	undoMock.mockReset()
@@ -358,13 +356,5 @@ describe('Composer secret guard', () => {
 		const props = renderComposer()
 		await typeAndSend('hello there')
 		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith('hello there'))
-	})
-
-	it('does nothing when the flag is off', async () => {
-		flags.on = false
-		const props = renderComposer()
-		await typeAndSend(FAKE_CF)
-		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(FAKE_CF))
-		expect(screen.queryByText('Maskin detected a secret in your message.')).not.toBeInTheDocument()
 	})
 })

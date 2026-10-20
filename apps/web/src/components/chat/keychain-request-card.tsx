@@ -5,7 +5,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { ApiError, type MessageKeychainRequest, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -65,7 +64,6 @@ export function KeychainRequestCard({
 	const { data: integrations } = useIntegrations(workspaceId)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
-	const settingsUi = useFeatureFlag('keychain-settings-ui')
 
 	const agents = useMemo(() => {
 		const inChat = (conversation?.participants ?? [])
@@ -159,15 +157,13 @@ export function KeychainRequestCard({
 				<span>
 					Saved <strong>{doneName}</strong> to the Keychain.
 				</span>
-				{settingsUi ? (
-					<Link
-						to="/$workspaceId/settings/keychain"
-						params={{ workspaceId }}
-						className="text-xs text-muted-foreground underline"
-					>
-						Manage in Keychain
-					</Link>
-				) : null}
+				<Link
+					to="/$workspaceId/settings/keychain"
+					params={{ workspaceId }}
+					className="text-xs text-muted-foreground underline"
+				>
+					Manage in Keychain
+				</Link>
 				{agentStillRunning ? (
 					<p className="w-full text-xs text-muted-foreground">
 						The agent is still running without it. Stop it from the chat, then send a message to
@@ -268,8 +264,7 @@ export function KeychainRequestCard({
 					</div>
 				))}
 				<p className="text-xs text-muted-foreground">
-					Saved for this workspace.
-					{settingsUi ? ' You can change who can use it in Settings → Keychain.' : ''}
+					Saved for this workspace. You can change who can use it in Settings → Keychain.
 				</p>
 			</fieldset>
 

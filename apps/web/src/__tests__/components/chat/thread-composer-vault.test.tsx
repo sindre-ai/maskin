@@ -11,7 +11,7 @@ const mockMutateAsync = vi.hoisted(() => vi.fn())
 const chatCaptureMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'keychain-chat-capture',
+	useFeatureFlag: () => false,
 }))
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
