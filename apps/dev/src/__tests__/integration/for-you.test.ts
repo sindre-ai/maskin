@@ -149,6 +149,14 @@ describe('GET /api/for-you', () => {
 		expect(await list()).toHaveLength(1)
 	})
 
+	it('drops an item whose object is no longer in the status the ask assumed', async () => {
+		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'proposed' })
+		await item({ objectId: obj.id }, { only_while_status: ['proposed'] })
+		expect(await list()).toHaveLength(1)
+		await db.update(objects).set({ status: 'active' }).where(eq(objects.id, obj.id))
+		expect(await list()).toEqual([])
+	})
+
 	it('drops an item the human has dismissed, and does not resurface it', async () => {
 		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
 		const sourceId = await comment(obj.id, agentId)

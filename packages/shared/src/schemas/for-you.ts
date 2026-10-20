@@ -27,6 +27,13 @@ export const forYouMetadataSchema = z.object({
 		.describe(
 			'Event id of the comment carrying the ask. The item drops once the human replies to or dismisses that thread.',
 		),
+	only_while_status: z
+		.array(z.string().min(1))
+		.min(1)
+		.optional()
+		.describe(
+			'The statuses the item\'s object must still be in for the ask to make sense, e.g. ["proposed"] for "move this bet to active". The item drops the moment the object\'s status is anything else, so a card cannot outlive the state it was written about.',
+		),
 })
 
 export type ForYouMetadata = z.infer<typeof forYouMetadataSchema>

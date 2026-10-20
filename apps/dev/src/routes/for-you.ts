@@ -177,6 +177,11 @@ app.openapi(listForYouRoute, async (c) => {
 				const obj = objectById.get(row.objectId)
 				// Deleted (FK set null would have cleared it) or closed: nothing left to decide.
 				if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
+				// The ask names the state it assumed ("move to active" assumes "proposed").
+				// Once the object is anywhere else, the ask is already moot.
+				if (meta.only_while_status && !meta.only_while_status.includes(obj.status ?? '')) {
+					return false
+				}
 				const sourceId = meta.source_comment_id
 				if (sourceId !== undefined) {
 					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
