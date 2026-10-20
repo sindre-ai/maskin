@@ -15,6 +15,7 @@ import {
 	flattenMessagesOldestFirst,
 	useConversation,
 	useConversationMessages,
+	useSendMessage,
 } from '@/hooks/use-conversation'
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
@@ -24,6 +25,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
+import type { MessageMetadata } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -87,6 +89,26 @@ function ConversationThreadPage() {
 	const producedEnabled = useFeatureFlag('graph-provenance-writes')
 	const { produced: producedSearch } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const producedRequested = producedEnabled && !!producedSearch
+	// Agent intro buttons and tool rows (bet e9cec236, slice 5a): one read here, one
+	// boolean down. Off is today's chat: the intro shows as its plain text.
+	const agentIntroEnabled = useFeatureFlag('agent-intro-1-1')
+	const sendMessage = useSendMessage(conversationId, workspaceId)
+	const sendStep = useCallback(
+		(content: string, metadata: MessageMetadata) => sendMessage.mutate({ content, metadata }),
+		[sendMessage.mutate],
+	)
+	// A fill step asks the composer to take its prompt. The nonce makes the same
+	// prompt tapped twice a new request; the request is dropped with the chat.
+	const [fillRequest, setFillRequest] = useState<{ text: string; nonce: number } | null>(null)
+	const fillNonceRef = useRef(0)
+	const pickStep = useCallback((text: string) => {
+		fillNonceRef.current += 1
+		setFillRequest({ text, nonce: fillNonceRef.current })
+	}, [])
+	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
+	useEffect(() => {
+		setFillRequest(null)
+	}, [conversationId])
 	const navigate = useNavigate()
 	// Desktop (≥1024) gets the persistent right-rail column when open;
 	// everything smaller (mobile + tablet portrait/landscape at 641-1023) opens
@@ -226,6 +248,10 @@ function ConversationThreadPage() {
 						v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
 						v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 						producedEnabled={producedEnabled}
+						suggestedStepsEnabled={agentIntroEnabled}
+						onPickStep={pickStep}
+						onSendStep={sendStep}
+						sendingStep={sendMessage.isPending}
 					/>
 					{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
@@ -237,7 +263,11 @@ function ConversationThreadPage() {
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
 					<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
-						<ThreadComposer workspaceId={workspaceId} conversationId={conversationId} />
+						<ThreadComposer
+							workspaceId={workspaceId}
+							conversationId={conversationId}
+							fillRequest={fillRequest}
+						/>
 					</div>
 				</div>
 				{/* Desktop (≥1024): persistent right-rail column at 320px, sliding

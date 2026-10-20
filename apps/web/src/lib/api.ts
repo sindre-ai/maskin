@@ -5,13 +5,16 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FromSuggestedStep,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	NeededTool,
 	SafeMetadata,
 	SendRoundInput,
 	SendRoundResponse,
+	SuggestedStep,
 	TriggerResponse,
 	UpdateFileCommentInput,
 } from '@maskin/shared'
@@ -2068,6 +2071,14 @@ export interface MessageMetadata {
 	integration_connect?: MessageIntegrationConnect
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
+	suggested_steps?: SuggestedStep[]
+	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
+	needed_tools?: NeededTool[]
+	/** Backend-owned: how many trailing paragraphs of an intro the web drops when it draws the steps and tool rows. */
+	plain_tail?: number
+	/** Client-supplied: the intro step a message was sent from. */
+	from_suggested_step?: FromSuggestedStep
 }
 
 export interface MessageResponse {
