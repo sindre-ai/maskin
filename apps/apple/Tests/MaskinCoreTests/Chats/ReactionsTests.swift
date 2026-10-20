@@ -40,44 +40,48 @@ struct ChatStoreReactionTests {
 	}
 
 	@Test("a tap shows the chip at once and tells the server")
-	func addsOptimistically() async {
+	func addsOptimistically() async throws {
 		let h = harness()
 		await h.store.start()
-		let message = h.store.messages[0]
+		let message = try #require(h.store.messages.first)
 		await h.store.toggleReaction("👍", on: message)
-		#expect(h.store.messages[0].reactions.map(\.emoji) == ["👍"])
-		#expect(h.store.messages[0].reactions[0].reactedByMe)
+		let shown = try #require(h.store.messages.first)
+		#expect(shown.reactions.map(\.emoji) == ["👍"])
+		#expect(shown.reactions.first?.reactedByMe == true)
 		let calls = await h.api.reactCalls
-		#expect(calls.count == 1 && calls[0].id == 1 && calls[0].add)
+		#expect(calls.first?.id == 1 && calls.first?.add == true && calls.count == 1)
 	}
 
 	@Test("a second tap takes it back")
-	func removes() async {
+	func removes() async throws {
 		let h = harness()
 		await h.store.start()
-		await h.store.toggleReaction("👍", on: h.store.messages[0])
-		await h.store.toggleReaction("👍", on: h.store.messages[0])
-		#expect(h.store.messages[0].reactions.isEmpty)
+		let message = try #require(h.store.messages.first)
+		await h.store.toggleReaction("👍", on: message)
+		await h.store.toggleReaction("👍", on: message)
+		#expect(h.store.messages.first?.reactions.isEmpty == true)
 		#expect(await h.api.reactCalls.map(\.add) == [true, false])
 	}
 
 	@Test("when the server refuses, the chip goes back and a notice says so")
-	func rollsBack() async {
+	func rollsBack() async throws {
 		let h = harness()
 		await h.store.start()
 		await h.api.setFailReact(true)
-		await h.store.toggleReaction("👍", on: h.store.messages[0])
-		#expect(h.store.messages[0].reactions.isEmpty)
+		let message = try #require(h.store.messages.first)
+		await h.store.toggleReaction("👍", on: message)
+		#expect(h.store.messages.first?.reactions.isEmpty == true)
 		#expect(h.store.notice == "Couldn't add the reaction.")
 	}
 
 	@Test("a reply in a thread can be reacted to too")
-	func threadReply() async {
+	func threadReply() async throws {
 		var reply = chatMsg(2, by: "sam", "in thread")
 		reply.threadRootID = 1
 		let h = ChatHarness(server: [chatMsg(1), reply])
 		await h.store.start()
-		await h.store.toggleReaction("❤️", on: h.store.replies(to: 1)[0])
-		#expect(h.store.replies(to: 1)[0].reactions.first?.emoji == "❤️")
+		let inThread = try #require(h.store.replies(to: 1).first)
+		await h.store.toggleReaction("❤️", on: inThread)
+		#expect(h.store.replies(to: 1).first?.reactions.first?.emoji == "❤️")
 	}
 }

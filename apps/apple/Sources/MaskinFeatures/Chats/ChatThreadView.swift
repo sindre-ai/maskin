@@ -980,7 +980,7 @@ struct ThreadTranscript: View {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now).uppercased())
 		case .system(let message):
-			ThreadDivider(label: message.content, ruled: false)
+			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
 		case .liveCall(let card):
