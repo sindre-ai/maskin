@@ -2027,6 +2027,10 @@ const deleteIntegrationRoute = createRoute({
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'Keychain credential: use POST /integrations/:id/remove',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -2044,6 +2048,19 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	// A vaulted Keychain credential is removed through POST /:id/remove, which
+	// limits it to its creator or an admin, zeroises the secret and appends to the
+	// audit chain. This route would only flip the status and leave the ciphertext.
+	if (existing.providerMode === 'byo_apikey' || existing.providerMode === 'byo_login') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This is a Keychain credential. Remove it from Keychain (POST /api/integrations/:id/remove).',
+			),
+			409,
+		)
+	}
 
 	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
 	// credentials are still readable so the provider can call its remote API

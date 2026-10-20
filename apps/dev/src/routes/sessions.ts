@@ -27,6 +27,7 @@ import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -946,6 +947,17 @@ app.openapi(inputSessionRoute, (async (c) => {
 			409,
 		)
 	}
+
+	// Keychain backstop; the turn goes straight to the agent's stdin and into the chat.
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId,
+		actorType: c.get('actorType'),
+		entityType: 'session',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
 
 	try {
 		await sessionManager.writeInput(

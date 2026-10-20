@@ -23,7 +23,7 @@ import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
 import { SessionManager } from '../../services/session-manager'
 import { buildIntegration, insertActor, insertSession, insertWorkspace } from '../factories'
-import { db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId } from './global-setup'
 import { fakeSessionControl } from './session-control-fake'
 
 /**
@@ -315,5 +315,24 @@ describe('PUT /api/integrations/:id/scope for a login (Integration)', () => {
 
 		expect(res.status).toBe(200)
 		expect((await rowOf(s.loginId))?.scopeGrants).toEqual([{ kind: 'actor', actorId: other.id }])
+	})
+})
+
+describe('DELETE /api/integrations/:id on a Keychain credential (Integration)', () => {
+	it('refuses with 409 and leaves the secret in place, for a key and a login', async () => {
+		const s = await setup()
+		const { default: integrationsRoutes } = await import('../../routes/integrations')
+		const app = createIntegrationApp({ path: '/api/integrations', module: integrationsRoutes })
+
+		for (const id of [s.keyId, s.loginId]) {
+			const res = await app.request(`/api/integrations/${id}`, {
+				method: 'DELETE',
+				headers: { 'x-workspace-id': s.ws.id },
+			})
+			expect(res.status).toBe(409)
+			const row = await rowOf(id)
+			expect(row?.status).toBe('active')
+			expect(row?.credentials).not.toBeNull()
+		}
 	})
 })

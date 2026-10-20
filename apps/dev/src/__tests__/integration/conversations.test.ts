@@ -1151,6 +1151,67 @@ describe('Conversations Integration', () => {
 			expect(JSON.stringify(eventRows)).not.toContain(fakeToken)
 		})
 
+		it('refuses an edit that adds a secret, keeps the stored text and records a bypass event', async () => {
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const sent = await post(app, conversation.id, 'a clean message')
+			const { id: messageId } = (await sent.json()) as { id: number }
+			sessionManager.writeInput.mockClear()
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${messageId}`,
+					{ content: `now with ${fakeToken}` },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+				'RAW_SECRET_DETECTED',
+			)
+			const [stored] = await db.select().from(messages).where(eq(messages.id, messageId))
+			expect(stored?.content).toBe('a clean message')
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+			expect(JSON.stringify(eventRows)).not.toContain(fakeToken)
+		})
+
+		it('refuses a secret in the initial message and creates no conversation', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Seeded', participant_actor_ids: [], initial_message: fakeToken },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+				'RAW_SECRET_DETECTED',
+			)
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, workspaceId),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+		})
+
 		it('applies to agent callers too', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
