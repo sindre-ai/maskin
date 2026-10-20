@@ -7,7 +7,7 @@ import {
 	respondNotificationSchema,
 	updateNotificationSchema,
 } from '@maskin/shared'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { trackCreateNotificationCalled } from '../lib/analytics/notification-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -19,7 +19,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
@@ -142,7 +142,7 @@ const listNotificationsRoute = createRoute({
 app.openapi(listNotificationsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { status, type, object_id, limit, offset } = c.req.valid('query')
+	const { status, type, object_id, limit, offset, order } = c.req.valid('query')
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
 	if (status) {
@@ -159,7 +159,7 @@ app.openapi(listNotificationsRoute, (async (c) => {
 		.select()
 		.from(notifications)
 		.where(and(...conditions))
-		.orderBy(notifications.createdAt)
+		.orderBy(order === 'desc' ? desc(notifications.createdAt) : asc(notifications.createdAt))
 		.limit(limit)
 		.offset(offset)
 
@@ -280,6 +280,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 const respondNotificationRoute = createRoute({
 	method: 'post',
 	path: '/{id}/respond',
+	'x-viewer-policy': 'writer',
 	tags: ['Notifications'],
 	summary: 'Respond to a notification and resume the agent',
 	request: {
@@ -324,7 +325,7 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification || !(await isWorkspaceMember(db, actorId, notification.workspaceId))) {
+	if (!notification || !(await isWorkspaceWriter(db, actorId, notification.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 	}
 

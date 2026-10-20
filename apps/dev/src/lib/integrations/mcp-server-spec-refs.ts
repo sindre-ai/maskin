@@ -34,3 +34,37 @@ export function serverSpecReferencesEnvKey(spec: McpServerSpec, envKey: string):
 	}
 	return false
 }
+
+/**
+ * True when any server in an agent- or session-level MCP map references
+ * `envKey` via `${ENV_KEY}`. Session-manager uses this as the "meant to use
+ * this integration" test: an agent whose own tools config names a provider's
+ * token variable gets that token injected; every other agent does not.
+ *
+ * The maps come from stored JSON, so entries are not trusted to match
+ * McpServerSpec: anything that is not an object is ignored, a missing `type`
+ * is read as http when there is a `url` and stdio otherwise, and missing
+ * `args` count as empty.
+ */
+export function mcpServersReferenceEnvKey(servers: unknown, envKey: string): boolean {
+	if (!servers || typeof servers !== 'object') return false
+	for (const entry of Object.values(servers as Record<string, unknown>)) {
+		if (!entry || typeof entry !== 'object') continue
+		const raw = entry as Record<string, unknown>
+		const spec: McpServerSpec =
+			typeof raw.url === 'string'
+				? {
+						type: 'http',
+						url: raw.url,
+						headers: (raw.headers as Record<string, string> | undefined) ?? undefined,
+					}
+				: {
+						type: 'stdio',
+						command: typeof raw.command === 'string' ? raw.command : '',
+						args: Array.isArray(raw.args) ? (raw.args as string[]) : [],
+						env: (raw.env as Record<string, string> | undefined) ?? undefined,
+					}
+		if (serverSpecReferencesEnvKey(spec, envKey)) return true
+	}
+	return false
+}

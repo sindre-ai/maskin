@@ -110,4 +110,27 @@ label="strip flag without a base URL"
 check "$label" -e MASKIN_STRIP_IMAGES=1
 expect "$label" "STUB_CLAUDE_RAN base_url=<unset>"
 
-echo "agent-image-smoke: OK (4 sessions reached the agent launch)"
+# maskin_plan: low effort and no WebSearch reach the CLI as arguments.
+label="maskin_plan effort and web search"
+check "$label" -e MASKIN_CLAUDE_EFFORT=low -e MASKIN_DISABLE_WEB_SEARCH=1
+expect "$label" "--effort low"
+expect "$label" "--disallowedTools=WebSearch"
+
+# Only the first-token guard set (no strip flag, no provider prefs): it still needs the proxy.
+label="first-token guard only"
+check "$label" -e MASKIN_TTFT_TIMEOUT_MS=5000 -e ANTHROPIC_BASE_URL=https://openrouter.ai/api
+expect "$label" "strip-images proxy up"
+expect "$label" "STUB_CLAUDE_RAN base_url=http://127.0.0.1:9334"
+
+# The guard without a base URL has nothing to proxy; it must not end the session.
+label="first-token guard without a base URL"
+check "$label" -e MASKIN_TTFT_TIMEOUT_MS=5000
+expect "$label" "STUB_CLAUDE_RAN base_url=<unset>"
+
+# Neither set (every other route): the CLI gets neither argument.
+label="no effort, web search on"
+check "$label"
+reject "$label" "--effort"
+reject "$label" "--disallowedTools"
+
+echo "agent-image-smoke: OK (8 sessions reached the agent launch)"

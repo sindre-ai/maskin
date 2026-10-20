@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import { files, workspaceMembers } from '@maskin/db/schema'
+import { files, voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, mapStatusToCode } from '../../lib/errors'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { getWorkspaceRole, isWorkspaceMember, isWorkspaceWriter } from '../../lib/workspace-auth'
 import {
 	buildCreateGraphBody,
@@ -24,6 +25,7 @@ const { default: filesRoutes } = await import('../../routes/files')
 const { default: fileCommentsRoutes } = await import('../../routes/file-comments')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: importsRoutes } = await import('../../routes/imports')
+const { default: voiceSessionsRoutes } = await import('../../routes/voice-sessions')
 
 // Real authMiddleware (the role comes from its membership lookup) in front of the
 // real routes, so a viewer API key goes through the same path as in production.
@@ -52,6 +54,7 @@ function createApp() {
 	app.route('/api/files', fileCommentsRoutes as never)
 	app.route('/api/events', eventsRoutes as never)
 	app.route('/api/imports', importsRoutes as never)
+	app.route('/api/voice-sessions', voiceSessionsRoutes as never)
 	return app
 }
 
@@ -269,6 +272,95 @@ describe('Viewer role is read-only', () => {
 			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), auth(viewerKey)),
 		)
 		expect(res.status).toBe(201)
+	})
+
+	describe('voice calls', () => {
+		afterEach(() => {
+			// biome-ignore lint/performance/noDelete: process.env coerces undefined to the string "undefined"
+			delete process.env.FF_TESTER_ACTOR_IDS
+			// biome-ignore lint/performance/noDelete: same
+			delete process.env.FF_TESTER_FEATURES
+			_resetFeatureFlagConfig()
+		})
+
+		// The voice routes sit behind the voice-mode-v1 flag (404 when off), so the
+		// flag must be on for the viewer to reach the role check at all.
+		const enableVoiceFor = (actorId: string) => {
+			process.env.FF_TESTER_ACTOR_IDS = actorId
+			process.env.FF_TESTER_FEATURES = 'voice-mode-v1'
+			_resetFeatureFlagConfig()
+		}
+
+		const addAgent = async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Chief of Staff', email: null })
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: agent.id, role: 'member' })
+			return agent
+		}
+
+		it('returns 403 to a viewer who tries to start a call', async () => {
+			enableVoiceFor(viewerId)
+			const agent = await addAgent()
+			const res = await createApp().request(
+				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: agent.id }, auth(viewerKey)),
+			)
+			expect(res.status).toBe(403)
+			const rows = await db
+				.select()
+				.from(voiceSessions)
+				.where(eq(voiceSessions.humanActorId, viewerId))
+			expect(rows).toHaveLength(0)
+		})
+
+		it('returns 403 to a member demoted to viewer after the call was reserved', async () => {
+			enableVoiceFor(viewerId)
+			const agent = await addAgent()
+			const [session] = await db
+				.insert(voiceSessions)
+				.values({
+					workspaceId,
+					agentActorId: agent.id,
+					humanActorId: viewerId,
+					status: 'pending',
+					model: 'gpt-realtime',
+					timeoutAt: new Date(Date.now() + 15 * 60_000),
+				})
+				.returning()
+			const res = await createApp().request(
+				jsonRequest(
+					'POST',
+					`/api/voice-sessions/${session?.id}/offer`,
+					{ sdp: 'v=0' },
+					auth(viewerKey),
+				),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('lets a viewer hang up their own call, so a demotion mid-call cannot strand it', async () => {
+			enableVoiceFor(viewerId)
+			const agent = await addAgent()
+			const [session] = await db
+				.insert(voiceSessions)
+				.values({
+					workspaceId,
+					agentActorId: agent.id,
+					humanActorId: viewerId,
+					status: 'active',
+					vendorSessionId: 'vs_test',
+					model: 'gpt-realtime',
+					timeoutAt: new Date(Date.now() + 15 * 60_000),
+				})
+				.returning()
+			const res = await createApp().request(
+				jsonRequest(
+					'POST',
+					`/api/voice-sessions/${session?.id}/hangup`,
+					{ reason: 'user_hangup' },
+					auth(viewerKey),
+				),
+			)
+			expect(res.status).toBe(200)
+		})
 	})
 
 	describe('workspace-auth helpers', () => {

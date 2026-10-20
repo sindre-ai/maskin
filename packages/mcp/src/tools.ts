@@ -1497,6 +1497,33 @@ export const tools = {
 			limit: z.number().int().min(1).max(500).default(100).describe('Max rows per page.'),
 		}),
 	},
+	get_session_activity: {
+		description:
+			"Get the compact agent activity trace for a session: per conversation-message turns, each with its steps (tool calls, thinking, text, errors), status and final result. Same wording as the web chat activity dropdown. Page toward older turns by passing the previous response's `oldest_log_id` as `before_log_id` while `has_older` is true. content and structuredContent carry the same full payload. This tool is read-only — to see raw log lines use `get_session` with `include_logs: true`; to change a session use `stop_session`, `pause_session` or `resume_session`.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Session ID'),
+			limit_turns: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.default(5)
+				.describe('Newest N turns to return (a turn = one conversation message answered)'),
+			message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Return only the turn triggered by this conversation message id'),
+			before_log_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Exclusive upper bound on log id; pass a previous `oldest_log_id` to page older'),
+		}),
+	},
 	stop_session: {
 		description: 'Stop a running session',
 		inputSchema: z.object({
@@ -1693,7 +1720,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Ask the user to connect an integration for a provider (e.g. "linear"). In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z

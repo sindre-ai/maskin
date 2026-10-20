@@ -3,10 +3,13 @@ import type { Database } from '@maskin/db'
 import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
+	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatIntegrationConnectAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
+	sessionActivityQuerySchema,
+	sessionActivityResponseSchema,
 	sessionAskSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
@@ -32,7 +35,9 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
+import { loadSessionActivity } from '../lib/session-activity-query'
+import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -51,6 +56,7 @@ type Env = {
 		actorType: string
 		sessionManager: SessionManager
 		maskinSessionId?: string
+		workspaceRole?: string
 	}
 }
 
@@ -77,6 +83,7 @@ async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId:
 const createSessionRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Create and optionally start a session',
 	request: {
@@ -98,6 +105,7 @@ const createSessionRoute = createRoute({
 })
 
 app.openapi(createSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
@@ -198,13 +206,6 @@ app.openapi(createSessionRoute, (async (c) => {
 	}
 	return c.json(created, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
-
-/** Where a helper session (started by another agent in a chat) asks its questions. */
-function helperAskConversationId(session: { conversationId: string | null; config: unknown }) {
-	if (session.conversationId) return null
-	const id = (session.config as { ask_conversation_id?: unknown } | null)?.ask_conversation_id
-	return typeof id === 'string' ? id : null
-}
 
 /**
  * Trim `actionPrompt` down to a scannable title for the lean-row shape.
@@ -502,6 +503,10 @@ const getSessionRoute = createRoute({
 			content: { 'application/json': { schema: getSessionResponseSchema } },
 			description: 'Session details',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is private to the person who started it',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -517,6 +522,9 @@ app.openapi(getSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const serialized = serialize(session) as z.infer<typeof sessionResponseSchema>
 
@@ -590,6 +598,7 @@ const updateSessionSchema = z
 const patchSessionRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Update mutable session fields',
 	request: {
@@ -616,6 +625,7 @@ const patchSessionRoute = createRoute({
 })
 
 app.openapi(patchSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -693,6 +703,7 @@ app.openapi(patchSessionRoute, (async (c) => {
 const stopSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/stop',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Stop a running session',
 	request: {
@@ -708,6 +719,10 @@ const stopSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Cannot stop session',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session and is not a workspace admin',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -716,6 +731,7 @@ const stopSessionRoute = createRoute({
 })
 
 app.openapi(stopSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -723,6 +739,9 @@ app.openapi(stopSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canControlSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	try {
 		await sessionManager.stopSession(id)
@@ -741,6 +760,7 @@ app.openapi(stopSessionRoute, (async (c) => {
 const pauseSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/pause',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Pause a running session and save snapshot',
 	request: {
@@ -756,6 +776,10 @@ const pauseSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Cannot pause session',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session and is not a workspace admin',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -764,6 +788,7 @@ const pauseSessionRoute = createRoute({
 })
 
 app.openapi(pauseSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -771,6 +796,9 @@ app.openapi(pauseSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canControlSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	try {
 		await sessionManager.pauseSession(id)
@@ -789,6 +817,7 @@ app.openapi(pauseSessionRoute, (async (c) => {
 const resumeSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/resume',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Resume a paused session from snapshot',
 	request: {
@@ -804,6 +833,10 @@ const resumeSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Cannot resume session',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller did not start this session and is not a workspace admin',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -812,6 +845,7 @@ const resumeSessionRoute = createRoute({
 })
 
 app.openapi(resumeSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
@@ -819,6 +853,9 @@ app.openapi(resumeSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canControlSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	try {
 		await sessionManager.resumeSession(id)
@@ -837,6 +874,7 @@ app.openapi(resumeSessionRoute, (async (c) => {
 const inputSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/input',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: 'Send a user input turn to an interactive session',
 	request: {
@@ -871,6 +909,7 @@ const inputSessionRoute = createRoute({
 })
 
 app.openapi(inputSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const sessionManager = c.get('sessionManager')
@@ -967,6 +1006,7 @@ app.openapi(inputSessionRoute, (async (c) => {
 const askSessionRoute = createRoute({
 	method: 'post',
 	path: '/{id}/ask',
+	'x-viewer-policy': 'writer',
 	tags: ['Sessions'],
 	summary: "Post an agent's question into its chat conversation",
 	request: {
@@ -1003,6 +1043,7 @@ const askSessionRoute = createRoute({
 })
 
 app.openapi(askSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -1244,6 +1285,10 @@ const getSessionLogsRoute = createRoute({
 			content: { 'application/json': { schema: z.array(sessionLogResponseSchema) } },
 			description: 'Session logs',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is private to the person who started it',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -1259,6 +1304,9 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.since) conditions.push(gt(sessionLogs.id, query.since))
@@ -1286,6 +1334,60 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
 
+// GET /:id/activity - Normalized per-message agent activity trace
+const getSessionActivityRoute = createRoute({
+	method: 'get',
+	path: '/{id}/activity',
+	tags: ['Sessions'],
+	summary: 'Get the agent activity trace (steps) per conversation message',
+	description: `Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most ${SESSION_ACTIVITY_SCAN_ROWS} of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.`,
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		query: sessionActivityQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionActivityResponseSchema } },
+			description: 'Activity turns, oldest to newest',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session was started by a different actor',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(getSessionActivityRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
+
+	const { turns, oldestLogId, hasOlder } = await loadSessionActivity(db, id, {
+		limitTurns: query.limit_turns,
+		messageId: query.message_id,
+		beforeLogId: query.before_log_id,
+	})
+
+	return c.json({
+		session_id: id,
+		turns,
+		oldest_log_id: oldestLogId,
+		has_older: hasOlder,
+	} satisfies z.infer<typeof sessionActivityResponseSchema>)
+}) as RouteHandler<typeof getSessionActivityRoute, Env>)
+
 // GET /:id/logs/deep - Cursor-paginated log read that mirrors the get_session_logs
 // MCP tool. Distinct from /:id/logs above: this route returns rows in the
 // requested direction (newest_first → id DESC) rather than always ascending.
@@ -1306,6 +1408,10 @@ const getSessionLogsDeepRoute = createRoute({
 			content: { 'application/json': { schema: z.array(sessionLogResponseSchema) } },
 			description: 'Session logs in the requested direction',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is private to the person who started it',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
@@ -1321,6 +1427,9 @@ app.openapi(getSessionLogsDeepRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.before_id !== undefined) conditions.push(lt(sessionLogs.id, query.before_id))
@@ -1379,6 +1488,9 @@ app.get('/:id/logs/stream', async (c) => {
 	const authSession = await loadSessionWithAuth(db, sessionId, workspaceId)
 	if (!authSession) {
 		return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	}
+	if (!(await canReadSession(db, authSession, c.get('actorId'), c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 	}
 
 	// Include 'paused' so a client subscribing to an already-paused session
