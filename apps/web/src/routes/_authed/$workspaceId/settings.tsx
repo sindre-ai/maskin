@@ -40,9 +40,12 @@ function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	// Keychain sits right under Integrations: the two are where access is managed.
+	const at = settingsNav.findIndex((item) => item.label === 'Integrations') + 1
 	const navItems = [
-		...settingsNav,
+		...settingsNav.slice(0, at),
 		keychainNavItem,
+		...settingsNav.slice(at),
 		...(workspace?.enterprise ? [keysNavItem] : []),
 	]
 

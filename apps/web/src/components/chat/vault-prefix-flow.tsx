@@ -258,8 +258,7 @@ export function VaultPrefixFlow({
 					detectedProvider: 'manual',
 					displayName: trimmedName,
 					rawSecret: secret,
-					scopeGrants:
-						grants === 'none' ? [] : [...selected].map((actorId) => ({ kind: 'actor', actorId })),
+					agentIds: grants === 'none' ? [] : [...selected],
 				})
 			} catch (err) {
 				// The field keeps the secret so the user can fix the name and press again.

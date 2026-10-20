@@ -24,6 +24,7 @@ import {
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import accountRoutes from './routes/account'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -44,7 +45,9 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
@@ -391,6 +394,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/admin/linkedin-unipile', adminLinkedinUnipileRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
+	app.route('/api/account', accountRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
@@ -415,6 +419,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsGrantsRoutes)
+	app.route('/api/integrations', integrationsGatewayRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations

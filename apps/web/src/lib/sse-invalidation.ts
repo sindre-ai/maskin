@@ -267,6 +267,11 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		}
+		case 'integration':
+			// A grant, a default, a connect or a disconnect: the integration list, the Keychain page
+			// and every agent's access are all under this key, so they refresh together.
+			invalidate(queryClient, { queryKey: queryKeys.integrations.all(workspaceId) })
+			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
 			break

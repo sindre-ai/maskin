@@ -62,6 +62,10 @@ export const queryKeys = {
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		// Nested under all(), so every invalidation of the integration list (a grant, a connect,
+		// a disconnect, an SSE event) refreshes what each agent can use as well.
+		agentAccess: (workspaceId: string, actorId: string) =>
+			['integrations', workspaceId, 'agent-access', actorId] as const,
 		auditLog: (workspaceId: string, integrationId: string) =>
 			['integrations', workspaceId, integrationId, 'audit-log'] as const,
 		githubLinkable: (workspaceId: string) =>

@@ -15,7 +15,6 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { scopeGrantsOnInsert, scopeGrantsOnReconnect } from '../lib/integrations/default-grants'
 import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
@@ -331,7 +330,6 @@ app.openapi(connectRoute, (async (c) => {
 					}),
 				),
 				...(existing[0].status === CONNECTED_STATUS ? {} : { status: 'pending' as const }),
-				...scopeGrantsOnReconnect(PROVIDER),
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, integrationId))
@@ -351,7 +349,6 @@ app.openapi(connectRoute, (async (c) => {
 						...(nativeReturn ? { native_return: nativeReturn } : {}),
 					}),
 				),
-				scopeGrants: scopeGrantsOnInsert(PROVIDER),
 				createdBy: actorId,
 			})
 			.returning({ id: integrations.id })

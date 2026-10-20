@@ -8,6 +8,22 @@ import { promisify } from 'node:util'
 import { createGzip } from 'node:zlib'
 
 const execFileAsync = promisify(execFileCb)
+
+/** provider → the URL of its own hosted MCP server, for each provider served through the gateway. */
+function gatewayUpstreamUrls(): Map<string, string> {
+	const out = new Map<string, string>()
+	for (const provider of GATEWAY_PROVIDERS) {
+		try {
+			const resolved = getProvider(provider)
+			if (resolved?.config.name !== provider) continue
+			const url = (resolved.config.mcp?.server as { url?: unknown } | undefined)?.url
+			if (typeof url === 'string' && !url.startsWith('$')) out.set(provider, url)
+		} catch {
+			// A provider this build does not register has nothing to rewrite.
+		}
+	}
+	return out
+}
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -21,6 +37,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import {
 	AGENT_PUSH_DIRECTORIES,
 	HUMAN_MESSAGE_STYLE,
@@ -78,6 +95,13 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { buildAccessPreamble } from '../lib/integrations/access-preamble'
+import {
+	type ActorIntegrationAccess,
+	attachesServer,
+	effectiveAccess,
+	listAgentAccess,
+} from '../lib/integrations/agent-access'
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CredentialUndoneError,
@@ -94,6 +118,8 @@ import {
 	stripSessionLevelMcps,
 } from '../lib/integrations/keychain-mcp-guard'
 import { getCredential } from '../lib/integrations/lookup'
+import { dropAlreadyConfigured, linkedInIdentityServer } from '../lib/integrations/mcp-attach'
+import { GATEWAY_PROVIDERS, rewriteMcpServersForGateway } from '../lib/integrations/mcp-gateway'
 import {
 	mcpServersReferenceEnvKey,
 	serverSpecReferencesEnvKey,
@@ -1532,6 +1558,41 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Stops the sandboxes of sessions whose rows were just deleted (workspace purge). stopSession
+	 * cannot be used: it reads the row, which is gone. This reuses the same teardown settleSession
+	 * runs (agent-server /stop RPC for remote sessions, ContainerManager for local ones). Best
+	 * effort and never throws: a failure leaves a sandbox for the idle/wall timeouts to reap.
+	 */
+	async stopSandboxesForPurge(
+		rows: {
+			id: string
+			workspaceId: string
+			containerId: string | null
+			agentServerId: string | null
+		}[],
+	): Promise<void> {
+		for (const r of rows) {
+			try {
+				if (!r.agentServerId) this.stopRequested.add(r.id)
+				await this.settleStopSandbox(
+					{ ...r, actorId: '', status: 'running' } as unknown as SessionSettleRow,
+					{
+						kind: 'stop',
+						classification: 'human_stop',
+						source: 'user-stop',
+						reason: 'workspace deleted',
+					},
+				)
+			} catch (err) {
+				logger.warn('purge: stopping session sandbox failed', {
+					sessionId: r.id,
+					error: String(err),
+				})
+			}
+		}
+	}
+
+	/**
 	 * Copy the container's /agent/ directory to S3 as session-workspaces/{sessionId}.tar.gz
 	 * so continuation sessions can restore from it via sourceSessionId. Works on stopped
 	 * containers (before docker rm). Called non-fatally from handleCompletion.
@@ -2248,9 +2309,13 @@ export class SessionManager extends EventEmitter {
 			sessionConfig.stop_on_result === true
 				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
 				: ''
+		// What the agent may do with each connected integration, told up front so it does
+		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
+		const accessRows = await this.loadAgentAccess(session)
+		const accessPreamble = buildAccessPreamble(accessRows)
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${HUMAN_MESSAGE_STYLE}`
+${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2556,6 +2621,10 @@ ${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		// Keys attached because the agent has access to the integration (not GitHub's per-org
+		// entries), so a duplicate of an entry the agent already carries can be dropped.
+		const attachedKeys = new Set<string>()
+		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
@@ -2590,7 +2659,37 @@ ${HUMAN_MESSAGE_STYLE}`
 				continue
 			}
 			const mcp = resolved.config.mcp
-			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
+			// What this agent may do with the integration. Access is what attaches its tools:
+			// whoever grants it should not also have to open each agent and add the server.
+			const access =
+				accessByIntegration.get(integration.id) ??
+				effectiveAccess(
+					{
+						providerMode: 'registered',
+						defaultAgentAccess: integration.defaultAgentAccess ?? 'read',
+					},
+					null,
+				)
+			const autoInjectServer =
+				mcp?.server &&
+				attachesServer(
+					{ providerMode: 'registered', status: 'active', exposed: true, access },
+					true,
+				)
+					? mcp.server
+					: null
+
+			// LinkedIn has one server per connected identity and no single spec: attach each.
+			if (integration.provider === 'linkedin-unipile' && !mcp?.server) {
+				if (access !== 'none') {
+					for (const cfg of getLinkedInMcpInstancesForIntegration(integration.id)) {
+						const key = instanceSlug(cfg)
+						autoInjectedMcpServers[key] = linkedInIdentityServer(key)
+						attachedKeys.add(key)
+					}
+				}
+				continue
+			}
 			// True when the provider's declared MCP server template references its
 			// own envKey via `${ENV_KEY}` — e.g. PostHog's
 			// `Authorization: Bearer ${POSTHOG_TOKEN}`. Such a server can't
@@ -2643,6 +2742,8 @@ ${HUMAN_MESSAGE_STYLE}`
 			}
 
 			if (integration.provider === 'github') {
+				// No access means no installation token and no MCP entry for this org.
+				if (access === 'none') continue
 				// Unreachable when accessToken is null: the catch above continues on
 				// getValidToken failure for github. Guard for the type checker.
 				if (accessToken === null) continue
@@ -2710,7 +2811,15 @@ ${HUMAN_MESSAGE_STYLE}`
 				const agentUsesToken =
 					mcpServersReferenceEnvKey(agentToolsMcpServers, envVarName) ||
 					mcpServersReferenceEnvKey(sessionConfig.mcps, envVarName)
-				if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
+				// A gateway provider's token never reaches the container: the agent calls it
+				// through Maskin, which holds the token and enforces the agent's access. With
+				// the token in the environment an agent could skip the gate with a plain curl.
+				if (GATEWAY_PROVIDERS.has(integration.provider)) {
+					logger.debug('Gateway provider token withheld from the container', {
+						sessionId: session.id,
+						provider: integration.provider,
+					})
+				} else if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
 					envVars[envVarName] = accessToken
 				} else {
 					logger.debug('Integration token not injected; agent config does not reference it', {
@@ -2722,6 +2831,7 @@ ${HUMAN_MESSAGE_STYLE}`
 			}
 			if (autoInjectServer) {
 				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
+				attachedKeys.add(`integration-${integration.provider}`)
 				logger.info('Auto-injected MCP server for active integration', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,
@@ -2964,8 +3074,24 @@ ${HUMAN_MESSAGE_STYLE}`
 				}
 			}
 		}
-		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
-		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
+		// Entries that point at a gateway provider's own server go through Maskin instead.
+		const gatewayUpstreams = gatewayUpstreamUrls()
+		const gatedAgentToolsMcpServers = rewriteMcpServersForGateway(
+			stripFailedIdentities(agentToolsMcpServers, preflightVerdicts) ?? undefined,
+			gatewayUpstreams,
+		).servers
+		const rewrittenSessionMcpServers =
+			rewriteMcpServersForGateway(
+				stripFailedIdentities(sessionMcpServers, preflightVerdicts),
+				gatewayUpstreams,
+			).servers ?? {}
+		// An integration the agent was granted, and also added by hand, is one server, not two.
+		const gatedSessionMcpServers = dropAlreadyConfigured(rewrittenSessionMcpServers, attachedKeys, [
+			gatedAgentToolsMcpServers,
+			Object.fromEntries(
+				Object.entries(rewrittenSessionMcpServers).filter(([key]) => !attachedKeys.has(key)),
+			),
+		]).servers
 
 		// Stamp the session id onto every Maskin MCP entry so `POST /mcp` can
 		// attribute each tool call to this session (see routes/mcp.ts
@@ -3064,8 +3190,8 @@ ${HUMAN_MESSAGE_STYLE}`
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, whose scope grants name the
-	 * session's actor or the whole workspace. The scope filter runs in SQL so a key
+	 * keys and logins, active or still inside their undo window, that an agent grant names
+	 * for the session's actor. The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
@@ -3073,14 +3199,26 @@ ${HUMAN_MESSAGE_STYLE}`
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
 	 *
-	 * A loop-kind grant matches nothing here: a session carries no loop id today, so a
-	 * loop grant stays fail-closed at launch.
-	 *
 	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
 	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
+	/** The agent's access per integration. Best effort: a failed lookup falls back to each integration's default. */
+	private async loadAgentAccess(
+		session: typeof sessions.$inferSelect,
+	): Promise<ActorIntegrationAccess[]> {
+		try {
+			return await listAgentAccess(this.db, session.workspaceId, session.actorId)
+		} catch (err) {
+			logger.warn('Could not load the agent integration access', {
+				sessionId: session.id,
+				error: err instanceof Error ? err.name : 'unknown',
+			})
+			return []
+		}
+	}
+
 	private async buildKeychainEnv(
 		session: typeof sessions.$inferSelect,
 	): Promise<Record<string, string>> {
@@ -3100,10 +3238,11 @@ ${HUMAN_MESSAGE_STYLE}`
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
 					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
-					or(
-						sql`${integrations.scopeGrants} @> '[{"kind":"workspace"}]'::jsonb`,
-						sql`${integrations.scopeGrants} @> ${JSON.stringify([{ kind: 'actor', actorId: session.actorId }])}::jsonb`,
-					),
+					// Explicit grant only: a Keychain credential has no default access. Written as
+					// literal qualified SQL, not Drizzle column objects: a correlated subquery built
+					// from those renders unqualified (known-pitfalls.md).
+					// An Allow for this one chat counts too, but only for sessions in that conversation.
+					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId}) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
 				),
 			)
 			.orderBy(asc(integrations.createdAt))
@@ -3134,6 +3273,7 @@ ${HUMAN_MESSAGE_STYLE}`
 			try {
 				const credential = await getCredential(this.db, session.workspaceId, row.id, {
 					requestingActorId: session.actorId,
+					conversationId: session.conversationId,
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})

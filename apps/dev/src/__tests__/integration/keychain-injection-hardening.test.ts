@@ -16,7 +16,7 @@ import { TokenManager } from '../../lib/integrations/oauth/token-manager'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import { logger } from '../../lib/logger'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { grantedActorIds, insertActor, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // The hardening half of the infra-token delta: a session that was given a vaulted key
@@ -86,16 +86,13 @@ async function setup(sessionConfig: Record<string, unknown> = {}) {
 		{ workspaceId: ws.id, actorId: granted.id, role: 'member' },
 		{ workspaceId: ws.id, actorId: ungranted.id, role: 'member' },
 	])
-	const { integrationId, scopeGrants } = await createByoApiKey(db, kms, {
+	const { integrationId } = await createByoApiKey(db, kms, {
 		workspaceId: ws.id,
 		actorId: human,
 		displayName: 'Canary',
 		rawSecret: CANARY,
+		agentIds: [granted.id],
 	})
-	await db
-		.update(integrations)
-		.set({ scopeGrants: [{ kind: 'actor', actorId: granted.id }] })
-		.where(eq(integrations.id, integrationId))
 	const launch = async (actorId: string) => {
 		const s = await insertSession(db, ws.id, actorId, human, {
 			status: 'pending',
@@ -110,7 +107,7 @@ async function setup(sessionConfig: Record<string, unknown> = {}) {
 			await manager.stop()
 		}
 	}
-	return { ws, granted, ungranted, scopeGrants, launch }
+	return { ws, granted, ungranted, integrationId, launch }
 }
 
 /** Runs the container's setup_mcps with the launch env and returns the config it wrote. */
@@ -197,14 +194,9 @@ describe('Keychain reference resolution (Integration)', () => {
 		expect(JSON.stringify(spy.mock.calls)).not.toContain(CANARY)
 	})
 
-	it('gives the canary key no workspace-wide grant', async () => {
+	it('grants the canary key to the one agent and nobody else', async () => {
 		const s = await setup()
-		expect(s.scopeGrants.some((g) => g.kind === 'workspace')).toBe(false)
-		const [row] = await db
-			.select({ grants: integrations.scopeGrants })
-			.from(integrations)
-			.where(eq(integrations.workspaceId, s.ws.id))
-		expect(JSON.stringify(row?.grants)).not.toContain('workspace')
+		expect(await grantedActorIds(db, s.integrationId)).toEqual([s.granted.id])
 	})
 })
 

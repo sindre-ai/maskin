@@ -1,4 +1,4 @@
-import { INTEGRATION_STATUS_ACTIVE, type ScopeGrant, integrations } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { __resetLinkedInMcpRegistryForTests } from '@maskin/mcp/linkedin'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -28,7 +28,6 @@ import { db, getTestActorId, sql } from './global-setup'
  */
 
 const ACCOUNT_ID = 'acc-webhook-shared'
-const WORKSPACE_GRANT: ScopeGrant[] = [{ kind: 'workspace' }]
 
 beforeAll(() => {
 	process.env.INTEGRATION_ENCRYPTION_KEY = 'a'.repeat(64)
@@ -56,7 +55,6 @@ async function seedRow(
 			credentials: opts.credentials ?? encrypt(JSON.stringify({ account_id: ACCOUNT_ID })),
 			externalId: ACCOUNT_ID,
 			unipileAccSlug: opts.unipileAccSlug,
-			scopeGrants: WORKSPACE_GRANT,
 			actorId,
 			createdBy: actorId,
 		})

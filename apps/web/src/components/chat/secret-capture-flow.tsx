@@ -212,8 +212,7 @@ export function SecretCaptureFlow({
 					detectedProvider: currentProvider,
 					displayName,
 					rawSecret: currentTarget.value,
-					scopeGrants:
-						grants === 'none' ? [] : [...selected].map((actorId) => ({ kind: 'actor', actorId })),
+					agentIds: grants === 'none' ? [] : [...selected],
 				})
 				queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 				const marker = redactionMarker(currentTarget.value, displayName)
