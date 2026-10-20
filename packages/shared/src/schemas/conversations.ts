@@ -234,6 +234,43 @@ export const draftTaskStateSchema = z.object({
 	approved_at: z.string().datetime().optional(),
 })
 
+/** What an agent can ask the human to put into the Keychain from a chat card. */
+export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
+export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
+
+/**
+ * An agent's request for a credential, shown as a Keychain card in the chat instead of
+ * the agent asking for it in plain text. Never accepted from a client. Holds no secret
+ * and never can: the human types the value into the card, which sends it straight to
+ * the vault, so it never passes through the agent or this message.
+ */
+export const messageKeychainRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** A name for the credential the card pre-fills, e.g. "e-conomic". */
+	suggested_name: z.string().min(1).max(80).optional(),
+	/** One line on what the credential is for, shown on the card. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
+/**
+ * An agent's request to use a credential that already exists in the Keychain, shown as a
+ * card with Allow / Not now. Never accepted from a client. Holds no secret: the card only
+ * names the credential, and allowing it grants the agent access on the server.
+ */
+export const messageKeychainAccessRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** The credential being asked for. */
+	integration_id: z.string().uuid(),
+	/** Its name as the person knows it, e.g. "Stripe". */
+	credential_name: z.string().min(1).max(80),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** One line on what the agent needs it for. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -260,6 +297,10 @@ export const messageMetadataSchema = z.object({
 	integration_connect: messageIntegrationConnectSchema.optional(),
 	/** Backend-owned: an agent's draft of an outbound text, shown as an editable card. */
 	draft: messageDraftSchema.optional(),
+	/** Backend-owned: an agent's request for a credential, shown as a Keychain card. */
+	keychain_request: messageKeychainRequestSchema.optional(),
+	/** Backend-owned: an agent's request to use an existing credential, shown as a card. */
+	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 })
@@ -280,6 +321,8 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
 		draft: _draft,
+		keychain_request: _keychainRequest,
+		keychain_access_request: _keychainAccessRequest,
 		...rest
 	} = metadata
 	return rest as T
@@ -324,6 +367,11 @@ export const postMessageSchema = z.object({
 	// config.conversation — see conversations route for the ownership check.
 	// Ignored (silently) otherwise, e.g. for human-authored messages.
 	session_id: z.string().uuid().optional(),
+	// Post as a reply in the thread rooted at this message. The root must be a
+	// top-level message of the same conversation (threads do not nest).
+	thread_root_id: z.number().int().positive().optional(),
+	// With thread_root_id: also show the reply in the main timeline.
+	also_in_channel: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({
@@ -337,6 +385,16 @@ export const messageQuerySchema = z.object({
 	before_id: z.coerce.number().int().positive().optional(),
 	after_id: z.coerce.number().int().positive().optional(),
 	limit: z.coerce.number().int().min(1).max(200).default(50),
+	// Return only the replies of this thread (newest-first like the main list).
+	thread_root_id: z.coerce.number().int().positive().optional(),
+})
+
+export const threadListQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).default(30),
+})
+
+export const markThreadReadSchema = z.object({
+	last_read_message_id: z.number().int().positive(),
 })
 
 export const updateConversationParticipantStateSchema = z
@@ -465,6 +523,44 @@ export function draftKindName(kind: string): string {
  */
 export function formatIntegrationConnectAsMarkdown(displayName: string): string {
 	return `Connect **${displayName}** to continue — use the Connect card below, or go to Settings → Integrations.`
+}
+
+/** The `keychain-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainCardSchema = z.object({
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	suggested_name: z.string().trim().min(1).max(80).optional(),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/**
+ * The plain-markdown rendering of a keychain card, used as the message's `content` so
+ * every reader that isn't the chat UI still says what is needed.
+ */
+export function formatKeychainRequestAsMarkdown(
+	kind: KeychainRequestKind,
+	suggestedName?: string,
+	hint?: string,
+): string {
+	const what = kind === 'login' ? 'a login (username and password)' : 'an API key'
+	const named = suggestedName ? ` for **${suggestedName}**` : ''
+	const why = hint ? ` ${hint}` : ''
+	return `I need ${what}${named}.${why} Add it with the Keychain card below, or in Settings → Keychain. It goes straight to your vault, so I never see it.`
+}
+
+/** The `keychain-access-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainAccessCardSchema = z.object({
+	/** The credential's name, as listed by `list_keychain_credentials`. */
+	credential_name: z.string().trim().min(1).max(80),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/** The plain-markdown rendering of an access card, for every reader that isn't the chat UI. */
+export function formatKeychainAccessRequestAsMarkdown(
+	credentialName: string,
+	hint?: string,
+): string {
+	const why = hint ? ` ${hint}` : ''
+	return `I'd like to use **${credentialName}** from your Keychain.${why} Allow it with the card below, or in Settings → Keychain. I never see the secret itself.`
 }
 
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */

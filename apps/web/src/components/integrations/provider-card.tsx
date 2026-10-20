@@ -14,6 +14,8 @@ interface ProviderCardProps {
 	notes?: ReactNode
 	/** Buttons / inputs on the right. */
 	actions: ReactNode
+	/** Full-width section under the row, e.g. which agents may use the integration. */
+	footer?: ReactNode
 }
 
 /**
@@ -28,6 +30,7 @@ export function ProviderCard({
 	subtitleTitle,
 	notes,
 	actions,
+	footer,
 }: ProviderCardProps) {
 	return (
 		<div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-4">
@@ -51,6 +54,7 @@ export function ProviderCard({
 				{notes}
 			</div>
 			{actions}
+			{footer && <div className="basis-full">{footer}</div>}
 		</div>
 	)
 }

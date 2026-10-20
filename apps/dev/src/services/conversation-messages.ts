@@ -13,6 +13,10 @@ export type InsertConversationMessageArgs = {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	kind?: 'message' | 'system'
+	/** Reply in the thread rooted at this message id; null/absent for a top-level message. */
+	threadRootId?: number | null
+	/** With threadRootId: also show the reply in the main timeline. */
+	threadAlsoInChannel?: boolean
 }
 
 export type InsertedConversationMessage = typeof messages.$inferSelect
@@ -47,6 +51,8 @@ export async function insertConversationMessage(
 			metadata: args.metadata,
 			sessionId: args.sessionId,
 			...(args.kind ? { kind: args.kind } : {}),
+			...(args.threadRootId ? { threadRootId: args.threadRootId } : {}),
+			...(args.threadRootId && args.threadAlsoInChannel ? { threadAlsoInChannel: true } : {}),
 		})
 		.onConflictDoNothing()
 		.returning()
@@ -64,7 +70,11 @@ export async function insertConversationMessage(
 		action: 'message_posted',
 		entityType: 'conversation',
 		entityId: args.conversationId,
-		data: { message_id: created.id, author_actor_id: args.actorId },
+		data: {
+			message_id: created.id,
+			author_actor_id: args.actorId,
+			...(args.threadRootId ? { thread_root_id: args.threadRootId } : {}),
+		},
 	})
 
 	return created

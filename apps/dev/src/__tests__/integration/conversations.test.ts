@@ -8,7 +8,12 @@ import {
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import {
+	CREDENTIAL_NAME_MAX_LENGTH,
+	checkCredentialName,
+	manualRedactionMarker,
+} from '@maskin/shared'
+import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
@@ -1080,6 +1085,192 @@ describe('Conversations Integration', () => {
 				.from(events)
 				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_posted')))
 			expect(eventRows).toHaveLength(1)
+		})
+	})
+
+	describe('raw-secret backstop', () => {
+		// Obviously fake, assembled at runtime so no token-shaped literal sits in the repo.
+		const fakeToken = `ghp_${'a'.repeat(36)}`
+
+		async function startConversation(app: ReturnType<typeof createConversationsApp>['app']) {
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Backstop', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			return (await created.json()) as { id: string }
+		}
+
+		const post = (
+			app: ReturnType<typeof createConversationsApp>['app'],
+			conversationId: string,
+			content: string,
+		) =>
+			app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversationId}/messages`,
+					{ content },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+		it('returns 400 RAW_SECRET_DETECTED, stores no message and records a bypass event without the value', async () => {
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+
+			const res = await post(app, conversation.id, `use this key ${fakeToken} please`)
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as { error: { code: string; message: string } }
+			expect(body.error.code).toBe('RAW_SECRET_DETECTED')
+			expect(JSON.stringify(body)).not.toContain(fakeToken)
+
+			const stored = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored).toHaveLength(0)
+			// Nothing was handed to an agent either.
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+			expect(eventRows[0]?.data).toMatchObject({ pattern_id: 'github', caller_type: 'human' })
+			expect(JSON.stringify(eventRows)).not.toContain(fakeToken)
+		})
+
+		it('refuses an edit that adds a secret, keeps the stored text and records a bypass event', async () => {
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const sent = await post(app, conversation.id, 'a clean message')
+			const { id: messageId } = (await sent.json()) as { id: number }
+			sessionManager.writeInput.mockClear()
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${messageId}`,
+					{ content: `now with ${fakeToken}` },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+				'RAW_SECRET_DETECTED',
+			)
+			const [stored] = await db.select().from(messages).where(eq(messages.id, messageId))
+			expect(stored?.content).toBe('a clean message')
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+			expect(JSON.stringify(eventRows)).not.toContain(fakeToken)
+		})
+
+		it('refuses a secret in the initial message and creates no conversation', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Seeded', participant_actor_ids: [], initial_message: fakeToken },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+				'RAW_SECRET_DETECTED',
+			)
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, workspaceId),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+		})
+
+		it('applies to agent callers too', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const human = createConversationsApp(ownerId)
+			const conversation = await startConversation(human.app)
+			await db.execute(
+				sql`INSERT INTO conversation_participants (conversation_id, actor_id) VALUES (${conversation.id}, ${agent.id})`,
+			)
+			const { app } = createConversationsApp(agent.id, 'agent')
+			const res = await post(app, conversation.id, fakeToken)
+			expect(res.status).toBe(400)
+		})
+
+		it('lets the redaction marker through', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const res = await post(app, conversation.id, 'here it is ghp_[REDACTED · vaulted as NAME]')
+			expect(res.status).toBe(201)
+		})
+
+		it('lets the manual redaction marker through for names built from every provider prefix', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const prefixes = [
+				'cfut_',
+				'cfat_',
+				'cfk_',
+				'ghp_',
+				'github_pat_',
+				'sk_live_',
+				'sk_test_',
+				'xoxb-',
+				'xoxp-',
+				'sk-',
+				'sk-proj-',
+				'sk-svcacct-',
+			]
+			for (const prefix of prefixes) {
+				// The bare prefix, and the longest name the name rule still lets through.
+				const names = [prefix]
+				for (let n = 1; n <= CREDENTIAL_NAME_MAX_LENGTH - prefix.length; n++) {
+					const name = `${prefix}${'a'.repeat(n)}`
+					if (checkCredentialName(name) === null) names[1] = name
+				}
+				for (const name of names) {
+					expect(checkCredentialName(name)).toBeNull()
+					const res = await post(app, conversation.id, manualRedactionMarker(name))
+					expect(res.status).toBe(201)
+				}
+			}
+		})
+
+		it('lets ordinary messages and amber-only blobs through', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			expect((await post(app, conversation.id, 'hello there')).status).toBe(201)
+			expect(
+				(await post(app, conversation.id, `commit ${'0123456789abcdef'.repeat(3)}`)).status,
+			).toBe(201)
 		})
 	})
 

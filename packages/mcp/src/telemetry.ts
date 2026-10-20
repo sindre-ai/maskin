@@ -439,6 +439,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
 	post_draft: 'draft_post',
+	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
 	stop_session: 'session_stop',

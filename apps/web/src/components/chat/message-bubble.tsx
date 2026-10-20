@@ -19,6 +19,8 @@ import { DraftCard } from './draft-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
+import { KeychainAccessRequestCard } from './keychain-access-request-card'
+import { KeychainRequestCard } from './keychain-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -324,6 +326,27 @@ export function MessageBubble({
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
 						provider={message.metadata.integration_connect.provider}
+					/>
+				) : null}
+				{/* An agent's request_keychain_credential call, surfaced as a Keychain card.
+				    The person types the credential into the card; it never reaches the agent. */}
+				{message.metadata?.keychain_request ? (
+					<KeychainRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_request}
+					/>
+				) : null}
+				{/* An agent's request_keychain_access call: Allow / Not now for a credential that
+				    already exists. Allowing grants the agent access on the server. */}
+				{message.metadata?.keychain_access_request ? (
+					<KeychainAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_access_request}
 					/>
 				) : null}
 				{/* An agent's draft of an email or post, shown as an editable card. Like

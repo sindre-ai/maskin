@@ -749,7 +749,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
+			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. For an agent, `access` lists what it can use: each integration with its level (`none`, `read`, `write`, `read_write`), whether the level is the agent's own (`grant`) or the integration's default, and whether its MCP server is attached, plus each saved Keychain credential and whether it has access. It is the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -1726,7 +1726,7 @@ export const tools = {
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description:
-			'List integrations connected to the workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List integrations connected to the workspace. Each row includes `defaultAgentAccess` (what agents without their own entry get) and `agentGrants` (the agents with their own access and its level), the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			limit: z
@@ -1820,6 +1820,86 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe('Hard character limit of the channel. The card blocks approval above it.'),
+		}),
+	},
+	request_keychain_credential: {
+		description:
+			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with the credential in your environment: an API key is the env var `KEYCHAIN_BYO_APIKEY_<NAME>`, a login is `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `KEYCHAIN_BYO_LOGIN_<NAME>_PASSWORD`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			kind: z
+				.enum(['api_key', 'login'])
+				.describe(
+					'"api_key" for a single secret (API key, token). "login" for a username and password.',
+				),
+			suggested_name: z
+				.string()
+				.min(1)
+				.max(80)
+				.optional()
+				.describe(
+					'A short name the card pre-fills for the credential, naming the service, e.g. "e-conomic". The user can change it.',
+				),
+			hint: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To log in and read the latest invoices."',
+				),
+		}),
+	},
+	list_keychain_credentials: {
+		description:
+			'List the credentials in the workspace Keychain by name, with their kind (api_key or login) and whether you already have access to each. Never returns a value. Use it before asking for a credential: if one with the right name exists, ask to use it with `request_keychain_access` instead of asking the user to add it again with `request_keychain_credential`. A credential you have access to is already in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, or `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `_PASSWORD`, where <NAME> is the name in capitals with other characters as underscores. Only works inside an agent session.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	request_keychain_access: {
+		description:
+			'Ask the user to let you use a credential that already exists in their Keychain, by showing an Allow / Not now card in the chat. Use it when `list_keychain_credentials` shows one you need and `has_access` is false. Use `request_keychain_credential` only when no such credential exists yet. You never see the value. The user chooses how long it lasts: for this chat only, or always. If they allow it you are restarted with it in your environment; if you are asked again in another chat, ask again with this tool. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			credential_name: z
+				.string()
+				.min(1)
+				.max(80)
+				.describe('The credential name exactly as listed by list_keychain_credentials.'),
+			hint: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To read the latest invoices."',
+				),
+		}),
+	},
+	update_integration_access: {
+		description:
+			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (read & write), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			integration_id: z
+				.string()
+				.uuid()
+				.describe('The integration or saved credential, from list_integrations.'),
+			default_agent_access: z
+				.enum(['read', 'none'])
+				.optional()
+				.describe('What agents without their own entry get. Not allowed for a saved key or login.'),
+			agent_access: z
+				.array(
+					z.object({
+						agent_id: z.string().uuid(),
+						access: z.enum(['none', 'read', 'read_write', 'default']),
+					}),
+				)
+				.max(50)
+				.optional()
+				.describe('Per-agent access. "default" removes the agent own entry.'),
 		}),
 	},
 	disconnect_integration: {

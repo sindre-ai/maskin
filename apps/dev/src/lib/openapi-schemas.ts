@@ -232,6 +232,13 @@ export const traverseGraphResponseSchema = z.object({
 	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
+export const agentGrantAccessSchema = z.enum(['none', 'read', 'read_write'])
+
+export const agentGrantSchema = z.object({
+	actorId: z.string().uuid(),
+	access: agentGrantAccessSchema,
+})
+
 export const integrationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -255,6 +262,22 @@ export const integrationResponseSchema = z.object({
 	// and reconnecting is what fixes it. Scope names only — never the token.
 	missingScopes: z.array(z.string()).optional(),
 	needsReconnect: z.boolean().optional(),
+	// Keychain. Where the credential came from, and for source chat_capture the
+	// session the key was pasted into. Never the value or the wrapped data key.
+	source: z.string().optional(),
+	originSessionId: z.string().uuid().nullable().optional(),
+	// Keychain. How the credential is held, its display name (null for the
+	// registered providers) and who may read it. Never the value.
+	providerMode: z.enum(['registered', 'byo_apikey', 'byo_login', 'byo_oauth']).optional(),
+	displayName: z.string().nullable().optional(),
+	// Agent grants. defaultAgentAccess is what an agent with no row of its own gets;
+	// agentGrants are the explicit rows. Keychain credentials are explicit-only.
+	defaultAgentAccess: z.enum(['read', 'none']).optional(),
+	agentGrants: z.array(agentGrantSchema).optional(),
+	// Saved credentials shared with an agent for one chat only ("Allow in this chat").
+	chatGrants: z
+		.array(z.object({ actorId: z.string().uuid(), conversationId: z.string().uuid() }))
+		.optional(),
 })
 
 export const providerEventSchema = z.object({
@@ -365,6 +388,36 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	/** Root message id when this is a thread reply; null for top-level messages. */
+	threadRootId: z.number().nullable(),
+	/** A thread reply also shown in the main timeline. */
+	threadAlsoInChannel: z.boolean(),
+})
+
+export const threadParticipantSchema = z.object({
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actorType: z.string(),
+})
+
+export const threadSummarySchema = z.object({
+	replyCount: z.number(),
+	lastReplyId: z.number(),
+	lastReplyAt: z.string().nullable(),
+	unreadCount: z.number(),
+	participants: z.array(threadParticipantSchema),
+})
+
+/**
+ * One row of the caller's Threads list: the root, its summary and the newest
+ * reply, with the conversation's title so the row can name where it lives.
+ */
+export const threadListItemSchema = z.object({
+	conversationId: z.string().uuid(),
+	conversationTitle: z.string(),
+	root: messageResponseSchema,
+	thread: threadSummarySchema,
+	lastReply: messageResponseSchema.nullable(),
 })
 
 // POST /conversations/:id/messages only: best-effort warning when some
@@ -401,6 +454,8 @@ export const spawnedSessionResponseSchema = z.object({
  */
 export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
 	spawned_sessions: z.array(spawnedSessionResponseSchema),
+	/** Present on a thread root that has replies. */
+	thread: threadSummarySchema.nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

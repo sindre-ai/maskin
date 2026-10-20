@@ -258,6 +258,51 @@ describe('scrubEvent (beforeSend)', () => {
 	})
 })
 
+describe('Keychain credential fields', () => {
+	// Obviously fake: ciphertext-shaped strings, not real material.
+	const FAKE_CIPHERTEXT = 'fakeiv:fakeauthtag:fakeciphertext'
+	const FAKE_WRAPPED_DEK = 'ZmFrZS13cmFwcGVkLWRlaw=='
+
+	it('scrubDeep replaces credentials and dek_ciphertext wherever they sit', () => {
+		const out = scrubDeep({
+			integration: { id: 'i-1', credentials: FAKE_CIPHERTEXT, dek_ciphertext: FAKE_WRAPPED_DEK },
+			rows: [{ dekCiphertext: FAKE_WRAPPED_DEK, rawSecret: 'fake-raw-secret', provider: 'slack' }],
+		}) as { integration: Record<string, unknown>; rows: Array<Record<string, unknown>> }
+		expect(out.integration).toEqual({
+			id: 'i-1',
+			credentials: '[redacted]',
+			dek_ciphertext: '[redacted]',
+		})
+		expect(out.rows[0]).toEqual({
+			dekCiphertext: '[redacted]',
+			rawSecret: '[redacted]',
+			provider: 'slack',
+		})
+	})
+
+	it('scrubEvent strips them from extra, contexts, request body and breadcrumb data', () => {
+		const event = {
+			extra: { row: { credentials: FAKE_CIPHERTEXT } },
+			contexts: { integration: { dek_ciphertext: FAKE_WRAPPED_DEK } },
+			request: { url: 'https://example.test', data: { credentials: FAKE_CIPHERTEXT } },
+			breadcrumbs: [{ category: 'query', data: { dek_ciphertext: FAKE_WRAPPED_DEK } }],
+		} as unknown as ErrorEvent
+		const text = JSON.stringify(scrubEvent(event))
+		expect(text).not.toContain(FAKE_CIPHERTEXT)
+		expect(text).not.toContain(FAKE_WRAPPED_DEK)
+		expect(text).toContain('https://example.test')
+	})
+
+	it('scrubLog strips them from attributes', () => {
+		const log = {
+			level: 'info',
+			message: 'row',
+			attributes: { credentials: FAKE_CIPHERTEXT },
+		} as unknown as Log
+		expect(JSON.stringify(scrubLog(log))).not.toContain(FAKE_CIPHERTEXT)
+	})
+})
+
 describe('drizzle-orm message format (canary)', () => {
 	it('still builds the message that rule 1 matches, so a drizzle upgrade fails loudly', () => {
 		const err = new DrizzleQueryError(SQL, [FAKE_HASH, FAKE_TOKEN], new Error('driver'))
