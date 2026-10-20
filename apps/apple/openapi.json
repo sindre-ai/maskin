@@ -26091,6 +26091,35 @@
 												"minItems": 2,
 												"maxItems": 3,
 												"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+											},
+											"draft": {
+												"type": "object",
+												"properties": {
+													"object_id": {
+														"type": "string",
+														"format": "uuid",
+														"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+													},
+													"label": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 30,
+														"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+													},
+													"to": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300,
+														"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+													},
+													"body": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 20000,
+														"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+													}
+												},
+												"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
 											}
 										},
 										"required": [
@@ -26099,7 +26128,7 @@
 											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -27009,6 +27038,416 @@
 				}
 			}
 		},
+		"/api/conversations/threads": {
+			"get": {
+				"tags": [
+					"Conversations"
+				],
+				"summary": "List threads the caller started or replied in, most recently active first",
+				"parameters": [
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 100,
+							"default": 30
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Threads",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"threads": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"conversationId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"conversationTitle": {
+														"type": "string"
+													},
+													"root": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "number"
+															},
+															"conversationId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"actorId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"actorName": {
+																"type": "string"
+															},
+															"actorType": {
+																"type": "string"
+															},
+															"kind": {
+																"type": "string"
+															},
+															"content": {
+																"type": "string"
+															},
+															"metadata": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"additionalProperties": {}
+															},
+															"sessionId": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"createdAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"editedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"threadRootId": {
+																"type": [
+																	"number",
+																	"null"
+																]
+															},
+															"threadAlsoInChannel": {
+																"type": "boolean"
+															}
+														},
+														"required": [
+															"id",
+															"conversationId",
+															"actorId",
+															"actorName",
+															"actorType",
+															"kind",
+															"content",
+															"metadata",
+															"sessionId",
+															"createdAt",
+															"editedAt",
+															"threadRootId",
+															"threadAlsoInChannel"
+														]
+													},
+													"thread": {
+														"type": "object",
+														"properties": {
+															"replyCount": {
+																"type": "number"
+															},
+															"lastReplyId": {
+																"type": "number"
+															},
+															"lastReplyAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"unreadCount": {
+																"type": "number"
+															},
+															"participants": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"actorId": {
+																			"type": "string",
+																			"format": "uuid"
+																		},
+																		"actorName": {
+																			"type": "string"
+																		},
+																		"actorType": {
+																			"type": "string"
+																		}
+																	},
+																	"required": [
+																		"actorId",
+																		"actorName",
+																		"actorType"
+																	]
+																}
+															}
+														},
+														"required": [
+															"replyCount",
+															"lastReplyId",
+															"lastReplyAt",
+															"unreadCount",
+															"participants"
+														]
+													},
+													"lastReply": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"id": {
+																"type": "number"
+															},
+															"conversationId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"actorId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"actorName": {
+																"type": "string"
+															},
+															"actorType": {
+																"type": "string"
+															},
+															"kind": {
+																"type": "string"
+															},
+															"content": {
+																"type": "string"
+															},
+															"metadata": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"additionalProperties": {}
+															},
+															"sessionId": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"createdAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"editedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"threadRootId": {
+																"type": [
+																	"number",
+																	"null"
+																]
+															},
+															"threadAlsoInChannel": {
+																"type": "boolean"
+															}
+														},
+														"required": [
+															"id",
+															"conversationId",
+															"actorId",
+															"actorName",
+															"actorType",
+															"kind",
+															"content",
+															"metadata",
+															"sessionId",
+															"createdAt",
+															"editedAt",
+															"threadRootId",
+															"threadAlsoInChannel"
+														]
+													}
+												},
+												"required": [
+													"conversationId",
+													"conversationTitle",
+													"root",
+													"thread",
+													"lastReply"
+												]
+											}
+										}
+									},
+									"required": [
+										"threads"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/conversations/{id}/messages/{messageId}/thread/read": {
+			"put": {
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Mark a thread read up to a reply (advance-only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"last_read_message_id": {
+										"type": "integer",
+										"exclusiveMinimum": 0
+									}
+								},
+								"required": [
+									"last_read_message_id"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Cursor after the update",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"last_read_message_id": {
+											"type": "number"
+										}
+									},
+									"required": [
+										"last_read_message_id"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/conversations/{id}": {
 			"get": {
 				"tags": [
@@ -27772,6 +28211,15 @@
 					},
 					{
 						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "thread_root_id",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "string",
 							"format": "uuid"
 						},
@@ -27841,6 +28289,15 @@
 															"string",
 															"null"
 														]
+													},
+													"threadRootId": {
+														"type": [
+															"number",
+															"null"
+														]
+													},
+													"threadAlsoInChannel": {
+														"type": "boolean"
 													},
 													"spawned_sessions": {
 														"type": "array",
@@ -27940,6 +28397,101 @@
 																"awaiting"
 															]
 														}
+													},
+													"reactions": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"emoji": {
+																	"type": "string"
+																},
+																"count": {
+																	"type": "number"
+																},
+																"reactedByMe": {
+																	"type": "boolean"
+																},
+																"actors": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"actorId": {
+																				"type": "string",
+																				"format": "uuid"
+																			},
+																			"actorName": {
+																				"type": "string"
+																			}
+																		},
+																		"required": [
+																			"actorId",
+																			"actorName"
+																		]
+																	}
+																}
+															},
+															"required": [
+																"emoji",
+																"count",
+																"reactedByMe",
+																"actors"
+															]
+														}
+													},
+													"thread": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"replyCount": {
+																"type": "number"
+															},
+															"lastReplyId": {
+																"type": "number"
+															},
+															"lastReplyAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"unreadCount": {
+																"type": "number"
+															},
+															"participants": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"actorId": {
+																			"type": "string",
+																			"format": "uuid"
+																		},
+																		"actorName": {
+																			"type": "string"
+																		},
+																		"actorType": {
+																			"type": "string"
+																		}
+																	},
+																	"required": [
+																		"actorId",
+																		"actorName",
+																		"actorType"
+																	]
+																}
+															}
+														},
+														"required": [
+															"replyCount",
+															"lastReplyId",
+															"lastReplyAt",
+															"unreadCount",
+															"participants"
+														]
 													}
 												},
 												"required": [
@@ -27954,7 +28506,11 @@
 													"sessionId",
 													"createdAt",
 													"editedAt",
-													"spawned_sessions"
+													"threadRootId",
+													"threadAlsoInChannel",
+													"spawned_sessions",
+													"reactions",
+													"thread"
 												]
 											}
 										},
@@ -28497,6 +29053,13 @@
 									"session_id": {
 										"type": "string",
 										"format": "uuid"
+									},
+									"thread_root_id": {
+										"type": "integer",
+										"exclusiveMinimum": 0
+									},
+									"also_in_channel": {
+										"type": "boolean"
 									}
 								},
 								"required": [
@@ -28562,6 +29125,15 @@
 												"string",
 												"null"
 											]
+										},
+										"threadRootId": {
+											"type": [
+												"number",
+												"null"
+											]
+										},
+										"threadAlsoInChannel": {
+											"type": "boolean"
 										}
 									},
 									"required": [
@@ -28575,7 +29147,9 @@
 										"metadata",
 										"sessionId",
 										"createdAt",
-										"editedAt"
+										"editedAt",
+										"threadRootId",
+										"threadAlsoInChannel"
 									]
 								}
 							}
@@ -28752,6 +29326,15 @@
 												"string",
 												"null"
 											]
+										},
+										"threadRootId": {
+											"type": [
+												"number",
+												"null"
+											]
+										},
+										"threadAlsoInChannel": {
+											"type": "boolean"
 										}
 									},
 									"required": [
@@ -28765,7 +29348,9 @@
 										"metadata",
 										"sessionId",
 										"createdAt",
-										"editedAt"
+										"editedAt",
+										"threadRootId",
+										"threadAlsoInChannel"
 									]
 								}
 							}
@@ -28827,6 +29412,233 @@
 								}
 							}
 						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/conversations/{id}/messages/{messageId}/reactions": {
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "React to a message with an emoji",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"emoji": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 16
+									}
+								},
+								"required": [
+									"emoji"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"204": {
+						"description": "Reaction recorded"
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Remove your emoji reaction from a message",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 16
+						},
+						"required": true,
+						"name": "emoji",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"204": {
+						"description": "Reaction removed (or was not there)"
 					},
 					"404": {
 						"description": "Not found",
@@ -36536,6 +37348,35 @@
 																		"minItems": 2,
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+																	},
+																	"draft": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid",
+																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 30,
+																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																			},
+																			"to": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 300,
+																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																			},
+																			"body": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 20000,
+																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																			}
+																		},
+																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
 																	}
 																},
 																"required": [
@@ -36544,7 +37385,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
