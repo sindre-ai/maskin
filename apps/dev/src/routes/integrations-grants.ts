@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database, Transaction } from '@maskin/db'
-import { agentGrants, integrations } from '@maskin/db/schema'
+import { agentGrants, integrations, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -12,6 +12,7 @@ import {
 	upsertAgentGrant,
 } from '../lib/integrations/agent-grants'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { logger } from '../lib/logger'
 import {
 	agentGrantAccessSchema,
 	agentGrantSchema,
@@ -20,12 +21,16 @@ import {
 } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
+import { relaunchChatSession } from '../services/chat-relaunch'
+import type { SessionManager } from '../services/session-manager'
+
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
 		workspaceRole?: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -519,5 +524,126 @@ app.openapi(putDefaultRoute, (async (c) => {
 	}
 	return c.json({ defaultAgentAccess }, 200)
 }) as RouteHandler<typeof putDefaultRoute, Env>)
+
+// ── POST /api/integrations/:id/allow-from-chat ───────────────────────────
+
+const allowFromChatRoute = createRoute({
+	method: 'post',
+	path: '/{id}/allow-from-chat',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Let the agent that asked in a chat use this saved credential (humans only)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParams,
+		body: {
+			content: {
+				'application/json': { schema: z.object({ sessionId: z.string().uuid() }).strict() },
+			},
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Granted. relaunch says whether the agent was restarted to pick it up',
+			content: {
+				'application/json': {
+					schema: z.object({
+						actorId: z.string().uuid(),
+						relaunch: z.enum(['stopped', 'failed']),
+					}),
+				},
+			},
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(allowFromChatRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+	const { sessionId } = c.req.valid('json')
+
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can change agent access'), 403)
+	}
+
+	// The agent is the one whose session asked: the card cannot name anyone else.
+	const [session] = await db
+		.select({ actorId: sessions.actorId })
+		.from(sessions)
+		.where(and(eq(sessions.id, sessionId), eq(sessions.workspaceId, workspaceId)))
+		.limit(1)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const outcome = await db.transaction(async (tx) => {
+		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
+		if (!target.ok) return target.reason
+		if (!isKeychainMode(target.providerMode as never)) return 'not_keychain' as const
+		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [session.actorId]))) {
+			return 'outside' as const
+		}
+		const previous = await upsertAgentGrant(tx, {
+			workspaceId,
+			integrationId: id,
+			actorId: session.actorId,
+			access: 'read_write',
+			createdBy: callerId,
+		})
+		await insertCredentialAccessLog(tx, {
+			workspaceId,
+			integrationId: id,
+			actorId: callerId,
+			action: 'scope_changed',
+			source: 'chat_card',
+			requestId: `grant-change:${id}:${randomUUID()}`,
+		})
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: {
+				change: 'agent_grant',
+				provider: target.provider,
+				agent_id: session.actorId,
+				access_before: previous,
+				access_after: 'read_write',
+				via: 'chat_card',
+			},
+		})
+		return 'saved' as const
+	})
+
+	if (outcome === 'not_keychain') {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Only a saved key or login can be shared from a chat'),
+			400,
+		)
+	}
+	if (outcome !== 'saved') {
+		const f = failure(outcome)
+		return c.json(f.error, f.status)
+	}
+
+	// The running session has no credential in its environment: stop it, and the next
+	// message starts a fresh one that does. Never fails the grant, which already committed.
+	const relaunch = await relaunchChatSession(
+		{ db, sessionManager: c.get('sessionManager') },
+		{ workspaceId, originSessionId: sessionId },
+	).catch((err: unknown) => {
+		logger.error('Relaunch after a chat access grant threw', {
+			workspaceId,
+			sessionId,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+		return 'failed' as const
+	})
+	return c.json({ actorId: session.actorId, relaunch }, 200)
+}) as RouteHandler<typeof allowFromChatRoute, Env>)
 
 export default app

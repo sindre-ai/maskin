@@ -6570,6 +6570,121 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'list_keychain_credentials',
+		{
+			description: tools.list_keychain_credentials.description,
+			inputSchema: tools.list_keychain_credentials.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'list_keychain_credentials',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return {
+					_meta: toolMeta,
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'This is not an agent session, so there is no Keychain to list.',
+						},
+					],
+				}
+			}
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${sessionId}/keychain-credentials`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: toolMeta,
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				structuredContent: result as Record<string, unknown>,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'request_keychain_access',
+		{
+			description: tools.request_keychain_access.description,
+			inputSchema: tools.request_keychain_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_keychain_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply which credential you need and that a person can share it with you in Settings → Keychain.',
+				)
+			}
+			try {
+				const res = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/keychain-access-card`,
+					{
+						credential_name: args.credential_name,
+						...(args.hint ? { hint: args.hint } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { already_granted?: boolean }
+				if (res.already_granted) {
+					return {
+						_meta: toolMeta,
+						content: [
+							{
+								type: 'text' as const,
+								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+							},
+						],
+					}
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply which credential you need and that it can be shared with you in Settings → Keychain.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'No credential with that name exists. Call list_keychain_credentials for the exact names, or request_keychain_credential to ask the user to add a new one.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'disconnect_integration',
 		{
 			description: tools.disconnect_integration.description,

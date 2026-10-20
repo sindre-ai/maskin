@@ -543,6 +543,12 @@ export const api = {
 				body: { access },
 				workspaceId,
 			}),
+		/** Allow the agent whose session asked in a chat to use a saved credential, and restart it. */
+		allowFromChat: (id: string, workspaceId: string, sessionId: string) =>
+			request<{ actorId: string; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-from-chat`,
+				{ method: 'POST', body: { sessionId }, workspaceId },
+			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
 				method: 'DELETE',
@@ -2183,6 +2189,15 @@ export interface MessageKeychainRequest {
 	hint?: string
 }
 
+/** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
+export interface MessageKeychainAccessRequest {
+	session_id: string
+	integration_id: string
+	credential_name: string
+	kind: 'api_key' | 'login'
+	hint?: string
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -2218,6 +2233,8 @@ export interface MessageMetadata {
 	integration_connect?: MessageIntegrationConnect
 	/** Backend-owned: an agent's request for a credential, rendered as a Keychain card. */
 	keychain_request?: MessageKeychainRequest
+	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
+	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }

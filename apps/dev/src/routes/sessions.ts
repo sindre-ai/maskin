@@ -1,11 +1,19 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	agentGrants,
+	integrations,
+	sessionLogs,
+	sessions,
+	triggers,
+} from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatIntegrationConnectAsMarkdown,
+	formatKeychainAccessRequestAsMarkdown,
 	formatKeychainRequestAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
@@ -14,6 +22,7 @@ import {
 	sessionAskSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
+	sessionKeychainAccessCardSchema,
 	sessionKeychainCardSchema,
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
@@ -23,7 +32,7 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -1382,6 +1391,244 @@ app.openapi(keychainCardRoute, (async (c) => {
 
 	return c.json({ posted: true as const, message_id: created.id }, 200)
 }) as RouteHandler<typeof keychainCardRoute, Env>)
+
+// GET /:id/keychain-credentials - What this session's agent can ask for from the Keychain
+//
+// Called by the `list_keychain_credentials` MCP tool. Names and kinds only, never a value,
+// and only for credentials a person can actually grant: active saved keys and logins.
+// Same gate as the card routes: only the agent that owns the session may ask.
+const keychainCredentialsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/keychain-credentials',
+	tags: ['Sessions'],
+	summary:
+		"List the Keychain credentials in this workspace and whether the session's agent has each",
+	request: { headers: workspaceIdHeader, params: sessionParamsSchema },
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						credentials: z.array(
+							z.object({
+								name: z.string(),
+								kind: z.enum(['api_key', 'login']),
+								has_access: z.boolean(),
+							}),
+						),
+					}),
+				},
+			},
+			description: 'Credentials by name',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(keychainCredentialsRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	const rows = await db
+		.select({
+			id: integrations.id,
+			name: integrations.displayName,
+			mode: integrations.providerMode,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, session.workspaceId),
+				inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.orderBy(asc(integrations.createdAt))
+	const granted = new Set(
+		(
+			await db
+				.select({ integrationId: agentGrants.integrationId })
+				.from(agentGrants)
+				.where(
+					and(
+						eq(agentGrants.workspaceId, session.workspaceId),
+						eq(agentGrants.actorId, session.actorId),
+					),
+				)
+		).map((g) => g.integrationId),
+	)
+	return c.json(
+		{
+			credentials: rows.flatMap((r) =>
+				r.name
+					? [
+							{
+								name: r.name,
+								kind: r.mode === 'byo_login' ? ('login' as const) : ('api_key' as const),
+								has_access: granted.has(r.id),
+							},
+						]
+					: [],
+			),
+		},
+		200,
+	)
+}) as RouteHandler<typeof keychainCredentialsRoute, Env>)
+
+// POST /:id/keychain-access-card - Ask the human to let this agent use an existing credential
+//
+// Called by the `request_keychain_access` MCP tool. Posts a card with Allow / Not now. The
+// card holds no secret: allowing it grants the agent access (a person only) and restarts
+// the agent so the credential is in its environment. Same gates as the other cards.
+const keychainAccessCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/keychain-access-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a card in the session chat asking the person to share an existing credential',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionKeychainAccessCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						posted: z.boolean(),
+						already_granted: z.boolean(),
+						message_id: z.number().nullable(),
+					}),
+				},
+			},
+			description: 'Card posted, or the agent already has the credential',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session or credential not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(keychainAccessCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { credential_name: credentialName, hint } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is nobody to show a card to',
+			),
+			409,
+		)
+	}
+
+	// By name, the way a person and the list tool know it. Active saved keys and logins only.
+	const [credential] = await db
+		.select({
+			id: integrations.id,
+			name: integrations.displayName,
+			mode: integrations.providerMode,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, session.workspaceId),
+				inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+				eq(integrations.status, 'active'),
+				sql`lower(${integrations.displayName}) = lower(${credentialName})`,
+			),
+		)
+		.limit(1)
+	if (!credential?.name) {
+		return c.json(
+			createApiError(
+				'NOT_FOUND',
+				'No credential with that name. Use list_keychain_credentials for the names, or request_keychain_credential to ask for a new one.',
+			),
+			404,
+		)
+	}
+
+	const [already] = await db
+		.select({ id: agentGrants.id })
+		.from(agentGrants)
+		.where(
+			and(eq(agentGrants.integrationId, credential.id), eq(agentGrants.actorId, session.actorId)),
+		)
+		.limit(1)
+	if (already) return c.json({ posted: false, already_granted: true, message_id: null }, 200)
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatKeychainAccessRequestAsMarkdown(credential.name, hint),
+		metadata: {
+			keychain_access_request: {
+				session_id: session.id,
+				integration_id: credential.id,
+				credential_name: credential.name,
+				kind: credential.mode === 'byo_login' ? 'login' : 'api_key',
+				...(hint ? { hint } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+	if (!created) {
+		logger.error('Keychain access card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Keychain access card could not be posted'), 500)
+	}
+	logger.info('Posted keychain access card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		integrationId: credential.id,
+	})
+	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
+}) as RouteHandler<typeof keychainAccessCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

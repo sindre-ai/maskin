@@ -45,6 +45,17 @@ All humans-only, writer role, and only the person who connected the integration 
 
 A refused call writes an `agent_access_denied` event on the integration.
 
+## Attaching the tools
+
+Access is also what attaches an integration's MCP server to an agent: at launch, every connected integration the agent can use (default read, or a grant) gets its server, with no per-agent setup. No access means no server. LinkedIn attaches one server per connected identity. A server the agent already added by hand at the same URL is not attached twice. A change on the Integrations page applies from the next session.
+
+## Asking for a credential that already exists
+
+Two MCP tools, used inside a chat:
+
+- `list_keychain_credentials` — names, kind and whether the agent already has each. Never a value.
+- `request_keychain_access` — posts an Allow / Not now card (`metadata.keychain_access_request`). Allow calls `POST /api/integrations/:id/allow-from-chat`, which grants *the agent whose session asked* read & write (a person only: whoever saved it, or a workspace admin), audits it, and restarts that session so the credential is in its environment. Not now only sends the agent a message. `request_keychain_credential` remains for a credential that does not exist yet.
+
 ## Classification
 
 `tool-kinds.ts` is fail-closed. For providers Maskin hosts, a tool is a read only if it is in the provider's curated set. For gateway providers the order is: the server's own `destructiveHint` (write), its `readOnlyHint` (read), then a name rule that requires a read verb (`get_`, `list_`, `search_`, …) and no write word anywhere in the name. A wrong "write" costs a refused call; a wrong "read" lets an agent act without permission, so ambiguity resolves to write.

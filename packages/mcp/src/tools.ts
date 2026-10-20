@@ -1764,6 +1764,33 @@ export const tools = {
 				),
 		}),
 	},
+	list_keychain_credentials: {
+		description:
+			'List the credentials in the workspace Keychain by name, with their kind (api_key or login) and whether you already have access to each. Never returns a value. Use it before asking for a credential: if one with the right name exists, ask to use it with `request_keychain_access` instead of asking the user to add it again with `request_keychain_credential`. A credential you have access to is already in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, or `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `_PASSWORD`, where <NAME> is the name in capitals with other characters as underscores. Only works inside an agent session.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	request_keychain_access: {
+		description:
+			'Ask the user to let you use a credential that already exists in their Keychain, by showing an Allow / Not now card in the chat. Use it when `list_keychain_credentials` shows one you need and `has_access` is false. Use `request_keychain_credential` only when no such credential exists yet. You never see the value: if the user allows it you are restarted with it in your environment. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			credential_name: z
+				.string()
+				.min(1)
+				.max(80)
+				.describe('The credential name exactly as listed by list_keychain_credentials.'),
+			hint: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To read the latest invoices."',
+				),
+		}),
+	},
 	disconnect_integration: {
 		description: 'Disconnect (revoke) an integration by ID',
 		inputSchema: z.object({
