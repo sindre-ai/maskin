@@ -87,6 +87,23 @@ describe('buildSuggestedSteps', () => {
 			[],
 		)
 	})
+
+	it('adds a fill step per skill after the generic steps while there is room', () => {
+		const steps = buildSuggestedSteps({ skillNames: ['Triage', 'Digest', 'Extra'], canRun: true })
+		expect(steps).toEqual([
+			{ label: 'What can you help me with?', prompt: 'What can you help me with?', action: 'send' },
+			{ label: 'Give me a first task', prompt: 'Here is a first task for you: ', action: 'fill' },
+			{ label: 'Try Triage', prompt: 'Use Triage on: ', action: 'fill' },
+			{ label: 'Try Digest', prompt: 'Use Digest on: ', action: 'fill' },
+		])
+	})
+
+	it('has no tool step, so a typical web-created agent gets exactly the two generic steps', () => {
+		expect(buildSuggestedSteps({ canRun: true }).map((s) => s.label)).toEqual([
+			'What can you help me with?',
+			'Give me a first task',
+		])
+	})
 })
 
 describe('renderAgentIntro', () => {

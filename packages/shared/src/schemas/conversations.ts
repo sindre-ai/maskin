@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { firstStepSchema } from './first-steps'
 import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
@@ -196,6 +197,29 @@ export const messageDeliverySchema = z.object({
 	comment_event_id: z.number().int().positive().optional(),
 })
 
+/**
+ * One first-step button in an agent intro. The same shape and rules as the
+ * creator's first_steps on create (firstStepSchema), so what is stored is held to
+ * the rule it was accepted under: a send step's prompt equals its label.
+ */
+export const suggestedStepSchema = firstStepSchema
+export const suggestedStepsSchema = z.array(suggestedStepSchema).min(1).max(4)
+
+/** A tool the job needs: the provider name only. Status is read live, never stored. */
+export const neededToolSchema = z.object({ provider: z.string().min(1).max(100) })
+export const neededToolsSchema = z.array(neededToolSchema).min(1).max(3)
+
+/**
+ * Set on the person's message when it came from tapping a send step. Client-
+ * supplied, so it carries no authority; it only lets tap-to-start be counted
+ * from saved messages.
+ */
+export const fromSuggestedStepSchema = z.object({
+	/** messages.id of the intro the step was on. */
+	intro_message_id: z.number().int(),
+	index: z.number().int().min(0).max(3),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -224,6 +248,14 @@ export const messageMetadataSchema = z.object({
 	helper_return: z.string().uuid().optional(),
 	/** Backend-owned: how the server itself put this message in the chat. */
 	delivery: messageDeliverySchema.optional(),
+	/** Backend-owned: the intro's first-step buttons, written once with the intro. */
+	suggested_steps: suggestedStepsSchema.optional(),
+	/** Backend-owned: the providers the intro's job needs, in the creator's order. */
+	needed_tools: neededToolsSchema.optional(),
+	/** Backend-owned: how many trailing paragraphs of the intro body the web drops when it draws the buttons and rows. */
+	plain_tail: z.number().int().min(0).max(10).optional(),
+	/** Client-supplied: the intro step a message was sent from. */
+	from_suggested_step: fromSuggestedStepSchema.optional(),
 })
 
 /**
@@ -243,6 +275,9 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		integration_connect: _integrationConnect,
 		helper_return: _helperReturn,
 		delivery: _delivery,
+		suggested_steps: _suggestedSteps,
+		needed_tools: _neededTools,
+		plain_tail: _plainTail,
 		...rest
 	} = metadata
 	return rest as T
@@ -335,6 +370,9 @@ export const updateConversationParticipantStateSchema = z
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageDelivery = z.infer<typeof messageDeliverySchema>
+export type SuggestedStep = z.infer<typeof suggestedStepSchema>
+export type NeededTool = z.infer<typeof neededToolSchema>
+export type FromSuggestedStep = z.infer<typeof fromSuggestedStepSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
 export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>

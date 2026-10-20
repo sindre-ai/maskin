@@ -556,7 +556,7 @@ describe('Agent intro — hints from the creator', () => {
 			.where(eq(workspaces.id, wsId))
 	}
 
-	async function introTextOf(agentId: string): Promise<string | undefined> {
+	async function introMessageOf(agentId: string) {
 		const chats = await waitFor(async () => {
 			const rows = await introChatsFor(agentId)
 			return rows.length > 0 ? rows : undefined
@@ -565,7 +565,11 @@ describe('Agent intro — hints from the creator', () => {
 			.select()
 			.from(messages)
 			.where(eq(messages.conversationId, chats?.[0]?.conversation.id as string))
-		return msg?.content
+		return msg
+	}
+
+	async function introTextOf(agentId: string): Promise<string | undefined> {
+		return (await introMessageOf(agentId))?.content
 	}
 
 	it("shows the creator's steps first and names the needed tools, through POST /api/actors", async () => {
@@ -596,6 +600,24 @@ describe('Agent intro — hints from the creator', () => {
 		)
 		expect(text?.trimEnd().endsWith('?')).toBe(false)
 
+		// The buttons and rows data rides the same insert as the delivery marker.
+		const intro = await introMessageOf(created.id)
+		expect(intro?.metadata).toEqual({
+			delivery: { kind: 'agent_intro', version: 1 },
+			suggested_steps: [
+				{ label: 'Summarise open bugs', prompt: 'Summarise open bugs', action: 'send' },
+				{ label: 'Draft a reply', prompt: 'Draft a reply to: ', action: 'fill' },
+				{
+					label: 'What can you help me with?',
+					prompt: 'What can you help me with?',
+					action: 'send',
+				},
+			],
+			needed_tools: [{ provider: 'linear' }, { provider: 'gmail' }],
+			// The list, the tools sentence; the tools sentence ends the body, so no closing line.
+			plain_tail: 2,
+		})
+
 		const sent = await waitFor(() => {
 			const calls = capturesOf('agent_intro_sent')
 			return calls.length > 0 ? calls : undefined
@@ -618,9 +640,17 @@ describe('Agent intro — hints from the creator', () => {
 		)
 		const created = (await res.json()) as { id: string }
 
-		expect(await introTextOf(created.id)).toContain(
-			'1. What can you help me with?\n2. Give me a first task',
-		)
+		const intro = await introMessageOf(created.id)
+		expect(intro?.content).toContain('1. What can you help me with?\n2. Give me a first task')
+		// Generic steps, no tools: the list is the whole tail (it ends on "a first task", no closing line).
+		expect(intro?.metadata).toMatchObject({
+			suggested_steps: [
+				{ label: 'What can you help me with?', action: 'send' },
+				{ label: 'Give me a first task', action: 'fill' },
+			],
+			plain_tail: 1,
+		})
+		expect(intro?.metadata).not.toHaveProperty('needed_tools')
 		const sent = await waitFor(() => {
 			const calls = capturesOf('agent_intro_sent')
 			return calls.length > 0 ? calls : undefined
@@ -656,6 +686,64 @@ describe('Agent intro — hints from the creator', () => {
 			return calls.length > 0 ? calls : undefined
 		})
 		expect(sent?.[0]?.[2]).toMatchObject({ needed_tools_count: 1, hints_dropped: 3 })
+		// Provider names only, the catalog name rather than the display name.
+		expect((await introMessageOf(created.id))?.metadata).toMatchObject({
+			needed_tools: [{ provider: 'linear' }],
+		})
+	})
+
+	it('writes no steps, tools or tail when the workspace cannot run an agent', async () => {
+		const { ws, key } = await setup()
+		await db.update(workspaces).set({ enterpriseGranted: true }).where(eq(workspaces.id, ws.id))
+
+		const res = await createAgent(
+			{
+				name: `No key ${randomUUID()}`,
+				workspace_id: ws.id,
+				needed_integrations: ['linear'],
+			},
+			bearer(key),
+		)
+		const created = (await res.json()) as { id: string }
+
+		const intro = await introMessageOf(created.id)
+		expect(intro?.metadata).toEqual({ delivery: { kind: 'agent_intro', version: 1 } })
+	})
+
+	it('strips steps, tools and tail from a posted message but keeps the step marker', async () => {
+		const { ws, key } = await setup()
+		await withKey(ws.id)
+		const res = await createAgent(
+			{ name: `Forge ${randomUUID()}`, workspace_id: ws.id },
+			bearer(key),
+		)
+		const created = (await res.json()) as { id: string }
+		const intro = await introMessageOf(created.id)
+		expect(intro).toBeDefined()
+
+		const post = await createConversationsApp().request(
+			jsonRequest(
+				'POST',
+				`/api/conversations/${intro?.conversationId}/messages`,
+				{
+					content: 'What can you help me with?',
+					metadata: {
+						suggested_steps: [{ label: 'Wire money', prompt: 'Wire money', action: 'send' }],
+						needed_tools: [{ provider: 'linear' }],
+						plain_tail: 1,
+						from_suggested_step: { intro_message_id: intro?.id, index: 0 },
+					},
+				},
+				{ ...bearer(key), 'x-workspace-id': ws.id },
+			),
+		)
+		expect(post.status).toBe(201)
+		const posted = (await post.json()) as { id: number }
+
+		const [row] = await db.select().from(messages).where(eq(messages.id, posted.id))
+		expect(row?.metadata).toEqual({
+			from_suggested_step: { intro_message_id: intro?.id, index: 0 },
+		})
 	})
 
 	it('returns 400 and writes nothing for a malformed step', async () => {

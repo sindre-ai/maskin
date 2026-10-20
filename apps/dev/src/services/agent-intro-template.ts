@@ -31,20 +31,26 @@ const GENERIC_FIRST_TASK_STEP: IntroStep = {
 /**
  * The first steps shown in the intro, in order: the creator's (at most 3), then
  * "What can you help me with?", then, only when the creator wrote none, "Give me
- * a first task". Deduplicated by lowercase label, at most 4. Nothing when the
- * workspace cannot run an agent. Slice 5a extends this one function (skill and
- * tool steps), so there is a single ordering rule.
+ * a first task", then one fill step per skill name while there is room. A new
+ * agent has no skills, so the skill steps never fire at creation. Deduplicated by
+ * lowercase label, at most 4. Nothing when the workspace cannot run an agent.
+ * This is the single ordering rule for the steps.
  */
 export function buildSuggestedSteps(input: {
 	creatorSteps?: IntroStep[]
+	skillNames?: string[]
 	canRun: boolean
 }): IntroStep[] {
 	if (!input.canRun) return []
 	const creatorSteps = (input.creatorSteps ?? []).slice(0, MAX_CREATOR_STEPS)
+	const skillSteps = (input.skillNames ?? []).map(
+		(name): IntroStep => ({ label: `Try ${name}`, prompt: `Use ${name} on: `, action: 'fill' }),
+	)
 	const candidates = [
 		...creatorSteps,
 		GENERIC_HELP_STEP,
 		...(creatorSteps.length === 0 ? [GENERIC_FIRST_TASK_STEP] : []),
+		...skillSteps,
 	]
 	const seen = new Set<string>()
 	const steps: IntroStep[] = []
