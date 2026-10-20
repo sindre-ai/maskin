@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { connect, createServer } from 'node:net'
 import type { AddressInfo, Server } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -240,6 +240,37 @@ describe('WorkspaceDesktopRegistry', () => {
 		const removed = calls.filter((c) => c[0] === 'remove').map((c) => c[c.length - 1])
 		expect(removed).toEqual([desktopName(WS_B, AGENT_A)])
 		expect(registry.get(WS_B, AGENT_A)).toBeUndefined()
+	})
+
+	it('reconcile leaves every VM and archive alone when the state file is corrupt', async () => {
+		const { msb, calls } = makeMsb()
+		await mkdir(dirname(stateFile), { recursive: true })
+		await writeFile(stateFile, '{"truncated')
+		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
+
+		await expect(registry.reconcile([desktopName(WS_A, AGENT_A)])).rejects.toThrow()
+
+		expect(calls.filter((c) => c[0] === 'remove')).toEqual([])
+		// The evidence is kept beside the original, and nothing overwrote it with {}.
+		const files = await readdir(dirname(stateFile))
+		expect(files.some((f) => f.startsWith('desktops.json.corrupt-'))).toBe(true)
+	})
+
+	it('reconcile leaves everything alone when the state file cannot be read', async () => {
+		const { msb, calls } = makeMsb()
+		// A directory where the file should be: readFile fails with EISDIR, not ENOENT.
+		await mkdir(stateFile, { recursive: true })
+		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
+
+		await expect(registry.reconcile([desktopName(WS_A, AGENT_A)])).rejects.toThrow()
+
+		expect(calls.filter((c) => c[0] === 'remove')).toEqual([])
+	})
+
+	it('reconcile treats a missing state file as a first boot', async () => {
+		const { msb } = makeMsb()
+		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
+		await expect(registry.reconcile([])).resolves.toBeUndefined()
 	})
 
 	it('reconcile drops state whose VM no longer exists', async () => {

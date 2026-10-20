@@ -993,13 +993,39 @@ export class WorkspaceDesktopRegistry {
 	}
 
 	private async readState(): Promise<Record<string, PersistedDesktop>> {
+		let raw: string
 		try {
-			return JSON.parse(await readFile(this.deps.stateFile, 'utf8')) as Record<
-				string,
-				PersistedDesktop
-			>
-		} catch {
-			return {}
+			raw = await readFile(this.deps.stateFile, 'utf8')
+		} catch (err) {
+			// No file is a first boot. Anything else (EACCES, EIO) is not "no state":
+			// reconcile would read it as "every desktop is unknown" and remove them all.
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
+			logger.error('workspace desktop state unreadable, leaving desktops untouched', {
+				error: String(err),
+			})
+			throw err
+		}
+		try {
+			const parsed: unknown = JSON.parse(raw)
+			if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+				throw new Error('state file is not an object')
+			}
+			return parsed as Record<string, PersistedDesktop>
+		} catch (err) {
+			// Corrupt state (a torn write, a bad edit). Keep the evidence and refuse
+			// to reconcile: treating it as empty would remove every VM and delete the
+			// snapshot archives of suspended desktops, which are the only copy.
+			const aside = `${this.deps.stateFile}.corrupt-${this.now()}`
+			await rename(this.deps.stateFile, aside).catch((renameErr) =>
+				logger.error('could not move corrupt workspace desktop state aside', {
+					error: String(renameErr),
+				}),
+			)
+			logger.error('workspace desktop state is corrupt, leaving desktops untouched', {
+				error: String(err),
+				movedTo: aside,
+			})
+			throw err
 		}
 	}
 

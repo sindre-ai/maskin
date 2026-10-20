@@ -184,6 +184,42 @@ describe('WorkspaceDesktopService', () => {
 		expect(await failing.ensure(WS, AGENT)).toBeNull()
 	})
 
+	it('ensure refuses to provision when a server could not answer the lookup', async () => {
+		const calls: string[] = []
+		const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push(`${init?.method} ${String(url)}`)
+			if (String(url).includes('a.example')) return res(503)
+			return init?.method === 'PUT' ? res(200, { password: 'new' }) : res(404)
+		}) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl,
+		})
+
+		await expect(svc.ensure(WS, AGENT)).rejects.toThrow(/could not tell/)
+		expect(calls.some((c) => c.startsWith('PUT'))).toBe(false)
+	})
+
+	it('ensure still uses the desktop a reachable server reports when another server is down', async () => {
+		const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+			String(url).includes('a.example') ? res(503) : res(200, { password: 'pw' }),
+		) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl,
+		})
+		expect((await svc.ensure(WS, AGENT))?.server.id).toBe('b')
+	})
+
+	it('remove refuses to say "nothing to remove" when a server could not answer', async () => {
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl: (async (url: string | URL | Request) =>
+				String(url).includes('a.example') ? res(500) : res(404)) as unknown as typeof fetch,
+		})
+		await expect(svc.remove(WS, AGENT)).rejects.toThrow(/could not tell/)
+	})
+
 	it('remove deletes on the hosting server and reports whether one existed', async () => {
 		const calls: string[] = []
 		const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

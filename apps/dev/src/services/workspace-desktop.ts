@@ -72,16 +72,34 @@ export class WorkspaceDesktopService {
 		})
 	}
 
-	/** Which server (if any) already hosts this agent's desktop. */
-	async locate(workspaceId: string, agentId: string): Promise<LocatedDesktop | null> {
+	/**
+	 * Asks every active server whether it hosts this agent's desktop. A server
+	 * that answers 404 is a definite "not here"; one that errors, times out or
+	 * answers anything else has told us nothing, and `unknown` records that. Callers
+	 * that would create or delete something must not treat unknown as absent.
+	 */
+	private async lookup(
+		workspaceId: string,
+		agentId: string,
+	): Promise<{ found: LocatedDesktop | null; unknown: boolean }> {
 		const servers = (await this.deps.listServers()).filter((s) => s.status !== 'disabled')
 		const results = await Promise.all(
-			servers.map(async (server): Promise<LocatedDesktop | null> => {
+			servers.map(async (server): Promise<LocatedDesktop | 'absent' | 'unknown'> => {
 				try {
 					const res = await this.call(server, 'GET', workspaceId, agentId, LOOKUP_TIMEOUT_MS)
-					if (!res.ok) return null
+					if (res.status === 404) return 'absent'
+					if (!res.ok) {
+						logger.warn('desktop lookup got an error from agent-server', {
+							serverId: server.id,
+							status: res.status,
+						})
+						return 'unknown'
+					}
 					const body = (await res.json()) as { password?: unknown; status?: unknown }
-					if (typeof body.password !== 'string') return null
+					if (typeof body.password !== 'string') {
+						logger.warn('desktop lookup answer had no password', { serverId: server.id })
+						return 'unknown'
+					}
 					return {
 						server,
 						password: body.password,
@@ -92,11 +110,21 @@ export class WorkspaceDesktopService {
 						serverId: server.id,
 						error: String(err),
 					})
-					return null
+					return 'unknown'
 				}
 			}),
 		)
-		return results.find((r): r is LocatedDesktop => r !== null) ?? null
+		const found = results.find((r): r is LocatedDesktop => typeof r === 'object') ?? null
+		return { found, unknown: !found && results.includes('unknown') }
+	}
+
+	/**
+	 * Which server (if any) already hosts this agent's desktop. Read-only callers
+	 * (the relay, port listing) get null for "not found or couldn't tell"; anything
+	 * that provisions or removes goes through `lookup` and refuses to guess.
+	 */
+	async locate(workspaceId: string, agentId: string): Promise<LocatedDesktop | null> {
+		return (await this.lookup(workspaceId, agentId)).found
 	}
 
 	/** Every agent in the workspace that has a computer, and whether it is asleep. */
@@ -146,7 +174,13 @@ export class WorkspaceDesktopService {
 		agentId: string,
 		opts: { preferServerId?: string } = {},
 	): Promise<LocatedDesktop | null> {
-		const existing = await this.locate(workspaceId, agentId)
+		const { found: existing, unknown } = await this.lookup(workspaceId, agentId)
+		// A server we couldn't reach may be the one hosting this agent's computer.
+		// Provisioning elsewhere would give the agent a second, empty one and orphan
+		// the first, so fail and let the caller retry.
+		if (!existing && unknown) {
+			throw new Error('could not tell whether this agent already has a computer')
+		}
 		// A suspended desktop is woken by PUT, which is idempotent and returns the
 		// running desktop; a running one is returned as found.
 		if (existing && existing.status !== 'suspended') return existing
@@ -248,8 +282,12 @@ export class WorkspaceDesktopService {
 
 	/** Removes the desktop wherever it lives. Returns whether one existed. */
 	async remove(workspaceId: string, agentId: string): Promise<boolean> {
-		const located = await this.locate(workspaceId, agentId)
-		if (!located) return false
+		const { found: located, unknown } = await this.lookup(workspaceId, agentId)
+		if (!located) {
+			// "Nothing to remove" only when every server said so.
+			if (unknown) throw new Error('could not tell where this agent’s computer is')
+			return false
+		}
 		const res = await this.call(located.server, 'DELETE', workspaceId, agentId, ENSURE_TIMEOUT_MS)
 		return res.ok
 	}

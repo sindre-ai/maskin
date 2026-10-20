@@ -14,6 +14,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { DESKTOP_STREAM_PATH } from '../services/desktop-relay'
 import {
 	type WorkspaceDesktopService,
@@ -33,6 +34,7 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType?: string
+		workspaceRole?: string
 		// Test seam: unit tests inject a fake instead of hitting agent-servers.
 		desktopService?: WorkspaceDesktopService
 	}
@@ -71,6 +73,7 @@ const accessResponses = {
 const connectRoute = createRoute({
 	method: 'post',
 	path: '/connect',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Start (if needed) and connect to an agent's computer",
 	description:
@@ -117,6 +120,7 @@ const listRoute = createRoute({
 const deleteRoute = createRoute({
 	method: 'delete',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Remove an agent's computer",
 	request: { headers: workspaceIdHeader, query: agentQuery },
@@ -126,6 +130,10 @@ const deleteRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ removed: z.boolean() }) } },
 		},
 		...accessResponses,
+		502: {
+			description: 'No agent-server could say where the computer is, so nothing was removed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -137,7 +145,7 @@ function serviceFor(c: { get: (k: 'desktopService' | 'db') => unknown }): Worksp
 }
 
 type Ctx = {
-	get: (k: 'actorId' | 'actorType' | 'db' | 'desktopService') => unknown
+	get: (k: 'actorId' | 'actorType' | 'db' | 'desktopService' | 'workspaceRole') => unknown
 	header: (name: string, value: string) => void
 	req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined }
 	json: (body: unknown, status: number) => Response
@@ -149,8 +157,13 @@ type Gate = { workspaceId: string; actorId: string; agentId: string }
  * The gate every desktop route passes through: the feature flag (a cost, not
  * just a UI branch — starting a desktop provisions a multi-GB microVM), then
  * whose computer this is and whether the caller may reach it.
+ *
+ * `write` is true for everything except listing ports. Connecting hands out the
+ * VNC password, and input/exec/delete act on the machine, so a read-only viewer
+ * (a workspace member) must not get through.
  */
-async function gate(c: Ctx): Promise<Gate | Response> {
+async function gate(c: Ctx, { write = true }: { write?: boolean } = {}): Promise<Gate | Response> {
+	if (write) assertWorkspaceWriterRole(c.get('workspaceRole') as string | undefined)
 	const workspaceId = (c.req.header('x-workspace-id') ?? '').toLowerCase()
 	const actorId = c.get('actorId') as string
 	if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId })) {
@@ -234,7 +247,13 @@ app.openapi(deleteRoute, async (c) => {
 	const gated = await gate(c as unknown as Ctx)
 	if (isResponse(gated)) return gated as never
 	const { workspaceId, actorId, agentId } = gated
-	const removed = await serviceFor(c).remove(workspaceId, agentId)
+	let removed: boolean
+	try {
+		removed = await serviceFor(c).remove(workspaceId, agentId)
+	} catch (err) {
+		logger.error('desktop remove failed', { workspaceId, agentId, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
+	}
 	if (removed) {
 		await recordEvent(c.get('db'), {
 			workspaceId,
@@ -263,6 +282,7 @@ const controlResponses = {
 const screenshotRoute = createRoute({
 	method: 'post',
 	path: '/screenshot',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Screenshot of an agent's desktop",
 	description: 'Starts the desktop if needed. Returns a base64 JPEG of the 1280x720 screen.',
@@ -288,6 +308,7 @@ const screenshotRoute = createRoute({
 const inputRoute = createRoute({
 	method: 'post',
 	path: '/input',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Send mouse/keyboard input to an agent's desktop",
 	request: {
@@ -307,6 +328,7 @@ const inputRoute = createRoute({
 const execRoute = createRoute({
 	method: 'post',
 	path: '/exec',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Run a shell command inside an agent's desktop VM",
 	request: {
@@ -383,6 +405,7 @@ const portSchema = z.object({
 const exposePortRoute = createRoute({
 	method: 'post',
 	path: '/ports',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Open a port in the agent's session sandbox from its computer",
 	description:
@@ -437,6 +460,7 @@ const listPortsRoute = createRoute({
 const closePortRoute = createRoute({
 	method: 'delete',
 	path: '/ports/{relay_port}',
+	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: 'Close an open port to free a slot',
 	request: {
@@ -547,7 +571,7 @@ async function forwardPorts(
 	c: Ctx,
 	action: { type: 'list' } | { type: 'close'; relayPort: number },
 ) {
-	const gated = await gate(c)
+	const gated = await gate(c, { write: action.type !== 'list' })
 	if (isResponse(gated)) return gated
 	const { workspaceId, agentId } = gated
 	const service = serviceFor(c as never)

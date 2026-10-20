@@ -24,7 +24,12 @@ function selectChain(rows: unknown[]) {
 
 function build(
 	service: Record<string, unknown>,
-	opts: { actorType?: string; actorId?: string; agentInWorkspace?: boolean } = {},
+	opts: {
+		actorType?: string
+		actorId?: string
+		agentInWorkspace?: boolean
+		workspaceRole?: string
+	} = {},
 ) {
 	const inserts: unknown[] = []
 	const db = {
@@ -36,10 +41,16 @@ function build(
 		select: () => selectChain(opts.agentInWorkspace === false ? [] : [{ id: AGENT }]),
 	}
 	const app = new OpenAPIHono<{ Variables: Record<string, unknown> }>()
+	// app-factory's onError is what turns ViewerReadOnlyError into a 403.
+	app.onError((err, c) => {
+		const status = (err as { status?: number }).status
+		return c.json({ error: String(err) }, (status ?? 500) as 403 | 500)
+	})
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', opts.actorId ?? ACTOR)
 		c.set('actorType', opts.actorType ?? 'human')
+		if (opts.workspaceRole) c.set('workspaceRole', opts.workspaceRole)
 		c.set('desktopService', service)
 		await next()
 	})
@@ -57,6 +68,54 @@ const post = (app: TestApp, headers: Record<string, string> = {}, query = `?agen
 
 const del = (app: TestApp, query = `?agent_id=${AGENT}`) =>
 	app.request(`/api/desktop${query}`, { method: 'DELETE', headers: { 'X-Workspace-Id': WS } })
+
+describe('read-only viewers', () => {
+	beforeEach(() => {
+		process.env.INTEGRATION_ENCRYPTION_KEY = 'ab'.repeat(32)
+		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
+	})
+
+	const writes: Array<[string, string, string, unknown?]> = [
+		['connect', 'POST', '/connect'],
+		['remove', 'DELETE', ''],
+		['screenshot', 'POST', '/screenshot'],
+		['input', 'POST', '/input', { action: 'move', x: 10, y: 10 }],
+		['exec', 'POST', '/exec', { command: 'id' }],
+		['expose port', 'POST', '/ports', { session_id: AGENT, guest_port: 3000 }],
+		['close port', 'DELETE', '/ports/20001'],
+	]
+
+	it.each(writes)(
+		'403s a viewer on %s without touching an agent-server',
+		async (_n, method, path, body) => {
+			const service = {
+				ensure: vi.fn(),
+				remove: vi.fn(),
+				control: vi.fn(),
+				locate: vi.fn(),
+				ports: vi.fn(),
+			}
+			const { app } = build(service, { workspaceRole: 'viewer' })
+
+			const res = await app.request(`/api/desktop${path}?agent_id=${AGENT}`, {
+				method,
+				headers: { 'X-Workspace-Id': WS, 'Content-Type': 'application/json' },
+				...(body ? { body: JSON.stringify(body) } : {}),
+			})
+
+			expect(res.status).toBe(403)
+			for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled()
+		},
+	)
+
+	it('still lets a viewer list the open ports', async () => {
+		const { app } = build({ locate: vi.fn(async () => null) }, { workspaceRole: 'viewer' })
+		const res = await app.request(`/api/desktop/ports?agent_id=${AGENT}`, {
+			headers: { 'X-Workspace-Id': WS },
+		})
+		expect(res.status).toBe(200)
+	})
+})
 
 describe('POST /api/desktop/connect', () => {
 	beforeEach(() => {
