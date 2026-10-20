@@ -173,6 +173,13 @@ const loopStepSchema = z.object({
  * for workspace-defined (custom) object types — without it only built-in types
  * have known terminal statuses.
  */
+const loopTagsSchema = z
+	.array(z.string().trim().min(1).max(40))
+	.max(10)
+	.describe(
+		'Short labels saying which team, business unit or part of the business this loop belongs to, e.g. ["Sales", "EMEA"]. Shown as filter pills and chips on Flows. Replaces the current tags; pass [] to clear.',
+	)
+
 const closedStatusesSchema = z
 	.record(z.array(z.string().min(1)))
 	.optional()
@@ -1260,6 +1267,7 @@ export const tools = {
 					'Existing objects — of any workspace-defined type — to start running through the loop. Each becomes an `in_loop` relationship (source = loop, target = object). Objects can also be added later with update_loop.',
 				),
 			closed_statuses: closedStatusesSchema,
+			tags: loopTagsSchema.optional(),
 		}),
 	},
 	update_loop: {
@@ -1290,6 +1298,7 @@ export const tools = {
 					`New plain-language close condition. Pass an empty string to clear. ${CLOSE_CONDITION_GUIDANCE}`,
 				),
 			closed_statuses: closedStatusesSchema,
+			tags: loopTagsSchema.optional(),
 			add_steps: z
 				.array(loopStepSchema)
 				.max(20)
