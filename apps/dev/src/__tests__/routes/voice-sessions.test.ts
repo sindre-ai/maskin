@@ -314,9 +314,11 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 
 		const agentKey = factory.mock.calls[0]?.[0].apiKey ?? ''
 		expect(agentKey).toMatch(/^ank_/)
-		const keyInsert = calls.inserts.find(
-			(v) => (v as { kind?: string }).kind === 'session',
-		) as { actorId: string; keyHash: string; expiresAt: Date }
+		const keyInsert = calls.inserts.find((v) => (v as { kind?: string }).kind === 'session') as {
+			actorId: string
+			keyHash: string
+			expiresAt: Date
+		}
 		expect(keyInsert).toMatchObject({ actorId: AGENT, keyHash: hashApiKey(agentKey) })
 		// Two hours, give or take the time the request took.
 		const ttlMs = keyInsert.expiresAt.getTime() - before

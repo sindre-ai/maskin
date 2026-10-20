@@ -267,10 +267,7 @@ async function ensureSkjaldSystemActor(
 		.where(and(eq(actors.type, 'system'), eq(actors.name, name)))
 		.limit(1)
 	if (!systemActor) {
-		;[systemActor] = await db
-			.insert(actors)
-			.values({ type: 'system', name, createdBy })
-			.returning()
+		;[systemActor] = await db.insert(actors).values({ type: 'system', name, createdBy }).returning()
 	}
 	if (!systemActor) throw new Error('Failed to create system actor for integration')
 
