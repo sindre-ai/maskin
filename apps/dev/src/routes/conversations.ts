@@ -892,6 +892,34 @@ app.openapi(postMessageRoute, (async (c) => {
 	})
 	if (!created) throw new Error('Failed to create message')
 
+	// Replying means the human has read everything before their message, so their read cursor
+	// moves to it: otherwise the thread keeps a NEW divider (and the list an unread badge) over
+	// messages they just answered, on every surface that replied from somewhere the cursor
+	// was never reported. Advance-only, like PATCH /:id/me. Humans only: an agent posting
+	// mid-turn may not have seen what landed since, and moving its cursor would hide that
+	// from its unread list.
+	if (callerType === 'human') {
+		await db
+			.update(conversationParticipants)
+			.set({
+				lastReadMessageId: sql`GREATEST(COALESCE(${conversationParticipants.lastReadMessageId}, 0), ${created.id})`,
+			})
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, id),
+					eq(conversationParticipants.actorId, callerId),
+				),
+			)
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'conversation_participant_state_updated',
+			entityType: 'conversation',
+			entityId: id,
+			data: { last_read_message_id: created.id, via: 'post_message' },
+		})
+	}
+
 	// An agent narrating a handoff mid-turn: hang the sub-sessions it has started
 	// since its last message under this one, so the card shows while they run.
 	// The spawner is the agent's own live session, taken from the body or, since
