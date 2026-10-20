@@ -283,6 +283,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/auth/login: pre-auth credential exchange
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
 	//   - POST /api/public/landing-events: landing-page funnel event ingest
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
@@ -308,6 +309,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/invites/preview' && method === 'GET') return next()
 		if (method === 'POST' && /^\/api\/invites\/[^/]+\/accept$/.test(path)) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// Native connect: the web-auth browser has no API key either. The sealed, 2-minute
+		// ticket is the credential; it sets the state-binding cookie then 302s to the provider.
+		if (method === 'GET' && /^\/api\/integrations\/[^/]+\/native-launch$/.test(path)) return next()
 		// The Skjald app trades its one-time connect code here. It has no API key, so the code and its PKCE
 		// verifier are the credential (routes/integrations-skjald-connect.ts).
 		if (path === '/api/integrations/skjald/exchange' && method === 'POST') return next()

@@ -1,8 +1,8 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	actors,
 	events,
+	actors,
 	integrations,
 	sessionLogs,
 	sessions,

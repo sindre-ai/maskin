@@ -1,4 +1,4 @@
-import { actors, events, integrations, workspaceMembers } from '@maskin/db/schema'
+import { events, actors, integrations, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { encrypt } from '../../lib/crypto'

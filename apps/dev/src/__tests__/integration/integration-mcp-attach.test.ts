@@ -1,9 +1,9 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	conversations,
-	events,
 	integrations,
 	messages,
 	workspaceMembers,
@@ -103,6 +103,24 @@ function instanceConfig(
 	}
 }
 
+interface PresetRow {
+	preset_id: string
+	key: string
+	label: string
+	auto_injected: boolean
+	attached?: boolean
+	server: { url?: string; env?: Record<string, string> }
+	affected_agents?: Array<{ id: string; name: string }>
+}
+
+interface PresetsBody {
+	presets: PresetRow[]
+	drift?: {
+		missing_preset_ids: string[]
+		stale_entries: Array<{ key: string; provider: string }>
+	}
+}
+
 describe('integration MCP attach flow', () => {
 	let humanId: string
 	let workspaceId: string
@@ -164,7 +182,7 @@ describe('integration MCP attach flow', () => {
 				'X-Workspace-Id': workspaceId,
 			}),
 		)
-		return { status: res.status, body: (await res.json()) as any }
+		return { status: res.status, body: (await res.json()) as PresetsBody }
 	}
 
 	function approve(
@@ -190,10 +208,10 @@ describe('integration MCP attach flow', () => {
 			const { status, body } = await listPresets()
 
 			expect(status).toBe(200)
-			expect(body.presets.map((p: { preset_id: string }) => p.preset_id)).toEqual(['linear'])
+			expect(body.presets.map((p) => p.preset_id)).toEqual(['linear'])
 			// Derived from config.ts, not restated: the entry is exactly the declared server.
-			expect(body.presets[0].server).toEqual(getProvider('linear').config.mcp?.server)
-			expect(body.presets[0].label).toBe('Linear')
+			expect(body.presets[0]?.server).toEqual(getProvider('linear').config.mcp?.server)
+			expect(body.presets[0]?.label).toBe('Linear')
 		})
 
 		it('offers one shared preset for however many Slack connections are active', async () => {
@@ -202,7 +220,7 @@ describe('integration MCP attach flow', () => {
 
 			const { body } = await listPresets()
 
-			expect(body.presets.map((p: { preset_id: string }) => p.preset_id)).toEqual(['slack'])
+			expect(body.presets.map((p) => p.preset_id)).toEqual(['slack'])
 		})
 
 		it('offers one GitHub preset per installation, keyed by owner', async () => {
@@ -212,13 +230,13 @@ describe('integration MCP attach flow', () => {
 
 			const { body } = await listPresets()
 
-			expect(body.presets.map((p: { preset_id: string }) => p.preset_id).sort()).toEqual([
+			expect(body.presets.map((p) => p.preset_id).sort()).toEqual([
 				'github-sindre-ai',
 				'github-vaerksted-ai',
 			])
-			const sindre = body.presets.find((p: { key: string }) => p.key === 'github-sindre-ai')
-			expect(sindre.server.env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe('${GITHUB_TOKEN_SINDRE_AI}')
-			expect(sindre.label).toBe('GitHub sindre-ai')
+			const sindre = body.presets.find((p) => p.key === 'github-sindre-ai')
+			expect(sindre?.server.env?.GITHUB_PERSONAL_ACCESS_TOKEN).toBe('${GITHUB_TOKEN_SINDRE_AI}')
+			expect(sindre?.label).toBe('GitHub sindre-ai')
 		})
 
 		it('offers one LinkedIn preset per live identity and skips a revoked credential', async () => {
@@ -243,9 +261,9 @@ describe('integration MCP attach flow', () => {
 
 			const { body } = await listPresets()
 
-			expect(body.presets.map((p: { preset_id: string }) => p.preset_id)).toEqual([SEBK])
-			expect(body.presets[0].label).toBe('Sebastian Krumhausen')
-			expect(body.presets[0].server.url).toBe(
+			expect(body.presets.map((p) => p.preset_id)).toEqual([SEBK])
+			expect(body.presets[0]?.label).toBe('Sebastian Krumhausen')
+			expect(body.presets[0]?.server.url).toBe(
 				`\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${SEBK}`,
 			)
 		})
@@ -261,14 +279,9 @@ describe('integration MCP attach flow', () => {
 
 			const { body } = await listPresets(`?actor_id=${holder}`)
 
-			const attached = Object.fromEntries(
-				body.presets.map((p: { preset_id: string; attached: boolean }) => [
-					p.preset_id,
-					p.attached,
-				]),
-			)
+			const attached = Object.fromEntries(body.presets.map((p) => [p.preset_id, p.attached]))
 			expect(attached).toEqual({ linear: true, slack: false, posthog: false })
-			expect(body.drift.missing_preset_ids).toEqual(['slack'])
+			expect(body.drift?.missing_preset_ids).toEqual(['slack'])
 		})
 
 		it('flags an entry that points at a revoked connection as stale', async () => {
@@ -296,10 +309,10 @@ describe('integration MCP attach flow', () => {
 
 			const { body } = await listPresets(`?actor_id=${holder}`)
 
-			expect(body.drift.stale_entries).toEqual([
+			expect(body.drift?.stale_entries).toEqual([
 				{ key: 'linkedin-gone-personal', provider: 'linkedin-unipile' },
 			])
-			expect(body.drift.missing_preset_ids).toEqual([])
+			expect(body.drift?.missing_preset_ids).toEqual([])
 		})
 
 		it('names the agents a disconnect stripped the entry from', async () => {
@@ -316,10 +329,8 @@ describe('integration MCP attach flow', () => {
 			const { body } = await listPresets('?include=affected')
 
 			expect(body.presets).toHaveLength(1)
-			expect(body.presets[0].affected_agents).toEqual([{ id: stripped, name: expect.any(String) }])
-			expect(body.presets[0].affected_agents.map((a: { id: string }) => a.id)).not.toContain(
-				bystander,
-			)
+			expect(body.presets[0]?.affected_agents).toEqual([{ id: stripped, name: expect.any(String) }])
+			expect(body.presets[0]?.affected_agents?.map((a) => a.id)).not.toContain(bystander)
 		})
 
 		it('404s an actor that is not an agent in this workspace', async () => {

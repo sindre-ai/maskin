@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
 import {
+	events,
 	INTEGRATION_STATUS_ACTIVE,
 	actors,
-	events,
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
