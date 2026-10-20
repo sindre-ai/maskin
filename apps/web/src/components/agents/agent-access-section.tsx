@@ -48,9 +48,6 @@ function IntegrationRow({
 		<li className="flex flex-wrap items-center gap-2 py-2">
 			<div className="min-w-0 flex-1 basis-40">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
-				<p className="text-xs text-muted-foreground">
-					{row.server_attached ? 'Tools attached' : 'No tools attached'}
-				</p>
 			</div>
 			<Select
 				value={value}
@@ -104,9 +101,6 @@ function ToolServerRow({
 		<li className="flex items-center gap-2 py-2">
 			<div className="min-w-0 flex-1">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
-				<p className="text-xs text-muted-foreground">
-					{on ? (row.source === 'default' ? 'On for all agents' : 'On') : 'Off'}
-				</p>
 			</div>
 			<Switch
 				checked={on}
@@ -120,17 +114,6 @@ function ToolServerRow({
 			/>
 		</li>
 	)
-}
-
-/** Always, not at all, or only in the chats a person allowed it in. */
-export function credentialStatus(
-	row: Pick<CredentialRowData, 'has_access' | 'chat_count'>,
-): string {
-	if (row.has_access) return 'Always'
-	if (row.chat_count > 0) {
-		return `Only in ${row.chat_count} ${row.chat_count === 1 ? 'chat' : 'chats'}`
-	}
-	return 'No access'
 }
 
 function CredentialRow({
@@ -151,9 +134,6 @@ function CredentialRow({
 		<li className="flex items-center gap-2 py-2">
 			<div className="min-w-0 flex-1">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
-				<p className="text-xs text-muted-foreground">
-					{row.kind === 'login' ? 'Login' : 'API key'} · {credentialStatus(row)}
-				</p>
 			</div>
 			<Switch
 				checked={row.has_access}

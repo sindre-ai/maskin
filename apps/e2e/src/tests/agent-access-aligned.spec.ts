@@ -117,7 +117,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.goto(`/${account.workspaceId}/agents/${reviewer.id}`)
 		const access = page.getByRole('combobox', { name: 'Access to Linear' })
 		await expect(access).toContainText('Read & write', { timeout: 15_000 })
-		await expect(page.getByText('Tools attached')).toBeVisible()
 
 		// Change it there; the Integrations page follows.
 		await access.click()

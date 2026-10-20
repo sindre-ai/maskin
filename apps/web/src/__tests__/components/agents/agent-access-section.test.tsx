@@ -1,4 +1,4 @@
-import { AgentAccessSection, credentialStatus } from '@/components/agents/agent-access-section'
+import { AgentAccessSection } from '@/components/agents/agent-access-section'
 import type { ActorResponse, AgentAccessView } from '@/lib/api'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -60,17 +60,18 @@ beforeEach(() => {
 })
 
 describe('AgentAccessSection', () => {
-	it('shows the level, whether tools are attached, and each saved credential', () => {
+	it('shows each tool and credential by name only, with no second line', () => {
 		render(<AgentAccessSection agent={agent} />)
 		expect(screen.getByText('Linear')).toBeInTheDocument()
-		expect(screen.getByText('Tools attached')).toBeInTheDocument()
+		expect(screen.queryByText('Tools attached')).toBeNull()
 		expect(screen.getByRole('combobox', { name: 'Access to Linear' })).toHaveTextContent(
 			'Default (Read)',
 		)
-		expect(screen.getByText(/API key · No access/)).toBeInTheDocument()
+		expect(screen.getByText('Stripe')).toBeInTheDocument()
+		expect(screen.queryByText(/API key/)).toBeNull()
 	})
 
-	it('reads an explicit grant by its level, and says when no tools are attached', () => {
+	it('reads an explicit grant by its level', () => {
 		view = data({
 			integrations: [
 				{
@@ -88,7 +89,7 @@ describe('AgentAccessSection', () => {
 			],
 		})
 		render(<AgentAccessSection agent={agent} />)
-		expect(screen.getByText('No tools attached')).toBeInTheDocument()
+		expect(screen.queryByText('No tools attached')).toBeNull()
 		expect(screen.getByRole('combobox', { name: 'Access to Linear' })).toHaveTextContent(
 			'Default (No access)',
 		)
@@ -133,13 +134,6 @@ describe('AgentAccessSection', () => {
 		expect(options).toEqual(['Default (Read)', 'Read', 'Read & write', 'No access'])
 	})
 
-	it('says always, only in some chats, or no access for a saved credential', () => {
-		expect(credentialStatus({ has_access: true, chat_count: 0 })).toBe('Always')
-		expect(credentialStatus({ has_access: false, chat_count: 1 })).toBe('Only in 1 chat')
-		expect(credentialStatus({ has_access: false, chat_count: 3 })).toBe('Only in 3 chats')
-		expect(credentialStatus({ has_access: false, chat_count: 0 })).toBe('No access')
-	})
-
 	it('is read-only for someone who did not connect it and is not an admin', () => {
 		view = data({
 			integrations: [{ ...data().integrations[0], created_by: 'someone-else' }],
@@ -182,7 +176,7 @@ describe('AgentAccessSection', () => {
 			render(<AgentAccessSection agent={agent} />)
 			const tools = screen.getByRole('list', { name: 'Tools' })
 			expect(within(tools).getByText('Docs search')).toBeInTheDocument()
-			expect(within(tools).getByText('Off')).toBeInTheDocument()
+			expect(within(tools).queryByText('Off')).toBeNull()
 			expect(screen.queryByRole('combobox', { name: 'Access to Docs search' })).toBeNull()
 		})
 
@@ -211,7 +205,7 @@ describe('AgentAccessSection', () => {
 				integrations: [server({ access: 'read', default_access: 'read', server_attached: true })],
 			})
 			render(<AgentAccessSection agent={agent} />)
-			expect(screen.getByText('On for all agents')).toBeInTheDocument()
+			expect(screen.queryByText('On for all agents')).toBeNull()
 			await userEvent
 				.setup()
 				.click(screen.getByRole('switch', { name: 'Docs search for this agent' }))
