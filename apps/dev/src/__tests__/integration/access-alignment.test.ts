@@ -116,8 +116,17 @@ type Setup = Awaited<ReturnType<typeof setup>>
 const H = (s: Setup) => ({ 'X-Workspace-Id': s.ws.id })
 const asHuman = (s: Setup) => appFor(s.human, 'human')
 
-async function json(res: Response) {
-	return res.json() as Promise<any>
+type ListRow = {
+	id: string
+	defaultAgentAccess: unknown
+	agentGrants: Array<{ actorId: string }>
+	chatGrants: unknown[]
+}
+type AccessRow = Record<string, unknown> & { integration_id: string }
+type AccessView = { integrations: AccessRow[]; credentials: AccessRow[] }
+
+async function json<T = unknown>(res: Response) {
+	return (await res.json()) as T
 }
 
 /** What a freshly launched session of the agent actually gets. */
@@ -166,12 +175,12 @@ async function expectAligned(s: Setup, want: Expected, step: string) {
 	const why = (surface: string) => `${step}: ${surface}`
 
 	// 1. The integration list: Integrations page and Keychain page.
-	const list = await json(
+	const list = await json<ListRow[]>(
 		await app.request(jsonRequest('GET', '/api/integrations', undefined, H(s))),
 	)
-	const linearRow = list.find((r: any) => r.id === s.linear.id)
-	const stripeRow = list.find((r: any) => r.id === s.stripeId)
-	const grantOf = (row: any) => row.agentGrants.find((g: any) => g.actorId === s.agent.id)
+	const linearRow = list.find((r) => r.id === s.linear.id)
+	const stripeRow = list.find((r) => r.id === s.stripeId)
+	const grantOf = (row: ListRow) => row.agentGrants.find((g) => g.actorId === s.agent.id)
 	expect(linearRow.defaultAgentAccess, why('list default')).toBe(want.linearDefault)
 	expect(Boolean(grantOf(linearRow)), why('list linear grant')).toBe(want.linearSource === 'grant')
 	expect(Boolean(grantOf(stripeRow)), why('list stripe grant')).toBe(want.stripe === true)
@@ -180,11 +189,11 @@ async function expectAligned(s: Setup, want: Expected, step: string) {
 	)
 
 	// 2. The agent's access view: agent page and get_actor.
-	const view = await json(
+	const view = await json<AccessView>(
 		await app.request(jsonRequest('GET', `/api/actors/${s.agent.id}/access`, undefined, H(s))),
 	)
-	const vLinear = view.integrations.find((r: any) => r.integration_id === s.linear.id)
-	const vStripe = view.credentials.find((r: any) => r.integration_id === s.stripeId)
+	const vLinear = view.integrations.find((r) => r.integration_id === s.linear.id)
+	const vStripe = view.credentials.find((r) => r.integration_id === s.stripeId)
 	expect(vLinear.access, why('view linear level')).toBe(want.linear)
 	expect(vLinear.source, why('view linear source')).toBe(want.linearSource)
 	expect(vLinear.default_access, why('view linear default')).toBe(want.linearDefault)
@@ -358,12 +367,12 @@ describe('Access reads the same on every surface (Integration)', () => {
 			.update(integrations)
 			.set({ config: { expose_to_agent_sessions: false } })
 			.where(eq(integrations.id, s.linear.id))
-		const view = await json(
+		const view = await json<AccessView>(
 			await asHuman(s).request(
 				jsonRequest('GET', `/api/actors/${s.agent.id}/access`, undefined, H(s)),
 			),
 		)
-		const linear = view.integrations.find((r: any) => r.integration_id === s.linear.id)
+		const linear = view.integrations.find((r) => r.integration_id === s.linear.id)
 		expect(linear.server_attached).toBe(false)
 		expect((await launch(s)).linearAttached).toBe(false)
 	})
