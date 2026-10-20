@@ -506,6 +506,27 @@ export const api = {
 			}),
 	},
 
+	/** Custom MCP servers: a workspace's own tool servers, shared with agents through grants. */
+	customMcpServers: {
+		get: (id: string, workspaceId: string) =>
+			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, { workspaceId }),
+		create: (workspaceId: string, body: { name: string; server: CustomMcpServerSpec }) =>
+			request<CustomMcpServerResponse>('/custom-mcp-servers', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		update: (
+			id: string,
+			workspaceId: string,
+			body: { name: string; server: CustomMcpServerSpec },
+		) =>
+			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
@@ -976,6 +997,10 @@ export const api = {
 		},
 	},
 
+	forYou: {
+		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+	},
+
 	featureFlags: {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
@@ -1442,11 +1467,24 @@ export interface LatestMentionDecisionOption {
 	recommended?: boolean
 }
 
+/**
+ * The text an agent proposes to send, shown above the buttons. The feed fills
+ * `body` from the draft object's current description, so it is always present
+ * here; `object_id` says which object it came from.
+ */
+export interface LatestMentionDecisionDraft {
+	object_id?: string
+	label?: string
+	to?: string
+	body?: string
+}
+
 export interface LatestMentionDecision {
 	title: string
 	summary: string
 	ask: string
 	options: LatestMentionDecisionOption[]
+	draft?: LatestMentionDecisionDraft
 }
 
 export interface LatestMention {
@@ -1463,6 +1501,24 @@ export interface LatestMention {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+/** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
+export interface ForYouItem {
+	notification_id: string
+	rank: number
+	headline: string
+	rationale: string | null
+	created_at: string | null
+	entity_type: 'object' | null
+	entity_id: string | null
+	session_id: string | null
+	object?: ObjectResponse
+	latest_mention?: LatestMention
+}
+
+export interface ForYouResponse {
+	items: ForYouItem[]
 }
 
 export interface BriefingResponse {
@@ -2213,6 +2269,22 @@ export interface MessageDraft {
 	char_limit?: number
 }
 
+/** A custom MCP server definition. Env and header values come back masked on read. */
+export interface CustomMcpServerSpec {
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	env?: Record<string, string>
+	url?: string
+	headers?: Record<string, string>
+}
+
+export interface CustomMcpServerResponse {
+	id: string
+	name: string
+	server: CustomMcpServerSpec
+}
+
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
@@ -2224,6 +2296,8 @@ export interface MessageKeychainRequest {
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
 /** What an agent can use: the one description every screen and the launch prompt share. */
 export interface AgentAccessView {
+	/** The Maskin MCP server: on every agent, read & write, and not changeable. */
+	maskin_mcp: { name: string; access: 'read_write'; locked: true }
 	integrations: Array<{
 		integration_id: string
 		provider: string
@@ -2233,6 +2307,10 @@ export interface AgentAccessView {
 		default_access: 'read' | 'none'
 		server_attached: boolean
 		created_by: string
+		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
+		kind: 'integration' | 'tool_server'
+		/** Tool server Maskin sits in front of: Read / Read & write / No access, not just on or off. */
+		gated: boolean
 	}>
 	credentials: Array<{
 		integration_id: string

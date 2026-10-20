@@ -2214,7 +2214,10 @@ describe('SessionManager', () => {
 			}
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
-			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+			// Only the Maskin MCP server, which every session gets: no GitHub entry.
+			expect(
+				Object.keys(JSON.parse(createArgs.env.MCP_SERVERS_JSON ?? '{}').mcpServers ?? {}),
+			).toEqual(['maskin'])
 			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBeUndefined()
 		})
 

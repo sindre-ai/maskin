@@ -14,6 +14,9 @@ const mockDisconnect = vi.fn()
  *  whether to open the post-authorization org picker. */
 const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
 
+// The Tools section has its own tests (components/integrations/tools-section.test.tsx).
+vi.mock('@/components/integrations/tools-section', () => ({ ToolsSection: () => null }))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {

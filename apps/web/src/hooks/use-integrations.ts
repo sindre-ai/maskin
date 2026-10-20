@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { type AgentGrantAccess, api } from '../lib/api'
+import { type AgentGrantAccess, type CustomMcpServerSpec, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -320,4 +320,54 @@ export function useSetDefaultAgentAccess(workspaceId: string, integrationId: str
 			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
 		'Default access updated',
 	)
+}
+
+/** A custom MCP server's definition, secrets masked. Fetched when its edit form opens. */
+export function useCustomMcpServer(workspaceId: string, id: string | null) {
+	return useQuery({
+		queryKey: [...queryKeys.integrations.all(workspaceId), 'custom-mcp', id] as const,
+		queryFn: () => api.customMcpServers.get(id as string, workspaceId),
+		enabled: !!workspaceId && !!id,
+		// A secret is never kept around: read it fresh each time the form opens.
+		gcTime: 0,
+	})
+}
+
+/** Add a custom MCP server. It reaches no agent until it is granted. */
+export function useCreateCustomMcpServer(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (input: { name: string; server: CustomMcpServerSpec }) =>
+			api.customMcpServers.create(workspaceId, input),
+		onSuccess: () => {
+			toast.success('Tool server added')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+export function useUpdateCustomMcpServer(workspaceId: string, id: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (input: { name: string; server: CustomMcpServerSpec }) =>
+			api.customMcpServers.update(id, workspaceId, input),
+		onSuccess: () => {
+			toast.success('Tool server saved')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Remove a custom MCP server: it drops out of every agent's next session. */
+export function useRemoveCustomMcpServer(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.integrations.disconnect(id, workspaceId),
+		onSuccess: () => {
+			toast.success('Tool server removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
 }
