@@ -29,13 +29,18 @@ export function useConnectIntegration(workspaceId: string) {
 			// does not have the App yet, instead of the authorize step that only
 			// lists orgs that already do.
 			installNewOrg?: boolean
+			// Workspace-relative path to land on once the connect finishes — the chat
+			// that showed the Connect card. Absent means Settings → Integrations. The
+			// backend only honours a plain path inside this workspace.
+			returnTo?: string
 		}) => {
 			const body =
-				input.apiKey || input.receiveSubdomain || input.installNewOrg
+				input.apiKey || input.receiveSubdomain || input.installNewOrg || input.returnTo
 					? {
 							...(input.apiKey ? { api_key: input.apiKey } : {}),
 							...(input.receiveSubdomain ? { receive_subdomain: input.receiveSubdomain } : {}),
 							...(input.installNewOrg ? { install_new_org: true } : {}),
+							...(input.returnTo ? { return_to: input.returnTo } : {}),
 						}
 					: undefined
 			return api.integrations.connect(workspaceId, input.provider, body)
@@ -64,10 +69,14 @@ export function useResendDnsPrecheck(workspaceId: string) {
 /** GitHub App installations the actor already reaches from another workspace.
  *  GitHub won't re-run its install flow for an org that already has the App, so
  *  binding an existing installation is the only way to add it here. */
-export function useLinkableGithubInstallations(workspaceId: string) {
+export function useLinkableGithubInstallations(
+	workspaceId: string,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
 		queryKey: queryKeys.integrations.githubLinkable(workspaceId),
 		queryFn: () => api.integrations.githubLinkable(workspaceId),
+		enabled: options?.enabled ?? true,
 	})
 }
 

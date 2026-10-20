@@ -808,6 +808,42 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_session_activity handler', () => {
+		const sid = '11111111-1111-4111-8111-111111111111'
+		const payload = {
+			session_id: sid,
+			turns: [{ message_id: 7, steps: [{ id: '1-0', kind: 'tool_use', label: 'Using Read' }] }],
+			oldest_log_id: 1,
+			has_older: false,
+		}
+
+		it('forwards paging params and returns the same full payload on both channels', async () => {
+			mockFetchSuccess(payload)
+			const handler = getHandler('get_session_activity')
+			const result = (await handler({
+				id: sid,
+				limit_turns: 3,
+				message_id: 7,
+				before_log_id: 99,
+			})) as { content: Array<{ text: string }>; structuredContent: unknown }
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain(`/api/sessions/${sid}/activity?`)
+			expect(calledUrl).toContain('limit_turns=3')
+			expect(calledUrl).toContain('message_id=7')
+			expect(calledUrl).toContain('before_log_id=99')
+			expect(result.structuredContent).toEqual(payload)
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('states it is read-only and names its write counterparts', async () => {
+			const { tools } = await import('../tools')
+			const d = tools.get_session_activity.description
+			expect(d).toContain('read-only')
+			expect(d).toContain('stop_session')
+		})
+	})
+
 	describe('update_objects handler — file attachments', () => {
 		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
 			// PATCH the object, GET (per file, returns empty → not yet attached),
@@ -2068,6 +2104,39 @@ describe('tool handlers', () => {
 
 				const handler = getHandler('update_loop')
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { tags: ['Old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', tags: ['Sales', 'EMEA'] })
+				await handler({ id: 'loop-1', tags: [] })
+
+				expect(patches[0]?.metadata).toEqual({ tags: ['Sales', 'EMEA'] })
+				expect(patches[1]?.metadata).toEqual({ tags: [] })
 			})
 
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {

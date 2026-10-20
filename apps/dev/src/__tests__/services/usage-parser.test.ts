@@ -202,6 +202,26 @@ describe('resolveSessionCostUsd', () => {
 		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash')
 	})
 
+	it('prices a workspace_custom session from the table, and keeps the CLI figure when the model is unlisted', async () => {
+		getModelPricingMock.mockResolvedValueOnce(DEEPSEEK_PRICING)
+		const priced = await resolveSessionCostUsd({
+			route: 'workspace_custom',
+			modelName: 'deepseek/deepseek-v4.1-flash',
+			usage: usage({ totalCostUsd: 1.91, inputTokens: 1000, outputTokens: 500 }),
+		})
+		// 1000*7e-8 + 500*1.4e-7 = 0.00014, ignoring the CLI's $1.91.
+		expect(priced).toBeCloseTo(0.00014, 12)
+		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4.1-flash')
+
+		getModelPricingMock.mockResolvedValueOnce(null)
+		const unlisted = await resolveSessionCostUsd({
+			route: 'workspace_custom',
+			modelName: 'my-company/private-model',
+			usage: usage({ totalCostUsd: 0.5, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(unlisted).toBe(0.5)
+	})
+
 	it('falls back to the legacy token rate on input+output when the model is unknown', async () => {
 		getModelPricingMock.mockResolvedValue(null)
 		const resolved = await resolveSessionCostUsd({

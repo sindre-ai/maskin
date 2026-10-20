@@ -21,6 +21,7 @@ import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -50,11 +51,6 @@ interface ThreadMessagesProps {
 	 *  route boundary on `graph-provenance-writes` so the sessions query fires
 	 *  only for tester actors. */
 	producedEnabled?: boolean
-	/** Chat thread `HANDED OFF` sub-agent delegation strip
-	 *  (bet/444b-handed-off-strip). Threaded from the route boundary as a
-	 *  plain boolean; the bubble decides per-message whether to render the
-	 *  strip based on this flag AND the message's own `spawned_sessions`. */
-	handedOffStripEnabled?: boolean
 }
 
 export function ThreadMessages({
@@ -64,7 +60,6 @@ export function ThreadMessages({
 	v4PolishBanner = false,
 	v4PolishBubbles = false,
 	producedEnabled = false,
-	handedOffStripEnabled = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
@@ -75,7 +70,7 @@ export function ThreadMessages({
 	// Each handoff is its own row in the timeline, at the moment its session was
 	// created: before the first message written after it, or at the foot of the
 	// thread when nothing has been written since.
-	const showHandoffCards = Boolean(threadsPane) && handedOffStripEnabled
+	const showHandoffCards = Boolean(threadsPane)
 	const handoffsByNextMessage = useMemo(() => {
 		if (!showHandoffCards) return new Map<number | 'end', typeof handoffs>()
 		return groupHandoffsByNextMessage(handoffs, messages)
@@ -107,6 +102,11 @@ export function ThreadMessages({
 			producedEnabled ? deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]) : new Map(),
 		[sessionList, producedEnabled],
 	)
+
+	// Head/tail dividers for each run of voice-call messages. Derived from the
+	// messages themselves (metadata.source === 'voice'), so it needs no flag read
+	// of its own: no voice messages exist until a flagged call has written some.
+	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
 
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
@@ -349,6 +349,9 @@ export function ThreadMessages({
 								{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
 									<MessageDivider date={message.createdAt} />
 								) : null}
+								{voiceBoundaries.get(message.id)?.start ? (
+									<VoiceCallBoundary variant="start" {...voiceBoundaries.get(message.id)?.start} />
+								) : null}
 								{/* A finished turn belongs to the reply it produced, so it
 							    renders *inside* that message under the agent's name
 							    rather than as a separate row above it — which read as
@@ -361,7 +364,6 @@ export function ThreadMessages({
 									questionAnswered={answeredQuestionIds.has(message.id)}
 									v4Polish={v4PolishBubbles}
 									spawnInfo={spawnByMessageId.get(message.id)}
-									handedOffStripEnabled={handedOffStripEnabled}
 									// Keyed by index as well as session: one session can put two
 									// turns under the same message (a result segment plus the
 									// live turn that follows it), so `sessionId` alone is not
@@ -382,6 +384,7 @@ export function ThreadMessages({
 										turn={turn}
 									/>
 								))}
+								{voiceBoundaries.get(message.id)?.end ? <VoiceCallBoundary variant="end" /> : null}
 							</div>
 						</Fragment>
 					)

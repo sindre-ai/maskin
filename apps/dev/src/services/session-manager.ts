@@ -65,7 +65,7 @@ import {
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifySessionExit } from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -80,7 +80,10 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
-import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
+import {
+	mcpServersReferenceEnvKey,
+	serverSpecReferencesEnvKey,
+} from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
@@ -95,6 +98,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -120,6 +124,7 @@ import {
 	registerMcpInit,
 } from '../lib/mcp-health'
 import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -435,6 +440,16 @@ export interface SessionLogEvent extends LogChunk {
 }
 
 /**
+ * In-process turn boundary for interactive sessions, emitted as `'turn'`.
+ * `started`: a user turn was written to the CLI's stdin (a human message, a
+ * seed turn, or a replay). `finished`: the turn's closing message was posted.
+ * Consumed by the Live Activity fan-out; never persisted.
+ */
+export type SessionTurnEvent =
+	| { sessionId: string; phase: 'started' }
+	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
+
+/**
  * §17.5 companion parser at the two completion paths: convert the classifier's
  * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
  * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
@@ -615,6 +630,8 @@ export class SessionManager extends EventEmitter {
 			// still retries and still tells the human.
 			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
 			fallbackModel: readEmptyTurnFallbackModel(),
+			onTurnFinished: (sessionId, outcome) =>
+				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
 		})
 	}
@@ -1340,6 +1357,7 @@ export class SessionManager extends EventEmitter {
 				data: log.content,
 			} satisfies SessionLogEvent)
 		}
+		this.emit('turn', { sessionId, phase: 'started' } satisfies SessionTurnEvent)
 	}
 
 	/**
@@ -2343,7 +2361,12 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
 				oauthExpiresAtTaken = resolved.oauthExpiresAt
-				routeModelName = resolved.modelName
+				// maskin_plan names its model on the result; a BYO endpoint's model is
+				// the ANTHROPIC_MODEL it was configured with.
+				routeModelName =
+					resolved.route === LLM_ROUTE_CUSTOM
+						? resolved.envVars.ANTHROPIC_MODEL
+						: resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -2404,11 +2427,11 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
-		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
-		// OpenRouter model that will actually run: the follow-on local cost
-		// resolver keys OpenRouter's pricing table on that value, and without
+		// On the maskin_plan and workspace_custom routes we ALSO stamp
+		// `sessions.model_name` with the model that will actually run: the local
+		// cost resolver keys OpenRouter's pricing table on that value, and without
 		// it every non-Anthropic session reads as an Opus-priced number.
-		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// claude_oauth and the API-key routes leave `model_name` null on purpose —
 		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
@@ -2420,7 +2443,7 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
 			)
 			const modelNameToPersist =
-				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				(routeTaken === LLM_ROUTE_MASKIN_PLAN || routeTaken === LLM_ROUTE_CUSTOM) &&
 				routeModelName &&
 				routeModelName !== session.modelName
 					? routeModelName
@@ -2489,6 +2512,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const integrationTokens: Record<string, string> = {}
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2631,7 +2655,26 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (accessToken !== null) {
 				const envVarName =
 					mcp?.envKey ?? `${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
-				envVars[envVarName] = accessToken
+				// Server-side copy, for code in this process that needs a provider
+				// token without the container ever seeing it (the preflight Slack alert).
+				integrationTokens[envVarName] = accessToken
+				// The container only gets the token if the agent is meant to use it:
+				// its own tools config (or the session's MCP list) references the
+				// token variable, or the MCP server auto-injected below needs it to
+				// sign in. Anything else would hand every shell-capable agent in the
+				// workspace a credential it has no use for.
+				const agentUsesToken =
+					mcpServersReferenceEnvKey(agentToolsMcpServers, envVarName) ||
+					mcpServersReferenceEnvKey(sessionConfig.mcps, envVarName)
+				if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
+					envVars[envVarName] = accessToken
+				} else {
+					logger.debug('Integration token not injected; agent config does not reference it', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						provider: integration.provider,
+					})
+				}
 			}
 			if (autoInjectServer) {
 				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
@@ -2715,6 +2758,8 @@ ${HUMAN_MESSAGE_STYLE}`
 			'ANTHROPIC_MODEL',
 			'ANTHROPIC_SMALL_FAST_MODEL',
 			'MASKIN_CLAUDE_EFFORT',
+			'MAX_THINKING_TOKENS',
+			'MASKIN_DISABLE_WEB_SEARCH',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -2837,7 +2882,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						statusSnippet: v.statusSnippet,
 					})),
 				})
-				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
 						botToken: slackBotToken,
@@ -3200,6 +3245,12 @@ ${HUMAN_MESSAGE_STYLE}`
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
+						if (
+							chunk.stream === 'stdout' &&
+							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
+						) {
+							continue
+						}
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
 							await this.emitUnhealthyMcpWarningIfAny(sessionId, chunk.data)
@@ -3601,9 +3652,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
-			exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (classifiedFailureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
@@ -5504,6 +5553,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// paths (queue-drain rejection, remote sessions) that have no
 		// activeSessions entry to key off.
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 	}
 
 	/**
@@ -5520,6 +5570,9 @@ ${HUMAN_MESSAGE_STYLE}`
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, line.content)) {
+				continue
+			}
 			if (line.stream === 'stdout') {
 				await this.emitGithubCauseTagIfAny(sessionId, line.content)
 				await this.emitUnhealthyMcpWarningIfAny(sessionId, line.content)
@@ -5796,9 +5849,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,
@@ -5812,6 +5863,42 @@ ${HUMAN_MESSAGE_STYLE}`
 		// only the CLI-banner tail is available on this side, same as handleCompletion.
 		const scheduledRetryAt = pickRetryAt(failureReason)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+
+		// Add this segment's usage onto the stored totals, like handleCompletion does
+		// through accumulateSessionUsage: a session that was paused and resumed
+		// already carries the earlier segments' usage, and the result envelope in
+		// the logs only reports the last segment. stopSession()'s provisional write
+		// carries no usage: the genuine report that follows reads the same logs, so
+		// adding on both would count one envelope twice. The genuine report adds.
+		const segmentUsageSet =
+			usage && !stoppedByUser
+				? {
+						totalCostUsd:
+							resolvedCostUsd != null
+								? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
+								: undefined,
+						inputTokens:
+							usage.inputTokens != null
+								? sql`COALESCE(${sessions.inputTokens}, 0) + ${usage.inputTokens}`
+								: undefined,
+						outputTokens:
+							usage.outputTokens != null
+								? sql`COALESCE(${sessions.outputTokens}, 0) + ${usage.outputTokens}`
+								: undefined,
+						cacheCreationInputTokens:
+							usage.cacheCreationInputTokens != null
+								? sql`COALESCE(${sessions.cacheCreationInputTokens}, 0) + ${usage.cacheCreationInputTokens}`
+								: undefined,
+						cacheReadInputTokens:
+							usage.cacheReadInputTokens != null
+								? sql`COALESCE(${sessions.cacheReadInputTokens}, 0) + ${usage.cacheReadInputTokens}`
+								: undefined,
+						durationMs:
+							usage.durationMs != null
+								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
+								: undefined,
+					}
+				: {}
 
 		const result: SessionResult = stoppedByUser
 			? { exit_code: exitCode, stopped_by_user: true }
@@ -5849,16 +5936,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						updatedAt: new Date(),
 						currentActivity: null,
 						...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
-						...(usage
-							? {
-									totalCostUsd: resolvedCostUsd?.toString() ?? null,
-									inputTokens: usage.inputTokens,
-									outputTokens: usage.outputTokens,
-									cacheCreationInputTokens: usage.cacheCreationInputTokens,
-									cacheReadInputTokens: usage.cacheReadInputTokens,
-									durationMs: usage.durationMs,
-								}
-							: {}),
+						...segmentUsageSet,
 					})
 					.where(
 						and(
@@ -5961,16 +6039,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
-						...(usage
-							? {
-									totalCostUsd: resolvedCostUsd?.toString() ?? null,
-									inputTokens: usage.inputTokens,
-									outputTokens: usage.outputTokens,
-									cacheCreationInputTokens: usage.cacheCreationInputTokens,
-									cacheReadInputTokens: usage.cacheReadInputTokens,
-									durationMs: usage.durationMs,
-								}
-							: {}),
+						...segmentUsageSet,
 					})
 					.where(eq(sessions.id, sessionId))
 			} catch (err) {
@@ -6151,6 +6220,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
