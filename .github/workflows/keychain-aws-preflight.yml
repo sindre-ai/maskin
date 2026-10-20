@@ -1,0 +1,93 @@
+# Keychain AWS preflight. Changes nothing in AWS.
+# Prints the OIDC sub claim, assumes the bootstrap role, proves the other environment's role is refused.
+# Design and rules: ADR-010 and infra/keychain-aws/README.md. Run this before anything else.
+name: Keychain AWS preflight
+
+run-name: Keychain AWS preflight (${{ inputs.target }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which environment to check
+        type: choice
+        required: true
+        options:
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: keychain-aws-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: keychain-aws-${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+    steps:
+      - name: Print the OIDC claims and check the sub
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ACCOUNT_ID" || { echo "Environment secret AWS_ACCOUNT_ID is missing"; exit 1; }
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "::add-mask::$TOKEN"
+          # The claims are not secret. The repo is public and the sub is what the trust policy must match.
+          CLAIMS=$(jq -R 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson' <<<"$TOKEN")
+          jq '{iss, aud, sub, ref, environment, repository_owner_id, repository_id}' <<<"$CLAIMS"
+          EXPECTED="repo:sindre-ai/maskin:environment:keychain-aws-$TARGET"
+          ACTUAL=$(jq -r .sub <<<"$CLAIMS")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::sub claim differs from the trust policy value. Expected $EXPECTED. Update the trust policy to the printed sub, then re-run."
+            exit 1
+          fi
+          echo "sub matches the trust policy value"
+
+      - name: Assume the bootstrap role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/maskin-keychain-bootstrap-${{ inputs.target }}
+          role-session-name: keychain-preflight-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: eu-central-1
+          mask-aws-account-id: true
+
+      - name: Who am I (role name only) and region
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARN=$(aws sts get-caller-identity --query Arn --output text)
+          echo "::add-mask::$ARN"
+          echo "assumed role: $(sed 's#.*assumed-role/##; s#/.*##' <<<"$ARN")"
+          echo "region: $AWS_REGION"
+          test "$AWS_REGION" = "eu-central-1"
+
+      - name: The other environment's role must refuse this job
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) OTHER=production ;;
+            production) OTHER=staging ;;
+            *) echo "bad target"; exit 1 ;;
+          esac
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "::add-mask::$TOKEN"
+          if aws sts assume-role-with-web-identity --no-sign-request \
+              --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/maskin-keychain-bootstrap-${OTHER}" \
+              --role-session-name keychain-preflight-negative \
+              --web-identity-token "$TOKEN" >/dev/null 2>&1; then
+            echo "::error::The $OTHER role accepted a $TARGET job. The trust policy is not pinned to the environment. Stop and tell the CTO."
+            exit 1
+          fi
+          echo "the $OTHER role refused this $TARGET job, as required"
