@@ -10,7 +10,7 @@ import {
 	skjaldTranscriptionCompletedPayloadSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, ne, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
@@ -21,7 +21,7 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
-import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
+import { type DetachScope, detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
@@ -1950,7 +1950,32 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// outlives the credential behind it. Left in place, the agent boots with
 	// the server attached, advertises its tools, and fails every call — so it
 	// reports a broken platform instead of a missing connection.
-	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+	//
+	// LinkedIn is one endpoint per identity, so only this credential's own
+	// entries go. Scoping by provider alone stripped every identity's entry from
+	// every agent whenever any one person disconnected (14 Oct 2026).
+	let detachScope: DetachScope | undefined
+	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
+		const slugPrefix = (accSlug: string | null) => (accSlug ? `linkedin-${accSlug}-` : null)
+		const others = await db
+			.select({ unipileAccSlug: integrations.unipileAccSlug })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, existing.workspaceId),
+					eq(integrations.provider, existing.provider),
+					eq(integrations.status, 'active'),
+					ne(integrations.id, existing.id),
+				),
+			)
+		detachScope = {
+			ownSlugPrefix: slugPrefix(existing.unipileAccSlug),
+			otherSlugPrefixes: others
+				.map((o) => slugPrefix(o.unipileAccSlug))
+				.filter((p): p is string => p !== null),
+		}
+	}
+	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId, detachScope)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)

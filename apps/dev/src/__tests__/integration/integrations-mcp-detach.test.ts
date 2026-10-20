@@ -154,6 +154,93 @@ describe('detachProviderMcpServers', () => {
 		expect((await toolsOf(b.id)).mcpServers).toEqual({})
 	})
 
+	// 14 Oct 2026: disconnecting Magnus's LinkedIn stripped Sebastian's entry from
+	// eight agents too, because the bare `/mcp` prefix matches every identity.
+	describe('scoped to one LinkedIn credential', () => {
+		const instance = (slug: string) => ({
+			type: 'http',
+			url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${slug}`,
+		})
+		const SEBK = 'linkedin-krumhausen-personal'
+		const MAGNUS = 'linkedin-magnus-noeddegaard-personal'
+
+		it('removes only the disconnected identity and keeps the other', async () => {
+			const createdBy = getTestActorId()
+			const ws = await insertWorkspace(db, createdBy)
+			const agent = await insertAgent(ws.id, {
+				mcpServers: { maskin: MASKIN_MCP, [SEBK]: instance(SEBK), [MAGNUS]: instance(MAGNUS) },
+			})
+
+			await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, {
+				ownSlugPrefix: 'linkedin-magnus-noeddegaard-',
+				otherSlugPrefixes: ['linkedin-krumhausen-'],
+			})
+
+			expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {}).sort()).toEqual(
+				['maskin', SEBK].sort(),
+			)
+		})
+
+		it('does not report an agent that only holds other identities as changed', async () => {
+			const createdBy = getTestActorId()
+			const ws = await insertWorkspace(db, createdBy)
+			const agent = await insertAgent(ws.id, { mcpServers: { [SEBK]: instance(SEBK) } })
+
+			const changed = await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, {
+				ownSlugPrefix: 'linkedin-magnus-noeddegaard-',
+				otherSlugPrefixes: ['linkedin-krumhausen-'],
+			})
+
+			expect(changed).toBe(0)
+			expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {})).toEqual([SEBK])
+		})
+
+		// `linkedin-magnus-` is a string prefix of `linkedin-magnus-noeddegaard-personal`.
+		it('leaves a longer-slug credential alone when its prefix extends the disconnected one', async () => {
+			const createdBy = getTestActorId()
+			const ws = await insertWorkspace(db, createdBy)
+			const agent = await insertAgent(ws.id, {
+				mcpServers: { 'linkedin-magnus-personal': instance('linkedin-magnus-personal'), [MAGNUS]: instance(MAGNUS) },
+			})
+
+			await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, {
+				ownSlugPrefix: 'linkedin-magnus-',
+				otherSlugPrefixes: ['linkedin-magnus-noeddegaard-'],
+			})
+
+			expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {})).toEqual([MAGNUS])
+		})
+
+		it('still removes the deprecated bare aggregate entry', async () => {
+			const createdBy = getTestActorId()
+			const ws = await insertWorkspace(db, createdBy)
+			const agent = await insertAgent(ws.id, {
+				mcpServers: { 'linkedin-unipile': LINKEDIN_MCP, [SEBK]: instance(SEBK) },
+			})
+
+			await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, {
+				ownSlugPrefix: 'linkedin-magnus-noeddegaard-',
+				otherSlugPrefixes: ['linkedin-krumhausen-'],
+			})
+
+			expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {})).toEqual([SEBK])
+		})
+
+		it('removes nothing but the aggregate when the credential never enumerated an identity', async () => {
+			const createdBy = getTestActorId()
+			const ws = await insertWorkspace(db, createdBy)
+			const agent = await insertAgent(ws.id, { mcpServers: { [SEBK]: instance(SEBK) } })
+
+			const changed = await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, {
+				ownSlugPrefix: null,
+				otherSlugPrefixes: [],
+			})
+
+			expect(changed).toBe(0)
+			expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {})).toEqual([SEBK])
+		})
+	})
+
 	it('leaves the integrations table alone — it only rewrites agent config', async () => {
 		const createdBy = getTestActorId()
 		const ws = await insertWorkspace(db, createdBy)

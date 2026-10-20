@@ -35,11 +35,48 @@ function providerMcpPath(provider: string): string {
 
 type McpServerEntry = { url?: unknown } & Record<string, unknown>
 
-function entryTargetsProvider(entry: unknown, provider: string): boolean {
+/**
+ * Narrows a detach to one credential of a multi-identity provider.
+ *
+ * LinkedIn serves one endpoint per identity, `/mcp/{instanceSlug}` with
+ * `instanceSlug = linkedin-{unipileAccSlug}-{identitySlug}`. Matching the bare
+ * `/mcp` prefix therefore matches every identity in the workspace, so
+ * disconnecting one person's LinkedIn stripped everyone's from every agent.
+ */
+export type DetachScope = {
+	/** `linkedin-{unipileAccSlug}-` of the credential being disconnected; null when it never enumerated an identity. */
+	ownSlugPrefix: string | null
+	/** Same prefix for every OTHER live credential of the provider in the workspace. */
+	otherSlugPrefixes: string[]
+}
+
+/** The path segment after `/mcp/`, or '' for the bare aggregate endpoint. */
+function instanceSlugOf(url: string, provider: string): string | null {
+	const base = providerMcpPath(provider)
+	const at = url.indexOf(base)
+	if (at === -1) return null
+	const rest = url.slice(at + base.length).split(/[?#]/)[0]
+	if (rest === '' || rest === '/') return ''
+	if (!rest.startsWith('/')) return null // e.g. `/mcpx`, a different endpoint
+	return rest.slice(1).replace(/\/+$/, '')
+}
+
+function entryTargetsProvider(entry: unknown, provider: string, scope?: DetachScope): boolean {
 	if (!entry || typeof entry !== 'object') return false
 	const url = (entry as McpServerEntry).url
 	if (typeof url !== 'string') return false
-	return url.includes(providerMcpPath(provider))
+	const slug = instanceSlugOf(url, provider)
+	if (slug === null) return false
+	// The bare endpoint is the deprecated aggregate: it exposes no tools for any
+	// identity, so it is dead as soon as any credential goes.
+	if (slug === '' || !scope) return true
+	if (!scope.ownSlugPrefix || !slug.startsWith(scope.ownSlugPrefix)) return false
+	// `linkedin-magnus-` is a prefix of `linkedin-magnus-noeddegaard-personal`
+	// too. When another live credential claims the slug with a longer prefix,
+	// it is theirs; leaving a dead entry is the safer miss than deleting a live one.
+	return !scope.otherSlugPrefixes.some(
+		(other) => other.length > scope.ownSlugPrefix!.length && slug.startsWith(other),
+	)
 }
 
 /**
@@ -57,6 +94,8 @@ export async function detachProviderMcpServers(
 	provider: string,
 	/** The actor performing the disconnect — recorded on the audit event. */
 	actorId: string,
+	/** Omit for single-endpoint providers; pass for per-identity ones (LinkedIn). */
+	scope?: DetachScope,
 ): Promise<number> {
 	try {
 		const rows = await db
@@ -74,7 +113,7 @@ export async function detachProviderMcpServers(
 			const kept: Record<string, unknown> = {}
 			const removed: string[] = []
 			for (const [key, entry] of Object.entries(servers as Record<string, unknown>)) {
-				if (entryTargetsProvider(entry, provider)) removed.push(key)
+				if (entryTargetsProvider(entry, provider, scope)) removed.push(key)
 				else kept[key] = entry
 			}
 			if (removed.length === 0) continue
