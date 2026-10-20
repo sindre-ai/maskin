@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { credentialMock } = vi.hoisted(() => ({ credentialMock: vi.fn() }))
 vi.mock('../../../../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: credentialMock,
+	findIntegrationRow: credentialMock,
+	getCredential: vi.fn(async () => ({ value: JSON.stringify({ account_id: 'acc_1' }) })),
 }))
 vi.mock('../../../../../lib/workspace-auth', () => ({ isWorkspaceMember: async () => true }))
 vi.mock('../../../../../lib/crypto', () => ({

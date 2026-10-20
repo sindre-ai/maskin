@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
+	type AgentGrantAccess,
 	actors,
+	agentGrants,
 	conversations,
 	notifications,
 	objects,
@@ -639,6 +641,37 @@ export async function insertSessionLog(
 	const { id: _id, ...data } = buildSessionLog({ sessionId, ...overrides })
 	const rows = await db.insert(sessionLogs).values(data).returning()
 	return rows[0]
+}
+
+/** Gives an agent access to an integration (a Keychain credential is read_write: on). */
+export async function insertAgentGrant(
+	db: Database,
+	grant: {
+		workspaceId: string
+		integrationId: string
+		actorId: string
+		access?: AgentGrantAccess
+		createdBy?: string
+	},
+) {
+	const rows = await db
+		.insert(agentGrants)
+		.values({ access: 'read_write', ...grant })
+		.onConflictDoUpdate({
+			target: [agentGrants.integrationId, agentGrants.actorId],
+			set: { access: grant.access ?? 'read_write' },
+		})
+		.returning()
+	return rows[0]
+}
+
+/** The actor ids holding a grant on an integration, sorted. */
+export async function grantedActorIds(db: Database, integrationId: string): Promise<string[]> {
+	const rows = await db
+		.select({ actorId: agentGrants.actorId })
+		.from(agentGrants)
+		.where(eq(agentGrants.integrationId, integrationId))
+	return rows.map((r) => r.actorId).sort()
 }
 
 export async function insertTrigger(
