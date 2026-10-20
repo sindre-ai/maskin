@@ -2459,7 +2459,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id, status: 'running' }),
 				} as Response)
 
-		it('flag on and the wait times out: asks for the return with one PATCH, nothing on the create call', async () => {
+		it('flag on and the wait times out: asks for the return with one PATCH, false on the create call', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n1')
 
@@ -2476,7 +2476,8 @@ describe('tool handlers', () => {
 			expect(parsed.notify_on_complete).toBe('registered')
 
 			const [create] = callsWith(fetchSpy, 'POST')
-			expect(JSON.parse(create[1].body as string)).not.toHaveProperty('notify_on_complete')
+			// False, not omitted: omitted defaults on for a helper started from a chat.
+			expect(JSON.parse(create[1].body as string).notify_on_complete).toBe(false)
 			const patches = callsWith(fetchSpy, 'PATCH')
 			expect(patches).toHaveLength(1)
 			expect(patches[0][0]).toBe('http://localhost:3000/api/sessions/sess-n1')

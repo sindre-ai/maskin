@@ -38,6 +38,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -144,6 +145,19 @@ app.openapi(createSessionRoute, (async (c) => {
 		link.linked && body.interactive !== false
 			? await resolveAskConversationId(db, link.spawnedBySessionId)
 			: null
+	// A helper started from a chat returns into that chat unless the caller said
+	// otherwise: with the routing flag on for the person in the sender's 1-1,
+	// notify_on_complete defaults on (helper-return.ts then prefers the chat to the
+	// object). An explicit true or false from the caller always wins.
+	const notifyOnComplete =
+		body.notify_on_complete ??
+		(link.linked &&
+			(await returnsToChatByDefault(db, {
+				senderSessionId: link.spawnedBySessionId,
+				senderConversationId: link.senderConversationId,
+				creatorId: actorId,
+				workspaceId,
+			})))
 	const config = link.linked
 		? {
 				...baseConfig,
@@ -154,7 +168,7 @@ app.openapi(createSessionRoute, (async (c) => {
 				// The chat this work belongs to, written whatever the routing flag says so
 				// the pre-ship baseline by session_origin exists (chat-origin-routing.ts).
 				...(link.originConversationId ? { origin_conversation_id: link.originConversationId } : {}),
-				...(body.notify_on_complete ? { notify_on_complete: true } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			}
 		: baseConfig
 

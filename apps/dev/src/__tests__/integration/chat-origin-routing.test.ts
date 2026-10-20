@@ -14,6 +14,7 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { planCommentRouting } from '../../services/chat-origin-routing'
+import { returnToSender } from '../../services/helper-return'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { CommentDispatcher } from '../../services/trigger-runner'
@@ -366,6 +367,107 @@ describe('origin stamp on spawned sessions', () => {
 		const f = await seed()
 		expect((await spawn(f, f.agent.id, f.cronSession.id)).origin_conversation_id).toBeUndefined()
 		expect((await spawn(f, f.agent.id, null)).origin_conversation_id).toBeUndefined()
+	})
+})
+
+describe('helper return default for work started from a chat', () => {
+	beforeEach(() => {
+		configureSessionLifecycle({ db, sessionManager: manager })
+	})
+	afterEach(() => setFlagFor())
+
+	async function spawnHelper(
+		f: Fixture,
+		senderSessionId: string | null,
+		extra: Record<string, unknown> = {},
+	) {
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/sessions',
+				{
+					actor_id: f.other.id,
+					action_prompt: 'help me',
+					auto_start: false,
+					initiated_from_object_id: f.object.id,
+					...extra,
+				},
+				{
+					'X-Workspace-Id': f.ws.id,
+					'X-Test-Actor-Id': f.agent.id,
+					...(senderSessionId ? { 'X-Maskin-Session-Id': senderSessionId } : {}),
+				},
+			),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { id: string }
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, body.id))
+		const config = (row?.config ?? {}) as { notify_on_complete?: boolean }
+		return { id: body.id, notify: config.notify_on_complete }
+	}
+
+	it('flag on: a helper started from a chat session that sets nothing returns into the chat, not the object', async () => {
+		const f = await seed()
+		setFlagFor(f.human.id)
+		const helper = await spawnHelper(f, f.chatSession.id)
+		expect(helper.notify).toBe(true)
+
+		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.id, helper.id))
+		const out = await returnToSender(db, helper.id)
+
+		expect(out).toEqual({ returned: true, destination: 'conversation' })
+		const inChat = await chatMessages(f.chat.id)
+		expect(inChat.filter((m) => m.actorId === f.other.id)).toHaveLength(1)
+		const onObject = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, f.object.id), eq(events.action, 'commented')))
+		expect(onObject).toHaveLength(0)
+	})
+
+	it('flag on: an explicit notify_on_complete false from the caller is kept', async () => {
+		const f = await seed()
+		setFlagFor(f.human.id)
+		const helper = await spawnHelper(f, f.chatSession.id, { notify_on_complete: false })
+		expect(helper.notify).toBeUndefined()
+	})
+
+	it('flag on: an explicit notify_on_complete true still works from a sender with no chat', async () => {
+		const f = await seed()
+		setFlagFor(f.human.id)
+		const helper = await spawnHelper(f, f.cronSession.id, { notify_on_complete: true })
+		expect(helper.notify).toBe(true)
+	})
+
+	it('flag on: a sender with no chat of its own (cron, header-less, helper) keeps today’s default', async () => {
+		const f = await seed()
+		setFlagFor(f.human.id)
+		expect((await spawnHelper(f, f.cronSession.id)).notify).toBeUndefined()
+		expect((await spawnHelper(f, null)).notify).toBeUndefined()
+		// A helper carries the chat only as a stamp, not as its own conversation.
+		expect((await spawnHelper(f, f.helperSession.id)).notify).toBeUndefined()
+	})
+
+	it('flag off: a helper started from a chat session is unchanged', async () => {
+		const f = await seed()
+		setFlagFor()
+		expect((await spawnHelper(f, f.chatSession.id)).notify).toBeUndefined()
+	})
+
+	it('flag on for someone else only: unchanged for this chat’s person', async () => {
+		const f = await seed()
+		setFlagFor(f.other.id)
+		expect((await spawnHelper(f, f.chatSession.id)).notify).toBeUndefined()
+	})
+
+	it('flag on: a group chat gets no default', async () => {
+		const f = await seed()
+		setFlagFor(f.human.id)
+		const second = await insertActor(db, { type: 'human', name: 'Second Person' })
+		await db
+			.insert(conversationParticipants)
+			.values({ conversationId: f.chat.id, actorId: second.id, addedBy: f.human.id })
+		expect((await spawnHelper(f, f.chatSession.id)).notify).toBeUndefined()
 	})
 })
 
