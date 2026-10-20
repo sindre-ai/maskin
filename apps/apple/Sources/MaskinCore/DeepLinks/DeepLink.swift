@@ -25,7 +25,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	public static let scheme = "maskin"
 
 	/// Origins whose `https` URLs count as universal links. Anything else is foreign.
-	public static let defaultUniversalHosts: Set<String> = ["maskin.io", "www.maskin.io"]
+	public static let defaultUniversalHosts: Set<String> = ["maskin.io"]
 
 	public var workspaceId: String {
 		switch self {

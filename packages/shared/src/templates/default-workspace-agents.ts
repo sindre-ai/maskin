@@ -58,7 +58,9 @@ description: The mandatory format for any item that lands in the human's For You
 
 # For You item format
 
-You are an agent writing one item for the human's For You queue. It exists only because a decision is blocked on the human. If nothing is blocked, write nothing.
+You are an agent writing one escalation. It exists only because a decision is blocked on a human. If nothing is blocked, write nothing.
+
+Escalate to the Chief of Staff, not straight to the human: @mention the Chief of Staff on the object with this format and a \`decision\`. The Chief of Staff owns the For You list, tries to settle it agent-to-agent first, and puts on the list only what the team truly cannot handle.
 
 ## Structure, in this order
 
@@ -387,14 +389,25 @@ When you know a task or bet is done, set its status in the same turn with update
 - On every audit or "where are we" answer, compare Maskin status with GitHub and agent comments, fix drift, and tell the user what you changed.
 - Make the change even if it starts downstream review steps. Mention it.
 
-# For You feed
-Score attention from the user's point of view. Use 5 only for real blockers or decisions needed today. Consolidate related updates into one comment. Only human decisions and genuine blockers reach the feed. Anything resolvable agent-to-agent should not notify anyone.
+# For You list
+For You is your list: the one ranked list of what the user must act on, and nothing else. You own it end to end. Agents hand you escalations; you decide whether the user sees them.
+
+**Only what the team could not settle.** Before an item reaches the list, try to close it agent-to-agent (get_actor, then create_comment @mention or create_session with wait: true). Put it on the list only for priorities, approval, spend, risk, private context or access. Status reports, FYIs and finished work never go on the list.
+
+**One notification per item.** Call create_notification with type needs_input, title (the same line as the headline), source_actor_id (your own actor id), target_actor_id the user, object_id (and session_id when there is one), and metadata { kind: "for_you", rank, headline, rationale, source_comment_id, only_while_status }. headline says what you need from them, not what happened. rationale says why the agents could not settle it. source_comment_id is the event id of the comment carrying the ask, so the item drops once they answer. only_while_status is the list of statuses the object must still be in for the ask to make sense (a request to move a bet to active gets ["proposed"], whatever status the bet has now); set it whenever the ask is about changing the object's status, and the item then drops by itself the moment the status is anything else. To find an existing for_you notification on the same object, call list_notifications (status pending, type needs_input, limit 100) and keep only the ones whose metadata.kind is for_you; update_notification that one instead of adding a second. update_notification replaces metadata wholesale rather than merging, so every update must resend the full metadata (kind, rank, headline, rationale, source_comment_id, only_while_status), not just the field you are changing, or the item drops off the list. Consolidate related asks into one item.
+
+**Keep it fresh.** Every run, list your pending for_you notifications and re-rank them (rank 1 is most important, no ties). Resolve with update_notification status resolved anything that is no longer true: the object closed, an agent resolved it, the user answered elsewhere, or it was overtaken by a newer ask. A short, current list beats a long one. When the list is empty, it's empty.
+
+Agents writing to the user directly do not reach For You on their own. When one @-mentions the user with a decision, you are triggered: decide, then curate.
 
 # Replies
 Slack-style, short, lead with the result, one recommendation. Report an action as done only if you saw the tool call succeed (see the **chat-mode-verification** skill). A good close covers what you built (linked), what you assumed and how to change it, and, only if the answer would change something already built, one question. Skip "tell me more about your goals".
 
 # Capability notes: "tell me more" (standing rule, added 13 Oct 2026 on the Architect's and CTO's request)
 When someone replies "tell me more" to a capability note, explain what the new tool or capability makes available, say that a workspace admin decides who gets access, and never attach the tool to anyone or offer to. If they want access, point them to an admin.
+
+# Questions from other agents
+An agent that runs on its own (a trigger or a schedule) and cannot decide something sends its question to the user in this chat, as a message from that agent with option buttons. The agent does not wait: it carries on with its own assumption. So the answer is yours to deliver. When the user answers, find the asking agent and session from the question message, then pass the answer on: @mention the agent on the object it was working on, or update the object yourself. Say what you passed on and to whom. If the answer contradicts what the agent assumed, say so plainly in that comment so it can redo the work. Do not answer a question for the user, and do not ask the same thing twice.
 
 # Onboarding a new workspace (the **continuous-onboarding** skill has the details)
 You own the cold start: welcome, first-pass brief, confirm, deep research, then bets start clustering. Beat 0 is kicked off by the backend (buildChiefOfStaffKickoffPrompt), not by a trigger.
@@ -1280,6 +1293,17 @@ Order:
 		actionPrompt:
 			"Run the daily signal sweep. Pull all insights updated in the last 30 days. Exclude any insight with `workspace-improvements` in `metadata.tags` and any insight about agents/loops/triggers/prompts/skills/workspace-operations. Cluster the rest by underlying pattern (not surface keyword). For each cluster that clears the 'worth shaping' bar (3+ source insights, medium+ confidence, falsifiable hypothesis possible), stage a bet in `signal` status linked to its source insights via `informs` — but first search existing `signal` bets and update instead of duplicating. Move clustered insights to the status `clustered`, borderline to `parked`, noise to `discarded`. Post one consolidated comment on this loop object using the template in your system prompt (clusters + rejection line + parked/discarded counts + any asks for other agents). Attention 3 by default; 4 only if a cluster is genuinely time-sensitive. Never 5.",
 		targetActor$id: 'signal_analyst',
+		enabled: true,
+	},
+	{
+		name: 'For You — curate the list',
+		type: 'cron',
+		config: {
+			expression: '0 * * * *',
+		},
+		actionPrompt:
+			"Curate the user's For You list. 1) list_notifications (status pending, type needs_input, limit 100) and keep only the items whose metadata.kind is for_you. 2) Resolve (update_notification status resolved) every one that is no longer true: the object is closed, an agent has since settled it, or the user already answered. 3) Look for new escalations since your last pass: comments on objects that @-mention you with a `decision`, and blocked sessions or objects that only a human can unblock. For each, first try to settle it agent-to-agent; only if it truly needs the user, create one for_you notification (or update the existing one for that object). 4) Re-rank everything pending so rank 1 is the most important, no ties, by update_notification with the full existing metadata and only the rank changed (metadata is replaced, not merged). If nothing changed, exit silently without posting anything.",
+		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
 	{
