@@ -124,8 +124,6 @@ export interface CallVerdict {
 }
 
 const POSTHOG_COMMAND_MAX_CHARS = 100_000
-// Tab is allowed between tokens; newlines and every other control character are not.
-const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f]/
 const COMMAND_SHAPE = /^([a-z]+)((?:[ \t].*)?)$/
 const DISCOVERY_COMMANDS: ReadonlySet<string> = new Set([
 	'help',
@@ -137,6 +135,17 @@ const DISCOVERY_COMMANDS: ReadonlySet<string> = new Set([
 ])
 const DISCOVERY_TAIL = /^[A-Za-z0-9 \t-]*$/
 const INNER_TOOL_NAME = /^[a-z0-9][a-z0-9-]*$/
+
+// Tab (0x09) is allowed between tokens; newlines and every other control character
+// (0x00-0x08, 0x0a-0x1f, 0x7f) are not. Checked by char code, since a regex with escaped
+// control characters fails the lint rule noControlCharactersInRegex.
+function hasControlChar(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		const code = text.charCodeAt(i)
+		if ((code <= 0x1f && code !== 0x09) || code === 0x7f) return true
+	}
+	return false
+}
 
 // PostHog's own tool names, on top of WRITE_WORDS, for a name that is not in the curated set.
 const POSTHOG_WRITE_WORDS =
@@ -173,7 +182,7 @@ function posthogInnerToolKind(name: string): ToolKind {
 function classifyPosthogCommand(command: unknown): CallVerdict {
 	const refused: CallVerdict = { kind: 'write' }
 	if (typeof command !== 'string') return refused
-	if (command.length > POSTHOG_COMMAND_MAX_CHARS || CONTROL_CHARS.test(command)) return refused
+	if (command.length > POSTHOG_COMMAND_MAX_CHARS || hasControlChar(command)) return refused
 	const shape = COMMAND_SHAPE.exec(command)
 	if (!shape) return refused
 	const word = shape[1] ?? ''
