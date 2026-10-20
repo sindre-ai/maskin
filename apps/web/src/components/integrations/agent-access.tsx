@@ -92,13 +92,13 @@ export function AgentAccess({
 				type="button"
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
-				className="flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 text-left text-xs transition-colors hover:text-foreground"
+				className="flex w-full min-w-0 flex-wrap items-center gap-x-1.5 rounded-md py-1 text-left text-xs transition-colors hover:text-foreground"
 			>
 				<ChevronRight
 					className={cn('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-90')}
 				/>
 				<span className="settings-label shrink-0">Agent access</span>
-				<span className="min-w-0 truncate text-muted-foreground">
+				<span className="min-w-0 text-muted-foreground">
 					{summarizeAgentAccess(defaultAccess, grants)}
 				</span>
 			</button>

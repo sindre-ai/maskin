@@ -36,13 +36,23 @@ ALTER TABLE "integrations"
 UPDATE "integrations" SET "default_agent_access" = 'none'
 	WHERE "provider_mode" IN ('byo_apikey', 'byo_login', 'byo_oauth');
 --> statement-breakpoint
-INSERT INTO "agent_grants" ("workspace_id", "integration_id", "actor_id", "access", "created_by")
-SELECT i."workspace_id", i."id", (g.value ->> 'actorId')::uuid, 'read_write', i."created_by"
-FROM "integrations" i
-CROSS JOIN LATERAL jsonb_array_elements(i."scope_grants") AS g(value)
-WHERE g.value ->> 'kind' = 'actor'
-	AND EXISTS (SELECT 1 FROM "actors" a WHERE a."id" = (g.value ->> 'actorId')::uuid)
-ON CONFLICT ("integration_id", "actor_id") DO NOTHING;
+-- Guarded so a second run, after scope_grants is gone, does nothing.
+DO $$
+BEGIN
+	IF EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'integrations' AND column_name = 'scope_grants'
+	) THEN
+		INSERT INTO "agent_grants" ("workspace_id", "integration_id", "actor_id", "access", "created_by")
+		SELECT i."workspace_id", i."id", (g.value ->> 'actorId')::uuid, 'read_write', i."created_by"
+		FROM "integrations" i
+		CROSS JOIN LATERAL jsonb_array_elements(i."scope_grants") AS g(value)
+		WHERE g.value ->> 'kind' = 'actor'
+			AND EXISTS (SELECT 1 FROM "actors" a WHERE a."id" = (g.value ->> 'actorId')::uuid)
+		ON CONFLICT ("integration_id", "actor_id") DO NOTHING;
+	END IF;
+END
+$$;
 --> statement-breakpoint
 ALTER TABLE "integrations" DROP CONSTRAINT IF EXISTS "integrations_scope_grants_is_array";
 --> statement-breakpoint
