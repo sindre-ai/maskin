@@ -101,12 +101,13 @@ private struct LoopsContainer: View {
 	private var sidebar: some View {
 		LoopsListView(
 			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
-			onNew: { buildLoopInChat() }, onBrowse: { showMarketplace = true }
+			onNew: { buildLoopInChat() }
 		)
-		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search flows")
-		.searchMinimized()
-		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
+		// Same as Team: the field stays tucked away until the list is pulled down, so the top bar has
+		// no search icon.
+		.flowsSearch(text: $search, isPresented: $searchPresented)
+		// Closing the field can't leave a stale query behind.
+		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
 		.shellToolbar(
 			environment: environment, title: "Flows",
@@ -193,5 +194,18 @@ struct FlowsDisplayMenu: View {
 		Picker("Sort", selection: $store.sort) {
 			ForEach(LoopsSort.allCases) { Text($0.title).tag($0) }
 		}
+	}
+}
+
+extension View {
+	/// Flows search: a pull-down field, like Team's.
+	fileprivate func flowsSearch(text: Binding<String>, isPresented: Binding<Bool>) -> some View {
+		#if os(iOS)
+			searchable(
+				text: text, isPresented: isPresented, placement: .navigationBarDrawer(displayMode: .automatic),
+				prompt: "Search flows")
+		#else
+			searchable(text: text, isPresented: isPresented, prompt: "Search flows")
+		#endif
 	}
 }

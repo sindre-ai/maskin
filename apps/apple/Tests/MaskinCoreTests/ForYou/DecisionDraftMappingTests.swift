@@ -1,0 +1,102 @@
+import Foundation
+import HTTPTypes
+import MaskinAPI
+import OpenAPIRuntime
+import Testing
+
+@testable import MaskinAPI
+@testable import MaskinCore
+
+/// Answers the unread-feed request with a fixed body, so the test sees exactly what the card is built from.
+private final class FeedTransport: ClientTransport, @unchecked Sendable {
+	let json: String
+	init(_ json: String) { self.json = json }
+
+	func send(
+		_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String
+	) async throws -> (HTTPResponse, HTTPBody?) {
+		var response = HTTPResponse(status: .ok)
+		response.headerFields[.contentType] = "application/json"
+		return (response, HTTPBody(json))
+	}
+}
+
+@Suite("Decision draft on the For You card")
+struct DecisionDraftMappingTests {
+	/// One card whose decision carries `draft` (or none), shaped the way the server sends it.
+	private func feed(draft: String?, destructive: Bool = false) -> String {
+		let draftField = draft.map { #","draft":\#($0)"# } ?? ""
+		return """
+			{"items":[{
+			  "entity_type":"object","entity_id":"task-1","unread_count":1,"mentioning_unread_count":1,
+			  "max_unread_attention":3,"latest_event_id":42,"latest_activity_at":"2026-10-20T10:00:00.000Z",
+			  "latest_mention":{
+			    "event_id":42,"actor_id":null,"created_at":"2026-10-20T10:00:00.000Z",
+			    "content":"Approve the note to Hans.","attention":3,
+			    "decision":{
+			      "title":"Send the note to Hans?",
+			      "summary":"Hans cancelled billing on 12 Oct and renewal is in 4 days.",
+			      "ask":"This goes to Hans in your name, so I will not send it alone.",
+			      "options":[
+			        {"label":"Send as it is","recommended":true,"destructive":\(destructive),
+			         "consequences":["Reaches Hans today","Cannot be recalled"]},
+			        {"label":"Skip","consequences":["Nothing is sent","Renewal may lapse"]}]
+			      \(draftField)}}}]}
+			"""
+	}
+
+	private func card(_ json: String) async throws -> ForYouCard {
+		let client = Client(
+			serverURL: URL(string: "http://localhost:3000")!, transport: FeedTransport(json))
+		let backend = APIForYouBackend(client: client, workspaceId: { "ws-1" })
+		return try #require(try await backend.fetchFeed(workspaceId: "ws-1").first)
+	}
+
+	@Test("shows the draft the server filled in, with its label and recipient")
+	func mapsDraft() async throws {
+		let draft = #"{"object_id":"task-1","label":"Email to Hans","to":"Hans Jensen","body":"Hej Hans, må jeg ringe?"}"#
+
+		let decision = try #require(try await card(feed(draft: draft)).mention?.decision)
+
+		#expect(
+			decision.draft
+				== DecisionDraft(label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?"))
+	}
+
+	@Test("falls back to the label Draft")
+	func defaultLabel() async throws {
+		let decision = try #require(
+			try await card(feed(draft: #"{"body":"Short note."}"#)).mention?.decision)
+
+		#expect(decision.draft?.label == "Draft")
+		#expect(decision.draft?.to == nil)
+	}
+
+	@Test("shows no box for a draft the server could not fill")
+	func emptyDraft() async throws {
+		let unfilled = try #require(
+			try await card(feed(draft: #"{"object_id":"gone"}"#)).mention?.decision)
+		let blank = try #require(try await card(feed(draft: #"{"body":""}"#)).mention?.decision)
+
+		#expect(unfilled.draft == nil)
+		#expect(blank.draft == nil)
+	}
+
+	@Test("leaves a card with no draft as it was")
+	func noDraft() async throws {
+		let decision = try #require(try await card(feed(draft: nil)).mention?.decision)
+
+		#expect(decision.draft == nil)
+		#expect(decision.options.count == 2)
+	}
+
+	@Test("carries the destructive flag so Send asks for a confirm")
+	func destructiveFlag() async throws {
+		let flagged = try #require(
+			try await card(feed(draft: nil, destructive: true)).mention?.decision)
+		let plain = try #require(try await card(feed(draft: nil)).mention?.decision)
+
+		#expect(flagged.options.first?.destructive == true)
+		#expect(plain.options.first?.destructive == false)
+	}
+}

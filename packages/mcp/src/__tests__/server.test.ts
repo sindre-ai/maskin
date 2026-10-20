@@ -6560,4 +6560,36 @@ describe('X-Maskin-Session-Id source', () => {
 		build({})
 		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
+
+	it('post_conversation_message resolves mention_names to metadata.mentions and reports misses', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const isPost = String(input).endsWith('/messages')
+			return {
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve(
+						isPost
+							? { id: 'msg-1' }
+							: { participants: [{ actorId: 'actor-strategist', actorName: 'Strategist' }] },
+					),
+			} as Response
+		})
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		const result = await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'over to you',
+			mention_names: ['Strategist', 'Nobody'],
+		})
+		const post = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((post?.[1] as RequestInit).body as string)
+		expect(sent.metadata.mentions).toEqual(['actor-strategist'])
+		expect(sent.mention_names).toBeUndefined()
+		const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? ''
+		expect(JSON.parse(text).unresolved_mentions).toEqual([
+			{ name: 'Nobody', reason: 'not_in_conversation' },
+		])
+	})
 })
