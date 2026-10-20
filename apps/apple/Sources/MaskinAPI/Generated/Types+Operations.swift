@@ -44455,6 +44455,7 @@ public enum Operations {
                     case completed = "completed"
                     case failed = "failed"
                     case timeout = "timeout"
+                    case user_stopped = "user_stopped"
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/status`.
                 public var status: Operations.get_sol_api_sol_sessions.Input.Query.statusPayload?
@@ -44734,6 +44735,7 @@ public enum Operations {
                                 case completed = "completed"
                                 case failed = "failed"
                                 case timeout = "timeout"
+                                case user_stopped = "user_stopped"
                             }
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/status`.
                             public var status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload

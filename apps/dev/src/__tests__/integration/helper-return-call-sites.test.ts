@@ -7,10 +7,11 @@ import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-// The two terminal writers that never go through settleSession must still send
-// the return: SessionManager.handleCompletion (local Docker) and
-// SessionManager.markRemoteSessionComplete (remote hosts). Against real Postgres
-// and the real SessionManager; only storage is stubbed.
+// The two terminal writers that report a sandbox exit must still send the return:
+// SessionManager.handleCompletion (local Docker) and
+// SessionManager.markRemoteSessionComplete (remote hosts). Both settle through
+// settleSession, which sends it. Against real Postgres and the real
+// SessionManager; only storage is stubbed.
 
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
@@ -106,19 +107,18 @@ describe('Helper return from the terminal writers (integration)', () => {
 		expect((await returnTexts())[0]).toContain('finished the work you handed it')
 	})
 
-	it('markRemoteSessionComplete: stopSession’s provisional write sends nothing; the genuine report sends one stop return', async () => {
+	it('markRemoteSessionComplete: a stop sends one stop return at once; the genuine report that follows adds none', async () => {
 		await manager.markRemoteSessionComplete(helperId, null, { stoppedByUser: true })
-		await new Promise((r) => setTimeout(r, 500))
-		expect(await returnTexts()).toHaveLength(0)
-		const [mid] = await db.select().from(sessions).where(eq(sessions.id, helperId))
-		expect(mid.helperReturnedAt).toBeNull()
+		await waitForReturns(1)
+		expect((await returnTexts())[0]).toContain('A person stopped Helper')
 
 		await manager.markRemoteSessionComplete(helperId, 143)
-		await waitForReturns(1)
+		await new Promise((r) => setTimeout(r, 400))
 		const texts = await returnTexts()
 		expect(texts).toHaveLength(1)
-		expect(texts[0]).toContain('A person stopped Helper')
 		expect(texts[0]).not.toContain('retry')
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, helperId))
+		expect(row.status).toBe('user_stopped')
 	})
 
 	it('handleCompletion: a non-zero exit sends one failed return', async () => {

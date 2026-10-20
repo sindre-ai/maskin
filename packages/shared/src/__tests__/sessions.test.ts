@@ -29,6 +29,7 @@ describe('sessionStatusSchema', () => {
 		'completed',
 		'failed',
 		'timeout',
+		'user_stopped',
 	]
 
 	for (const s of statuses) {

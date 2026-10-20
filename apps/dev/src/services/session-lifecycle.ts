@@ -524,6 +524,8 @@ export interface SettleOutcome {
 	snapshotKey?: string
 	/** Structured provider-side failure reason (feeds `sessions.result`). */
 	failureReason?: SessionResult['failure_reason']
+	/** When the scheduler may retry a credit-exhausted session; written to `sessions.retry_at`. */
+	retryAt?: Date
 	/** Who called settle. */
 	source: SettleSource
 }
@@ -959,6 +961,7 @@ export async function settleSession(
 			// including pause, whose UI-side treatment is the same "not running"
 			// state a completed row has.
 			setPatch.currentActivity = null
+			if (outcome.retryAt) setPatch.retryAt = outcome.retryAt
 			if (outcome.kind === 'pause') {
 				// A paused row's container is gone — the caller stops/removes the
 				// sandbox as part of the snapshot flow, and any resume path spins
