@@ -949,6 +949,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
 					[{ driver: null }],
@@ -1039,6 +1040,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					// Driver lookup — the object has a driver, and they are a thread
 					// participant, so the fallback ladder (case 2) will handle them.
 					[{ driver: driverAgentId }],
@@ -1108,6 +1110,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
 					// Thread comments query: only humans authored, but root @mentions agent A
@@ -1188,6 +1191,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
 						{
@@ -1256,6 +1260,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
 					// Thread comments: new + prior agent A reply + root. Both agent rows
@@ -1333,6 +1338,7 @@ describe('Events Routes', () => {
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
 					// Mention resolution inside postComment
 					[{ id: agentAId }],
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					// resolveMentionedAgentIds — the excludedAgentIds source
 					[{ id: agentAId }],
 					// Driver lookup for the fallback exclusion. The comment carries a
@@ -1464,6 +1470,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					[{ driver: null }],
 					threadRows,
 				]
@@ -1508,6 +1515,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[], // object-chat mirror lookup in postComment: no chat for this object
 					[{ driver: null }],
 					// Both prior thread participants are humans → no agent spawn
 					[

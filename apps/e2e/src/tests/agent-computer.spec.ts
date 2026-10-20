@@ -88,7 +88,7 @@ test.describe("An agent's computer", () => {
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
 			await expect(page.getByRole('button', { name: 'Wake up' })).toBeVisible()
-			await expect(page.getByText('Asleep')).toBeVisible()
+			await expect(page.getByText('Asleep', { exact: true })).toBeVisible()
 			await expectNoHorizontalOverflow(page)
 			expect(connectCalls).toBe(0)
 		})
@@ -169,17 +169,31 @@ test.describe("An agent's computer", () => {
 				}),
 			})
 		})
-		const streamUrl = new Promise<string>((resolve) => {
-			void page.routeWebSocket(/\/api\/desktop\/stream/, (ws) => {
-				resolve(ws.url())
-				// Close before any VNC handshake: the page must report it never came up.
-				void ws.close()
+		// Not routeWebSocket: noVNC rejects Playwright's mocked socket (see helpers/fake-vnc.ts).
+		// Record the stream URL the page opens, then point it at a closed port so the socket
+		// fails before any VNC handshake: the page must report it never came up.
+		await page.addInitScript(() => {
+			const opened: string[] = []
+			;(window as unknown as { __streamUrls: string[] }).__streamUrls = opened
+			window.WebSocket = new Proxy(window.WebSocket, {
+				construct(target, args: [string | URL, (string | string[])?]) {
+					const [wsUrl, protocols] = args
+					if (!String(wsUrl).includes('/api/desktop/stream')) {
+						return Reflect.construct(target, [wsUrl, protocols])
+					}
+					opened.push(String(wsUrl))
+					return Reflect.construct(target, ['ws://127.0.0.1:1/', protocols])
+				},
 			})
 		})
 
 		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-		const url = new URL(await streamUrl)
+		const streamUrls = () =>
+			page.evaluate(() => (window as unknown as { __streamUrls: string[] }).__streamUrls)
+		await expect.poll(async () => (await streamUrls())[0] ?? '').toContain('/api/desktop/stream')
+		const [streamUrl] = await streamUrls()
+		const url = new URL(streamUrl as string)
 		expect(url.pathname).toBe('/api/desktop/stream')
 		expect(url.searchParams.get('ticket')).toBe('e2e-ticket')
 		// The request names whose computer it is.
