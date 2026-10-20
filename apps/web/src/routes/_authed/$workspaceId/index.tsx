@@ -1,4 +1,5 @@
 import { BriefCard } from '@/components/foryou/brief-card'
+import type { DraftAction } from '@/components/foryou/draft-stack'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
 import {
 	type FeedMode,
@@ -19,7 +20,13 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import { trackForyouCardMarkedRead } from '@/lib/analytics'
-import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
+import {
+	type CreateCommentInput,
+	type DisplaySettingsBody,
+	type LatestMentionDecisionDraft,
+	type UnreadItem,
+	api,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
@@ -326,6 +333,39 @@ function ForYouFeed() {
 		[markItemRead, postReply, undoDecision],
 	)
 
+	// One message of a stacked card. The reply names the message by the agent's own
+	// key, so the agent can tell which one was sent and which was skipped. It goes
+	// under the question like any other answer. Rejects when the reply fails, so the
+	// card keeps that message open instead of showing it as dealt with.
+	const handleDraftAction = useCallback(
+		(item: UnreadItem, draft: LatestMentionDecisionDraft, action: DraftAction) => {
+			const what = [draft.label ?? 'Message', draft.to ? `to ${draft.to}` : null]
+				.filter(Boolean)
+				.join(' ')
+			return postReply.mutateAsync({
+				entity_id: item.entity_id,
+				content: `${action === 'send' ? 'Send' : 'Skip'}: ${what}${draft.id ? ` (${draft.id})` : ''}`,
+				...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+			})
+		},
+		[postReply],
+	)
+
+	// The last message has been dealt with: the card settles the way a taken option
+	// does, but without a further reply, since each message already got its own.
+	const handleDraftsDone = useCallback(
+		(item: UnreadItem) => {
+			setDecided((prev) =>
+				new Map(prev).set(feedItemKey(item), {
+					item,
+					option: { id: 'drafts', label: 'Dealt with every message' },
+				}),
+			)
+			if (!markItemRead(item)) toast.warning('Replies sent, but the thread stayed unread.')
+		},
+		[markItemRead],
+	)
+
 	// Typing an answer settles the thread exactly as taking an option does, so
 	// the card has to leave the column the same way. The composer has already
 	// posted the comment by the time this fires, so the card is hidden
@@ -595,6 +635,8 @@ function ForYouFeed() {
 									}
 									decided={decided.get(key)?.option ?? null}
 									onDecide={(option) => handleDecide(item, option)}
+									onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
+									onDraftsDone={() => handleDraftsDone(item)}
 									replied={repliedKeys.has(key)}
 									onReplied={() => handleReplied(item)}
 									onMarkRead={() => dismissAll([item], 'Marked as read')}

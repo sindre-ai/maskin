@@ -212,6 +212,44 @@ describe('FeedCard — draft on the card', () => {
 		expect(screen.queryByRole('region', { name: 'Draft' })).not.toBeInTheDocument()
 	})
 
+	it('stacks several messages with their own Send and Skip, next to the card options', async () => {
+		const onDraftAction = vi.fn().mockResolvedValue(undefined)
+		renderCard({
+			onDraftAction,
+			onDraftsDone: vi.fn(),
+			item: buildItem({
+				latest_mention: buildMention({
+					decision: buildDecision({
+						drafts: [
+							{ id: 'kenneth', label: 'LinkedIn DM', to: 'Kenneth', body: 'Hej Kenneth.' },
+							{ id: 'dan', label: 'LinkedIn DM', to: 'Dan', body: 'Hej Dan.' },
+						],
+					}),
+				}),
+			}),
+		})
+
+		expect(screen.getByText('Hej Kenneth.')).toBeInTheDocument()
+		expect(screen.getByText('Hej Dan.')).toBeInTheDocument()
+		expect(screen.getAllByRole('button', { name: 'Skip' })).toHaveLength(2)
+		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
+
+		await userEvent.click(screen.getAllByRole('button', { name: 'Skip' })[0])
+		expect(onDraftAction).toHaveBeenCalledWith(expect.objectContaining({ id: 'kenneth' }), 'skip')
+	})
+
+	it('shows no stack when the page gave the card no way to act on it', () => {
+		renderCard({
+			item: buildItem({
+				latest_mention: buildMention({
+					decision: buildDecision({ drafts: [{ id: 'a', body: 'Hej.' }] }),
+				}),
+			}),
+		})
+
+		expect(screen.queryByRole('button', { name: 'Skip' })).not.toBeInTheDocument()
+	})
+
 	it('renders a card with no draft exactly as before', () => {
 		renderCard()
 
