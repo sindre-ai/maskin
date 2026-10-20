@@ -90,6 +90,8 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
+	'agent_grants',
+	'agent_chat_grants',
 	'imports',
 	'integrations',
 	'events',
@@ -105,11 +107,15 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
 	'conversation_participants',
 	'conversation_pending_turns',
+	'credential_access_log',
+	'credential_chain_snapshots',
 	'file_comments',
 	'files',
 	'google_meet_space_idempotency',
+	'live_activity_tokens',
 	'loop_active_days',
 	'mcp_telemetry',
+	'message_thread_reads',
 	'messages',
 	'message_thread_reads',
 	'session_dispatch_attempts',
@@ -118,6 +124,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'trigger_dispatches',
 	'trigger_event_queue',
 	'user_display_settings',
+	'voice_sessions',
 	'workspace_invitations',
 	'workspace_onboarding_prompts',
 	'workspace_skills',
@@ -260,6 +267,9 @@ export async function purgeWorkspace(
 	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
 	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
 	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
+	// Grants reference integrations/conversations (cascade) but also the workspace (NO ACTION).
+	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
+	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
 	await tx.delete(imports).where(eq(imports.workspaceId, workspaceId))
 	await tx.delete(integrations).where(eq(integrations.workspaceId, workspaceId))
 	await tx.delete(events).where(eq(events.workspaceId, workspaceId))
@@ -306,7 +316,8 @@ export async function purgeWorkspace(
 		}
 	}
 
-	// Everything else (invitations, files, skills, trigger children, display settings, …) cascades.
+	// Everything else (invitations, files, skills, trigger children, display settings, the Keychain
+	// audit trail, …) cascades.
 	await tx.delete(workspaces).where(eq(workspaces.id, workspaceId))
 
 	return {
