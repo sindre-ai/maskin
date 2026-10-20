@@ -75,12 +75,13 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 }
 
 public enum TeamFilterChip: String, CaseIterable, Sendable, Codable {
-	case all, unread, people, agents, groups, flows
+	case all, unread, pinned, people, agents, groups, flows
 
 	public var label: String {
 		switch self {
 		case .all: "All"
 		case .unread: "Unread"
+		case .pinned: "Pinned"
 		case .people: "People"
 		case .agents: "Agents"
 		case .groups: "Groups"
@@ -192,7 +193,7 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	public struct Section: Identifiable, Equatable, Sendable {
-		public enum Kind: Equatable, Sendable { case needsYou, working, unread, flows, people, time, all, filtered }
+		public enum Kind: Equatable, Sendable { case working, unread, flows, people, time, all, filtered }
 		public var id: String
 		public var kind: Kind
 		public var label: String
@@ -318,7 +319,8 @@ public struct TeamLayout: Equatable, Sendable {
 			switch input.chip {
 			case .all: return true
 			case .unread: return tile.unreadCount > 0
-			case .groups: return false
+			// The Pinned chip lists the pinned chats as rows (below), not as tiles above them.
+			case .groups, .pinned: return false
 			case .flows: if case .flow = tile.kind { return true } else { return false }
 			case .people, .agents:
 				guard case .conversation(let c) = tile.kind else { return false }
@@ -345,6 +347,11 @@ public struct TeamLayout: Equatable, Sendable {
 					id: "unread", kind: .unread, label: "Unread", count: rows.count, rows: byRecency(rows),
 					showsMarkAllRead: !rows.isEmpty)
 			]
+		case .pinned:
+			let rows = byRecency(
+				active.filter(\.pinned).map(conversationRow)
+					+ input.flowRooms.filter { pinnedFlowKeys.contains($0.pinKey) }.map(flowRow))
+			sections = [Section(id: "pinned", kind: .filtered, label: "Pinned", count: rows.count, rows: rows)]
 		case .people, .agents:
 			let wanted: ParticipantKind = input.chip == .people ? .person : .agent
 			let rows = personRows(unpinned.filter { kind(of: $0, me: me) == wanted }, me: me)
@@ -395,23 +402,11 @@ public struct TeamLayout: Equatable, Sendable {
 		var sections: [Section] = []
 		let me = input.currentActorID
 
-		// NEEDS YOU first, then WORKING: each conversation lives in the first section it fits, so
-		// it never repeats below in UNREAD or the time groups.
-		let needs = conversations.filter {
-			needsYou($0, me: me, mentioned: input.mentionedConversationIDs)
-		}
-		let needsIDs = Set(needs.map(\.id))
-		let working = conversations.filter {
-			!needsIDs.contains($0.id) && isWorking($0, workingAgentIDs: input.workingAgentIDs)
-		}
-		let placed = needsIDs.union(working.map(\.id))
+		// WORKING first: each conversation lives in the first section it fits, so it never repeats
+		// below in UNREAD or the time groups. An unread chat is not "needing you" on its own.
+		let working = conversations.filter { isWorking($0, workingAgentIDs: input.workingAgentIDs) }
+		let placed = Set(working.map(\.id))
 		let conversations = conversations.filter { !placed.contains($0.id) }
-		if !needs.isEmpty {
-			sections.append(
-				Section(
-					id: "needs-you", kind: .needsYou, label: "Needs you", count: needs.count,
-					rows: byRecency(needs.map(conversationRow)), showsMarkAllRead: true))
-		}
 		if !working.isEmpty {
 			sections.append(
 				Section(
@@ -475,15 +470,6 @@ public struct TeamLayout: Equatable, Sendable {
 			}
 		}
 		return sections
-	}
-
-	/// Someone is waiting on you: an unread message from somebody else that mentions you or ends in a
-	/// question. The API has no "pending ask" flag on a conversation, so this reads the preview.
-	public static func needsYou(_ c: ConversationSummary, me: String?, mentioned: Set<String>) -> Bool {
-		guard c.isUnread, c.snippetActorID != me else { return false }
-		if mentioned.contains(c.id) { return true }
-		return ChatPreviewText.plain(c.snippet ?? "")
-			.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
 	}
 
 	/// An agent in the conversation is running right now.

@@ -32,6 +32,20 @@ enum ThreadNav {
 		return shown.count > 3 ? "\(names) +\(shown.count - 3)" : names
 	}
 
+	/// The chat's own title when it is a one-to-one with a custom topic (not the person's name or
+	/// the default made from names); nil otherwise, so the nav bar falls back to `title`.
+	static func topic(
+		chatTitle: String, participants: [ChatParticipant], currentActorID: String, flow: ChatFlowContext?
+	) -> String? {
+		guard flow == nil else { return nil }
+		let others = participants.filter { $0.id != currentActorID }
+		guard others.count == 1 else { return nil }
+		let names = others.map(\.name)
+		let title = chatTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !title.isEmpty, title != ThreadLayout.defaultTitle(for: names), !names.contains(title) else { return nil }
+		return ChatPreviewText.plain(title)
+	}
+
 	/// `typing…` / `replying…` / `working` while anyone is live; otherwise `{flow} flow` for a flow
 	/// chat and nothing for a direct one. A flow channel with several live agents says `n working`
 	/// and a single typer `{name} is typing…`.

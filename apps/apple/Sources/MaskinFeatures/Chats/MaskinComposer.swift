@@ -208,13 +208,17 @@ struct MaskinComposer: View {
 
 	private var row: some View {
 		HStack(alignment: .bottom, spacing: MaskinSpace.s4) {
+			// One field in one slot for both states. Moving it between branches makes SwiftUI build a
+			// new field, which loses focus: the keyboard dropped and the thread jumped when dictation began.
 			if isDictating {
-				ComposerDictationControls(onDiscard: discardDictation, onDone: finishDictation) {
-					field(placeholder: "Listening…")
-				}
+				ComposerDictationLeading(onDiscard: discardDictation)
+			} else if config.showsAttach {
+				attachButton
+			}
+			field(placeholder: isDictating ? "Listening…" : config.placeholder)
+			if isDictating {
+				ComposerDictationDone(action: finishDictation)
 			} else {
-				if config.showsAttach { attachButton }
-				field(placeholder: config.placeholder)
 				if let goLive = config.goLive, !model.hasContent {
 					ComposerCircleButton(
 						symbol: "waveform", fill: MaskinSurface.fill, foreground: MaskinColor.ink2,

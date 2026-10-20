@@ -10411,6 +10411,13 @@ public struct Client: APIProtocol {
                     name: "offset",
                     value: input.query.offset
                 )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "order",
+                    value: input.query.order
+                )
                 try converter.setHeaderFieldAsURI(
                     in: &request.headerFields,
                     name: "x-workspace-id",

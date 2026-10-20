@@ -8,6 +8,11 @@ export const mimeTypeSchema = z
 	.max(255)
 	.regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i, 'Invalid MIME type format')
 
+// What a file is for. `briefing` is the only kind today: an HTML page the Chief of
+// Staff (or a loop) writes to be read in For you.
+export const fileKindSchema = z.enum(['briefing'])
+export type FileKind = z.infer<typeof fileKindSchema>
+
 export const fileNameSchema = z.string().trim().min(1).max(255)
 
 export const fileEncodingSchema = z.enum(['base64', 'utf8'])
@@ -108,6 +113,7 @@ export const createFileSchema = z
 	.object({
 		name: fileNameSchema,
 		description: z.string().max(1000).nullable().optional(),
+		kind: fileKindSchema.nullable().optional(),
 		mime_type: mimeTypeSchema,
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
@@ -120,6 +126,7 @@ export const updateFileSchema = z
 	.object({
 		name: fileNameSchema.optional(),
 		description: z.string().max(1000).nullable().optional(),
+		kind: fileKindSchema.nullable().optional(),
 		mime_type: mimeTypeSchema.optional(),
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
@@ -141,6 +148,7 @@ export const fileListItemSchema = z.object({
 	workspaceId: z.string().uuid(),
 	name: z.string(),
 	description: z.string().nullable(),
+	kind: fileKindSchema.nullable(),
 	mimeType: z.string(),
 	sizeBytes: z.number().int().nonnegative(),
 	storageKey: z.string(),

@@ -361,26 +361,29 @@ struct TeamLayoutPriorityTests {
 				mentionedConversationIDs: mentioned, now: now, calendar: cal))
 	}
 
-	@Test("an unread question or mention goes to Needs you, and nowhere else")
-	func needsYou() {
+	@Test("an unread question or mention is plain Unread, never a Needs you section")
+	func unreadIsNotNeedsYou() {
 		let result = layout(
 			[
 				chatConvo("ask", last: ago(hours: 1), unread: 1, snippet: "Ship it today?", participants: [chatMe, forge]),
 				chatConvo("ping", last: ago(hours: 2), unread: 1, snippet: "FYI", participants: [chatMe, forge]),
-				chatConvo("plain", last: ago(hours: 3), unread: 1, snippet: "Done.", participants: [chatMe, forge]),
 				chatConvo("read", last: ago(hours: 4), snippet: "Okay?", participants: [chatMe, forge]),
 			], mentioned: ["ping"])
-		#expect(result.sections.first?.kind == .needsYou)
+		#expect(result.sections.first?.kind == .unread)
 		#expect(result.sections.first?.rows.map(\.id) == ["ask", "ping"])
-		#expect(result.sections.first { $0.kind == .unread }?.rows.map(\.id) == ["plain"])
 		#expect(result.conversationIDs.filter { $0 == "ask" }.count == 1)
 	}
 
-	@Test("your own last message never needs you")
-	func ownMessage() {
-		var c = chatConvo("mine", last: ago(hours: 1), unread: 1, snippet: "Any news?", participants: [chatMe, forge])
-		c.snippetActorID = "me"
-		#expect(layout([c]).sections.contains { $0.kind == .needsYou } == false)
+	@Test("the Pinned chip lists pinned chats as rows and hides the tiles")
+	func pinnedChip() {
+		var pinned = chatConvo("pin", last: ago(hours: 1), participants: [chatMe, forge])
+		pinned.pinned = true
+		let other = chatConvo("other", last: ago(hours: 2), participants: [chatMe, ida])
+		let result = TeamLayout.build(
+			TeamLayout.Input(
+				conversations: [pinned, other], chip: .pinned, currentActorID: "me", now: now, calendar: cal))
+		#expect(result.tiles.isEmpty)
+		#expect(result.sections.first?.rows.map(\.id) == ["pin"])
 	}
 
 	@Test("a conversation with a running agent lists under Working, after Needs you")

@@ -6754,6 +6754,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/role`.
                         public var role: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -6799,6 +6801,7 @@ public enum Operations {
                         ///   - agentState:
                         ///   - createdAt:
                         ///   - role:
+                        ///   - voice_enabled:
                         ///   - workspaces:
                         public init(
                             id: Swift.String,
@@ -6810,6 +6813,7 @@ public enum Operations {
                             agentState: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.agentStatePayload,
                             createdAt: Swift.String? = nil,
                             role: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil
                         ) {
                             self.id = id
@@ -6821,6 +6825,7 @@ public enum Operations {
                             self.agentState = agentState
                             self.createdAt = createdAt
                             self.role = role
+                            self.voice_enabled = voice_enabled
                             self.workspaces = workspaces
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -6833,6 +6838,7 @@ public enum Operations {
                             case agentState
                             case createdAt
                             case role
+                            case voice_enabled
                             case workspaces
                         }
                     }
@@ -7502,6 +7508,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/POST/responses/201/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/POST/responses/201/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/POST/responses/201/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/POST/responses/201/content/json/skillsPayload/id`.
@@ -7556,6 +7564,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         ///   - api_key:
@@ -7578,6 +7587,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.post_sol_api_sol_actors.Output.Created.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil,
                             api_key: Swift.String,
@@ -7600,6 +7610,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                             self.api_key = api_key
@@ -7623,6 +7634,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                             case api_key
@@ -8690,6 +8702,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/GET/responses/200/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/{id}/GET/responses/200/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/GET/responses/200/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/{id}/GET/responses/200/content/json/skillsPayload/id`.
@@ -8738,6 +8752,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         public init(
@@ -8757,6 +8772,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.get_sol_api_sol_actors_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil
                         ) {
@@ -8776,6 +8792,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                         }
@@ -8796,6 +8813,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                         }
@@ -9477,6 +9495,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/responses/200/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/responses/200/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/responses/200/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/responses/200/content/json/skillsPayload/id`.
@@ -9525,6 +9545,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         public init(
@@ -9544,6 +9565,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil
                         ) {
@@ -9563,6 +9585,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                         }
@@ -9583,6 +9606,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                         }
@@ -11221,6 +11245,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/reset/POST/responses/200/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/{id}/reset/POST/responses/200/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/reset/POST/responses/200/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/{id}/reset/POST/responses/200/content/json/skillsPayload/id`.
@@ -11269,6 +11295,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         public init(
@@ -11288,6 +11315,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_reset.Output.Ok.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil
                         ) {
@@ -11307,6 +11335,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                         }
@@ -11327,6 +11356,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                         }
@@ -11839,6 +11869,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/pause/POST/responses/200/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/{id}/pause/POST/responses/200/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/pause/POST/responses/200/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/{id}/pause/POST/responses/200/content/json/skillsPayload/id`.
@@ -11887,6 +11919,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         public init(
@@ -11906,6 +11939,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_pause.Output.Ok.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil
                         ) {
@@ -11925,6 +11959,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                         }
@@ -11945,6 +11980,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                         }
@@ -12481,6 +12517,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/run/POST/responses/200/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/{id}/run/POST/responses/200/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/{id}/run/POST/responses/200/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/{id}/run/POST/responses/200/content/json/skillsPayload/id`.
@@ -12529,6 +12567,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         public init(
@@ -12548,6 +12587,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_run.Output.Ok.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil
                         ) {
@@ -12567,6 +12607,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                         }
@@ -12587,6 +12628,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                         }
@@ -13106,6 +13148,8 @@ public enum Operations {
                         public var updatedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/auth/login/POST/responses/200/content/json/installedLoopId`.
                         public var installedLoopId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/auth/login/POST/responses/200/content/json/voice_enabled`.
+                        public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/auth/login/POST/responses/200/content/json/skillsPayload`.
                         public struct skillsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/auth/login/POST/responses/200/content/json/skillsPayload/id`.
@@ -13160,6 +13204,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - updatedAt:
                         ///   - installedLoopId:
+                        ///   - voice_enabled:
                         ///   - skills:
                         ///   - role:
                         ///   - api_key:
@@ -13182,6 +13227,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
                             installedLoopId: Swift.String? = nil,
+                            voice_enabled: Swift.Bool? = nil,
                             skills: Operations.post_sol_api_sol_auth_sol_login.Output.Ok.Body.jsonPayload.skillsPayload? = nil,
                             role: Swift.String? = nil,
                             api_key: Swift.String,
@@ -13204,6 +13250,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
                             self.installedLoopId = installedLoopId
+                            self.voice_enabled = voice_enabled
                             self.skills = skills
                             self.role = role
                             self.api_key = api_key
@@ -13227,6 +13274,7 @@ public enum Operations {
                             case createdAt
                             case updatedAt
                             case installedLoopId
+                            case voice_enabled
                             case skills
                             case role
                             case api_key
@@ -16441,6 +16489,23 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing`.
                         public var billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice`.
+                        public struct voicePayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice/persist_transcripts`.
+                            public var persist_transcripts: Swift.Bool?
+                            /// Creates a new `voicePayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - persist_transcripts:
+                            public init(persist_transcripts: Swift.Bool? = nil) {
+                                self.persist_transcripts = persist_transcripts
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case persist_transcripts
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice`.
+                        public var voice: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.voicePayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/north_star_metric`.
                         public var north_star_metric: Swift.String?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/default_agent_id`.
@@ -16518,6 +16583,7 @@ public enum Operations {
                         ///   - privacy:
                         ///   - custom_llm:
                         ///   - billing:
+                        ///   - voice:
                         ///   - north_star_metric:
                         ///   - default_agent_id:
                         ///   - pinned_files:
@@ -16537,6 +16603,7 @@ public enum Operations {
                             privacy: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.privacyPayload? = nil,
                             custom_llm: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.custom_llmPayload? = nil,
                             billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload? = nil,
+                            voice: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.voicePayload? = nil,
                             north_star_metric: Swift.String? = nil,
                             default_agent_id: Swift.String? = nil,
                             pinned_files: [Swift.String]? = nil,
@@ -16556,6 +16623,7 @@ public enum Operations {
                             self.privacy = privacy
                             self.custom_llm = custom_llm
                             self.billing = billing
+                            self.voice = voice
                             self.north_star_metric = north_star_metric
                             self.default_agent_id = default_agent_id
                             self.pinned_files = pinned_files
@@ -16576,6 +16644,7 @@ public enum Operations {
                             case privacy
                             case custom_llm
                             case billing
+                            case voice
                             case north_star_metric
                             case default_agent_id
                             case pinned_files
@@ -18309,6 +18378,23 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing`.
                         public var billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice`.
+                        public struct voicePayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice/persist_transcripts`.
+                            public var persist_transcripts: Swift.Bool?
+                            /// Creates a new `voicePayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - persist_transcripts:
+                            public init(persist_transcripts: Swift.Bool? = nil) {
+                                self.persist_transcripts = persist_transcripts
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case persist_transcripts
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice`.
+                        public var voice: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.voicePayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/north_star_metric`.
                         public var north_star_metric: Swift.String?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/default_agent_id`.
@@ -18386,6 +18472,7 @@ public enum Operations {
                         ///   - privacy:
                         ///   - custom_llm:
                         ///   - billing:
+                        ///   - voice:
                         ///   - north_star_metric:
                         ///   - default_agent_id:
                         ///   - pinned_files:
@@ -18405,6 +18492,7 @@ public enum Operations {
                             privacy: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.privacyPayload? = nil,
                             custom_llm: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.custom_llmPayload? = nil,
                             billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload? = nil,
+                            voice: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.voicePayload? = nil,
                             north_star_metric: Swift.String? = nil,
                             default_agent_id: Swift.String? = nil,
                             pinned_files: [Swift.String]? = nil,
@@ -18424,6 +18512,7 @@ public enum Operations {
                             self.privacy = privacy
                             self.custom_llm = custom_llm
                             self.billing = billing
+                            self.voice = voice
                             self.north_star_metric = north_star_metric
                             self.default_agent_id = default_agent_id
                             self.pinned_files = pinned_files
@@ -18444,6 +18533,7 @@ public enum Operations {
                             case privacy
                             case custom_llm
                             case billing
+                            case voice
                             case north_star_metric
                             case default_agent_id
                             case pinned_files
@@ -29587,6 +29677,8 @@ public enum Operations {
                             public var entryCondition: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closeCondition`.
                             public var closeCondition: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/tags`.
+                            public var tags: [Swift.String]
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/inProgressCount`.
                             public var inProgressCount: Swift.Int
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closedCount`.
@@ -29731,6 +29823,7 @@ public enum Operations {
                             ///   - pill:
                             ///   - entryCondition:
                             ///   - closeCondition:
+                            ///   - tags:
                             ///   - inProgressCount:
                             ///   - closedCount:
                             ///   - medianTimeToCloseMs:
@@ -29750,6 +29843,7 @@ public enum Operations {
                                 pill: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.pillPayload,
                                 entryCondition: Swift.String? = nil,
                                 closeCondition: Swift.String? = nil,
+                                tags: [Swift.String],
                                 inProgressCount: Swift.Int,
                                 closedCount: Swift.Int,
                                 medianTimeToCloseMs: Swift.Int? = nil,
@@ -29769,6 +29863,7 @@ public enum Operations {
                                 self.pill = pill
                                 self.entryCondition = entryCondition
                                 self.closeCondition = closeCondition
+                                self.tags = tags
                                 self.inProgressCount = inProgressCount
                                 self.closedCount = closedCount
                                 self.medianTimeToCloseMs = medianTimeToCloseMs
@@ -29789,6 +29884,7 @@ public enum Operations {
                                 case pill
                                 case entryCondition
                                 case closeCondition
+                                case tags
                                 case inProgressCount
                                 case closedCount
                                 case medianTimeToCloseMs
@@ -38254,25 +38350,33 @@ public enum Operations {
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/recommended`.
                             public var recommended: Swift.Bool?
+                            /// Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/destructive`.
+                            public var destructive: Swift.Bool?
                             /// Creates a new `optionsPayloadPayload`.
                             ///
                             /// - Parameters:
                             ///   - label: 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
                             ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
+                            ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                             public init(
                                 label: Swift.String,
                                 consequences: [Swift.String],
-                                recommended: Swift.Bool? = nil
+                                recommended: Swift.Bool? = nil,
+                                destructive: Swift.Bool? = nil
                             ) {
                                 self.label = label
                                 self.consequences = consequences
                                 self.recommended = recommended
+                                self.destructive = destructive
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case label
                                 case consequences
                                 case recommended
+                                case destructive
                             }
                         }
                         /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -39177,9 +39281,12 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/source`.
                         @frozen public enum sourcePayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case final_output = "final_output"
+                            case voice = "voice"
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/source`.
                         public var source: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.sourcePayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/voice_session_id`.
+                        public var voice_session_id: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output`.
                         public struct final_outputPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/dedupe_key`.
@@ -39506,6 +39613,7 @@ public enum Operations {
                         ///   - context_objects:
                         ///   - context_notifications:
                         ///   - source:
+                        ///   - voice_session_id:
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
@@ -39517,6 +39625,7 @@ public enum Operations {
                             context_objects: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.context_objectsPayload? = nil,
                             context_notifications: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.context_notificationsPayload? = nil,
                             source: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.sourcePayload? = nil,
+                            voice_session_id: Swift.String? = nil,
                             final_output: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil,
@@ -39528,6 +39637,7 @@ public enum Operations {
                             self.context_objects = context_objects
                             self.context_notifications = context_notifications
                             self.source = source
+                            self.voice_session_id = voice_session_id
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
@@ -39540,6 +39650,7 @@ public enum Operations {
                             case context_objects
                             case context_notifications
                             case source
+                            case voice_session_id
                             case final_output
                             case question
                             case question_answer
@@ -42338,9 +42449,12 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/source`.
                         @frozen public enum sourcePayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case final_output = "final_output"
+                            case voice = "voice"
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/source`.
                         public var source: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.sourcePayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/voice_session_id`.
+                        public var voice_session_id: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output`.
                         public struct final_outputPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/dedupe_key`.
@@ -42667,6 +42781,7 @@ public enum Operations {
                         ///   - context_objects:
                         ///   - context_notifications:
                         ///   - source:
+                        ///   - voice_session_id:
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
@@ -42678,6 +42793,7 @@ public enum Operations {
                             context_objects: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.context_objectsPayload? = nil,
                             context_notifications: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.context_notificationsPayload? = nil,
                             source: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.sourcePayload? = nil,
+                            voice_session_id: Swift.String? = nil,
                             final_output: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil,
@@ -42689,6 +42805,7 @@ public enum Operations {
                             self.context_objects = context_objects
                             self.context_notifications = context_notifications
                             self.source = source
+                            self.voice_session_id = voice_session_id
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
@@ -42701,6 +42818,7 @@ public enum Operations {
                             case context_objects
                             case context_notifications
                             case source
+                            case voice_session_id
                             case final_output
                             case question
                             case question_answer
@@ -49505,6 +49623,13 @@ public enum Operations {
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/notifications/GET/query/offset`.
                 public var offset: Swift.Int?
+                /// - Remark: Generated from `#/paths/api/notifications/GET/query/order`.
+                @frozen public enum orderPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case asc = "asc"
+                    case desc = "desc"
+                }
+                /// - Remark: Generated from `#/paths/api/notifications/GET/query/order`.
+                public var order: Operations.get_sol_api_sol_notifications.Input.Query.orderPayload?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
@@ -49513,18 +49638,21 @@ public enum Operations {
                 ///   - object_id:
                 ///   - limit:
                 ///   - offset:
+                ///   - order:
                 public init(
                     status: Swift.String? = nil,
                     _type: Swift.String? = nil,
                     object_id: Swift.String? = nil,
                     limit: Swift.Int? = nil,
-                    offset: Swift.Int? = nil
+                    offset: Swift.Int? = nil,
+                    order: Operations.get_sol_api_sol_notifications.Input.Query.orderPayload? = nil
                 ) {
                     self.status = status
                     self._type = _type
                     self.object_id = object_id
                     self.limit = limit
                     self.offset = offset
+                    self.order = order
                 }
             }
             public var query: Operations.get_sol_api_sol_notifications.Input.Query
@@ -54085,25 +54213,33 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/recommended`.
                                         public var recommended: Swift.Bool?
+                                        /// Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
+                                        public var destructive: Swift.Bool?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
                                         ///   - label: 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
+                                        ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
-                                            recommended: Swift.Bool? = nil
+                                            recommended: Swift.Bool? = nil,
+                                            destructive: Swift.Bool? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
+                                            self.destructive = destructive
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
                                             case consequences
                                             case recommended
+                                            case destructive
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.

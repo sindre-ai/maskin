@@ -437,6 +437,8 @@ public final class AppRuntime {
 		ForYouRuntime.deletePersistedOutbox(actorId: actorId, directory: forYouDirectory)
 		// Queued chat messages belong to this account and must never replay as another.
 		ChatsRuntime.signOut(actorId: actorId)
+		// Shares parked by the share extension live in the App Group container; same rule.
+		ShareQueue.shared()?.removeAll()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil

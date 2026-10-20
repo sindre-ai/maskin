@@ -75,6 +75,21 @@ import Testing
 		#expect(divider(items) == nil)
 	}
 
+	@Test func theDividerSitsAfterYourLatestReplyEvenWhenTheCursorLags() {
+		// Messages 2 and 3 were answered by "me" (4), but the server cursor still says 1.
+		let items = ThreadLayout.items(
+			for: [
+				message(1, "a", at: 0), message(2, "a", at: 10), message(3, "a", at: 20),
+				message(4, "me", at: 30), message(5, "a", at: 40), message(6, "a", at: 50),
+			],
+			unreadAfter: 1, currentActorID: "me")
+		let at = try! #require(divider(items))
+		if case .message(let next, _) = items[at + 1] { #expect(next.serverID == 5) } else {
+			Issue.record("expected the first message after the reply to follow the divider")
+		}
+		if case .unreadDivider(let count) = items[at] { #expect(count == 2) }
+	}
+
 	@Test func noCursorOrNothingNewMeansNoDivider() {
 		let rows = [message(1, "a", at: 0), message(2, "a", at: 10)]
 		#expect(divider(ThreadLayout.items(for: rows, unreadAfter: nil, currentActorID: "me")) == nil)

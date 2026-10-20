@@ -327,6 +327,14 @@ public final class AuthSession {
 		state = .signedIn(s)
 	}
 
+	/// The selected workspace was deleted and none is left: keep the sign-in, forget the selection.
+	public func clearWorkspace() {
+		guard var s = session, s.workspaceId != nil else { return }
+		s.workspaceId = nil
+		try? persist(s)
+		state = .signedIn(s)
+	}
+
 	/// End the session. The in-memory state clears at once (requests stop carrying the key), but
 	/// if the Keychain delete fails the owed delete is remembered and finished by the next
 	/// `restore()`, so the session can't resurrect at launch.
@@ -335,6 +343,9 @@ public final class AuthSession {
 		notifySessionEnded()
 		clearStored()
 		state = .signedOut
+		// A deliberate sign-out is not an expiry. Deleting the account kills the key before the
+		// push-token unregister runs; its 401 must not leave "session ended" on the login screen.
+		sessionExpired = false
 	}
 
 	/// Call right BEFORE asking the server to rotate this actor's key. Until `adoptRotatedKey`
