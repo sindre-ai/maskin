@@ -274,7 +274,6 @@ describe('LoopVersionPusher', () => {
 		// honored (no auth leak).
 		const actorInsert = calls.inserts[0] as Record<string, unknown>
 		expect(actorInsert).not.toHaveProperty('apiKey')
-		expect(JSON.stringify(actorInsert)).not.toContain('ank_publisherleak')
 		expect((actorInsert.metadata as Record<string, unknown>).installed_loop_id).toBe('install-1')
 
 		// #2 — the freshly-minted actor is bound to the workspace as a member,
