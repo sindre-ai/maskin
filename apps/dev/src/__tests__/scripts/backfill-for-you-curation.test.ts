@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	parseArgs,
 	patchChiefOfStaffPrompt,
-	planSkill,
+	patchForYouSkill,
 } from '../../../scripts/backfill-for-you-curation'
 
 const template = CHIEF_OF_STAFF_DEFAULT.systemPrompt
@@ -78,18 +78,40 @@ describe('patchChiefOfStaffPrompt', () => {
 	})
 })
 
-describe('planSkill', () => {
-	it('updates a skill that still has the old opening line', () => {
-		const old = FOR_YOU_FORMAT_SKILL.content.replace(
-			'You are an agent writing one escalation.',
-			"You are an agent writing one item for the human's For You queue.",
+const EXTENDED_SKILL = [
+	'---',
+	'name: for-you-format',
+	'---',
+	'',
+	'# For You item format',
+	'',
+	"You are an agent writing one item for the human's For You queue. It exists only because a decision is blocked on the human.",
+	'',
+	'Before you write one, load **ask-an-agent-first**. Humans are the last resort.',
+	'',
+	'**Asked first** — one line, which agents you asked before coming here.',
+].join('\n')
+
+describe('patchForYouSkill', () => {
+	it("inserts the escalation paragraph and keeps a workspace's own additions", () => {
+		const { plan, content } = patchForYouSkill(EXTENDED_SKILL)
+		expect(plan).toBe('update')
+		expect(content).toContain('Escalate to the Chief of Staff')
+		expect(content).toContain('load **ask-an-agent-first**')
+		expect(content).toContain('**Asked first**')
+		expect(content.indexOf('Escalate to the Chief of Staff')).toBeLessThan(
+			content.indexOf('Before you write one'),
 		)
-		expect(planSkill(old)).toBe('update')
 	})
 
-	it('leaves a current skill alone, skips a hand-edited one, and reports a missing one', () => {
-		expect(planSkill(FOR_YOU_FORMAT_SKILL.content)).toBe('none')
-		expect(planSkill('# my own version of this skill')).toBe('skipped-customised')
-		expect(planSkill(null)).toBe('missing')
+	it('is idempotent', () => {
+		const once = patchForYouSkill(EXTENDED_SKILL).content
+		expect(patchForYouSkill(once)).toEqual({ plan: 'none', content: once })
+	})
+
+	it('leaves the current template alone, skips an unrecognised skill, reports a missing one', () => {
+		expect(patchForYouSkill(FOR_YOU_FORMAT_SKILL.content).plan).toBe('none')
+		expect(patchForYouSkill('# my own version of this skill').plan).toBe('skipped-customised')
+		expect(patchForYouSkill(null).plan).toBe('missing')
 	})
 })

@@ -14,8 +14,11 @@
 //      "# For You list") section and adds "# Questions from other agents".
 //      Every other section is left exactly as stored, so a prompt the owner
 //      customised keeps its customisations.
-//   2. The for-you-format skill, but only while it still carries the old
-//      opening line. A skill that was edited by hand is reported and skipped.
+//   2. The for-you-format skill: inserts the one paragraph telling agents to
+//      escalate to the Chief of Staff, right under its opening paragraph, and
+//      touches nothing else. Workspaces have extended this skill (Vaerksted
+//      added "Asked first" and draft rules), so it is never replaced wholesale.
+//      A skill without the expected heading is reported and skipped.
 //   3. The "For You — curate the list" trigger, created if the workspace has no
 //      trigger of that name. It is a cron that starts a Chief of Staff session
 //      every hour, so it costs real usage: check the workspace is one that
@@ -50,8 +53,8 @@ const FOR_YOU_HEADINGS = ['# For You list', '# For You feed']
 const QUESTIONS_HEADING = '# Questions from other agents'
 const BEFORE_QUESTIONS_HEADING = '# Onboarding a new workspace'
 const CURATE_TRIGGER_NAME = 'For You — curate the list'
-/** First sentence of the for-you-format skill before #2183 rewrote it. */
-const OLD_SKILL_MARKER = "You are an agent writing one item for the human's For You queue."
+const SKILL_HEADING = '# For You item format'
+const SKILL_ESCALATION_MARKER = 'Escalate to the Chief of Staff'
 
 export type ParsedArgs = { workspaceId: string; apply: boolean }
 
@@ -128,10 +131,28 @@ export type BackfillPlan = {
 	trigger: TriggerPlan
 }
 
-export function planSkill(stored: string | null): SkillPlan {
-	if (stored === null) return 'missing'
-	if (stored === FOR_YOU_FORMAT_SKILL.content) return 'none'
-	return stored.includes(OLD_SKILL_MARKER) ? 'update' : 'skipped-customised'
+/** The escalation paragraph exactly as the template words it. */
+function escalationParagraph(): string {
+	const line = FOR_YOU_FORMAT_SKILL.content
+		.split('\n')
+		.find((l) => l.startsWith(SKILL_ESCALATION_MARKER))
+	if (!line) throw new Error('for-you-format template has no escalation paragraph')
+	return line
+}
+
+/**
+ * Adds the escalation paragraph under the skill's opening paragraph, leaving the
+ * rest of the stored text untouched. Pure, so it can be unit-tested.
+ */
+export function patchForYouSkill(stored: string | null): { plan: SkillPlan; content: string } {
+	if (stored === null) return { plan: 'missing', content: '' }
+	if (stored.includes(SKILL_ESCALATION_MARKER)) return { plan: 'none', content: stored }
+	const opening = new RegExp(`(${SKILL_HEADING}\\n\\n[^\\n]+\\n)`)
+	if (!opening.test(stored)) return { plan: 'skipped-customised', content: stored }
+	return {
+		plan: 'update',
+		content: stored.replace(opening, `$1\n${escalationParagraph()}\n`),
+	}
 }
 
 /**
@@ -189,7 +210,8 @@ export async function backfillForYouCuration(
 				CHIEF_OF_STAFF_DEFAULT.systemPrompt.replaceAll('{{self_id}}', chief.id),
 			)
 		: null
-	const skillPlan = planSkill(skill?.content ?? null)
+	const skillPatch = patchForYouSkill(skill?.content ?? null)
+	const skillPlan = skillPatch.plan
 	const triggerTemplate = DEFAULT_WORKSPACE_TRIGGERS.find((t) => t.name === CURATE_TRIGGER_NAME)
 	if (!triggerTemplate) throw new Error(`Template has no "${CURATE_TRIGGER_NAME}" trigger`)
 
@@ -221,7 +243,7 @@ export async function backfillForYouCuration(
 
 	if (skill && skillPlan === 'update') {
 		if (!storage) throw new Error('Storage is required to update the for-you-format skill')
-		const content = FOR_YOU_FORMAT_SKILL.content
+		const content = skillPatch.content
 		const parsed = parseSkillMd(content)
 		// Object store first: if it fails the row still matches what is stored.
 		const { sizeBytes } = await storage.putWorkspaceSkill(workspaceId, skill.id, content)

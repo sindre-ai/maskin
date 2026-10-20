@@ -19,10 +19,17 @@ const OLD_PROMPT = [
 	'Short.',
 ].join('\n')
 
-const OLD_SKILL = FOR_YOU_FORMAT_SKILL.content.replace(
-	'You are an agent writing one escalation.',
+const OLD_SKILL = [
+	'---',
+	'name: for-you-format',
+	'---',
+	'',
+	'# For You item format',
+	'',
 	"You are an agent writing one item for the human's For You queue.",
-)
+	'',
+	'**Asked first** — a line this workspace added.',
+].join('\n')
 
 describe('backfillForYouCuration (integration)', () => {
 	let workspaceId: string
@@ -84,7 +91,8 @@ describe('backfillForYouCuration (integration)', () => {
 		expect(after.prompt).toContain('# For You list')
 		expect(after.prompt).toContain('# Questions from other agents')
 		expect(after.prompt).toContain('A custom line the owner added.')
-		expect(after.skill).toBe(FOR_YOU_FORMAT_SKILL.content)
+		expect(after.skill).toContain('Escalate to the Chief of Staff')
+		expect(after.skill).toContain('a line this workspace added.')
 		expect(putWorkspaceSkill).toHaveBeenCalledOnce()
 		expect(after.trigs).toHaveLength(1)
 		expect(after.trigs[0]?.name).toBe('For You — curate the list')
@@ -109,7 +117,7 @@ describe('backfillForYouCuration (integration)', () => {
 		expect((await stored()).trigs).toHaveLength(1)
 	})
 
-	it('leaves a hand-edited skill alone', async () => {
+	it('leaves a skill without the expected heading alone', async () => {
 		await db
 			.update(workspaceSkills)
 			.set({ content: '# my own version' })
