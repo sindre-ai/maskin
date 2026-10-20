@@ -91,108 +91,15 @@ describe('Google Search Console provider registration', () => {
 		expect(names).toContain('google-search-console')
 	})
 
-	it('wires preDisconnect so the disconnect endpoint revokes the Google grant', () => {
+	// Revoking at Google kills the grant for every workspace sharing this OAuth client and
+	// Google account, so disconnecting here must only flip the Maskin row.
+	it('does not revoke the Google grant on disconnect', () => {
 		const resolved = getProvider('google-search-console')
-		expect(resolved.preDisconnect).toBeDefined()
+		expect(resolved.preDisconnect).toBeUndefined()
 	})
 
 	it('does not wire resolveExternalId (deferred to task 2 with sync)', () => {
 		const resolved = getProvider('google-search-console')
 		expect(resolved.resolveExternalId).toBeUndefined()
-	})
-})
-
-describe('revokeGoogleSearchConsoleGrant', () => {
-	const ORIGINAL_CLIENT_ID = process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID
-	const ORIGINAL_CLIENT_SECRET = process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET
-
-	beforeAll(() => {
-		process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID = 'test-client-id'
-		process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET = 'test-client-secret'
-	})
-
-	afterAll(() => {
-		process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID = ORIGINAL_CLIENT_ID
-		process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET = ORIGINAL_CLIENT_SECRET
-	})
-
-	afterEach(() => {
-		vi.restoreAllMocks()
-	})
-
-	function makeCtx(credentials: Record<string, unknown>) {
-		return {
-			db: {} as unknown,
-			integrationId: 'int-1',
-			workspaceId: 'ws-1',
-			credentials,
-		}
-	}
-
-	it("POSTs the stored refresh token to Google's revoke endpoint", async () => {
-		const { revokeGoogleSearchConsoleGrant } = await import(
-			'../../../../lib/integrations/providers/google-search-console/disconnect'
-		)
-
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-			ok: true,
-			status: 200,
-			text: () => Promise.resolve(''),
-		} as Response)
-
-		await revokeGoogleSearchConsoleGrant(
-			makeCtx({ accessToken: 'ya29.access', refreshToken: '1//refresh' }),
-		)
-
-		expect(fetchSpy).toHaveBeenCalledTimes(1)
-		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
-		expect(url).toBe('https://oauth2.googleapis.com/revoke')
-		expect(init.method).toBe('POST')
-		expect(String(init.body)).toBe('token=1%2F%2Frefresh')
-	})
-
-	it('falls back to the access token when no refresh token is stored', async () => {
-		const { revokeGoogleSearchConsoleGrant } = await import(
-			'../../../../lib/integrations/providers/google-search-console/disconnect'
-		)
-
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-			ok: true,
-			status: 200,
-			text: () => Promise.resolve(''),
-		} as Response)
-
-		await revokeGoogleSearchConsoleGrant(makeCtx({ accessToken: 'ya29.access' }))
-
-		// biome-ignore lint/style/noNonNullAssertion: test asserts fetch was called above
-		expect(String(fetchSpy.mock.calls[0]![1]?.body)).toBe('token=ya29.access')
-	})
-
-	it('swallows revoke errors so the disconnect flow always succeeds', async () => {
-		const { revokeGoogleSearchConsoleGrant } = await import(
-			'../../../../lib/integrations/providers/google-search-console/disconnect'
-		)
-
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-			ok: false,
-			status: 500,
-			text: () => Promise.resolve('boom'),
-		} as Response)
-
-		await expect(
-			revokeGoogleSearchConsoleGrant(makeCtx({ refreshToken: '1//refresh' })),
-		).resolves.toBeUndefined()
-	})
-
-	it('is a no-op when credentials hold no usable token', async () => {
-		const { revokeGoogleSearchConsoleGrant } = await import(
-			'../../../../lib/integrations/providers/google-search-console/disconnect'
-		)
-
-		const fetchSpy = vi.spyOn(globalThis, 'fetch')
-
-		await revokeGoogleSearchConsoleGrant(makeCtx({}))
-
-		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 })
