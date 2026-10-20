@@ -21,20 +21,12 @@ public struct ObjectDetailScreen<Decision: View>: View {
 
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.horizontalSizeClass) private var sizeClass
-	/// Objects linked with `/` in the comment being written, and what the picker is showing.
-	@State private var linked: [CommentReference] = []
-	@State private var referenceResults: [CommentReference] = []
-	@State private var searchingReferences = false
-	/// The comment being written: text, `@` mentions, attachments and the reply quote all live in
-	/// the shared composer model (spec 7 §1).
-	@State private var composer: ChatComposerModel
 	@State private var editing = false
 	@State private var confirmingDelete = false
-	/// Set when the reader sends a comment, so the timeline follows it to the bottom.
-	@State private var followNextItem = false
 	@State private var atTop = true
-	/// The event a held-down Reply picked; the next comment threads under it.
-	@State private var replyingTo: TimelineItem?
+	/// Comments live in the object's group chat, pushed from the bar at the bottom or from the
+	/// latest-activity card.
+	@State private var showingChat = false
 	@Environment(AppRuntime.self) private var appRuntime: AppRuntime?
 
 	public init(
@@ -55,71 +47,10 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		store.onObjectChanged = { [weak listStore] in listStore?.apply($0) }
 		store.onObjectDeleted = { [weak listStore] in listStore?.remove($0) }
 		_store = State(initialValue: store)
-		let env = services.environment
-		_composer = State(
-			initialValue: ChatComposerModel(
-				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? ""),
-				selfActorID: env.auth.session?.actorId ?? ""))
 		environment = services.environment
 		self.onOpenObject = onOpenObject
 		self.onClose = onClose
 		self.decision = decision
-	}
-
-	/// Fills the `/` picker for what is typed after the slash, waiting a beat so a fast typist
-	/// doesn't fire a request per letter.
-	private func searchReferences() async {
-		guard let query = ReferenceTrigger.find(in: composer.text)?.query else {
-			referenceResults = []
-			return
-		}
-		searchingReferences = true
-		try? await Task.sleep(for: .milliseconds(200))
-		guard !Task.isCancelled else { return }
-		let found = await store.searchObjects(query)
-		guard !Task.isCancelled else { return }
-		referenceResults = found
-		searchingReferences = false
-	}
-
-	// MARK: Comments
-
-	private var composerConfig: MaskinComposerConfig {
-		MaskinComposerConfig(
-			variant: .floating,
-			placeholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? "Comment — @ to tag, / to link",
-			suggestions: { query in
-				CommentMentions.candidates(
-					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
-					excluding: Set(composer.mentions.map(\.id))
-				).map { ChatParticipant(id: $0.id, name: $0.name, kind: $0.isAgent ? .agent : .human) }
-			},
-			// The same workspace list, with roles, every other composer offers.
-			roster: appRuntime?.mentionRoster()?.roster)
-	}
-
-	/// Hold → Reply: the composer quotes the event and the next comment threads under it.
-	private func startReply(to item: TimelineItem) {
-		MaskinHaptics.play(.light)
-		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { replyingTo = item }
-		composer.reply(to: store.authorName(for: item), text: ActivityGrouping.summary(of: item))
-	}
-
-	/// The thread already shows the parent, so the body carries the text alone, not a quote.
-	/// Sending jumps to Activity, where the thread is.
-	private func sendComment() {
-		let text = composer.trimmedText
-		guard !text.isEmpty, !composer.isUploading, !composer.hasFailedAttachment else { return }
-		let mentions = composer.mentions.map(\.id).filter { $0 != store.currentActorId }
-		let files = composer.attachments.compactMap(\.ref)
-		let refs = linked
-		let parent = replyingTo?.eventId
-		composer.clear()
-		linked = []
-		replyingTo = nil
-		followNextItem = parent == nil
-		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity }
-		Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files, parentEventId: parent) }
 	}
 
 	public var body: some View {
@@ -137,37 +68,15 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.ambientBackground()
 		.safeAreaInset(edge: .bottom) {
-			// The composer stays on every page; sending jumps to Activity, where the thread is.
 			if store.object != nil {
-				VStack(spacing: MaskinSpace.s4) {
-					if ReferenceTrigger.find(in: composer.text) != nil {
-						ReferenceSuggestions(
-							results: referenceResults.filter { ref in !linked.contains { $0.id == ref.id } },
-							isSearching: searchingReferences,
-							onPick: { ref in
-								composer.text = ReferenceTrigger.removingTrigger(from: composer.text)
-								if linked.count < ReferenceTrigger.maxReferences { linked.append(ref) }
-							})
-							.transition(.opacity.combined(with: .move(edge: .bottom)))
-					}
-					if !linked.isEmpty {
-						ChipFlow {
-							ForEach(linked) { ref in
-								ReferenceChip(ref: ref, onRemove: { linked.removeAll { $0.id == ref.id } })
-							}
-						}
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.padding(.horizontal, MaskinSpace.s5)
-					}
-					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
-				}
-				.animation(MaskinMotion.quick, value: ReferenceTrigger.find(in: composer.text) != nil)
-				.task(id: ReferenceTrigger.find(in: composer.text)?.query) { await searchReferences() }
-				// Clearing the quote strip in the composer also drops the thread target.
-				.onChange(of: composer.replyTo == nil) { _, cleared in if cleared { replyingTo = nil } }
-				.padding(.horizontal, MaskinSpace.s7)
-				.padding(.bottom, MaskinSpace.s4)
+				ChatEntryBar { openChat() }
+					.padding(.horizontal, MaskinSpace.s7)
+					.padding(.bottom, MaskinSpace.s4)
 			}
+		}
+		.navigationDestination(isPresented: $showingChat) {
+			ObjectChatScreen(
+				environment: environment, objectID: store.objectId, title: store.object?.displayTitle ?? "Chat")
 		}
 		// The header carries the title; the bar takes it over once the header has scrolled away.
 		.navigationTitle(atTop ? "" : (store.object?.displayTitle ?? ""))
@@ -237,7 +146,6 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.onChange(of: store.didDelete) { _, deleted in if deleted { close() } }
 		.task { await store.load() }
-		.task { await appRuntime?.mentionRoster()?.load() }
 		.task { await store.observe(environment.events.subscribe()) }
 	}
 
@@ -310,44 +218,39 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// asks; switching pages never loses it.
 	private var pageScroll: some View {
 		let part = page ?? .overview
-		return ScrollViewReader { proxy in
-			ScrollView {
-				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
-					ObjectDetailContent(store: store, part: .header, onEdit: { editing = true }) { EmptyView() }
-						.padding(.horizontal, MaskinSpace.s11)
+		return ScrollView {
+			LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
+				ObjectDetailContent(store: store, part: .header, onEdit: { editing = true }) { EmptyView() }
+					.padding(.horizontal, MaskinSpace.s11)
+					.padding(.top, MaskinSpace.s2)
+					.padding(.bottom, MaskinSpace.s7)
+				Section {
+					ObjectDetailContent(
+						store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
+						onShowActivity: { openChat() }
+					) { decision }
+					.padding(.horizontal, MaskinSpace.s9)
+					.padding(.top, MaskinSpace.s5)
+					.padding(.bottom, MaskinSpace.s12 * 4)
+					.id(part)
+					.transition(.opacity)
+				} header: {
+					pageBar
 						.padding(.top, MaskinSpace.s2)
-						.padding(.bottom, MaskinSpace.s7)
-					Section {
-						ObjectDetailContent(
-							store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
-							onReply: startReply,
-							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } }
-						) { decision }
-						.padding(.horizontal, MaskinSpace.s9)
-						.padding(.top, MaskinSpace.s5)
-						.padding(.bottom, MaskinSpace.s12 * 4)
-						.id(part)
-						.transition(.opacity)
-					} header: {
-						pageBar
-							.padding(.top, MaskinSpace.s2)
-							.padding(.bottom, MaskinSpace.s4)
-							.background(MaskinSurface.grouped)
-							.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
-					}
+						.padding(.bottom, MaskinSpace.s4)
+						.background(MaskinSurface.grouped)
+						.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
 				}
 			}
-			.scrollDismissesKeyboard(.interactively)
-			.refreshable { await store.refresh() }
-			.trackingTop($atTop)
-			// The newest item is first. Only jump to it after the reader posts, or when a live item
-			// arrives while they are already at the top.
-			.onChange(of: store.latest?.id) { old, id in
-				guard part == .activity, let id, followNextItem || (old != nil && atTop) else { return }
-				followNextItem = false
-				withAnimation(reduceMotion ? nil : .easeOut(duration: MaskinDuration.slide)) { proxy.scrollTo(id, anchor: .top) }
-			}
 		}
+		.scrollDismissesKeyboard(.interactively)
+		.refreshable { await store.refresh() }
+		.trackingTop($atTop)
+	}
+
+	private func openChat() {
+		MaskinHaptics.play(.light)
+		showingChat = true
 	}
 
 	private func shareText(_ object: WorkObject) -> String {
@@ -439,5 +342,32 @@ extension View {
 				})
 		}
 		return AnyView(self)
+	}
+}
+
+/// The way into an object's chat, where comments are written. A glass pill at the bottom, in the
+/// place the comment box used to be.
+private struct ChatEntryBar: View {
+	let action: () -> Void
+
+	var body: some View {
+		Button(action: action) {
+			HStack(spacing: MaskinSpace.s4) {
+				Image(systemName: "bubble.left.and.bubble.right")
+				Text("Chat about this")
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+				Spacer(minLength: 0)
+				Image(systemName: "chevron.right")
+					.font(.footnote.weight(.semibold))
+					.foregroundStyle(MaskinColor.ink5)
+			}
+			.foregroundStyle(MaskinColor.ink)
+			.padding(.horizontal, MaskinSpace.s8)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.maskinGlass(in: Capsule(), interactive: true)
+			.overlay(Capsule().strokeBorder(MaskinSurface.glassBorder, lineWidth: 0.5))
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel("Chat about this")
 	}
 }

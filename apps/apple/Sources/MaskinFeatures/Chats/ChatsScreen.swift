@@ -337,7 +337,7 @@ private struct ThreadHost: View {
 	}
 }
 
-private struct ChatThreadHost: View {
+struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
 	let conversationID: String

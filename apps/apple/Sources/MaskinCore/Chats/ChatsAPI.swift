@@ -122,3 +122,19 @@ public struct ChatsHTTPError: Error, Equatable, Sendable {
 public protocol ChatFileUploading: Sendable {
 	func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef
 }
+
+/// What a group chat is about.
+public enum ChatSubject: Sendable, Hashable {
+	case object(String)
+	case loop(String)
+}
+
+extension ConversationsAPI {
+	/// The group chat for a task or workflow: the one that exists, or a new one. Asking again
+	/// returns the same chat, so opening it twice never makes two.
+	public func chat(about subject: ChatSubject, title: String, idempotencyKey: String) async throws
+		-> ConversationSummary
+	{
+		throw ChatsError("Group chats aren't available here.")
+	}
+}

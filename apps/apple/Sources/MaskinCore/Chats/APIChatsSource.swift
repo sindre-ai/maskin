@@ -50,18 +50,53 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
 	) async throws -> ConversationSummary {
+		try await post(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage, subject: nil,
+			idempotencyKey: idempotencyKey)
+	}
+
+	public func chat(about subject: ChatSubject, title: String, idempotencyKey: String) async throws
+		-> ConversationSummary
+	{
+		try await post(
+			title: title, participantIDs: [], initialMessage: nil, subject: subject,
+			idempotencyKey: idempotencyKey)
+	}
+
+	/// `POST /api/conversations`. With a subject the server answers 200 with the chat that already
+	/// exists for it, or 201 with a new one; the caller gets the same either way.
+	private func post(
+		title: String, participantIDs: [String], initialMessage: String?, subject: ChatSubject?,
+		idempotencyKey: String
+	) async throws -> ConversationSummary {
+		typealias Subject = Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.subjectPayload
+		let wire: Subject? = subject.map {
+			switch $0 {
+			case .object(let id): Subject(_type: .object, id: id)
+			case .loop(let id): Subject(_type: .loop, id: id)
+			}
+		}
 		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
 			try await client.post_sol_api_sol_conversations(
 				.init(
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
 					body: .json(
 						.init(
-							title: title, participant_actor_ids: participantIDs,
+							subject: wire, title: title, participant_actor_ids: participantIDs,
 							initial_message: initialMessage))))
 		}
 		switch output {
 		case .created(let created):
 			let row = try created.body.json
+			return ConversationSummary(
+				id: row.id, title: row.title, lastMessageAt: ChatDates.parse(row.lastMessageAt),
+				createdAt: ChatDates.parse(row.createdAt), pinned: row.pinned, archived: row.archived,
+				unreadCount: Int(row.unread_count),
+				participants: row.participants.map {
+					ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
+				}, lastReadMessageID: row.last_read_message_id.map(Int.init))
+		case .ok(let existing):
+			let row = try existing.body.json
 			return ConversationSummary(
 				id: row.id, title: row.title, lastMessageAt: ChatDates.parse(row.lastMessageAt),
 				createdAt: ChatDates.parse(row.createdAt), pinned: row.pinned, archived: row.archived,
@@ -323,6 +358,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				status: 404,
 				message: thread == nil
 					? "This conversation no longer exists." : "That thread's first message is gone.")
+		case .badRequest:
+			throw ChatsHTTPError(status: 400, message: "That message couldn't be sent.")
 		case .undocumented(let status, _):
 			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}
