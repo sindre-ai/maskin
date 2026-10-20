@@ -1532,8 +1532,13 @@ app.openapi(callbackRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
 	}
 	// A sealed blob that decrypts but is not a connect state (e.g. a native launch
-	// ticket) must not reach the nonce/workspace lookups below.
-	if (typeof stateData?.nonce !== 'string' || typeof stateData.workspaceId !== 'string') {
+	// ticket, which carries a nonce and workspaceId but never an actorId) must not
+	// reach the nonce/workspace lookups below.
+	if (
+		typeof stateData?.nonce !== 'string' ||
+		typeof stateData.workspaceId !== 'string' ||
+		typeof stateData.actorId !== 'string'
+	) {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
 	}
 

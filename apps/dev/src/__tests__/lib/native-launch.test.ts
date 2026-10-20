@@ -42,9 +42,9 @@ describe('native launch ticket', () => {
 		expect(decodeLaunchTicket(state)).toBeNull()
 	})
 
-	it('is not a valid OAuth state either (no workspace/nonce shape)', () => {
-		const raw = encodeLaunchTicket({ ...base, ts: Date.now() })
+	it('is not a valid OAuth state either (never carries an actorId)', () => {
+		const raw = encodeLaunchTicket({ ...base, ts: Date.now(), workspaceId: 'w' })
 		const asState = decodeState(raw) as unknown as Record<string, unknown>
-		expect(asState.workspaceId).toBeUndefined()
+		expect(asState.actorId).toBeUndefined()
 	})
 })
