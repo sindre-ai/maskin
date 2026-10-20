@@ -380,6 +380,16 @@ export const api = {
 			}),
 		regenerateApiKey: (id: string) =>
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
+		approveIntegrationAttach: (
+			id: string,
+			presetId: string,
+			workspaceId: string,
+			opts: { allAffected?: boolean } = {},
+		) =>
+			request<IntegrationAttachResult>(
+				`/actors/${id}/integration-mcp/${encodeURIComponent(presetId)}`,
+				{ method: 'POST', body: { all_affected: opts.allAffected ?? false }, workspaceId },
+			),
 		reset: (id: string, workspaceId: string) =>
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
 		pause: (id: string, workspaceId: string) =>
@@ -586,10 +596,18 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
-		linkedinIdentities: (workspaceId: string) =>
-			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
+		mcpPresets: (
+			workspaceId: string,
+			opts: { actorId?: string; includeAffected?: boolean } = {},
+		) => {
+			const qs = new URLSearchParams()
+			if (opts.actorId) qs.set('actor_id', opts.actorId)
+			if (opts.includeAffected) qs.set('include', 'affected')
+			const suffix = qs.toString()
+			return request<McpPresetsResponse>(`/integrations/mcp-presets${suffix ? `?${suffix}` : ''}`, {
 				workspaceId,
-			}),
+			})
+		},
 	},
 
 	notifications: {
@@ -1756,19 +1774,41 @@ export interface SlackUser {
 }
 
 /**
- * One connected LinkedIn identity (personal profile OR admined company page)
- * for a workspace. Rendered by the agent MCP panel as one Quick Add button
- * per row — clicking writes an mcpServers entry keyed on `instanceSlug` that
- * points at `/api/integrations/linkedin-unipile/mcp/${instanceSlug}`, so only
- * this identity's tools land on the agent.
+ * One MCP entry the workspace can attach to an agent, derived by the API from
+ * the provider configs and the live integrations. The Quick Add buttons and the
+ * agent tools read the same list, so they cannot drift apart.
  */
-export interface LinkedInIdentitySummary {
-	instanceSlug: string
-	displayName: string
-	identityType: 'personal' | 'company_page'
-	identitySlug: string
-	unipileAccSlug: string
-	integrationId: string
+export interface McpPresetResponse {
+	preset_id: string
+	provider: string
+	provider_label: string
+	label: string
+	integration_id: string
+	/** The key the entry is filed under in the agent's mcpServers. */
+	key: string
+	/** The provider is wired into every session already; attaching is optional. */
+	auto_injected: boolean
+	server: Record<string, unknown>
+	/** Only with actor_id. */
+	attached?: boolean
+	/** Only with include=affected: agents a disconnect stripped this entry from. */
+	affected_agents?: Array<{ id: string; name: string }>
+}
+
+export interface McpPresetsResponse {
+	presets: McpPresetResponse[]
+	drift?: {
+		actor_id: string
+		missing_preset_ids: string[]
+		stale_entries: Array<{ key: string; provider: string }>
+	}
+}
+
+export interface IntegrationAttachResult {
+	preset_id: string
+	key: string
+	attached_actor_ids: string[]
+	already_attached_actor_ids: string[]
 }
 
 export interface NotificationResponse {
@@ -2033,6 +2073,13 @@ export interface MessageIntegrationConnect {
 	provider: string
 }
 
+/** An agent's proposal to give an agent an integration, surfaced into chat as an Approve card. */
+export interface MessageIntegrationAttach {
+	session_id: string
+	actor_id: string
+	preset_id: string
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -2066,6 +2113,11 @@ export interface MessageMetadata {
 	 * connect an integration, rendered as a Connect card.
 	 */
 	integration_connect?: MessageIntegrationConnect
+	/**
+	 * Backend-owned; stripped from anything a client sends. An agent's proposal to
+	 * attach an integration's tools to an agent, rendered as an Approve card.
+	 */
+	integration_attach?: MessageIntegrationAttach
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }

@@ -74,7 +74,7 @@ export const config: ProviderConfig = {
 		envKey: 'GITHUB_TOKEN',
 		autoInject: true,
 		// An agent's copy is a stdio entry whose token env points at
-		// `${GITHUB_TOKEN_<OWNER>}` (mcp-servers.tsx, handleAddGithub), so it is
+		// `${GITHUB_TOKEN_<OWNER>}` (built by `entry.server` below), so it is
 		// recognised by that variable, not by a URL.
 		entry: {
 			kind: 'per-installation',

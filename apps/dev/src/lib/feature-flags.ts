@@ -116,6 +116,19 @@ export const FLAGS = {
 	 * See `.claude/rules/feature-flags.md` for the boundary rule.
 	 */
 	CHAT_PLUS_MENU_ATTACH_ONLY: 'chat-plus-menu-attach-only',
+	/**
+	 * The Approve card an agent raises in chat with `propose_integration_attach`
+	 * ("allow this agent to use this integration"). New per-actor visual layer:
+	 * OFF renders no card, and the message's markdown still says what was asked.
+	 * Only the card sits behind the flag, read once in `chat/message-bubble.tsx`.
+	 * The preset list, the attach-card route, the approve route and the MCP tools
+	 * are additive backend that change nothing for an actor who never calls the
+	 * tool, so they are not flagged. A tester sees the card (and can approve) only
+	 * when their actor id is in `FF_TESTER_ACTOR_IDS` and this id is in
+	 * `FF_TESTER_FEATURES`. Retire (drop the boundary + delete this entry) once
+	 * the card ships to everyone.
+	 */
+	INTEGRATION_ATTACH_CARD: 'integration-attach-card',
 	loopsV4Polish: 'loops-v4-polish',
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
 	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',

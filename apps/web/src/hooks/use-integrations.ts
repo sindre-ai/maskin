@@ -176,15 +176,47 @@ export function useSlackUsers(integrationId: string | undefined, workspaceId: st
 }
 
 /**
- * P3-K · Enumerate LinkedIn identities for a workspace. Every connected
- * identity — the human profile plus each admined page — is one Quick Add
- * button in the agent MCP panel. Returns [] when linkedin-unipile is not
- * connected.
+ * The MCP entries this workspace can attach to an agent: one list the API
+ * derives from the provider configs and the live integrations, shared with the
+ * agent tools. Lives under the workspace's integrations key, so connecting or
+ * disconnecting an integration refreshes it.
  */
-export function useLinkedInIdentities(workspaceId: string) {
+export function useMcpPresets(
+	workspaceId: string,
+	opts: { actorId?: string; includeAffected?: boolean; enabled?: boolean } = {},
+) {
 	return useQuery({
-		queryKey: queryKeys.integrations.linkedinIdentities(workspaceId),
-		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
-		staleTime: FIVE_MINUTES,
+		queryKey: queryKeys.integrations.mcpPresets(workspaceId, opts.actorId, opts.includeAffected),
+		queryFn: () =>
+			api.integrations.mcpPresets(workspaceId, {
+				actorId: opts.actorId,
+				includeAffected: opts.includeAffected,
+			}),
+		enabled: opts.enabled ?? true,
+	})
+}
+
+/**
+ * A human admin's click on an Approve card. The server re-derives the entry, so
+ * nothing but the ids travels. `allAffected` also restores it on every agent a
+ * disconnect stripped it from.
+ */
+export function useApproveIntegrationAttach(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { actorId: string; presetId: string; allAffected?: boolean }) =>
+			api.actors.approveIntegrationAttach(input.actorId, input.presetId, workspaceId, {
+				allAffected: input.allAffected,
+			}),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			for (const id of [...result.attached_actor_ids, ...result.already_attached_actor_ids]) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
+			}
+		},
+		onError: (error) => {
+			toast.error(error instanceof Error ? error.message : 'Could not attach the integration')
+		},
 	})
 }

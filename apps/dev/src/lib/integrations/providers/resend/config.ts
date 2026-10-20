@@ -46,9 +46,9 @@ export const config: ProviderConfig = {
 	// `envVars.RESEND_API_KEY` is stamped into the session (see spec §3). The
 	// literal `${RESEND_API_KEY}` in the Authorization header is expanded by
 	// envsubst inside the container at CMD time — same pattern as PostHog
-	// (`Bearer ${POSTHOG_TOKEN}`). Must match INTEGRATION_MCP_PRESETS.resend in
-	// `apps/web/src/components/agents/mcp-servers.tsx` byte-for-byte; the
-	// config.test.ts double-write assertion is what stops silent drift.
+	// (`Bearer ${POSTHOG_TOKEN}`). The quick-add button is derived from this
+	// `server` (GET /api/integrations/mcp-presets), so there is no second copy to
+	// keep in sync.
 	mcp: {
 		envKey: 'RESEND_API_KEY',
 		autoInject: true,

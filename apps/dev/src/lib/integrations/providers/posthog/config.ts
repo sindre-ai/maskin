@@ -19,8 +19,9 @@ export const config: ProviderConfig = {
 	// First external (not first-party @maskin/ext-*) MCP server — see ADR in the
 	// posthog-loop bet thread. autoInject = every agent session in a workspace
 	// with an active PostHog integration gets the MCP, no per-agent config
-	// required. Matches the frontend INTEGRATION_MCP_PRESETS entry so the
-	// quick-add button and the auto-injected server produce the same shape.
+	// required. The quick-add button (GET /api/integrations/mcp-presets) is
+	// derived from this `server`, so it and the auto-injected server are the
+	// same shape by construction.
 	mcp: {
 		envKey: 'POSTHOG_TOKEN',
 		autoInject: true,
