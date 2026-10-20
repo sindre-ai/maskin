@@ -37,7 +37,7 @@ import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 import desktopRoutes from './routes/desktop'
-import desktopTeachRoutes from './routes/desktop-teach'
+// import desktopTeachRoutes from './routes/desktop-teach'
 import customMcpServersRoutes from './routes/custom-mcp-servers'
 import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
@@ -463,7 +463,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
 	app.route('/api/desktop', desktopRoutes)
-	app.route('/api/desktop/teach', desktopTeachRoutes)
+	// app.route('/api/desktop/teach', desktopTeachRoutes)
 	app.route('/api/voice-sessions', voiceSessionsRoutes)
 
 	if (options.includeExtensions !== false) {

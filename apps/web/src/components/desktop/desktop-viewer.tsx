@@ -1,4 +1,4 @@
-import { TeachDialog } from '@/components/desktop/teach-dialog'
+// import { TeachDialog } from '@/components/desktop/teach-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -6,7 +6,7 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { cn } from '@/lib/cn'
 import type RfbClient from '@novnc/novnc/lib/rfb'
-import { Eye, GraduationCap, MousePointer2, RefreshCw, Square } from 'lucide-react'
+import { Eye, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -199,6 +199,7 @@ export function DesktopViewer({
 				</Button>
 			) : (
 				<>
+					{/* "Teach a task" is switched off until the feature is further developed.
 					<Button
 						variant="outline"
 						size="sm"
@@ -209,6 +210,7 @@ export function DesktopViewer({
 						<GraduationCap size={15} />
 						<span className="hidden sm:inline">Teach a task</span>
 					</Button>
+					*/}
 					<Button
 						variant={controlling ? 'default' : 'outline'}
 						size="sm"
@@ -289,12 +291,12 @@ export function DesktopViewer({
 					/>
 				)}
 			</div>
-			<TeachDialog
+			{/* <TeachDialog
 				open={teaching.dialogOpen}
 				onOpenChange={teaching.setDialogOpen}
 				workspaceId={workspaceId}
 				onStart={teaching.start}
-			/>
+			/> */}
 		</div>
 	)
 }

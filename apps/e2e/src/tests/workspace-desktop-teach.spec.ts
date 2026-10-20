@@ -87,7 +87,8 @@ async function expectNoHorizontalOverflow(page: Page) {
 	expect(overflow).toBeLessThanOrEqual(0)
 }
 
-test.describe('Teach a task on the desktop', () => {
+// Skipped while "Teach a task" is switched off in the desktop viewer.
+test.describe.skip('Teach a task on the desktop', () => {
 	let vnc: FakeVnc | null = null
 	test.afterEach(async () => {
 		await vnc?.close()

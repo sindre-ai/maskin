@@ -87,7 +87,8 @@ async function startRecording(user: ReturnType<typeof userEvent.setup>) {
 const press = (el: Element, x = 320, y = 180) =>
 	el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: x, clientY: y }))
 
-describe('Teach a task on an agent computer', () => {
+// Skipped while "Teach a task" is switched off in the desktop viewer.
+describe.skip('Teach a task on an agent computer', () => {
 	beforeEach(() => {
 		instances.length = 0
 		localStorage.clear()
