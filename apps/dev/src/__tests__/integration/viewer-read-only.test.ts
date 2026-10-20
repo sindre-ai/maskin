@@ -397,7 +397,12 @@ describe('Viewer role is read-only', () => {
 			expect(asViewer.status).toBe(403)
 
 			const asMember = await app.request(
-				jsonRequest('PATCH', `/api/notifications/${other?.id}`, { status: 'seen' }, auth(memberKey)),
+				jsonRequest(
+					'PATCH',
+					`/api/notifications/${other?.id}`,
+					{ status: 'seen' },
+					auth(memberKey),
+				),
 			)
 			expect(asMember.status).toBe(200)
 			expect((await asMember.json()).status).toBe('seen')
