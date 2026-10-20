@@ -47,11 +47,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isPrivateIPv4(octets: number[]): boolean {
+	const [a, b] = octets as [number, number]
+	return (
+		a === 0 ||
+		a === 10 ||
+		a === 127 ||
+		(a === 169 && b === 254) ||
+		(a === 172 && b >= 16 && b <= 31) ||
+		(a === 192 && b === 168) ||
+		(a === 100 && b >= 64 && b <= 127)
+	)
+}
+
 /**
  * A voice call fetches these URLs from the API process, not from a sandbox, so
  * a workspace-editable URL must not reach this host's own network. This API
  * itself is allowed (the in-process Slack and LinkedIn servers live there);
  * anything else must be https and not a loopback, private or link-local host.
+ *
+ * Only literal hosts are checked: a public name that resolves to a private
+ * address is not caught here. Redirects are refused separately, in
+ * `createVoiceToolkit`.
  */
 export function isAllowedVoiceMcpUrl(rawUrl: string, apiBaseUrl: string): boolean {
 	let url: URL
@@ -62,27 +79,30 @@ export function isAllowedVoiceMcpUrl(rawUrl: string, apiBaseUrl: string): boolea
 	}
 	if (url.origin === new URL(apiBaseUrl).origin) return true
 	if (url.protocol !== 'https:') return false
-	const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+	const host = url.hostname
+		.toLowerCase()
+		.replace(/^\[|\]$/g, '')
+		.replace(/\.$/, '')
 	if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal'))
 		return false
 	if (host.endsWith('.local')) return false
 	if (host.includes(':')) {
-		// IPv6 literal: loopback, unique-local and link-local.
+		// IPv6 literal. Refuse the unspecified and loopback addresses, anything that
+		// embeds an IPv4 address (mapped `::ffff:`, NAT64 `64:ff9b::`), unique-local
+		// (fc00::/7) and link-local (fe80::/10).
 		return !(
+			host === '::' ||
 			host === '::1' ||
+			host.startsWith('::ffff:') ||
+			host.startsWith('64:ff9b:') ||
 			host.startsWith('fc') ||
 			host.startsWith('fd') ||
-			host.startsWith('fe80')
+			/^fe[89ab]/.test(host)
 		)
 	}
 	const octets = host.split('.').map(Number)
 	if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
-		const [a, b] = octets as [number, number, number, number]
-		if (a === 10 || a === 127 || a === 0) return false
-		if (a === 169 && b === 254) return false
-		if (a === 172 && b >= 16 && b <= 31) return false
-		if (a === 192 && b === 168) return false
-		if (a === 100 && b >= 64 && b <= 127) return false
+		return !isPrivateIPv4(octets)
 	}
 	return true
 }

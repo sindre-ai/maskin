@@ -73,15 +73,27 @@ function realtimeName(server: string, tool: string, taken: Set<string>): string 
 	return name
 }
 
+/**
+ * Never follow a redirect: the address was checked before the call, and a
+ * redirect would carry the request (and its credentials) somewhere unchecked.
+ */
+const noRedirectFetch = (input: string | URL, init?: RequestInit) =>
+	fetch(input, { ...init, redirect: 'manual' })
+
 async function connectExternal(spec: VoiceExternalMcpServer): Promise<Client> {
 	const url = new URL(spec.url)
 	const requestInit = { headers: spec.headers ?? {} }
 	const transport =
 		spec.transport === 'sse'
-			? new SSEClientTransport(url, { requestInit })
-			: new StreamableHTTPClientTransport(url, { requestInit })
+			? new SSEClientTransport(url, { requestInit, fetch: noRedirectFetch })
+			: new StreamableHTTPClientTransport(url, { requestInit, fetch: noRedirectFetch })
 	const client = new Client({ name: 'maskin-voice', version: '0.1.0' })
-	await client.connect(transport)
+	try {
+		await client.connect(transport)
+	} catch (err) {
+		await client.close().catch(() => {})
+		throw err
+	}
 	return client
 }
 
@@ -91,6 +103,26 @@ export async function createVoiceToolkit(
 ): Promise<VoiceToolkit> {
 	const server = createMcpServer(config)
 	const client = new Client({ name: 'maskin-voice', version: '0.1.0' })
+	const externalClients: Client[] = []
+	try {
+		return await buildToolkit(server, client, externalClients, externalServers)
+	} catch (err) {
+		// Setup failed halfway: close everything already opened.
+		await Promise.allSettled([
+			client.close(),
+			server.close(),
+			...externalClients.map((c) => c.close()),
+		])
+		throw err
+	}
+}
+
+async function buildToolkit(
+	server: ReturnType<typeof createMcpServer>,
+	client: Client,
+	externalClients: Client[],
+	externalServers: Record<string, VoiceExternalMcpServer>,
+): Promise<VoiceToolkit> {
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
 	await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
 
@@ -108,7 +140,6 @@ export async function createVoiceToolkit(
 
 	// realtime function name -> where to send the call and what the server calls it
 	const external = new Map<string, { client: Client; tool: string }>()
-	const externalClients: Client[] = []
 	const unreachableServers: string[] = []
 	await Promise.all(
 		Object.entries(externalServers).map(async ([serverName, spec]) => {
@@ -116,13 +147,20 @@ export async function createVoiceToolkit(
 			let timedOut = false
 			let timer: ReturnType<typeof setTimeout> | undefined
 			try {
+				const attempt = (async () => {
+					const c = await connectExternal(spec)
+					connected = c
+					// Connected after the deadline: nobody is waiting for it any more.
+					if (timedOut) {
+						await c.close().catch(() => {})
+						throw new Error('timed out')
+					}
+					return { client: c, tools: await listAllTools(c) }
+				})()
+				// If the timeout wins the race, this keeps the late result from being an unhandled rejection.
+				attempt.catch(() => {})
 				const listed = await Promise.race([
-					(async () => {
-						connected = await connectExternal(spec)
-						// Connected after the deadline: nobody is waiting for it any more.
-						if (timedOut) await connected.close().catch(() => {})
-						return { client: connected, tools: await listAllTools(connected) }
-					})(),
+					attempt,
 					new Promise<never>((_, reject) => {
 						timer = setTimeout(() => {
 							timedOut = true

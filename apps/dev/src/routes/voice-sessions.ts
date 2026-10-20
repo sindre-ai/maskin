@@ -513,15 +513,23 @@ app.openapi(postOfferRoute, async (c) => {
 		await releasePendingSession(db, session.id)
 		throw err
 	}
-	const outcome = await createRealtimeCall({
-		tools: toolkit.tools,
-		apiKey,
-		callsUrl: realtimeCallsUrl(),
-		offerSdp: sdp,
-		instructions,
-		voice: VOICE_REALTIME_VOICE,
-		model: VOICE_REALTIME_MODEL,
-	})
+	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
+	try {
+		outcome = await createRealtimeCall({
+			tools: toolkit.tools,
+			apiKey,
+			callsUrl: realtimeCallsUrl(),
+			offerSdp: sdp,
+			instructions,
+			voice: VOICE_REALTIME_VOICE,
+			model: VOICE_REALTIME_MODEL,
+		})
+	} catch (err) {
+		// Nothing owns the toolkit's connections yet, so close them here.
+		void toolkit.close().catch(() => {})
+		await releasePendingSession(db, session.id)
+		throw err
+	}
 
 	if (outcome.kind !== 'ok') void toolkit.close().catch(() => {})
 

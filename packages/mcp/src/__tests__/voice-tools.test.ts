@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createMcpServer } from '../server'
 import { createVoiceToolkit } from '../voice-tools'
 
@@ -99,5 +99,47 @@ describe('createVoiceToolkit — agent MCP servers', () => {
 		const withNone = await createVoiceToolkit(config, {})
 		const plain = await createVoiceToolkit(config)
 		expect(withNone.tools.map((t) => t.name)).toEqual(plain.tools.map((t) => t.name))
+	})
+
+	it('does not follow a redirect to another address', async () => {
+		const { createServer } = await import('node:http')
+		let targetHits = 0
+		const target = createServer((_req, res) => {
+			targetHits++
+			res.end('{}')
+		})
+		await new Promise<void>((r) => target.listen(0, '127.0.0.1', r))
+		const targetPort = (target.address() as { port: number }).port
+		const redirector = createServer((_req, res) => {
+			res.writeHead(302, { Location: `http://127.0.0.1:${targetPort}/mcp` })
+			res.end()
+		})
+		await new Promise<void>((r) => redirector.listen(0, '127.0.0.1', r))
+		const port = (redirector.address() as { port: number }).port
+		try {
+			const toolkit = await createVoiceToolkit(config, {
+				hop: { url: `http://127.0.0.1:${port}/mcp`, headers: { Authorization: 'Bearer secret' } },
+			})
+			expect(toolkit.unreachableServers).toEqual(['hop'])
+			expect(targetHits).toBe(0)
+			await toolkit.close()
+		} finally {
+			target.close()
+			redirector.close()
+		}
+	})
+
+	it('closes what it opened when setup fails halfway', async () => {
+		const close = vi.spyOn(Client.prototype, 'close')
+		const listTools = vi
+			.spyOn(Client.prototype, 'listTools')
+			.mockRejectedValueOnce(new Error('boom'))
+		try {
+			await expect(createVoiceToolkit(config)).rejects.toThrow('boom')
+			expect(close).toHaveBeenCalled()
+		} finally {
+			listTools.mockRestore()
+			close.mockRestore()
+		}
 	})
 })
