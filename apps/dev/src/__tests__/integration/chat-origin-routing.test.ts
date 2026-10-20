@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	conversationParticipants,
 	events,
+	conversationParticipants,
 	messages,
 	notifications,
 	sessions,
@@ -542,7 +542,9 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 		const f = await seed()
 		setFlagFor(f.human.id)
 		expect((await planCommentRouting(db, base(f, { attention: 3 }))).delivery).not.toBeNull()
-		expect((await planCommentRouting(db, base(f, { attention: undefined }))).delivery).not.toBeNull()
+		expect(
+			(await planCommentRouting(db, base(f, { attention: undefined }))).delivery,
+		).not.toBeNull()
 	})
 
 	it('a human commenter is never routed', async () => {

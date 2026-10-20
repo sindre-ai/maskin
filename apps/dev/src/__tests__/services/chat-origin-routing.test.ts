@@ -56,9 +56,9 @@ describe('cutAtParagraph', () => {
 
 describe('buildRoutedMessage', () => {
 	it('sends a short body as is, with no link', () => {
-		expect(buildRoutedMessage({ body: 'All done.', title: 'Report', url: URL, pointerOnly: false })).toBe(
-			'All done.',
-		)
+		expect(
+			buildRoutedMessage({ body: 'All done.', title: 'Report', url: URL, pointerOnly: false }),
+		).toBe('All done.')
 	})
 
 	it('ends a cut body with a link to the rest', () => {
@@ -86,7 +86,12 @@ describe('buildRoutedMessage', () => {
 	})
 
 	it('drops square brackets from the title so the link stays valid', () => {
-		const text = buildRoutedMessage({ body: 'x', title: '[Bug] Login', url: URL, pointerOnly: true })
+		const text = buildRoutedMessage({
+			body: 'x',
+			title: '[Bug] Login',
+			url: URL,
+			pointerOnly: true,
+		})
 		expect(text).toBe(`I posted an update on [Bug Login](${URL}).`)
 	})
 })
