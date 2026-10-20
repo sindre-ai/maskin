@@ -72,9 +72,10 @@ export function NeededTools({
 	return (
 		<section className="flex flex-col gap-1" data-testid="needed-tools">
 			<h3 className="eyebrow">Tools for this job</h3>
-			{rows.map(({ info }) => (
+			{rows.map(({ info, state }) => (
 				<IntegrationConnectCard
 					key={info.name}
+					introState={state}
 					workspaceId={workspaceId}
 					conversationId={conversationId}
 					provider={info.name}
