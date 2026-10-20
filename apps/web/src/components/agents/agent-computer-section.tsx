@@ -18,8 +18,6 @@ import { useState } from 'react'
  * memory while it runs. So it connects straight away only if it is already
  * running; otherwise it offers a button. The live view, and its expand-to-popup,
  * is the shared ExpandableDesktop.
- *
- * The `workspace-desktop` flag is read once, by the parent (AgentDetailView).
  */
 export function AgentComputerSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()

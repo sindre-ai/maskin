@@ -1,12 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/feature-flags', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../lib/feature-flags')>()),
-	isFlagEnabledForWorkspace: vi.fn(),
-}))
-
-import { isFlagEnabledForWorkspace } from '../../lib/feature-flags'
 import desktopTeachRoutes from '../../routes/desktop-teach'
 
 const WS = '11111111-1111-4111-8111-111111111111'
@@ -111,18 +105,7 @@ const post = (app: TestApp, payload: unknown) =>
 	})
 
 describe('POST /api/desktop/teach', () => {
-	beforeEach(() => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
-	})
-
-	it('404s without touching storage or sessions when the flag is off', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-		const t = build()
-
-		expect((await post(t.app, body())).status).toBe(404)
-		expect(t.storage.uploadFile).not.toHaveBeenCalled()
-		expect(t.createSession).not.toHaveBeenCalled()
-	})
+	beforeEach(() => {})
 
 	it('404s when the agent is not an agent in this workspace', async () => {
 		const t = build({ agent: null })
@@ -300,9 +283,7 @@ describe('POST /api/desktop/teach', () => {
 })
 
 describe('DELETE /api/desktop/teach/:recordingId', () => {
-	beforeEach(() => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
-	})
+	beforeEach(() => {})
 
 	const del = (app: TestApp, id: string) =>
 		app.request(`/api/desktop/teach/${id}?agent_id=${AGENT}`, {
@@ -331,12 +312,5 @@ describe('DELETE /api/desktop/teach/:recordingId', () => {
 
 		expect((await del(t.app, '..%2F..%2Fetc')).status).toBe(400)
 		expect(t.deletes).toHaveLength(0)
-	})
-
-	it('404s when the flag is off', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-		const t = build()
-
-		expect((await del(t.app, 'aaaaaaaaaaaa')).status).toBe(404)
 	})
 })

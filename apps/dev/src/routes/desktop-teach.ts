@@ -16,7 +16,6 @@ import {
 } from '../lib/desktop-teach'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import type { AgentStorageManager } from '../services/agent-storage'
@@ -121,9 +120,6 @@ async function deleteRecordings(
 app.openapi(teachRoute, async (c) => {
 	const workspaceId = (c.req.header('x-workspace-id') ?? '').toLowerCase()
 	const actorId = c.get('actorId')
-	if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId })) {
-		return c.json(createApiError('NOT_FOUND', 'Desktop is not available'), 404)
-	}
 	const db = c.get('db')
 	const storage = c.get('agentStorage')
 	const request = c.req.valid('json')
@@ -235,11 +231,6 @@ app.openapi(teachRoute, async (c) => {
 
 app.openapi(deleteRoute, async (c) => {
 	const workspaceId = (c.req.header('x-workspace-id') ?? '').toLowerCase()
-	if (
-		!isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId: c.get('actorId') })
-	) {
-		return c.json(createApiError('NOT_FOUND', 'Desktop is not available'), 404)
-	}
 	const { recordingId } = c.req.valid('param')
 	const { agent_id } = c.req.valid('query')
 	const prefix = `${TEACH_FILE_TYPE}/${teachDir(recordingId)}/`

@@ -18,10 +18,6 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 const AGENT_ID = '22222222-2222-4222-8222-222222222222'
 const OTHER_AGENT_ID = '33333333-3333-4333-8333-333333333333'
 
-async function setFlag(page: Page) {
-	await page.addInitScript(() => localStorage.setItem('ff:workspace-desktop', 'on'))
-}
-
 const LIST_URL = /\/api\/desktop$/
 const CONNECT_URL = /\/api\/desktop\/connect/
 
@@ -101,7 +97,6 @@ test.describe.skip('Teach a task on the desktop', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page)
 			const viewed = await seedAgent(account)
 			await fakeBackend(page, viewed)
 			vnc = await attachFakeVnc(page)
@@ -181,7 +176,6 @@ test.describe.skip('Teach a task on the desktop', () => {
 
 	test('does not send anything when nothing was demonstrated', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
-		await setFlag(page)
 		const viewed = await seedAgent(account)
 		await fakeBackend(page, viewed)
 		vnc = await attachFakeVnc(page)
@@ -205,7 +199,6 @@ test.describe.skip('Teach a task on the desktop', () => {
 	for (const scheme of ['light', 'dark'] as const) {
 		test(`shows the recording state in ${scheme} mode`, async ({ page, account }) => {
 			await page.emulateMedia({ colorScheme: scheme })
-			await setFlag(page)
 			const viewed = await seedAgent(account)
 			await fakeBackend(page, viewed)
 			vnc = await attachFakeVnc(page)

@@ -8,12 +8,6 @@ import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
-vi.mock('../../lib/feature-flags', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../lib/feature-flags')>()),
-	isFlagEnabledForWorkspace: vi.fn(() => true),
-}))
-
-const { isFlagEnabledForWorkspace } = await import('../../lib/feature-flags')
 const { default: sessionsRoutes } = await import('../../routes/sessions')
 
 /**
@@ -80,7 +74,6 @@ describe('POST /sessions/:id/computer-card', () => {
 	let conversationId: string
 
 	beforeEach(async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
 		humanId = getTestActorId()
 		const ws = await insertWorkspace(db, humanId)
 		if (!ws) throw new Error('failed to seed workspace')
@@ -164,7 +157,6 @@ describe('POST /sessions/:id/computer-card', () => {
 	})
 
 	it('404s when computers are not available in the workspace, and posts nothing', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
 		const session = await chatSession()
 		const app = createSessionsApp(agentId)
 

@@ -12,8 +12,6 @@ import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
-import { DESKTOP_FLAG } from '@/hooks/use-desktop'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
@@ -32,7 +30,6 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const navigate = useNavigate()
 	// The one read of the desktop flag for the whole feature: the computer lives
 	// on this page only, so this is its boundary.
-	const computerEnabled = useFeatureFlag(DESKTOP_FLAG)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions ?? []), [sessions])
@@ -134,7 +131,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
-				{computerEnabled && <AgentComputerSection agent={agent} />}
+				<AgentComputerSection agent={agent} />
 				<AgentLoopsSection agent={agent} />
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
