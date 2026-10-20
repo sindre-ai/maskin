@@ -1570,6 +1570,41 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Stops the sandboxes of sessions whose rows were just deleted (workspace purge). stopSession
+	 * cannot be used: it reads the row, which is gone. This reuses the same teardown settleSession
+	 * runs (agent-server /stop RPC for remote sessions, ContainerManager for local ones). Best
+	 * effort and never throws: a failure leaves a sandbox for the idle/wall timeouts to reap.
+	 */
+	async stopSandboxesForPurge(
+		rows: {
+			id: string
+			workspaceId: string
+			containerId: string | null
+			agentServerId: string | null
+		}[],
+	): Promise<void> {
+		for (const r of rows) {
+			try {
+				if (!r.agentServerId) this.stopRequested.add(r.id)
+				await this.settleStopSandbox(
+					{ ...r, actorId: '', status: 'running' } as unknown as SessionSettleRow,
+					{
+						kind: 'stop',
+						classification: 'human_stop',
+						source: 'user-stop',
+						reason: 'workspace deleted',
+					},
+				)
+			} catch (err) {
+				logger.warn('purge: stopping session sandbox failed', {
+					sessionId: r.id,
+					error: String(err),
+				})
+			}
+		}
+	}
+
+	/**
 	 * Copy the container's /agent/ directory to S3 as session-workspaces/{sessionId}.tar.gz
 	 * so continuation sessions can restore from it via sourceSessionId. Works on stopped
 	 * containers (before docker rm). Called non-fatally from handleCompletion.
