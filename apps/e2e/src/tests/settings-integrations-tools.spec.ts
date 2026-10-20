@@ -150,3 +150,52 @@ test('the Tools section reads in light and dark', async ({ page, account }) => {
 		await expect(tools.getByRole('button', { name: /Add server/ })).toBeVisible()
 	}
 })
+
+test('a header can use a saved Keychain credential instead of a pasted secret', async ({
+	page,
+	account,
+}) => {
+	const res = await fetch('http://localhost:5173/api/integrations/byo-apikey', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${account.apiKey}`,
+			'X-Workspace-Id': account.workspaceId,
+		},
+		body: JSON.stringify({ displayName: 'Stripe', rawSecret: 'sk-live-e2e-secret' }),
+	})
+	expect(res.ok).toBe(true)
+
+	await page.goto(`/${account.workspaceId}/settings/integrations`)
+	const tools = page.getByRole('region', { name: 'Custom tools' })
+	await expect(tools).toBeVisible({ timeout: 15_000 })
+	await tools.getByRole('button', { name: /Add server/ }).click()
+	await tools.getByLabel('Name').fill('Billing')
+	await tools.getByRole('combobox', { name: 'Transport' }).click()
+	await page.getByRole('option', { name: 'HTTP' }).click()
+	await tools.getByLabel('URL').fill('https://tools.example.com/mcp')
+	await tools.getByRole('button', { name: 'Add', exact: true }).click()
+	await tools.getByLabel('Headers name').fill('Authorization')
+	await tools.getByLabel('Headers value').fill('Bearer ')
+	await tools.getByRole('combobox', { name: /saved credential for headers Authorization/i }).click()
+	await page.getByRole('option', { name: 'Stripe' }).click()
+	await expect(tools.getByLabel('Headers value')).toHaveValue(
+		'Bearer ${KEYCHAIN_BYO_APIKEY_STRIPE}',
+	)
+	await tools.getByRole('button', { name: 'Save' }).click()
+	await expect(tools.getByText('Billing', { exact: true })).toBeVisible()
+
+	// Reopened, it still names the credential (not a mask), and the secret is nowhere on the page.
+	await tools.getByRole('button', { name: 'Edit Billing' }).click()
+	await expect(tools.getByLabel('Headers value')).toHaveValue(
+		'Bearer ${KEYCHAIN_BYO_APIKEY_STRIPE}',
+	)
+	await expect(page.locator('body')).not.toContainText('sk-live-e2e-secret')
+
+	// A credential that is not in the Keychain is refused, in the form.
+	await tools.getByLabel('Headers value').fill('Bearer ${KEYCHAIN_BYO_APIKEY_NOPE}')
+	await tools.getByRole('button', { name: 'Save' }).click()
+	await expect(
+		tools.getByText('No saved credential matches KEYCHAIN_BYO_APIKEY_NOPE'),
+	).toBeVisible()
+})

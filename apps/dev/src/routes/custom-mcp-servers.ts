@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { agentGrants, integrations } from '@maskin/db/schema'
+import { agentGrants, integrations, sessions } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { encrypt } from '../lib/crypto'
@@ -19,6 +19,13 @@ import {
 	readCustomServer,
 	summarizeServer,
 } from '../lib/integrations/custom-mcp'
+import {
+	KeychainReferenceError,
+	credentialIndex,
+	fillKeychainReferences,
+	misplacedReferences,
+	referencedVars,
+} from '../lib/integrations/custom-mcp-keychain'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
 	assertWorkspaceWriterRole,
@@ -101,6 +108,68 @@ async function loadRow(db: Database, workspaceId: string, id: string) {
 	return row ?? null
 }
 
+function transportKey(server: CustomMcpServer): string {
+	return JSON.stringify([
+		server.type ?? null,
+		server.command ?? null,
+		server.url ?? null,
+		server.args ?? [],
+	])
+}
+
+type RefCheck = { ok: true } | { ok: false; status: 400 | 403; message: string }
+
+/**
+ * Where a server may name a saved credential, and who may point it there. A value can hold
+ * `${KEYCHAIN_...}` only in env or headers, only for a credential that exists, and only if the
+ * person saving may also decide who gets that credential (they saved it, or they are an admin):
+ * otherwise anyone could aim a server they control at someone else's key. Re-checked when the
+ * command or URL changes, since that is where a reference would be sent.
+ */
+async function checkReferences(
+	db: Database,
+	input: {
+		workspaceId: string
+		callerId: string
+		server: CustomMcpServer
+		stored: CustomMcpServer | null
+	},
+): Promise<RefCheck> {
+	const { workspaceId, callerId, server, stored } = input
+	if (misplacedReferences(server).length > 0) {
+		return {
+			ok: false,
+			status: 400,
+			message:
+				'A saved credential can only be used in an environment variable or header value, written as ${KEYCHAIN_...}',
+		}
+	}
+	const refs = referencedVars(server)
+	if (refs.length === 0) return { ok: true }
+	const index = await credentialIndex(db, workspaceId)
+	for (const name of refs) {
+		if (!index.has(name)) {
+			return { ok: false, status: 400, message: `No saved credential matches ${name}` }
+		}
+	}
+	const known = new Set(stored ? referencedVars(stored) : [])
+	const targetChanged = !stored || transportKey(stored) !== transportKey(server)
+	const toCheck = refs.filter((name) => targetChanged || !known.has(name))
+	if (toCheck.length === 0) return { ok: true }
+	const mayDecide = await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)
+	for (const name of toCheck) {
+		const entry = index.get(name)
+		if (entry && entry.createdBy !== callerId && !mayDecide) {
+			return {
+				ok: false,
+				status: 403,
+				message: `Only the person who saved "${entry.displayName}" or a workspace admin can use it in a tool server`,
+			}
+		}
+	}
+	return { ok: true }
+}
+
 // ── POST /api/custom-mcp-servers ─────────────────────────────────────────
 
 const addServerRoute = createRoute({
@@ -133,6 +202,14 @@ app.openapi(addServerRoute, (async (c) => {
 	const { name, server } = c.req.valid('json')
 	if (await nameTaken(db, workspaceId, name)) {
 		return c.json(createApiError('CONFLICT', 'A tool server with that name already exists'), 409)
+	}
+
+	const refCheck = await checkReferences(db, { workspaceId, callerId, server, stored: null })
+	if (!refCheck.ok) {
+		return c.json(
+			createApiError(refCheck.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST', refCheck.message),
+			refCheck.status,
+		)
 	}
 
 	const created = await db.transaction(async (tx) => {
@@ -265,6 +342,13 @@ app.openapi(updateServerRoute, (async (c) => {
 		)
 	}
 	const server = customMcpServerSchema.parse((tools.mcpServers as { s: unknown }).s)
+	const refCheck = await checkReferences(db, { workspaceId, callerId, server, stored })
+	if (!refCheck.ok) {
+		return c.json(
+			createApiError(refCheck.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST', refCheck.message),
+			refCheck.status,
+		)
+	}
 
 	await db.transaction(async (tx) => {
 		await tx
@@ -332,11 +416,30 @@ async function gateway(c: import('hono').Context<{ Variables: Env['Variables'] }
 	}
 	const url = server.url
 	const access = (await resolveAgentAccess(db, workspaceId, id, actorId)) ?? 'none'
+	// The session the call comes from, so a credential allowed for only this chat counts. Taken
+	// only when it is this agent's own session in this workspace.
+	let session: { id: string; conversationId: string | null } | null = null
+	const sessionHeader = c.req.header('x-maskin-session-id')
+	if (sessionHeader && z.string().uuid().safeParse(sessionHeader).success) {
+		const [row] = await db
+			.select({ id: sessions.id, conversationId: sessions.conversationId })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.id, sessionHeader),
+					eq(sessions.workspaceId, workspaceId),
+					eq(sessions.actorId, actorId),
+				),
+			)
+			.limit(1)
+		session = row ?? null
+	}
+	const label = row.displayName ?? 'This tool server'
 	return proxyMcp(c as never, {
 		workspaceId,
 		actorId,
 		provider: CUSTOM_MCP_PROVIDER,
-		label: row.displayName ?? 'This tool server',
+		label,
 		integrationId: id,
 		access,
 		cacheKey: `${workspaceId}:${id}`,
@@ -348,10 +451,26 @@ async function gateway(c: import('hono').Context<{ Variables: Env['Variables'] }
 					`${row.displayName ?? 'This tool server'} points at an address Maskin will not call.`,
 				)
 			}
+			let headers: Record<string, string>
+			try {
+				headers = await fillKeychainReferences(
+					db,
+					{
+						workspaceId,
+						actorId,
+						conversationId: session?.conversationId ?? null,
+						sessionId: session?.id ?? null,
+						serverLabel: label,
+						outboundTarget: new URL(url).hostname,
+					},
+					server.headers ?? {},
+				)
+			} catch (err) {
+				if (err instanceof KeychainReferenceError) throw new GatewayUpstreamError(err.message)
+				throw err
+			}
 			// A header still holding a ${PLACEHOLDER} only the container could fill is dropped.
-			return Object.fromEntries(
-				Object.entries(server.headers ?? {}).filter(([, v]) => !/${[^}]*}/.test(v)),
-			)
+			return Object.fromEntries(Object.entries(headers).filter(([, v]) => !/\$\{[^}]*\}/.test(v)))
 		},
 	})
 }

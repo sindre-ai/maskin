@@ -423,6 +423,9 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	delete_loop: 'loop_delete',
 	// Comments
 	create_comment: 'comment_create',
+	// Notifications
+	create_notification: 'notification_create',
+	update_notification: 'notification_update',
 	// Workspace skills
 	create_workspace_skill: 'skill_create',
 	update_workspace_skill: 'skill_update',

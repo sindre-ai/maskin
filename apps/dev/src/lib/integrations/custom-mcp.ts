@@ -78,7 +78,26 @@ export function maskServer(server: CustomMcpServer): CustomMcpServer {
 	const masked = maskActorTools({ mcpServers: { s: asRecord(server) } }) as {
 		mcpServers: { s: CustomMcpServer }
 	}
-	return masked.mcpServers.s
+	const out = masked.mcpServers.s
+	// A value that only names a saved credential is not a secret, so show it: it is what
+	// lets a person see (and keep) which credential a server uses. Any other text stays masked.
+	for (const field of ['env', 'headers'] as const) {
+		const original = server[field]
+		const shown = out[field]
+		if (!original || !shown) continue
+		for (const [key, value] of Object.entries(original)) {
+			if (isCredentialReference(value)) shown[key] = value
+		}
+	}
+	return out
+}
+
+const KEYCHAIN_REF = /\$\{KEYCHAIN_[A-Za-z0-9_]*\}/
+
+/** True for a value that is a Keychain reference, with at most a short word like "Bearer" around it. */
+export function isCredentialReference(value: string): boolean {
+	if (!KEYCHAIN_REF.test(value)) return false
+	return /^[A-Za-z ]{0,16}$/.test(value.replace(new RegExp(KEYCHAIN_REF, 'g'), ''))
 }
 
 export { MASKED_VALUE }
@@ -160,6 +179,8 @@ export function customGatewayServerSpec(id: string): Record<string, unknown> {
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			// Lets the gateway honour a credential allowed for just this chat.
+			'X-Maskin-Session-Id': '${SESSION_ID}',
 		},
 	}
 }

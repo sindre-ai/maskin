@@ -156,6 +156,68 @@ describe('ToolsSection', () => {
 		)
 	})
 
+	it('lets a header point at a saved credential instead of pasting the secret', async () => {
+		const user = userEvent.setup()
+		integrations = [
+			buildIntegrationResponse({
+				id: 'key-1',
+				provider: 'stripe',
+				providerMode: 'byo_apikey',
+				displayName: 'Stripe',
+				status: 'active',
+			}),
+			buildIntegrationResponse({
+				id: 'login-1',
+				provider: 'coolify',
+				providerMode: 'byo_login',
+				displayName: 'Coolify',
+				status: 'active',
+			}),
+		]
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add server/ }))
+		await user.type(screen.getByLabelText('Name'), 'Billing')
+		await user.click(screen.getByRole('combobox', { name: 'Transport' }))
+		await user.click(await screen.findByRole('option', { name: 'HTTP' }))
+		await user.type(screen.getByLabelText('URL'), 'https://tools.example.com/mcp')
+		await user.click(screen.getByRole('button', { name: /^Add$/ }))
+		await user.type(screen.getByLabelText('Headers name'), 'Authorization')
+		await user.type(screen.getByLabelText('Headers value'), 'Bearer ')
+
+		await user.click(
+			screen.getByRole('combobox', { name: /saved credential for headers Authorization/i }),
+		)
+		// An API key is one entry; a login is its username and its password.
+		expect((await screen.findAllByRole('option')).map((o) => o.textContent)).toEqual([
+			'Stripe',
+			'Coolify · username',
+			'Coolify · password',
+		])
+		await user.click(screen.getByRole('option', { name: 'Stripe' }))
+		const reference = 'Bearer ${KEYCHAIN_BYO_APIKEY_STRIPE}'
+		expect(screen.getByLabelText('Headers value')).toHaveValue(reference)
+		await user.click(screen.getByRole('button', { name: 'Save' }))
+		expect(createServer).toHaveBeenCalledWith(
+			{
+				name: 'Billing',
+				server: {
+					type: 'http',
+					url: 'https://tools.example.com/mcp',
+					headers: { Authorization: reference },
+				},
+			},
+			expect.anything(),
+		)
+	})
+
+	it('offers no credential picker when nothing is saved in the Keychain', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add server/ }))
+		await user.click(screen.getByRole('button', { name: /^Add$/ }))
+		expect(screen.queryByRole('combobox', { name: /saved credential/i })).toBeNull()
+	})
+
 	it('asks before removing a server', async () => {
 		const user = userEvent.setup()
 		integrations = [server()]
