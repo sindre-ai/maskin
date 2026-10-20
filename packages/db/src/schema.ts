@@ -317,7 +317,7 @@ export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' |
  * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
  * Keychain credentials only ever use 'read_write' (on/off): no row is off.
  */
-export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
 
 /** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
 export type IntegrationDefaultAccess = 'read' | 'none'
@@ -440,7 +440,10 @@ export const agentGrants = pgTable(
 	(t) => [
 		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
 		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
-		check('agent_grants_access_enum', sql`${t.access} IN ('none', 'read', 'read_write')`),
+		check(
+			'agent_grants_access_enum',
+			sql`${t.access} IN ('none', 'read', 'ask_first', 'read_write')`,
+		),
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect

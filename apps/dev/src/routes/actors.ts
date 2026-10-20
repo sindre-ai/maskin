@@ -921,7 +921,7 @@ const actorAccessRoute = createRoute({
 								integration_id: z.string().uuid(),
 								provider: z.string(),
 								name: z.string(),
-								access: z.enum(['none', 'read', 'read_write']),
+								access: z.enum(['none', 'read', 'ask_first', 'read_write']),
 								source: z.enum(['grant', 'default']),
 								default_access: z.enum(['read', 'none']),
 								server_attached: z.boolean(),

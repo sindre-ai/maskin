@@ -8,11 +8,47 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useIntegrations } from '@/hooks/use-integrations'
 import type { CustomMcpServerSpec } from '@/lib/api'
+import { useWorkspace } from '@/lib/workspace-context'
+import { byoApiKeyEnvName, byoLoginEnvNames } from '@maskin/shared'
 import { Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 type Pair = { id: number; key: string; value: string }
+
+/** A saved Keychain credential a value can point at, instead of holding the secret itself. */
+export interface CredentialOption {
+	label: string
+	/** The env var that stands for it, written into the value as ${NAME}. */
+	envName: string
+}
+
+/** The workspace's saved API keys and logins, as things a value can refer to. */
+export function useCredentialOptions(): CredentialOption[] {
+	const { workspaceId } = useWorkspace()
+	const { data } = useIntegrations(workspaceId)
+	const options: CredentialOption[] = []
+	for (const row of data ?? []) {
+		if (!row.displayName || (row.status !== 'active' && row.status !== 'pending_undo')) continue
+		if (row.providerMode === 'byo_apikey') {
+			const envName = byoApiKeyEnvName(row.displayName)
+			if (envName) options.push({ label: row.displayName, envName })
+		} else if (row.providerMode === 'byo_login') {
+			const names = byoLoginEnvNames(row.displayName)
+			if (names) {
+				options.push({ label: `${row.displayName} · username`, envName: names.username })
+				options.push({ label: `${row.displayName} · password`, envName: names.password })
+			}
+		}
+	}
+	return options
+}
+
+/** The value with the credential's reference added on the end, so "Bearer " + a key works. */
+export function withCredential(value: string, envName: string): string {
+	return `${value}\${${envName}}`
+}
 
 function toPairs(record: Record<string, string> | undefined): Pair[] {
 	return Object.entries(record ?? {}).map(([key, value], id) => ({ id, key, value }))
@@ -179,6 +215,7 @@ function PairEditor({
 	keyPlaceholder: string
 	valuePlaceholder: string
 }) {
+	const credentials = useCredentialOptions()
 	const nextId = pairs.reduce((max, p) => Math.max(max, p.id + 1), 0)
 	const patch = (id: number, change: Partial<Pair>) =>
 		onChange(pairs.map((p) => (p.id === id ? { ...p, ...change } : p)))
@@ -196,7 +233,7 @@ function PairEditor({
 				</Button>
 			</div>
 			{pairs.map((pair) => (
-				<div key={pair.id} className="mb-1 flex gap-2">
+				<div key={pair.id} className="mb-1 flex flex-wrap gap-2">
 					<Input
 						value={pair.key}
 						onChange={(e) => patch(pair.id, { key: e.target.value })}
@@ -211,6 +248,30 @@ function PairEditor({
 						aria-label={`${label} value`}
 						className="min-w-0 flex-1 font-mono text-xs"
 					/>
+					{credentials.length > 0 && (
+						// A saved credential instead of a pasted secret: the value keeps a reference, and
+						// the Keychain stays the one place the key lives and is rotated.
+						<Select
+							value=""
+							onValueChange={(envName) =>
+								patch(pair.id, { value: withCredential(pair.value, envName) })
+							}
+						>
+							<SelectTrigger
+								aria-label={`Use a saved credential for ${label.toLowerCase()} ${pair.key || 'row'}`}
+								className="w-full sm:w-44"
+							>
+								<SelectValue placeholder="Saved credential" />
+							</SelectTrigger>
+							<SelectContent>
+								{credentials.map((c) => (
+									<SelectItem key={c.envName} value={c.envName}>
+										{c.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					)}
 					<Button
 						size="icon"
 						variant="ghost"
