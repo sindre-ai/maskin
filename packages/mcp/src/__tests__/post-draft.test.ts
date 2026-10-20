@@ -87,6 +87,17 @@ describe('post_draft', () => {
 		expect(result.isError).toBeUndefined()
 	})
 
+	it('points an email draft at gmail_send_email, and no other kind', async () => {
+		createMcpServer({ ...config, maskinSessionId: SESSION_ID })
+		fetchMock.mockResolvedValue(jsonResponse({ message_id: 5, object_id: 'task-1' }))
+
+		const email = await handler(EMAIL)
+		const post = await handler({ kind: 'linkedin_post', body: 'A post' })
+
+		expect(email.content[0]?.text).toContain('gmail_send_email with draft_object_id task-1')
+		expect(post.content[0]?.text).not.toContain('gmail_send_email')
+	})
+
 	it('says there is no chat, as an error, when not running in a session', async () => {
 		vi.stubEnv('SESSION_ID', '')
 		createMcpServer(config)

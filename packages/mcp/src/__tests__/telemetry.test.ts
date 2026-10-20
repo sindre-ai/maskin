@@ -171,6 +171,7 @@ describe('MCP telemetry wrapper', () => {
 			'connect_integration',
 			'disconnect_integration',
 			'post_draft',
+			'gmail_send_email',
 			'stop_session',
 			'pause_session',
 			'resume_session',

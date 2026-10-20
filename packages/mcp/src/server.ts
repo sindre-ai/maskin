@@ -6207,7 +6207,7 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)) as { message_id: number; object_id: string }
 				return reply(
-					`The draft is now in the chat as an editable card, saved on object ${posted.object_id}. Nothing has been sent. Do not repeat the draft in your own words. End your turn now, without a closing message; when the person approves they will say so and mention you. Then read object ${posted.object_id}, check its draft_state is still approved, and send its content, which may differ from what you wrote.`,
+					`The draft is now in the chat as an editable card, saved on object ${posted.object_id}. Nothing has been sent. Do not repeat the draft in your own words. End your turn now, without a closing message; when the person approves they will say so and mention you. Then read object ${posted.object_id}, check its draft_state is still approved, and send its content, which may differ from what you wrote.${args.kind === 'email' ? ` To send an email, call gmail_send_email with draft_object_id ${posted.object_id} and nothing else; it sends the saved subject and text to the address in \`to\`, so \`to\` must hold a real address.` : ''}`,
 				)
 			} catch (err) {
 				if (parseApiErrorStatus(err) === 409) {
@@ -6219,6 +6219,52 @@ export function createMcpServer(config: McpConfig) {
 				// Anything else is something the agent can act on (a missing subject,
 				// a draft over its character limit), so say what the server said.
 				throw err
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_send_email',
+		{
+			description: tools.gmail_send_email.description,
+			inputSchema: tools.gmail_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/send',
+					{
+						to: args.to,
+						cc: args.cc,
+						subject: args.subject,
+						body: args.body,
+						draft_object_id: args.draft_object_id,
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { message_id: string; mode: 'approved_draft' | 'direct' }
+				return reply(
+					sent.mode === 'approved_draft'
+						? 'Sent: the approved draft went out exactly as the person approved it. Do not send it again.'
+						: 'Sent. Do not send it again.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
 			}
 		},
 	)

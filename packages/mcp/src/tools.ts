@@ -1807,7 +1807,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Who it goes to, shown read-only (e.g. "Mette Holm, Northwind"). Required for email.',
+					'Who it goes to, shown read-only (e.g. "Mette Holm, Northwind"). Required for email. For an email that will be sent with gmail_send_email, include the real address, e.g. "Mette Holm <mette@northwind.dk>", so the person approves the actual recipient.',
 				),
 			subject: z.string().optional().describe('Subject line. Required for email.'),
 			title: z
@@ -1820,6 +1820,35 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe('Hard character limit of the channel. The card blocks approval above it.'),
+		}),
+	},
+	gmail_send_email: {
+		description:
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. Needs write access to Gmail for you (Settings → Integrations); without it the call is refused and you should tell the person to grant it. Two ways to call it. (1) Send directly with `to`, `subject` and `body`: allowed on your own for any recipient EXCEPT someone a person marked protected or who opted out of email in the CRM; for those the call is refused and you must use the second way. (2) Send a draft a person approved: show the email with `post_draft` (kind "email"; put the real address in `to`, for example "Mette Holm <mette@northwind.dk>", so the person approves the actual recipient), end your turn, and when they approve and mention you, call this tool with only `draft_object_id`. That sends exactly the subject and text saved on the card, once, and only if a person approved it. Never pass `to`, `subject` or `body` together with `draft_object_id`. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			to: z
+				.string()
+				.optional()
+				.describe(
+					'Recipient address, or several separated by commas. "Mette Holm <mette@northwind.dk>" or "mette@northwind.dk". Not used with draft_object_id.',
+				),
+			cc: z
+				.string()
+				.optional()
+				.describe('Cc addresses, comma separated. Not used with draft_object_id.'),
+			subject: z.string().optional().describe('Subject line. Not used with draft_object_id.'),
+			body: z
+				.string()
+				.optional()
+				.describe('The email text, plain text. Not used with draft_object_id.'),
+			draft_object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The object id `post_draft` returned, after a person approved the card. Sends its saved subject and text to the address on the card.',
+				),
 		}),
 	},
 	request_keychain_credential: {

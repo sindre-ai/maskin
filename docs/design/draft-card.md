@@ -82,6 +82,32 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 7. **A revision supersedes.** When the agent redrafts, it posts a new card; the old
    card should read Superseded and lock. (Not built yet.)
 
+## Sending an approved email
+
+The card does not send anything; the agent does, with the `gmail_send_email` MCP tool
+(`POST /api/integrations/gmail/send`, `apps/dev/src/routes/integrations-gmail.ts`).
+
+- **Who may send** is the agent's access to Gmail in Settings → Integrations. Write access
+  sends on its own; read-only or no access is refused with the usual access message.
+- **Who needs a person.** A recipient marked off limits is the exception: a contact with
+  `protected` or `email_opt_out`, a `loss_category` of `personal_protected`, or a contact
+  who `works_at` a company marked `protected` (`send-guard.ts` lists them). The tool
+  refuses and tells the agent to post a card. This is the one place to add a reason.
+- **Approved draft.** With `draft_object_id`, the tool sends exactly the subject
+  (`draft_subject`) and text (`content`) saved on the task, to the address on the card.
+  It requires `draft_state: approved` **and** that the latest approve event on the task
+  was made by a person: `POST /api/objects/:id/draft` accepts any workspace writer, so
+  the state alone does not show a person agreed. The card's `to` must therefore hold a
+  real address (`Mette Holm <mette@northwind.dk>`); a name alone is refused with
+  instructions to redraft.
+- **Once.** The send claims the task first (`draft_send_state: sending`, then `sent` or
+  `unknown`), in one conditional UPDATE. A refusal from Gmail releases the claim; an
+  unclear failure (5xx, dropped connection) locks it, because sending again could deliver
+  it twice. A direct send is also refused if the same email went out in the last 24 hours.
+
+Not yet: the card does not show a *Sent* state. It reads `draft_send_state` from the task
+when someone builds that.
+
 ## Scaling to other channels
 
 The aim is that adding Instagram, TikTok or any other platform is configuration and
