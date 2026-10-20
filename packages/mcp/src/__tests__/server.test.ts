@@ -4651,7 +4651,6 @@ describe('tool handlers', () => {
 					false,
 				)
 			})
-
 		})
 
 		it('list_actors omits connectedTriggers/connectedLoops for the cross-workspace listing even with include', async () => {
