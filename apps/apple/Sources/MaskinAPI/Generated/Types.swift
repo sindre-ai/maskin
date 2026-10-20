@@ -188,7 +188,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/workspaces/{id}/members`.
     /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post`.
     func post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(_ input: Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Input) async throws -> Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Output
-    /// Change a workspace member's role (admin/member; owner via transfer-ownership)
+    /// Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)
     ///
     /// - Remark: HTTP `PATCH /api/workspaces/{id}/members/{actorId}`.
     /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/{actorId}/patch`.
@@ -1012,7 +1012,7 @@ extension APIProtocol {
             body: body
         ))
     }
-    /// Change a workspace member's role (admin/member; owner via transfer-ownership)
+    /// Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)
     ///
     /// - Remark: HTTP `PATCH /api/workspaces/{id}/members/{actorId}`.
     /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/{actorId}/patch`.
@@ -1269,11 +1269,13 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/integrations/{provider}/connect/post`.
     public func post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
         path: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Path,
-        headers: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Headers
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Body? = nil
     ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output {
         try await post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input(
             path: path,
-            headers: headers
+            headers: headers,
+            body: body
         ))
     }
     /// Update integration settings
