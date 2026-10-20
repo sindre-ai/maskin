@@ -398,6 +398,21 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/thread/read`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/thread/read/put`.
     func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read(_ input: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Input) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Output
+    /// Chief of Staff only: re-rank, reassign or withdraw another agent's open decision
+    ///
+    /// - Remark: HTTP `PATCH /api/conversations/{id}/messages/{messageId}/decision`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/decision/patch`.
+    func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(_ input: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Output
+    /// Answer a decision card by picking one of its options
+    ///
+    /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/decision`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/decision/put`.
+    func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(_ input: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Output
+    /// Take back a decision you posted that nobody has answered yet
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}/decision`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/decision/delete`.
+    func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(_ input: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Output
     /// Get a conversation (participants-only)
     ///
     /// - Remark: HTTP `GET /api/conversations/{id}`.
@@ -523,6 +538,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/notifications/{id}/respond`.
     /// - Remark: Generated from `#/paths//api/notifications/{id}/respond/post`.
     func post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond(_ input: Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Input) async throws -> Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Output
+    /// The Chief of Staff's ranked list of what needs the current actor
+    ///
+    /// - Remark: HTTP `GET /api/for-you`.
+    /// - Remark: Generated from `#/paths//api/for-you/get`.
+    func get_sol_api_sol_for_hyphen_you(_ input: Operations.get_sol_api_sol_for_hyphen_you.Input) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output
     /// Subscribe current actor to an entity
     ///
     /// - Remark: HTTP `POST /api/subscriptions`.
@@ -1595,6 +1615,49 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Chief of Staff only: re-rank, reassign or withdraw another agent's open decision
+    ///
+    /// - Remark: HTTP `PATCH /api/conversations/{id}/messages/{messageId}/decision`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/decision/patch`.
+    public func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(
+        path: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Path,
+        headers: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Headers,
+        body: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Body? = nil
+    ) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Output {
+        try await patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Answer a decision card by picking one of its options
+    ///
+    /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/decision`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/decision/put`.
+    public func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(
+        path: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Path,
+        headers: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Headers,
+        body: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Body? = nil
+    ) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Output {
+        try await put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Take back a decision you posted that nobody has answered yet
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}/decision`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/decision/delete`.
+    public func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(
+        path: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Path,
+        headers: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Output {
+        try await delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_decision.Input(
+            path: path,
+            headers: headers
+        ))
+    }
     /// Get a conversation (participants-only)
     ///
     /// - Remark: HTTP `GET /api/conversations/{id}`.
@@ -1947,6 +2010,13 @@ extension APIProtocol {
             headers: headers,
             body: body
         ))
+    }
+    /// The Chief of Staff's ranked list of what needs the current actor
+    ///
+    /// - Remark: HTTP `GET /api/for-you`.
+    /// - Remark: Generated from `#/paths//api/for-you/get`.
+    public func get_sol_api_sol_for_hyphen_you(headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
+        try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(headers: headers))
     }
     /// Subscribe current actor to an entity
     ///

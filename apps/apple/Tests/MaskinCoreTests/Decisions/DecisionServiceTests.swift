@@ -30,6 +30,18 @@ final class FakeDecisionBackend: DecisionBackend, @unchecked Sendable {
 	func markUnread(entityId: String) async throws {
 		lock.withLock { log.append("unread:\(entityId)") }
 	}
+
+	func answerChatDecision(
+		conversationID: String, messageID: Int, optionIndex: Int, note: String?
+	) async throws {
+		lock.withLock { log.append("chatAnswer:\(conversationID):\(messageID):\(optionIndex):\(note ?? "-")") }
+	}
+
+	func replyToChatDecision(
+		conversationID: String, messageID: Int, text: String, mention: String?
+	) async throws {
+		lock.withLock { log.append("chatReply:\(conversationID):\(messageID):\(text):\(mention ?? "-")") }
+	}
 }
 
 @MainActor
@@ -159,5 +171,53 @@ struct DecisionServiceTests {
 		service.choose("Approve", on: target)
 		service.commitHeld()
 		#expect(await eventually { backend.calls.count == 2 })
+	}
+
+	// MARK: Decision cards posted into a chat
+
+	private let chatTarget = DecisionTarget(
+		entityId: "obj-9",
+		chat: ChatDecisionRef(
+			conversationID: "conv-1", messageID: 7, posterID: "agent-1", optionLabels: ["Approve", "Hold"]))
+
+	@Test func aChatCardIsAnsweredWithTheOptionIndexAndNothingElse() async {
+		let (service, _, backend, _) = make(window: 0.05)
+		service.choose("Hold", on: chatTarget)
+		#expect(service.record(for: "obj-9")?.kind == .option("Hold"))
+		#expect(await eventually { service.record(for: "obj-9")?.phase == .sent })
+		// One request on the card: no comment is posted on the object and no thread is marked read.
+		#expect(backend.calls == ["chatAnswer:conv-1:7:1:-"])
+	}
+
+	@Test func theReasonTypedWithAHoldTravelsWithTheAnswer() async {
+		let (service, _, backend, _) = make(window: 0.05)
+		service.choose("Hold", note: "Need the legal check", on: chatTarget)
+		#expect(await eventually { backend.calls.count == 1 })
+		#expect(backend.calls == ["chatAnswer:conv-1:7:1:Need the legal check"])
+	}
+
+	@Test func undoInsideTheWindowSendsNothingForAChatCard() async {
+		let (service, _, backend, _) = make(window: 60)
+		service.choose("Approve", on: chatTarget)
+		#expect(service.canUndo("obj-9"))
+		#expect(service.undo("obj-9"))
+		try? await Task.sleep(for: .milliseconds(100))
+		#expect(backend.calls.isEmpty)
+		#expect(service.record(for: "obj-9") == nil)
+	}
+
+	@Test func aTypedAnswerOnAChatCardIsAThreadReplyMentioningThePoster() async {
+		let (service, _, backend, _) = make(window: 0.05)
+		service.reply("Ship it Thursday", on: chatTarget)
+		#expect(await eventually { backend.calls.count == 1 })
+		#expect(backend.calls == ["chatReply:conv-1:7:Ship it Thursday:agent-1"])
+	}
+
+	@Test func anOptionTheCardDoesNotHaveSendsNothing() async {
+		let (service, _, backend, _) = make(window: 0.05)
+		service.choose("Something else", on: chatTarget)
+		try? await Task.sleep(for: .milliseconds(200))
+		#expect(backend.calls.isEmpty)
+		#expect(service.record(for: "obj-9") == nil)
 	}
 }

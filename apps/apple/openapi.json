@@ -20606,6 +20606,936 @@
 				}
 			}
 		},
+		"/api/custom-mcp-servers": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Add a custom MCP server to the workspace (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"server": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"command": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 512
+											},
+											"args": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"maxItems": 100
+											},
+											"env": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											},
+											"url": {
+												"type": "string",
+												"maxLength": 2048
+											},
+											"headers": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": [
+									"name",
+									"server"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Added. No agent has it until it is granted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Name taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/custom-mcp-servers/{id}": {
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Read a custom MCP server, with secret values masked",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The server",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Change a custom MCP server (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"server": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"command": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 512
+											},
+											"args": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"maxItems": 100
+											},
+											"env": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											},
+											"url": {
+												"type": "string",
+												"maxLength": 2048
+											},
+											"headers": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": [
+									"name",
+									"server"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Saved. Applies to sessions started after this call",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Name taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/chat-capture": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -31638,6 +32568,100 @@
 												"type": "string",
 												"format": "uuid"
 											},
+											"decision": {
+												"type": "object",
+												"properties": {
+													"title": {
+														"type": "string",
+														"minLength": 1,
+														"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+													},
+													"summary": {
+														"type": "string",
+														"minLength": 1,
+														"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+													},
+													"ask": {
+														"type": "string",
+														"minLength": 1,
+														"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+													},
+													"options": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"label": {
+																	"type": "string",
+																	"minLength": 1,
+																	"description": "4 words or fewer, sentence case. The choice itself: \"7-day window\", \"Hold\", \"Ship to 10%\". Not a sentence, and not a verb phrase describing what you will do."
+																},
+																"consequences": {
+																	"type": "array",
+																	"items": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"minItems": 2,
+																	"maxItems": 3,
+																	"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																},
+																"recommended": {
+																	"type": "boolean",
+																	"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																},
+																"destructive": {
+																	"type": "boolean",
+																	"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																}
+															},
+															"required": [
+																"label",
+																"consequences"
+															]
+														},
+														"minItems": 2,
+														"maxItems": 3,
+														"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+													},
+													"draft": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid",
+																"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+															},
+															"label": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 30,
+																"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+															},
+															"to": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300,
+																"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+															},
+															"body": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 20000,
+																"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+															}
+														},
+														"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+													}
+												},
+												"required": [
+													"title",
+													"summary",
+													"ask",
+													"options"
+												],
+												"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+											},
 											"comment_event_id": {
 												"type": "integer"
 											}
@@ -32635,6 +33659,1539 @@
 				}
 			}
 		},
+		"/api/conversations/decisions": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Post a decision card into an object's group chat",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"object_id": {
+										"type": "string",
+										"format": "uuid",
+										"description": "The object the decision is about. Its group chat is used, or made."
+									},
+									"decision": {
+										"type": "object",
+										"properties": {
+											"title": {
+												"type": "string",
+												"minLength": 1,
+												"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+											},
+											"summary": {
+												"type": "string",
+												"minLength": 1,
+												"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+											},
+											"ask": {
+												"type": "string",
+												"minLength": 1,
+												"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+											},
+											"options": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"description": "4 words or fewer, sentence case. The choice itself: \"7-day window\", \"Hold\", \"Ship to 10%\". Not a sentence, and not a verb phrase describing what you will do."
+														},
+														"consequences": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"minLength": 1
+															},
+															"minItems": 2,
+															"maxItems": 3,
+															"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+														},
+														"recommended": {
+															"type": "boolean",
+															"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+														},
+														"destructive": {
+															"type": "boolean",
+															"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+														}
+													},
+													"required": [
+														"label",
+														"consequences"
+													]
+												},
+												"minItems": 2,
+												"maxItems": 3,
+												"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+											},
+											"draft": {
+												"type": "object",
+												"properties": {
+													"object_id": {
+														"type": "string",
+														"format": "uuid",
+														"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+													},
+													"label": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 30,
+														"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+													},
+													"to": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300,
+														"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+													},
+													"body": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 20000,
+														"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+													}
+												},
+												"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+											}
+										},
+										"required": [
+											"title",
+											"summary",
+											"ask",
+											"options"
+										],
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+									},
+									"attention": {
+										"type": "integer",
+										"minimum": 1,
+										"maximum": 5
+									},
+									"for_actor_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"minItems": 1,
+										"maxItems": 20,
+										"description": "The people who can answer. Defaults to the humans following the object."
+									},
+									"content": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 8000,
+										"description": "Text shown where cards are not drawn. Defaults to the decision title and ask."
+									}
+								},
+								"required": [
+									"object_id",
+									"decision"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Decision posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"conversation_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"message_id": {
+											"type": "number"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"open"
+											]
+										},
+										"for_actor_ids": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										}
+									},
+									"required": [
+										"conversation_id",
+										"message_id",
+										"status",
+										"for_actor_ids"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such object",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Decisions addressed to the caller, most urgent first",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"open",
+								"answered",
+								"withdrawn"
+							],
+							"default": "open"
+						},
+						"required": false,
+						"name": "state",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"mine",
+								"all"
+							],
+							"default": "mine"
+						},
+						"required": false,
+						"name": "scope",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 100,
+							"default": 30
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Decisions",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"decisions": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"message_id": {
+														"type": "number"
+													},
+													"conversation_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"conversation_title": {
+														"type": "string"
+													},
+													"object_id": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"content": {
+														"type": "string"
+													},
+													"decision": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+															},
+															"summary": {
+																"type": "string",
+																"minLength": 1,
+																"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+															},
+															"ask": {
+																"type": "string",
+																"minLength": 1,
+																"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+															},
+															"options": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"label": {
+																			"type": "string",
+																			"minLength": 1,
+																			"description": "4 words or fewer, sentence case. The choice itself: \"7-day window\", \"Hold\", \"Ship to 10%\". Not a sentence, and not a verb phrase describing what you will do."
+																		},
+																		"consequences": {
+																			"type": "array",
+																			"items": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"minItems": 2,
+																			"maxItems": 3,
+																			"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																		},
+																		"recommended": {
+																			"type": "boolean",
+																			"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																		},
+																		"destructive": {
+																			"type": "boolean",
+																			"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																		}
+																	},
+																	"required": [
+																		"label",
+																		"consequences"
+																	]
+																},
+																"minItems": 2,
+																"maxItems": 3,
+																"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+															},
+															"draft": {
+																"type": "object",
+																"properties": {
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid",
+																		"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																	},
+																	"label": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 30,
+																		"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																	},
+																	"to": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 300,
+																		"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																	},
+																	"body": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 20000,
+																		"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																	}
+																},
+																"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+															}
+														},
+														"required": [
+															"title",
+															"summary",
+															"ask",
+															"options"
+														],
+														"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+													},
+													"attention": {
+														"type": [
+															"number",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"open",
+															"answered",
+															"withdrawn"
+														]
+													},
+													"withdrawn_reason": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"created_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"posted_by": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": "string"
+															},
+															"type": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"id",
+															"name",
+															"type"
+														]
+													},
+													"reply_count": {
+														"type": "number"
+													},
+													"answer": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"option_index": {
+																"type": "number"
+															},
+															"answered_by": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"answered_at": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"option_index",
+															"answered_by",
+															"answered_at"
+														]
+													}
+												},
+												"required": [
+													"message_id",
+													"conversation_id",
+													"conversation_title",
+													"object_id",
+													"content",
+													"decision",
+													"attention",
+													"status",
+													"withdrawn_reason",
+													"created_at",
+													"posted_by",
+													"reply_count",
+													"answer"
+												]
+											}
+										}
+									},
+									"required": [
+										"decisions"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "scope=all is for the Chief of Staff only",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/conversations/{id}/messages/{messageId}/decision": {
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Answer a decision card by picking one of its options",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"option_index": {
+										"type": "integer",
+										"minimum": 0,
+										"maximum": 9,
+										"description": "Which option, counting from 0."
+									},
+									"note": {
+										"type": "string",
+										"maxLength": 500,
+										"description": "Why, in the person's words (for example a reason for holding)."
+									}
+								},
+								"required": [
+									"option_index"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Answered; the poster has been told in the card thread",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"answered"
+											]
+										},
+										"option_index": {
+											"type": "number"
+										},
+										"label": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"status",
+										"option_index",
+										"label"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "No such option",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not for you",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Already answered or withdrawn",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Take back a decision you posted that nobody has answered yet",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"204": {
+						"description": "Withdrawn"
+					},
+					"403": {
+						"description": "Not yours",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Already answered or withdrawn",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"patch": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Chief of Staff only: re-rank, reassign or withdraw another agent's open decision",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"attention": {
+										"type": "integer",
+										"minimum": 1,
+										"maximum": 5
+									},
+									"for_actor_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"minItems": 1,
+										"maxItems": 20
+									},
+									"withdraw": {
+										"type": "object",
+										"properties": {
+											"reason": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 500
+											},
+											"merged_into": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"description": "The message id of the open decision this one duplicates."
+											}
+										},
+										"required": [
+											"reason"
+										]
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Curated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"open",
+												"withdrawn"
+											]
+										},
+										"attention": {
+											"type": [
+												"number",
+												"null"
+											]
+										},
+										"for_actor_ids": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										}
+									},
+									"required": [
+										"status",
+										"attention",
+										"for_actor_ids"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Only the Chief of Staff curates decisions",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Already answered or withdrawn",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/conversations/{id}": {
 			"get": {
 				"tags": [
@@ -33524,6 +36081,69 @@
 													"threadAlsoInChannel": {
 														"type": "boolean"
 													},
+													"decision": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"status": {
+																"type": "string",
+																"enum": [
+																	"open",
+																	"answered",
+																	"withdrawn"
+																]
+															},
+															"forActorIds": {
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"format": "uuid"
+																}
+															},
+															"attention": {
+																"type": [
+																	"number",
+																	"null"
+																]
+															},
+															"answerOptionIndex": {
+																"type": [
+																	"number",
+																	"null"
+																]
+															},
+															"answeredBy": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"answeredAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"withdrawnReason": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"status",
+															"forActorIds",
+															"attention",
+															"answerOptionIndex",
+															"answeredBy",
+															"answeredAt",
+															"withdrawnReason"
+														]
+													},
 													"spawned_sessions": {
 														"type": "array",
 														"items": {
@@ -33733,6 +36353,7 @@
 													"editedAt",
 													"threadRootId",
 													"threadAlsoInChannel",
+													"decision",
 													"spawned_sessions",
 													"reactions",
 													"thread"
@@ -34338,6 +36959,100 @@
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"decision": {
+												"type": "object",
+												"properties": {
+													"title": {
+														"type": "string",
+														"minLength": 1,
+														"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+													},
+													"summary": {
+														"type": "string",
+														"minLength": 1,
+														"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+													},
+													"ask": {
+														"type": "string",
+														"minLength": 1,
+														"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+													},
+													"options": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"label": {
+																	"type": "string",
+																	"minLength": 1,
+																	"description": "4 words or fewer, sentence case. The choice itself: \"7-day window\", \"Hold\", \"Ship to 10%\". Not a sentence, and not a verb phrase describing what you will do."
+																},
+																"consequences": {
+																	"type": "array",
+																	"items": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"minItems": 2,
+																	"maxItems": 3,
+																	"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																},
+																"recommended": {
+																	"type": "boolean",
+																	"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																},
+																"destructive": {
+																	"type": "boolean",
+																	"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																}
+															},
+															"required": [
+																"label",
+																"consequences"
+															]
+														},
+														"minItems": 2,
+														"maxItems": 3,
+														"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+													},
+													"draft": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid",
+																"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+															},
+															"label": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 30,
+																"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+															},
+															"to": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300,
+																"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+															},
+															"body": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 20000,
+																"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+															}
+														},
+														"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+													}
+												},
+												"required": [
+													"title",
+													"summary",
+													"ask",
+													"options"
+												],
+												"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 											},
 											"comment_event_id": {
 												"type": "integer"
@@ -38462,11 +41177,19 @@
 											"enum": [
 												true
 											]
+										},
+										"delivered_to": {
+											"type": "string",
+											"enum": [
+												"chat",
+												"chief_of_staff"
+											]
 										}
 									},
 									"required": [
 										"message_id",
-										"posted"
+										"posted",
+										"delivered_to"
 									]
 								}
 							}
@@ -41126,6 +43849,16 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 64
+						},
+						"required": false,
+						"name": "kind",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"minimum": 1,
 							"maximum": 100,
@@ -42171,6 +44904,618 @@
 				}
 			}
 		},
+		"/api/for-you": {
+			"get": {
+				"tags": [
+					"For You"
+				],
+				"summary": "The Chief of Staff's ranked list of what needs the current actor",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Ranked For You items, already filtered against live state",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"notification_id": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"rank": {
+														"type": [
+															"number",
+															"null"
+														]
+													},
+													"headline": {
+														"type": "string"
+													},
+													"rationale": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"created_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"entity_type": {
+														"type": [
+															"string",
+															"null"
+														],
+														"enum": [
+															"object"
+														]
+													},
+													"entity_id": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"session_id": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"object": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"workspaceId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"type": {
+																"type": "string"
+															},
+															"title": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"content": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"status": {
+																"type": "string"
+															},
+															"metadata": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"additionalProperties": {}
+															},
+															"driver": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"activeSessionId": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"activeSessionCurrentActivity": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"active_session_state": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"createdBy": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"createdAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"updatedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"is_subscribed": {
+																"type": "boolean"
+															},
+															"unread_count": {
+																"type": "number"
+															},
+															"subscriber_count": {
+																"type": "number"
+															},
+															"is_starred_by_me": {
+																"type": "boolean"
+															}
+														},
+														"required": [
+															"id",
+															"workspaceId",
+															"type",
+															"title",
+															"content",
+															"status",
+															"metadata",
+															"driver",
+															"activeSessionId",
+															"createdBy",
+															"createdAt",
+															"updatedAt"
+														]
+													},
+													"chat_decision": {
+														"type": "object",
+														"properties": {
+															"message_id": {
+																"type": "number"
+															},
+															"conversation_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"conversation_title": {
+																"type": "string"
+															},
+															"object_id": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"content": {
+																"type": "string"
+															},
+															"decision": {
+																"type": "object",
+																"properties": {
+																	"title": {
+																		"type": "string",
+																		"minLength": 1,
+																		"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+																	},
+																	"summary": {
+																		"type": "string",
+																		"minLength": 1,
+																		"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+																	},
+																	"ask": {
+																		"type": "string",
+																		"minLength": 1,
+																		"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+																	},
+																	"options": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"description": "4 words or fewer, sentence case. The choice itself: \"7-day window\", \"Hold\", \"Ship to 10%\". Not a sentence, and not a verb phrase describing what you will do."
+																				},
+																				"consequences": {
+																					"type": "array",
+																					"items": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"minItems": 2,
+																					"maxItems": 3,
+																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																				},
+																				"recommended": {
+																					"type": "boolean",
+																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																				},
+																				"destructive": {
+																					"type": "boolean",
+																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																				}
+																			},
+																			"required": [
+																				"label",
+																				"consequences"
+																			]
+																		},
+																		"minItems": 2,
+																		"maxItems": 3,
+																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+																	},
+																	"draft": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid",
+																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 30,
+																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																			},
+																			"to": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 300,
+																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																			},
+																			"body": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 20000,
+																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																			}
+																		},
+																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+																	}
+																},
+																"required": [
+																	"title",
+																	"summary",
+																	"ask",
+																	"options"
+																],
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+															},
+															"attention": {
+																"type": [
+																	"number",
+																	"null"
+																]
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"open",
+																	"answered",
+																	"withdrawn"
+																]
+															},
+															"withdrawn_reason": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"created_at": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"posted_by": {
+																"type": "object",
+																"properties": {
+																	"id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"name": {
+																		"type": "string"
+																	},
+																	"type": {
+																		"type": "string"
+																	}
+																},
+																"required": [
+																	"id",
+																	"name",
+																	"type"
+																]
+															},
+															"reply_count": {
+																"type": "number"
+															},
+															"answer": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"properties": {
+																	"option_index": {
+																		"type": "number"
+																	},
+																	"answered_by": {
+																		"type": [
+																			"string",
+																			"null"
+																		],
+																		"format": "uuid"
+																	},
+																	"answered_at": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	}
+																},
+																"required": [
+																	"option_index",
+																	"answered_by",
+																	"answered_at"
+																]
+															}
+														},
+														"required": [
+															"message_id",
+															"conversation_id",
+															"conversation_title",
+															"object_id",
+															"content",
+															"decision",
+															"attention",
+															"status",
+															"withdrawn_reason",
+															"created_at",
+															"posted_by",
+															"reply_count",
+															"answer"
+														]
+													},
+													"latest_mention": {
+														"type": "object",
+														"properties": {
+															"event_id": {
+																"type": "number"
+															},
+															"actor_id": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"created_at": {
+																"type": "string"
+															},
+															"content": {
+																"type": "string"
+															},
+															"attention": {
+																"type": [
+																	"number",
+																	"null"
+																]
+															},
+															"decision": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"properties": {
+																	"title": {
+																		"type": "string",
+																		"minLength": 1,
+																		"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+																	},
+																	"summary": {
+																		"type": "string",
+																		"minLength": 1,
+																		"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+																	},
+																	"ask": {
+																		"type": "string",
+																		"minLength": 1,
+																		"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+																	},
+																	"options": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"description": "4 words or fewer, sentence case. The choice itself: \"7-day window\", \"Hold\", \"Ship to 10%\". Not a sentence, and not a verb phrase describing what you will do."
+																				},
+																				"consequences": {
+																					"type": "array",
+																					"items": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"minItems": 2,
+																					"maxItems": 3,
+																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																				},
+																				"recommended": {
+																					"type": "boolean",
+																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																				},
+																				"destructive": {
+																					"type": "boolean",
+																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																				}
+																			},
+																			"required": [
+																				"label",
+																				"consequences"
+																			]
+																		},
+																		"minItems": 2,
+																		"maxItems": 3,
+																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+																	},
+																	"draft": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid",
+																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 30,
+																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																			},
+																			"to": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 300,
+																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																			},
+																			"body": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 20000,
+																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																			}
+																		},
+																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+																	}
+																},
+																"required": [
+																	"title",
+																	"summary",
+																	"ask",
+																	"options"
+																],
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+															}
+														},
+														"required": [
+															"event_id",
+															"actor_id",
+															"created_at",
+															"content",
+															"attention",
+															"decision"
+														]
+													}
+												},
+												"required": [
+													"notification_id",
+													"rank",
+													"headline",
+													"rationale",
+													"created_at",
+													"entity_type",
+													"entity_id",
+													"session_id"
+												]
+											}
+										}
+									},
+									"required": [
+										"items"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/devices": {
 			"post": {
 				"tags": [
@@ -42443,7 +45788,7 @@
 					"Devices"
 				],
 				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
-				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
+				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to the device's Agents working activity for the workspace in `X-Workspace-Id`; a new activity mints a new token (the old one is deleted by the app). The device must be one of the caller’s registered devices.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -42468,7 +45813,10 @@
 										"pattern": "^[0-9a-fA-F]+$"
 									},
 									"session_id": {
-										"type": "string",
+										"type": [
+											"string",
+											"null"
+										],
 										"format": "uuid"
 									}
 								},
@@ -42504,7 +45852,7 @@
 											"type": "string",
 											"format": "uuid"
 										},
-										"session_id": {
+										"workspace_id": {
 											"type": [
 												"string",
 												"null"
@@ -42519,7 +45867,7 @@
 										"id",
 										"kind",
 										"device_id",
-										"session_id",
+										"workspace_id",
 										"updated_at"
 									]
 								}
@@ -42584,7 +45932,7 @@
 						}
 					},
 					"404": {
-						"description": "Device or session not found",
+						"description": "Device or workspace not found",
 						"content": {
 							"application/json": {
 								"schema": {

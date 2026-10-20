@@ -17,11 +17,16 @@ import type { AgentGrant, AgentGrantAccess, IntegrationResponse } from '@/lib/ap
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS } from '@maskin/shared'
+import { AGENT_ACCESS_LABELS, supportsAskFirst } from '@maskin/shared'
 import { ChevronRight, X } from 'lucide-react'
 import { useState } from 'react'
 
 const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
+/** Gmail adds the middle step: the agent may draft, but each email waits for a person. */
+const ACCESS_ORDER_ASK_FIRST: AgentGrantAccess[] = ['read', 'ask_first', 'read_write', 'none']
+
+export const accessOrderFor = (provider: string): AgentGrantAccess[] =>
+	supportsAskFirst(provider) ? ACCESS_ORDER_ASK_FIRST : ACCESS_ORDER
 
 /**
  * The one-line reading of who can do what, shown while the section is collapsed. The
@@ -33,10 +38,12 @@ export function summarizeAgentAccess(
 	grants: Pick<AgentGrant, 'access'>[],
 ): string {
 	const writers = grants.filter((g) => g.access === 'read_write').length
+	const asking = grants.filter((g) => g.access === 'ask_first').length
 	const blocked = grants.filter((g) => g.access === 'none').length
 	if (defaultAccess === 'read') {
 		const parts = ['All agents can read']
 		if (writers > 0) parts.push(`${writers} can also write`)
+		if (asking > 0) parts.push(`${asking} can write after you approve`)
 		if (blocked > 0) parts.push(`${blocked} ${blocked === 1 ? 'has' : 'have'} no access`)
 		return parts.join(' · ')
 	}
@@ -46,7 +53,12 @@ export function summarizeAgentAccess(
 }
 
 /** What a newly added agent starts with: the step up from the default. */
-export function startingAccess(defaultAccess: 'read' | 'none'): AgentGrantAccess {
+export function startingAccess(
+	defaultAccess: 'read' | 'none',
+	provider?: string,
+): AgentGrantAccess {
+	// An agent added to Gmail starts by asking first, never by sending on its own.
+	if (provider && supportsAskFirst(provider)) return 'ask_first'
 	return defaultAccess === 'read' ? 'read_write' : 'read'
 }
 
@@ -144,7 +156,7 @@ export function AgentAccess({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										{ACCESS_ORDER.map((a) => (
+										{accessOrderFor(integration.provider).map((a) => (
 											<SelectItem key={a} value={a}>
 												{AGENT_ACCESS_LABELS[a]}
 											</SelectItem>
@@ -171,7 +183,10 @@ export function AgentAccess({
 						<Select
 							value=""
 							onValueChange={(actorId) =>
-								setGrant.mutate({ actorId, access: startingAccess(defaultAccess) })
+								setGrant.mutate({
+									actorId,
+									access: startingAccess(defaultAccess, integration.provider),
+								})
 							}
 							disabled={busy}
 						>
@@ -186,6 +201,13 @@ export function AgentAccess({
 								))}
 							</SelectContent>
 						</Select>
+					)}
+
+					{supportsAskFirst(integration.provider) && (
+						<p className="text-xs text-muted-foreground">
+							Ask first: the agent can write drafts, and each email waits for your approval in the
+							chat. Read & write: it sends on its own, except to contacts you marked protected.
+						</p>
 					)}
 
 					<p className="text-xs text-muted-foreground">

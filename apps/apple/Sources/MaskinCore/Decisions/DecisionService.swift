@@ -38,16 +38,23 @@ public struct DecisionTarget: Sendable, Equatable {
 	public var parentEventId: Int?
 	/// The thread's high-water mark. `nil`: the reply can go out but cannot mark the thread read.
 	public var latestEventId: Int?
+	/// Set when the ask is a decision card in a chat: the answer goes to the chat, not as a comment.
+	public var chat: ChatDecisionRef?
 
-	public init(entityId: String, parentEventId: Int? = nil, latestEventId: Int? = nil) {
+	public init(
+		entityId: String, parentEventId: Int? = nil, latestEventId: Int? = nil,
+		chat: ChatDecisionRef? = nil
+	) {
 		self.entityId = entityId
 		self.parentEventId = parentEventId
 		self.latestEventId = latestEventId
+		self.chat = chat
 	}
 
 	public init(_ card: ForYouCard) {
 		self.init(
-			entityId: card.id, parentEventId: card.mention?.eventId, latestEventId: card.latestEventId)
+			entityId: card.id, parentEventId: card.mention?.eventId, latestEventId: card.latestEventId,
+			chat: card.chatDecision)
 	}
 }
 
@@ -59,6 +66,26 @@ public protocol DecisionBackend: Sendable {
 	func markRead(entityId: String, lastEventId: Int) async throws
 	/// `POST /api/subscriptions/unread`
 	func markUnread(entityId: String) async throws
+	/// `PUT /api/conversations/:id/messages/:messageId/decision`: pick an option on a chat card.
+	func answerChatDecision(conversationID: String, messageID: Int, optionIndex: Int, note: String?)
+		async throws
+	/// A typed answer on a chat card: a reply in the card's thread that mentions its poster.
+	func replyToChatDecision(conversationID: String, messageID: Int, text: String, mention: String?)
+		async throws
+}
+
+extension DecisionBackend {
+	public func answerChatDecision(
+		conversationID: String, messageID: Int, optionIndex: Int, note: String?
+	) async throws {
+		throw OutboxRejection(message: "Answering a chat decision isn't available here.")
+	}
+
+	public func replyToChatDecision(
+		conversationID: String, messageID: Int, text: String, mention: String?
+	) async throws {
+		throw OutboxRejection(message: "Replying to a chat decision isn't available here.")
+	}
 }
 
 /// What the service has done (or is about to do) for one object.
@@ -109,6 +136,8 @@ public final class DecisionService {
 	public static let commentKind = "decision.comment"
 	public static let markReadKind = "decision.markRead"
 	public static let markUnreadKind = "decision.markUnread"
+	public static let chatAnswerKind = "decision.chatAnswer"
+	public static let chatReplyKind = "decision.chatReply"
 
 	/// Seconds a decision is held before it is sent, during which Undo is free.
 	public let undoWindow: TimeInterval
@@ -234,6 +263,10 @@ public final class DecisionService {
 	private func submit(
 		content: String, kind: DecisionRecord.Kind, target: DecisionTarget, note: String? = nil
 	) {
+		if let chat = target.chat {
+			submitToChat(chat, content: content, kind: kind, target: target, note: note)
+			return
+		}
 		let group = UUID().uuidString
 		let comment = enqueue(
 			kind: Self.commentKind, target: target, group: group,
@@ -251,6 +284,39 @@ public final class DecisionService {
 			DecisionRecord(
 				kind: kind, phase: .held(until: now().addingTimeInterval(undoWindow)),
 				staysUnread: staysUnread, groupId: group, note: note),
+			for: target.entityId)
+	}
+
+	/// A card posted into a chat: taking an option is one request on the message, typing is a reply in
+	/// its thread. There is no thread to mark read; answering takes the card out of For You itself.
+	private func submitToChat(
+		_ chat: ChatDecisionRef, content: String, kind: DecisionRecord.Kind, target: DecisionTarget,
+		note: String?
+	) {
+		let group = UUID().uuidString
+		let queued: Bool
+		switch kind {
+		case .option(let label):
+			guard let index = chat.optionLabels.firstIndex(of: label) else { return }
+			queued = enqueue(
+				kind: Self.chatAnswerKind, target: target, group: group,
+				summary: "Your answer: \u{201C}\(Self.excerpt(label))\u{201D}",
+				payload: ChatAnswerPayload(
+					conversationID: chat.conversationID, messageID: chat.messageID, optionIndex: index,
+					note: note))
+		default:
+			queued = enqueue(
+				kind: Self.chatReplyKind, target: target, group: group,
+				summary: "Your reply on \u{201C}\(Self.excerpt(content))\u{201D}",
+				payload: ChatReplyPayload(
+					conversationID: chat.conversationID, messageID: chat.messageID, text: content,
+					mention: chat.posterID))
+		}
+		guard queued else { return }
+		install(
+			DecisionRecord(
+				kind: kind, phase: .held(until: now().addingTimeInterval(undoWindow)),
+				staysUnread: false, groupId: group, note: note),
 			for: target.entityId)
 	}
 
@@ -343,6 +409,20 @@ struct MarkUnreadPayload: Codable, Sendable, Equatable {
 	var entityId: String
 }
 
+struct ChatAnswerPayload: Codable, Sendable, Equatable {
+	var conversationID: String
+	var messageID: Int
+	var optionIndex: Int
+	var note: String?
+}
+
+struct ChatReplyPayload: Codable, Sendable, Equatable {
+	var conversationID: String
+	var messageID: Int
+	var text: String
+	var mention: String?
+}
+
 /// Replays decision writes through a `DecisionBackend`. Register one per outbox.
 public struct DecisionOutboxExecutor: OutboxExecuting {
 	private let backend: any DecisionBackend
@@ -362,6 +442,15 @@ public struct DecisionOutboxExecutor: OutboxExecuting {
 		case DecisionService.markUnreadKind:
 			let p = try decoder.decode(MarkUnreadPayload.self, from: payload)
 			try await backend.markUnread(entityId: p.entityId)
+		case DecisionService.chatAnswerKind:
+			let p = try decoder.decode(ChatAnswerPayload.self, from: payload)
+			try await backend.answerChatDecision(
+				conversationID: p.conversationID, messageID: p.messageID, optionIndex: p.optionIndex,
+				note: p.note)
+		case DecisionService.chatReplyKind:
+			let p = try decoder.decode(ChatReplyPayload.self, from: payload)
+			try await backend.replyToChatDecision(
+				conversationID: p.conversationID, messageID: p.messageID, text: p.text, mention: p.mention)
 		default:
 			throw OutboxRejection(message: "Unknown queued action \(kind).")
 		}

@@ -15,6 +15,7 @@ filter:
     - /api/conversations/{id}/messages
     - /api/conversations/{id}/messages/{messageId}
     - /api/conversations/{id}/messages/{messageId}/retry
+    - /api/conversations/{id}/messages/{messageId}/decision
     - /api/conversations/{id}/messages/{messageId}/reactions
     - /api/conversations/{id}/messages/{messageId}/thread/read
     - /api/conversations/threads
@@ -27,6 +28,7 @@ filter:
     - /api/notifications/{id}
     - /api/notifications/{id}/respond
     - /api/briefing
+    - /api/for-you
     - /api/events/history
     - /api/feature-flags
     - /api/events

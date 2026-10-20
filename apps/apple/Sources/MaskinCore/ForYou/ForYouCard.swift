@@ -69,6 +69,24 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var recommended: DecisionOption? { options.first(where: \.recommended) }
 }
 
+/// Where a decision card lives when it was posted into a chat: answering it is one request on the
+/// message, and talking about it happens in the message's thread.
+public struct ChatDecisionRef: Sendable, Equatable, Codable {
+	public var conversationID: String
+	public var messageID: Int
+	/// Who posted it, so a typed reply in the thread can @mention them.
+	public var posterID: String?
+	/// The options in the order the server counts them (the answer is an index).
+	public var optionLabels: [String]
+
+	public init(conversationID: String, messageID: Int, posterID: String? = nil, optionLabels: [String]) {
+		self.conversationID = conversationID
+		self.messageID = messageID
+		self.posterID = posterID
+		self.optionLabels = optionLabels
+	}
+}
+
 /// The latest comment that @-mentioned the reader: why the card exists.
 public struct ForYouMention: Sendable, Equatable, Codable {
 	public var eventId: Int
@@ -108,12 +126,17 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 	public var latestEventId: Int?
 	public var latestActivityAt: Date?
 	public var mention: ForYouMention?
+	/// Position in the Chief of Staff's ranked list (0 is first). `nil` for a card that did not come
+	/// from that list, which is then ordered by the reader's sort setting instead.
+	public var rank: Int?
+	/// Set when the card is a decision posted into a chat. Its answer then goes to the chat.
+	public var chatDecision: ChatDecisionRef?
 
 	public init(
 		id: String, entityType: String = "object", objectTitle: String? = nil,
 		objectType: String? = nil, status: String? = nil, unreadCount: Int = 1,
 		maxAttention: Int? = nil, latestEventId: Int? = nil, latestActivityAt: Date? = nil,
-		mention: ForYouMention? = nil
+		mention: ForYouMention? = nil, rank: Int? = nil, chatDecision: ChatDecisionRef? = nil
 	) {
 		self.id = id
 		self.entityType = entityType
@@ -125,6 +148,8 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 		self.latestEventId = latestEventId
 		self.latestActivityAt = latestActivityAt
 		self.mention = mention
+		self.rank = rank
+		self.chatDecision = chatDecision
 	}
 
 	public enum Kind: Sendable, Equatable {

@@ -1,15 +1,17 @@
 import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS } from '@maskin/shared'
 import type { ActorIntegrationAccess, AgentAccess } from './agent-access'
+import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
 import { getProvider } from './registry'
 
 const LEVEL_TEXT: Record<AgentAccess, string> = {
 	read_write: `${AGENT_ACCESS_LABELS.read_write} (${AGENT_ACCESS_EFFECT.read_write})`,
+	ask_first: `${AGENT_ACCESS_LABELS.ask_first} (${AGENT_ACCESS_EFFECT.ask_first})`,
 	read: `${AGENT_ACCESS_LABELS.read} (${AGENT_ACCESS_EFFECT.read})`,
 	none: AGENT_ACCESS_LABELS.none,
 }
 
 // Strongest first, so a mixed provider lists its best level first.
-const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'none']
+const LEVEL_ORDER: AgentAccess[] = ['read_write', 'ask_first', 'read', 'none']
 
 export function providerLabel(provider: string): string {
 	try {
@@ -29,6 +31,8 @@ export function buildAccessPreamble(rows: ActorIntegrationAccess[]): string {
 	const byProvider = new Map<string, Set<AgentAccess>>()
 	for (const row of rows) {
 		if (row.providerMode !== 'registered') continue
+		// A custom tool server is simply there or not; it has no levels to explain.
+		if (row.provider === CUSTOM_MCP_PROVIDER) continue
 		const levels = byProvider.get(row.provider) ?? new Set<AgentAccess>()
 		levels.add(row.access)
 		byProvider.set(row.provider, levels)

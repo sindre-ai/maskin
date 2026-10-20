@@ -70,6 +70,19 @@ struct ChiefOfStaffThreadsTests {
 		#expect(made.isEmpty)
 	}
 
+	@Test("a decision posted in a chat opens that chat, with no 'About' thread made")
+	func chatDecisionOpensItsChat() async throws {
+		let group = chatConvo("group-1", title: "Onboarding redesign", participants: [chatMe])
+		let api = CoSAPI(items: [group])
+		let store = ConversationsStore(api: api, events: nil)
+		var chatCard = card
+		chatCard.chatDecision = ChatDecisionRef(
+			conversationID: "group-1", messageID: 7, posterID: "agent-1", optionLabels: ["Approve", "Hold"])
+		let outcome = try await ChiefOfStaffThreads.open(about: chatCard, conversations: store)
+		#expect(outcome == .existing(group))
+		#expect(await api.created.isEmpty)
+	}
+
 	@Test("an archived thread is not reused")
 	func skipsArchived() async throws {
 		var archived = chatConvo("c9", title: "About: Onboarding redesign", participants: [chatMe, chief])

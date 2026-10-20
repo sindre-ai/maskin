@@ -232,7 +232,7 @@ export const traverseGraphResponseSchema = z.object({
 	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
-export const agentGrantAccessSchema = z.enum(['none', 'read', 'read_write'])
+export const agentGrantAccessSchema = z.enum(['none', 'read', 'ask_first', 'read_write'])
 
 export const agentGrantSchema = z.object({
 	actorId: z.string().uuid(),

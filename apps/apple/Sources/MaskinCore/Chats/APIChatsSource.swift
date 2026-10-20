@@ -359,7 +359,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				message: thread == nil
 					? "This conversation no longer exists." : "That thread's first message is gone.")
 		case .badRequest:
-			throw ChatsHTTPError(status: 400, message: "That message couldn't be sent.")
+			throw ChatsHTTPError(status: 400, message: "The message was rejected.")
 		case .undocumented(let status, _):
 			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}

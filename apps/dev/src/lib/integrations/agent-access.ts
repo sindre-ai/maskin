@@ -10,6 +10,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, asc, eq, inArray } from 'drizzle-orm'
+import { isGatedRow } from './custom-mcp'
 
 /**
  * What one actor may do with one integration. The single place that answers it.
@@ -24,8 +25,12 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
  */
 export type AgentAccess = 'none' | AgentGrantAccess
 
-export const canRead = (a: AgentAccess): boolean => a === 'read' || a === 'read_write'
-export const canWrite = (a: AgentAccess): boolean => a === 'read_write'
+export const canRead = (a: AgentAccess): boolean =>
+	a === 'read' || a === 'ask_first' || a === 'read_write'
+/** May use the integration's write tools. "Ask first" may: it is the irreversible ones that ask. */
+export const canWrite = (a: AgentAccess): boolean => a === 'ask_first' || a === 'read_write'
+/** May do an irreversible action (send an email) without a person's yes. Only "Read & write". */
+export const canActWithoutAsking = (a: AgentAccess): boolean => a === 'read_write'
 export const hasAnyAccess = (a: AgentAccess): boolean => a !== 'none'
 
 export function isKeychainMode(mode: IntegrationProviderMode): boolean {
@@ -113,6 +118,8 @@ export interface ActorIntegrationAccess {
 	createdBy: string
 	/** False when the integration is switched off for agent sessions. */
 	exposed: boolean
+	/** A custom tool server Maskin sits in front of (has Read / Read & write / No access). */
+	gated: boolean
 }
 
 /**
@@ -207,6 +214,7 @@ export async function listAgentAccess(
 			exposed:
 				(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
 				false,
+			gated: isGatedRow(r.config),
 		}
 	})
 }
