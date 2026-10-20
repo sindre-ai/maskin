@@ -27,6 +27,12 @@ struct ForYouCardTests {
 		#expect(c.contextTitle == "Onboarding bet")
 	}
 
+	@Test func aCardCachedBeforeRankingExistedStillDecodes() throws {
+		let json = #"{"id":"o1","entityType":"object","unreadCount":1}"#
+		let c = try JSONDecoder().decode(ForYouCard.self, from: Data(json.utf8))
+		#expect(c.rank == nil)
+	}
+
 	@Test func plainMentionTakesItsFirstSentenceAsHeadline() {
 		let c = card(content: "Can you check the pricing page? I changed the tiers yesterday.")
 		#expect(c.kind == .thread)
