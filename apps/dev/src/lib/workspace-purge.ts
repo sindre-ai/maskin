@@ -34,7 +34,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count, desc, eq, inArray, notInArray, or } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { evictBillingUsage } from './billing-usage-cache'
 import { logger } from './logger'
@@ -70,8 +70,8 @@ import { logger } from './logger'
 //
 // The audit trail dies with the workspace (the events table is purged), so the deletion itself is
 // recorded through the logger by the caller, not as an events row. That includes the Keychain
-// trail, which cascades: the result carries its final chain head and row counts, so the log line
-// says what was erased without keeping the data.
+// trail: the result carries its final chain head and row counts, so the log line says what was
+// erased without keeping the data.
 
 /** Tables the purge deletes by hand. The guard test requires every NO ACTION/RESTRICT child. */
 export const WORKSPACE_PURGE_EXPLICIT = [
@@ -85,6 +85,10 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'star_state',
 	'workspace_credit_ledger',
 	'workspace_overage_usage',
+	'agent_chat_grants',
+	'agent_grants',
+	'credential_access_log',
+	'credential_chain_snapshots',
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
@@ -115,6 +119,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'mcp_telemetry',
 	'message_thread_reads',
 	'messages',
+	'message_thread_reads',
 	'session_dispatch_attempts',
 	'slack_user_links',
 	'trigger_cooldowns',
@@ -126,6 +131,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'workspace_onboarding_prompts',
 	'workspace_skills',
 	'workspace_suppressions',
+	'live_activity_tokens',
+	'voice_sessions',
 ] as const
 
 export interface WorkspacePurgeResult {
@@ -142,9 +149,9 @@ export interface WorkspacePurgeResult {
 }
 
 export interface PurgedKeychainAudit {
-	/** credential_access_log rows erased by the cascade. */
+	/** credential_access_log rows erased. */
 	logRows: number
-	/** credential_chain_snapshots rows erased by the cascade. */
+	/** credential_chain_snapshots rows erased. */
 	snapshotRows: number
 	/** Id of the last log row (the chain head), or null if the workspace had none. */
 	chainHeadId: string | null
@@ -264,17 +271,8 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceCreditLedger).where(eq(workspaceCreditLedger.workspaceId, workspaceId))
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
-	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
-	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
-	// Grants reference integrations/conversations (cascade) but also the workspace (NO ACTION).
-	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
-	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
-	await tx.delete(imports).where(eq(imports.workspaceId, workspaceId))
-	await tx.delete(integrations).where(eq(integrations.workspaceId, workspaceId))
-	await tx.delete(events).where(eq(events.workspaceId, workspaceId))
-
-	// Keychain audit trail: both tables cascade from the workspace row below. The chain head and the
-	// counts are read first, because they are the only record of the delete that outlives it.
+	// The chain head and the counts are read before the audit trail goes, because they are the only
+	// record of the delete that outlives it.
 	const [lastLogRow] = await tx
 		.select({ id: credentialAccessLog.id, rowHash: credentialAccessLog.rowHash })
 		.from(credentialAccessLog)
@@ -289,6 +287,24 @@ export async function purgeWorkspace(
 		.select({ n: count() })
 		.from(credentialChainSnapshots)
 		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
+
+	// The audit trail dies with the workspace. The snapshot table is append-only by trigger; that
+	// trigger lets a DELETE through only while this transaction-local flag is set (migration 0097).
+	await tx.execute(sql`SELECT set_config('maskin.purging_workspace', 'on', true)`)
+	await tx
+		.delete(credentialChainSnapshots)
+		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
+	await tx.delete(credentialAccessLog).where(eq(credentialAccessLog.workspaceId, workspaceId))
+	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
+	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
+	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
+	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
+	// Grants reference integrations/conversations (cascade) but also the workspace (NO ACTION).
+	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
+	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
+	await tx.delete(imports).where(eq(imports.workspaceId, workspaceId))
+	await tx.delete(integrations).where(eq(integrations.workspaceId, workspaceId))
+	await tx.delete(events).where(eq(events.workspaceId, workspaceId))
 
 	// One statement per table: sessions reference each other (retry_of), and NO ACTION is checked
 	// at the end of the statement, so deleting them together is fine.
