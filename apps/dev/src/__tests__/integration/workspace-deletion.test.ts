@@ -102,22 +102,6 @@ async function countRows(table: string, column: string, workspaceId: string): Pr
 	return (row as { n: number }).n
 }
 
-/**
- * Keychain audit trail of a workspace: a few chained log rows (the BEFORE INSERT trigger assigns
- * id and hashes) and two daily snapshots. integration_id and actor_id carry no FK (migration 0094).
- */
-async function seedKeychainAudit(workspaceId: string, logRows = 3) {
-	const ref = randomUUID()
-	for (let i = 0; i < logRows; i++) {
-		await sql`
-			INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
-			VALUES (${workspaceId}, ${ref}, ${ref}, ${randomUUID()})`
-	}
-	await sql`
-		INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
-		VALUES (${workspaceId}, '2026-10-01', 1, 'h1'), (${workspaceId}, '2026-10-02', 2, 'h2')`
-}
-
 /** Puts at least one row in every kind of table the purge has to reach. */
 async function seedWorkspace(owner: Actor, opts: { name?: string; settings?: unknown } = {}) {
 	const ws = await insertWorkspace(db, owner.id, {
@@ -229,8 +213,6 @@ async function seedWorkspace(owner: Actor, opts: { name?: string; settings?: unk
 		path: 'm.md',
 		storageKey: `agents/${ws.id}/${agent.id}/m.md`,
 	})
-
-	await seedKeychainAudit(ws.id)
 
 	// installed_loops -> objects is NO ACTION, so objects cannot go first.
 	const [loop] = await db
@@ -398,52 +380,6 @@ describe('workspace deletion (integration)', () => {
 			]),
 		)
 		expect(storage.deleted.some((k) => k.includes(bystander.ws.id))).toBe(false)
-	})
-
-	describe('Keychain audit trail', () => {
-		it('is erased with the workspace, and the purge reports the final chain head and counts', async () => {
-			const target = await seedWorkspace(me, { name: 'Audited' })
-			const bystander = await seedWorkspace(await insertActor(db, { type: 'human' }))
-			const [head] = await sql<{ id: string; row_hash: string }[]>`
-				SELECT id::text AS id, row_hash FROM credential_access_log
-				WHERE workspace_id = ${target.ws.id} ORDER BY id DESC LIMIT 1`
-			expect(head).toBeDefined()
-
-			const result = await db.transaction((tx) => purgeWorkspace(tx, target.ws.id))
-
-			expect(result.keychainAudit).toEqual({
-				logRows: 3,
-				snapshotRows: 2,
-				chainHeadId: head?.id,
-				chainHeadHash: head?.row_hash,
-			})
-			expect(await countRows('credential_access_log', 'workspace_id', target.ws.id)).toBe(0)
-			expect(await countRows('credential_chain_snapshots', 'workspace_id', target.ws.id)).toBe(0)
-			expect(await db.select().from(workspaces).where(eq(workspaces.id, target.ws.id))).toEqual([])
-			// Another workspace's trail is untouched.
-			expect(await countRows('credential_access_log', 'workspace_id', bystander.ws.id)).toBe(3)
-			expect(await countRows('credential_chain_snapshots', 'workspace_id', bystander.ws.id)).toBe(2)
-		})
-
-		it('reports an empty trail for a workspace that never read a credential', async () => {
-			const ws = await insertWorkspace(db, me.id, { name: 'No audit' })
-			const result = await db.transaction((tx) => purgeWorkspace(tx, ws.id))
-			expect(result.keychainAudit).toEqual({
-				logRows: 0,
-				snapshotRows: 0,
-				chainHeadId: null,
-				chainHeadHash: null,
-			})
-		})
-
-		it('still refuses a direct delete or update of a snapshot while the workspace exists', async () => {
-			const { ws } = await seedWorkspace(me)
-			const delSnapshot = sql`DELETE FROM credential_chain_snapshots WHERE workspace_id = ${ws.id}`
-			await expect(delSnapshot).rejects.toThrow(/append-only/)
-			const updSnapshot = sql`UPDATE credential_chain_snapshots SET row_hash = 'x' WHERE workspace_id = ${ws.id}`
-			await expect(updSnapshot).rejects.toThrow(/append-only/)
-			expect(await countRows('credential_chain_snapshots', 'workspace_id', ws.id)).toBe(2)
-		})
 	})
 
 	it('keeps the people, and scrubs an agent that only lived in this workspace', async () => {
@@ -659,5 +595,75 @@ describe('workspace deletion (integration)', () => {
 		expect((await del(ws.id, 'Once')).status).toBe(404)
 		const again = await insertWorkspace(db, me.id, { name: 'Once' })
 		expect(again.name).toBe('Once')
+	})
+
+	it('erases the Keychain audit trail with the workspace, but only through the cascade', async () => {
+		const other = await insertActor(db, { type: 'human' })
+		const target = await seedWorkspace(me, { name: 'Audited' })
+		const bystander = await seedWorkspace(other, { name: 'Audited bystander' })
+
+		for (const ws of [target.ws, bystander.ws]) {
+			// The insert trigger assigns id/hashes/read_at; the log has no FK on actor or integration.
+			await sql`
+				INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+				VALUES (${ws.id}, ${randomUUID()}, ${me.id}, 'req-1')`
+			await sql`
+				INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+				VALUES (${ws.id}, '2026-01-01', 1, 'hash')`
+		}
+
+		// The snapshot table is still append-only for anything that is not the workspace cascade.
+		await expect(
+			sql`DELETE FROM credential_chain_snapshots WHERE workspace_id = ${target.ws.id}`,
+		).rejects.toThrow(/append-only/)
+		await expect(
+			sql`UPDATE credential_chain_snapshots SET row_hash = 'x' WHERE workspace_id = ${target.ws.id}`,
+		).rejects.toThrow(/append-only/)
+
+		expect((await del(target.ws.id, 'Audited')).status).toBe(200)
+
+		for (const table of ['credential_access_log', 'credential_chain_snapshots']) {
+			const rows = await sql.unsafe(`SELECT workspace_id FROM ${table}`)
+			expect(
+				rows.map((r) => r.workspace_id),
+				table,
+			).toEqual([bystander.ws.id])
+		}
+	})
+
+	it('reports the final Keychain chain head and the erased row counts', async () => {
+		const ws = await insertWorkspace(db, me.id, { name: 'Chain head' })
+		for (let i = 0; i < 3; i++) {
+			await sql`
+				INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+				VALUES (${ws.id}, ${randomUUID()}, ${me.id}, ${randomUUID()})`
+		}
+		await sql`
+			INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+			VALUES (${ws.id}, '2026-10-01', 1, 'h1'), (${ws.id}, '2026-10-02', 2, 'h2')`
+		const [head] = await sql<{ id: string; row_hash: string }[]>`
+			SELECT id::text AS id, row_hash FROM credential_access_log
+			WHERE workspace_id = ${ws.id} ORDER BY id DESC LIMIT 1`
+
+		const result = await db.transaction((tx) => purgeWorkspace(tx, ws.id))
+
+		expect(result.keychainAudit).toEqual({
+			logRows: 3,
+			snapshotRows: 2,
+			chainHeadId: head?.id,
+			chainHeadHash: head?.row_hash,
+		})
+		expect(await countRows('credential_access_log', 'workspace_id', ws.id)).toBe(0)
+	})
+
+	it('reports an empty Keychain trail for a workspace that never read a credential', async () => {
+		const ws = await insertWorkspace(db, me.id, { name: 'No audit' })
+		const result = await db.transaction((tx) => purgeWorkspace(tx, ws.id))
+		expect(result.keychainAudit).toEqual({
+			logRows: 0,
+			snapshotRows: 0,
+			chainHeadId: null,
+			chainHeadHash: null,
+		})
 	})
 })

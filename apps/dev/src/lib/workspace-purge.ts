@@ -70,10 +70,8 @@ import { logger } from './logger'
 //
 // The audit trail dies with the workspace (the events table is purged), so the deletion itself is
 // recorded through the logger by the caller, not as an events row. That includes the Keychain
-// trail: credential_access_log is deleted by hand (it has no delete trigger) and
-// credential_chain_snapshots cascades (its append-only trigger lets a DELETE through only once the
-// workspace row is gone, migration 0097). The final chain head and the row counts come back in
-// the result, so the caller's log line says what was erased without keeping the data.
+// trail, which cascades: the result carries its final chain head and row counts, so the log line
+// says what was erased without keeping the data.
 
 /** Tables the purge deletes by hand. The guard test requires every NO ACTION/RESTRICT child. */
 export const WORKSPACE_PURGE_EXPLICIT = [
@@ -89,10 +87,9 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'workspace_overage_usage',
 	'orphan_thread_detections',
 	'awaiting_vies',
+	'agent_files',
 	'agent_grants',
 	'agent_chat_grants',
-	'agent_files',
-	'credential_access_log',
 	'imports',
 	'integrations',
 	'events',
@@ -108,6 +105,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
 	'conversation_participants',
 	'conversation_pending_turns',
+	'credential_access_log',
 	'credential_chain_snapshots',
 	'file_comments',
 	'files',
@@ -144,9 +142,9 @@ export interface WorkspacePurgeResult {
 }
 
 export interface PurgedKeychainAudit {
-	/** credential_access_log rows deleted. */
+	/** credential_access_log rows erased by the cascade. */
 	logRows: number
-	/** credential_chain_snapshots rows removed by the cascade. */
+	/** credential_chain_snapshots rows erased by the cascade. */
 	snapshotRows: number
 	/** Id of the last log row (the chain head), or null if the workspace had none. */
 	chainHeadId: string | null
@@ -267,15 +265,16 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
 	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
+	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
+	// Grants reference integrations/conversations (cascade) but also the workspace (NO ACTION).
 	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
 	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
-	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
 	await tx.delete(imports).where(eq(imports.workspaceId, workspaceId))
 	await tx.delete(integrations).where(eq(integrations.workspaceId, workspaceId))
+	await tx.delete(events).where(eq(events.workspaceId, workspaceId))
 
-	// Keychain audit trail. The chain head and the counts are read first: they are the only record
-	// of the delete that outlives it. The log is deleted by hand because its workspace FK is NO
-	// ACTION; the snapshots cascade from the workspace row below.
+	// Keychain audit trail: both tables cascade from the workspace row below. The chain head and the
+	// counts are read first, because they are the only record of the delete that outlives it.
 	const [lastLogRow] = await tx
 		.select({ id: credentialAccessLog.id, rowHash: credentialAccessLog.rowHash })
 		.from(credentialAccessLog)
@@ -290,9 +289,6 @@ export async function purgeWorkspace(
 		.select({ n: count() })
 		.from(credentialChainSnapshots)
 		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
-	await tx.delete(credentialAccessLog).where(eq(credentialAccessLog.workspaceId, workspaceId))
-
-	await tx.delete(events).where(eq(events.workspaceId, workspaceId))
 
 	// One statement per table: sessions reference each other (retry_of), and NO ACTION is checked
 	// at the end of the statement, so deleting them together is fine.
@@ -336,7 +332,8 @@ export async function purgeWorkspace(
 		}
 	}
 
-	// Everything else (invitations, files, skills, trigger children, display settings, …) cascades.
+	// Everything else (invitations, files, skills, trigger children, display settings, the Keychain
+	// audit trail, …) cascades.
 	await tx.delete(workspaces).where(eq(workspaces.id, workspaceId))
 
 	return {

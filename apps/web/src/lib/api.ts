@@ -973,6 +973,10 @@ export const api = {
 		},
 	},
 
+	forYou: {
+		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+	},
+
 	featureFlags: {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
@@ -1439,11 +1443,24 @@ export interface LatestMentionDecisionOption {
 	recommended?: boolean
 }
 
+/**
+ * The text an agent proposes to send, shown above the buttons. The feed fills
+ * `body` from the draft object's current description, so it is always present
+ * here; `object_id` says which object it came from.
+ */
+export interface LatestMentionDecisionDraft {
+	object_id?: string
+	label?: string
+	to?: string
+	body?: string
+}
+
 export interface LatestMentionDecision {
 	title: string
 	summary: string
 	ask: string
 	options: LatestMentionDecisionOption[]
+	draft?: LatestMentionDecisionDraft
 }
 
 export interface LatestMention {
@@ -1460,6 +1477,24 @@ export interface LatestMention {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+/** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
+export interface ForYouItem {
+	notification_id: string
+	rank: number
+	headline: string
+	rationale: string | null
+	created_at: string | null
+	entity_type: 'object' | null
+	entity_id: string | null
+	session_id: string | null
+	object?: ObjectResponse
+	latest_mention?: LatestMention
+}
+
+export interface ForYouResponse {
+	items: ForYouItem[]
 }
 
 export interface BriefingResponse {
