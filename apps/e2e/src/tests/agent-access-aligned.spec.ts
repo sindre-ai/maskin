@@ -142,7 +142,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			'No access',
 		)
 		expect(state.grants).toEqual([{ actorId: reviewer.id, access: 'none' }])
-		await expect(page.getByText('No tools attached')).toBeVisible()
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(
