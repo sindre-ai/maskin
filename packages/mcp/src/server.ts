@@ -6202,6 +6202,7 @@ export function createMcpServer(config: McpConfig) {
 						subject: args.subject,
 						body: args.body,
 						approval_comment_id: args.approval_comment_id,
+						draft_id: args.draft_id,
 					},
 					{ workspaceId: args.workspace_id },
 				)) as { message_id: string; mode: 'approved_draft' | 'direct' }
