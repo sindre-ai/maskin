@@ -15,7 +15,7 @@ test.describe('Chat — a message that links to an object shows what the object 
 			const task = await account.api.createObject(account.workspaceId, {
 				type: 'task',
 				title: 'LinkedIn note to Catja',
-				status: 'in_review',
+				status: 'todo',
 				content: NOTE,
 			})
 
@@ -39,7 +39,8 @@ test.describe('Chat — a message that links to an object shows what the object 
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
 			await expect(thread.getByText(NOTE)).toBeVisible({ timeout: 10_000 })
-			await expect(thread.getByRole('link', { name: 'LinkedIn note to Catja' })).toBeVisible()
+			await expect(thread.getByText('LinkedIn note to Catja', { exact: true })).toBeVisible()
+			await expect(thread.getByRole('link', { name: /Open/ })).toBeVisible()
 
 			for (const colorScheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme })
