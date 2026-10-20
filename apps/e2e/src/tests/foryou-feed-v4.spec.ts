@@ -232,6 +232,17 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await expect(page.getByTestId('foryou-feed-group')).toHaveCount(0)
 	})
 
+	test('the sidebar badge counts the curated items, not every unread mention', async ({
+		page,
+		account,
+	}) => {
+		await mockFeed(page, account.workspaceId)
+		await page.goto(`/${account.workspaceId}`)
+
+		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(5)
+		await expect(page.getByLabel('5 unread')).toBeVisible()
+	})
+
 	test('taking an option posts it and leaves a receipt', async ({ page, account }) => {
 		// The reply marks the thread read, so the server drops it from the unread
 		// feed straight away — the receipt has to survive that refetch.
