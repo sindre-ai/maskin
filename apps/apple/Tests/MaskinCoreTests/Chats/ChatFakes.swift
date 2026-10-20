@@ -57,6 +57,10 @@ actor FakeChatAPI: ChatAPI {
 	var persistedByKey: [String: ChatMessage] = [:]
 	/// Make the send response name another conversation (the stored row keeps the real one).
 	var responseConversationID: String?
+	var sentThreads: [ChatSendThread?] = []
+	var threadMarks: [(root: Int, last: Int)] = []
+	var reactCalls: [(id: Int, emoji: String, add: Bool)] = []
+	var failReact = false
 
 	init(server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1")) {
 		self.server = server
@@ -118,6 +122,44 @@ actor FakeChatAPI: ChatAPI {
 		var response = saved
 		response.conversationID = responseConversationID
 		return response
+	}
+
+	func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, thread: ChatSendThread?,
+		idempotencyKey: String
+	) async throws -> ChatMessage {
+		guard let thread else {
+			return try await send(
+				conversationID: conversationID, content: content, metadata: metadata,
+				idempotencyKey: idempotencyKey)
+		}
+		sentKeys.append(idempotencyKey)
+		sentContents.append(content)
+		sentMetadata.append(metadata)
+		sentThreads.append(thread)
+		if !sendErrors.isEmpty { throw sendErrors.removeFirst() }
+		if let existing = persistedByKey[idempotencyKey] { return existing }
+		let next = (server.compactMap(\.serverID).max() ?? 0) + 1
+		var saved = chatMsg(next, by: "me", content, at: 1000 + TimeInterval(next), metadata: metadata?.jsonValue)
+		saved.threadRootID = thread.rootID
+		saved.alsoInChannel = thread.alsoInChannel
+		server.append(saved)
+		persistedByKey[idempotencyKey] = saved
+		return saved
+	}
+
+	func threadReplies(conversationID: String, rootID: Int) async throws -> [ChatMessage] {
+		server.filter { $0.threadRootID == rootID }.sorted { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
+	}
+
+	func react(conversationID: String, messageID: Int, emoji: String, add: Bool) async throws {
+		if failReact { throw ChatsError("Couldn't add the reaction.") }
+		reactCalls.append((messageID, emoji, add))
+	}
+	func setFailReact(_ v: Bool) { failReact = v }
+
+	func markThreadRead(conversationID: String, rootID: Int, lastMessageID: Int) async throws {
+		threadMarks.append((rootID, lastMessageID))
 	}
 
 	func sessions(conversationID: String) async throws -> [ChatAgentSession] { sessionList }

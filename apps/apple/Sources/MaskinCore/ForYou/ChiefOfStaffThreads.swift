@@ -49,6 +49,14 @@ public enum ChiefOfStaffThreads {
 	public static func open(
 		about card: ForYouCard, alsoInvite: [String] = [], conversations: ConversationsStore
 	) async throws -> Outcome {
+		// A decision card posted into a chat is discussed in that chat (its group chat about the
+		// task), not in a separate "About:" conversation found by its title.
+		if let ref = card.chatDecision {
+			await conversations.refresh()
+			if let found = conversations.conversations.first(where: { $0.id == ref.conversationID }) {
+				return .existing(found)
+			}
+		}
 		await conversations.loadActors()
 		guard let chief = conversations.actors.first(where: isChiefOfStaff) else { throw NoChiefOfStaff() }
 		await conversations.refresh()
