@@ -9,6 +9,7 @@ import {
 	GmailSendError,
 	type GmailSendErrorCode,
 	getDraftSummary,
+	listDraftSummaries,
 	sendDraft,
 } from '../lib/integrations/providers/gmail/send'
 import { getProvider } from '../lib/integrations/registry'
@@ -128,6 +129,64 @@ function agentRefusal(): Failure {
 	}
 }
 
+function toDraftBody(d: Awaited<ReturnType<typeof getDraftSummary>>) {
+	return {
+		draft_id: d.draftId,
+		message_id: d.messageId,
+		thread_id: d.threadId,
+		to: d.to,
+		cc: d.cc,
+		subject: d.subject,
+		snippet: d.snippet,
+	}
+}
+
+// ── GET /api/integrations/gmail/drafts ───────────────────────────
+
+const listDraftsRoute = createRoute({
+	method: 'get',
+	path: '/drafts',
+	tags: ['integrations'],
+	summary: 'List the newest Gmail drafts so a person can review them',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Drafts',
+			content: { 'application/json': { schema: z.object({ drafts: z.array(draftSchema) }) } },
+		},
+		403: { description: 'Not a person', content: { 'application/json': { schema: errorSchema } } },
+		404: { description: 'Not connected', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'Reconnect needed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		502: { description: 'Gmail error', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(listDraftsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (c.get('actorType') !== 'human') {
+		const f = agentRefusal()
+		return c.json(f.body, f.status)
+	}
+
+	const access = await gmailAccess(db, workspaceId, actorId)
+	if (!access.ok) return c.json(access.failure.body, access.failure.status)
+
+	try {
+		const drafts = await listDraftSummaries(access.accessToken)
+		return c.json({ drafts: drafts.map(toDraftBody) }, 200)
+	} catch (err) {
+		if (!(err instanceof GmailSendError)) throw err
+		const f = failureFor(err)
+		return c.json(f.body, f.status)
+	}
+})
+
 // ── GET /api/integrations/gmail/drafts/:draftId ──────────────────
 
 const getDraftRoute = createRoute({
@@ -164,18 +223,7 @@ app.openapi(getDraftRoute, async (c) => {
 
 	try {
 		const d = await getDraftSummary(access.accessToken, draftId)
-		return c.json(
-			{
-				draft_id: d.draftId,
-				message_id: d.messageId,
-				thread_id: d.threadId,
-				to: d.to,
-				cc: d.cc,
-				subject: d.subject,
-				snippet: d.snippet,
-			},
-			200,
-		)
+		return c.json(toDraftBody(d), 200)
 	} catch (err) {
 		if (!(err instanceof GmailSendError)) throw err
 		const f = failureFor(err)

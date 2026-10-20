@@ -1,3 +1,4 @@
+import { GmailDraftsDialog } from '@/components/integrations/gmail-drafts-dialog'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
@@ -62,6 +63,7 @@ export function ProviderRow({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
+	const [draftsOpen, setDraftsOpen] = useState(false)
 	const isConnected = !!integration
 	const handleConnect = () => {
 		if (provider.authType === 'api_key') {
@@ -147,6 +149,11 @@ export function ProviderRow({
 								Reconnect
 							</Button>
 						)}
+						{provider.name === 'gmail' && variant !== 'chat' && (
+							<Button variant="outline" size="sm" onClick={() => setDraftsOpen(true)}>
+								Review drafts
+							</Button>
+						)}
 						{variant === 'chat' ? (
 							<ConnectedButton />
 						) : (
@@ -159,6 +166,13 @@ export function ProviderRow({
 							>
 								Disconnect
 							</Button>
+						)}
+						{provider.name === 'gmail' && (
+							<GmailDraftsDialog
+								workspaceId={workspaceId}
+								open={draftsOpen}
+								onClose={() => setDraftsOpen(false)}
+							/>
 						)}
 					</div>
 				) : (

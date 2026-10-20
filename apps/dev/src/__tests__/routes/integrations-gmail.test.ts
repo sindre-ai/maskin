@@ -4,14 +4,21 @@ vi.mock('../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
-const { getIntegrationCredential, getValidToken, getDraftSummary, sendDraft, recordEvent } =
-	vi.hoisted(() => ({
-		getIntegrationCredential: vi.fn(),
-		getValidToken: vi.fn(),
-		getDraftSummary: vi.fn(),
-		sendDraft: vi.fn(),
-		recordEvent: vi.fn(),
-	}))
+const {
+	getIntegrationCredential,
+	getValidToken,
+	getDraftSummary,
+	listDraftSummaries,
+	sendDraft,
+	recordEvent,
+} = vi.hoisted(() => ({
+	getIntegrationCredential: vi.fn(),
+	getValidToken: vi.fn(),
+	getDraftSummary: vi.fn(),
+	listDraftSummaries: vi.fn(),
+	sendDraft: vi.fn(),
+	recordEvent: vi.fn(),
+}))
 
 vi.mock('../../lib/integrations/lookup', () => ({ getIntegrationCredential }))
 
@@ -27,7 +34,7 @@ vi.mock('../../lib/integrations/providers/gmail/send', async () => {
 	const actual = await vi.importActual<
 		typeof import('../../lib/integrations/providers/gmail/send')
 	>('../../lib/integrations/providers/gmail/send')
-	return { ...actual, getDraftSummary, sendDraft }
+	return { ...actual, getDraftSummary, listDraftSummaries, sendDraft }
 })
 
 vi.mock('../../lib/events/record-event', () => ({ recordEvent }))
@@ -49,6 +56,7 @@ function app(actorType = 'human') {
 
 beforeEach(() => {
 	for (const fn of [
+		listDraftSummaries,
 		getIntegrationCredential,
 		getValidToken,
 		getDraftSummary,
@@ -169,5 +177,53 @@ describe('GET /api/integrations/gmail/drafts/:draftId', () => {
 
 		expect(res.status).toBe(403)
 		expect(getDraftSummary).not.toHaveBeenCalled()
+	})
+})
+
+describe('GET /api/integrations/gmail/drafts', () => {
+	it('lists the drafts for review', async () => {
+		listDraftSummaries.mockResolvedValue([
+			{
+				draftId: 'd1',
+				messageId: 'm1',
+				threadId: null,
+				to: 'ada@example.com',
+				cc: '',
+				subject: 'Intro',
+				snippet: 'Hi',
+			},
+		])
+
+		const res = await app().request(jsonGet('/api/integrations/gmail/drafts', HEADERS))
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			drafts: [
+				{
+					draft_id: 'd1',
+					message_id: 'm1',
+					thread_id: null,
+					to: 'ada@example.com',
+					cc: '',
+					subject: 'Intro',
+					snippet: 'Hi',
+				},
+			],
+		})
+	})
+
+	it('refuses an agent', async () => {
+		const res = await app('agent').request(jsonGet('/api/integrations/gmail/drafts', HEADERS))
+
+		expect(res.status).toBe(403)
+		expect(listDraftSummaries).not.toHaveBeenCalled()
+	})
+
+	it('returns 404 when Gmail is not connected', async () => {
+		getIntegrationCredential.mockResolvedValue(null)
+
+		expect((await app().request(jsonGet('/api/integrations/gmail/drafts', HEADERS))).status).toBe(
+			404,
+		)
 	})
 })

@@ -120,6 +120,27 @@ export async function getDraftSummary(
 	}
 }
 
+/** How many of the newest drafts the review list shows. */
+export const DRAFT_LIST_LIMIT = 20
+
+/**
+ * The account's newest drafts, summarised. Gmail's list call returns bare ids, so
+ * each one is read for its recipients and subject. A draft that vanishes or fails
+ * between the two calls (sent or deleted in Gmail meanwhile) is left out rather
+ * than failing the list.
+ */
+export async function listDraftSummaries(accessToken: string): Promise<GmailDraftSummary[]> {
+	const url = new URL(`${GMAIL_API_BASE}/drafts`)
+	url.searchParams.set('maxResults', String(DRAFT_LIST_LIMIT))
+	const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } })
+	if (!res.ok) return fail(res)
+
+	const list = (await res.json()) as { drafts?: Array<{ id?: string }> }
+	const ids = (list.drafts ?? []).flatMap((d) => (d.id ? [d.id] : []))
+	const settled = await Promise.allSettled(ids.map((id) => getDraftSummary(accessToken, id)))
+	return settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+}
+
 /**
  * Send a draft, but only if it is still the version the caller saw. An agent may
  * keep editing a draft while a person reads it; without this check the person's

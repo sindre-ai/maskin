@@ -67,6 +67,9 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Default: no selection pending, so the post-authorization picker stays shut.
 	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
+	// The Gmail drafts dialog stays shut here; only its trigger button is under test.
+	useGmailDrafts: () => ({ data: { drafts: [] }, isLoading: false, error: null }),
+	useSendGmailDraft: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }))
 
 /** LinkedIn installs are per-member, so the grouped row resolves who connected
@@ -461,6 +464,22 @@ describe('IntegrationsPage', () => {
 
 			expect(screen.getByText('Connected as user@gmail.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
+		})
+
+		it('offers "Review drafts" once Gmail is connected, and not before', () => {
+			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			const { unmount } = render(<IntegrationsPage />)
+			expect(screen.queryByRole('button', { name: 'Review drafts' })).not.toBeInTheDocument()
+			unmount()
+
+			mockUseIntegrations.mockReturnValue({
+				data: [buildIntegrationResponse({ id: 'gm-1', provider: 'gmail', status: 'active' })],
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+
+			expect(screen.getByRole('button', { name: 'Review drafts' })).toBeInTheDocument()
 		})
 	})
 

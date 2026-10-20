@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	GmailSendError,
 	getDraftSummary,
+	listDraftSummaries,
 	sendDraft,
 } from '../../../../lib/integrations/providers/gmail/send'
 
@@ -123,5 +124,26 @@ describe('sendDraft', () => {
 		const err = await sendDraft('tok', 'draft-1', 'm1').catch((e) => e)
 		expect(err).toBeInstanceOf(GmailSendError)
 		expect(err.code).toBe('INSUFFICIENT_SCOPE')
+	})
+})
+
+describe('listDraftSummaries', () => {
+	it('reads each listed draft and skips one that vanished meanwhile', async () => {
+		fetchMock
+			.mockResolvedValueOnce(json(200, { drafts: [{ id: 'draft-1' }, { id: 'gone' }] }))
+			.mockResolvedValueOnce(json(200, draftBody('m1')))
+			.mockResolvedValueOnce(json(404, { error: { message: 'Requested entity was not found.' } }))
+
+		const drafts = await listDraftSummaries('tok')
+
+		expect(drafts.map((d) => d.draftId)).toEqual(['draft-1'])
+		expect(String(fetchMock.mock.calls[0][0])).toContain('maxResults=20')
+	})
+
+	it('returns an empty list when there are no drafts', async () => {
+		fetchMock.mockResolvedValueOnce(json(200, {}))
+
+		expect(await listDraftSummaries('tok')).toEqual([])
+		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 })

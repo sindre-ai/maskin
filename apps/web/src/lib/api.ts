@@ -564,6 +564,14 @@ export const api = {
 				body: { installation_id: installationId },
 				workspaceId,
 			}),
+		gmailDrafts: (workspaceId: string) =>
+			request<{ drafts: GmailDraft[] }>('/integrations/gmail/drafts', { workspaceId }),
+		/** Irreversible. `messageId` is the draft version the person was shown; the server refuses (409) if it changed. */
+		gmailSendDraft: (workspaceId: string, draftId: string, messageId: string) =>
+			request<{ message_id: string; thread_id: string | null }>(
+				`/integrations/gmail/drafts/${encodeURIComponent(draftId)}/send`,
+				{ method: 'POST', body: { message_id: messageId }, workspaceId },
+			),
 		githubPendingSelection: (workspaceId: string, integrationId: string) =>
 			request<GithubPendingSelection>(`/integrations/github/pending-selection/${integrationId}`, {
 				workspaceId,
@@ -1709,6 +1717,17 @@ export interface IntegrationResponse {
 export interface GithubPendingSelection {
 	integrationId: string
 	installations: Array<{ installationId: string; ownerLogin: string | null }>
+}
+
+/** A Gmail draft awaiting a person's review. `message_id` is its version: it changes when the draft is edited. */
+export interface GmailDraft {
+	draft_id: string
+	message_id: string
+	thread_id: string | null
+	to: string
+	cc: string
+	subject: string
+	snippet: string
 }
 
 export interface LinkableGithubInstallation {

@@ -95,6 +95,32 @@ export function useLinkGithubInstallation(workspaceId: string) {
 	})
 }
 
+/** The connected Gmail account's newest drafts. Only fetches while the review dialog is open. */
+export function useGmailDrafts(workspaceId: string, enabled: boolean) {
+	return useQuery({
+		queryKey: queryKeys.integrations.gmailDrafts(workspaceId),
+		queryFn: () => api.integrations.gmailDrafts(workspaceId),
+		enabled,
+		// A draft can be edited or sent in Gmail at any time; never show a stale version to send.
+		staleTime: 0,
+	})
+}
+
+export function useSendGmailDraft(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ draftId, messageId }: { draftId: string; messageId: string }) =>
+			api.integrations.gmailSendDraft(workspaceId, draftId, messageId),
+		onSuccess: () => {
+			toast.success('Email sent')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.gmailDrafts(workspaceId) })
+		},
+		// A changed draft (409) needs a fresh list so the person sees what would go out now.
+		onError: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.gmailDrafts(workspaceId) }),
+	})
+}
+
 /** Installations the user authorized against on GitHub, awaiting their pick.
  *  Only fetches once the connect callback has redirected back with an id. */
 export function useGithubPendingSelection(workspaceId: string, integrationId: string | null) {
