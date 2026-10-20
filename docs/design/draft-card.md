@@ -88,7 +88,7 @@ Read before changing the storage model or the editor.
   here asks the agent to send through its normal tools, so that gate still applies to
   the send itself.
 
-## Open decision: who owns the draft
+## Decision: who owns the draft (A, chosen 2026-10-20)
 
 A. **Task-backed (this PR stack).** The task holds the text; chat and For you are
    views of it. Gives drafts a structured home, which the For You bet says they lack.
@@ -97,9 +97,11 @@ A. **Task-backed (this PR stack).** The task holds the text; chat and For you ar
 B. **`draft_final` on the reply (For You spec).** One writer. Needs the card, route
    and tool reworked, and the chat card would read a decision block, not a task.
 
-Leaning A for chat with the For You card pointing at the same task, which means the
-For You spec is amended by its Architect and CTO. Not decided. The PRs are held as
-drafts until it is.
+**Chosen: A.** Chat uses the task-backed draft, and the For You card should point at the
+same task instead of carrying its own `draft_final`. That needs the For You spec
+amended by its Architect and CTO (storage model only; the always-editable box, Revert
+to draft, plain text, the confirm tap and the flag stay as specified). Until they agree
+the PRs stay drafts.
 
 ## Built
 
