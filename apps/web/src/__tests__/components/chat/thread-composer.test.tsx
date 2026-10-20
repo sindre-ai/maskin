@@ -118,3 +118,29 @@ describe('ThreadComposer — draft persistence', () => {
 		expect(screen.getByLabelText('Message this conversation')).toHaveValue('')
 	})
 })
+
+describe('ThreadComposer — blocked reason', () => {
+	it('disables the textarea, names the agent in the placeholder and points at the notice', () => {
+		render(
+			<ThreadComposer
+				workspaceId="ws-1"
+				conversationId="convo-1"
+				blockedReason={{ agentName: 'Forge', noticeId: 'composer-notice' }}
+			/>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+		const textarea = screen.getByLabelText('Message this conversation')
+		expect(textarea).toBeDisabled()
+		expect(textarea).toHaveAttribute('placeholder', "Forge can't reply yet")
+		expect(textarea).toHaveAttribute('aria-describedby', 'composer-notice')
+	})
+
+	it('leaves the composer enabled with no describedby when not blocked', () => {
+		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		const textarea = screen.getByLabelText('Message this conversation')
+		expect(textarea).not.toBeDisabled()
+		expect(textarea).not.toHaveAttribute('aria-describedby')
+	})
+})
