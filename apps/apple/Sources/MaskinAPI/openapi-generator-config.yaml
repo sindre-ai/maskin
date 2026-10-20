@@ -69,6 +69,9 @@ filter:
     - /api/integrations/providers
     - /api/integrations/{id}
     - /api/integrations/{provider}/connect
+    - /api/integrations/linkedin-unipile/connect
+    - /api/integrations/github/pending-selection/{id}
+    - /api/integrations/github/select-installation
     - /api/integrations/{id}/complete
     - /api/marketplace/loops
     - /api/marketplace/loops/{id}
@@ -78,3 +81,5 @@ filter:
     - /api/conversations/{id}/participants/{actorId}
     - /api/briefing/spoken
     - /api/billing/usage
+    - /api/invites/preview
+    - /api/invites/{token}/accept

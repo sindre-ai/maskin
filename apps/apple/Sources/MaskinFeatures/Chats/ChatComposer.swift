@@ -51,6 +51,7 @@ struct ChatComposer: View {
 	#if os(iOS)
 	@State var liveDictation = Dictation()
 	@State var live: LiveVoiceController?
+	@State var liveAudio: LiveAudioSession?
 	@Environment(\.openURL) var openURL
 	#endif
 	/// What went wrong with a live conversation, shown once with a way to Settings.
@@ -101,28 +102,22 @@ extension ChatComposer {
 	fileprivate func startLive() {
 		#if os(iOS)
 		guard live == nil else { return }
-		let dictation = liveDictation
 		let model = model
 		let onSend = onSend
+		// The same engine as the full-screen call: its own recogniser and audio session.
 		let controller = LiveVoiceController(
-			ports: LiveVoiceController.Ports(
-				startListening: { onText in
-					await dictation.start(onText: onText)
-					if case .unavailable(let message) = dictation.state {
-						dictation.clearError()
-						return message
-					}
-					return nil
-				},
-				stopListening: { dictation.stop() },
-				isListening: { dictation.isListening },
-				speak: { id, markdown in SpeechReader.shared.enqueue(markdown: markdown, id: id) },
-				stopSpeaking: { SpeechReader.shared.stop() },
-				isSpeaking: { SpeechReader.shared.speakingID != nil },
-				send: { text in
-					model.text = text
-					onSend()
-				}))
+			ports: LiveMeetingSession.devicePorts(send: { text in
+				model.text = text
+				onSend()
+			}))
+		let audio = LiveAudioSession()
+		do {
+			try audio.activate(title: "Live conversation", voice: controller)
+			liveAudio = audio
+		} catch {
+			voiceProblem = "Couldn't open the audio session (\(error.localizedDescription))."
+			return
+		}
 		live = controller
 		controller.begin(existing: replies)
 		#else
@@ -134,6 +129,8 @@ extension ChatComposer {
 		#if os(iOS)
 		live?.end()
 		live = nil
+		liveAudio?.deactivate()
+		liveAudio = nil
 		#endif
 		voice = .idle
 	}
@@ -163,12 +160,17 @@ private struct LiveLifecycle: ViewModifier {
 	func body(content: Content) -> some View {
 		#if os(iOS)
 		content
-			.onDisappear { composer.live?.end() }
+			.onDisappear {
+				composer.live?.end()
+				composer.liveAudio?.deactivate()
+			}
 			.onChange(of: composer.replies.map(\.id)) { _, _ in composer.live?.messagesChanged(composer.replies) }
 			.onChange(of: composer.live?.isActive) { _, active in
 				guard active == false, let live = composer.live else { return }
 				if let failure = live.failure { composer.voiceProblem = failure }
 				composer.live = nil
+				composer.liveAudio?.deactivate()
+				composer.liveAudio = nil
 			}
 			.alert("Voice", isPresented: Binding(get: { composer.voiceProblem != nil }, set: { if !$0 { composer.voiceProblem = nil } })) {
 				Button("Open Settings") {

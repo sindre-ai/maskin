@@ -108,4 +108,68 @@ struct ChiefOfStaffLiveChatTests {
 			], chiefID: "chief", excludingTitle: "Daily briefing")
 		#expect(picked == nil)
 	}
+
+	@Test func noteWithTurnsRoundTrips() {
+		let title = LiveMeetingFormat.endNote(lead: "Relay", guests: ["Forge"], seconds: 421)
+		let note = LiveMeetingNote(
+			title: title,
+			turns: [
+				.init(speaker: "You", text: "what is blocked right now", isYou: true),
+				.init(speaker: "Relay", text: "Three bets.\n\nSee **Billing**.", isYou: false),
+			])
+		let parsed = LiveMeetingNote.parse(note.markdown)
+		#expect(parsed?.title == "Live meeting with Relay, with Forge · 7:01")
+		#expect(parsed?.heading == "Live meeting with Relay, with Forge")
+		#expect(parsed?.durationText == "7:01")
+		#expect(parsed?.turns.map(\.isYou) == [true, false])
+		#expect(parsed?.turns.last?.text == "Three bets. See **Billing**.")
+		#expect(parsed?.youCount == 1 && parsed?.agentCount == 1)
+		#expect(parsed?.lastAgentTurn?.speaker == "Relay")
+	}
+
+	@Test func emptyCallSaysNoSpeechWasCaptured() {
+		let note = LiveMeetingNote(title: "Live meeting with Relay · 0:42", turns: [])
+		#expect(note.markdown.hasSuffix(LiveMeetingNote.emptyText))
+		let parsed = LiveMeetingNote.parse(note.markdown)
+		#expect(parsed?.turns.isEmpty == true)
+	}
+
+	@Test func ordinaryMessagesAreNotNotes() {
+		#expect(LiveMeetingNote.parse("hello") == nil)
+		#expect(LiveMeetingNote.parse("Live meeting with Relay · 0:42") == nil)
+		#expect(LiveMeetingNote.parse("Live meeting with the team · tomorrow at nine") == nil)
+	}
+
+	@Test func longTranscriptKeepsTheLatestLines() {
+		let turns = (0..<60).map {
+			LiveMeetingTurn(speaker: "Relay", text: "line \($0) " + String(repeating: "x", count: 1000), isYou: false)
+		}
+		let markdown = LiveMeetingNote(title: "Live meeting with Relay · 9:00", turns: turns).markdown
+		#expect(markdown.count < LiveMeetingNote.maxTranscriptLength + 500)
+		#expect(markdown.contains("line 59"))
+		#expect(!markdown.contains("line 0 "))
+		#expect(markdown.contains("earlier lines left out"))
+	}
+
+	@Test func summaryPointsAtTheThreadInsteadOfRepeatingIt() {
+		let turns: [LiveMeetingTurn] = [
+			.init(speaker: "You", text: "what is blocked", isYou: true),
+			.init(speaker: "Relay", text: "Three bets.", isYou: false),
+			.init(speaker: "You", text: "who owns them", isYou: true),
+			.init(speaker: "Relay", text: "Forge owns two.", isYou: false),
+		]
+		let note = LiveMeetingNote.summary(title: "Live meeting with Relay · 7:01", turns: turns)
+		#expect(!note.markdown.contains("who owns them"))
+		let parsed = LiveMeetingNote.parse(note.markdown)
+		#expect(parsed?.isSummary == true)
+		#expect(parsed?.youCount == 2 && parsed?.agentCount == 2)
+		#expect(parsed?.firstYouTurn?.text == "what is blocked")
+		#expect(parsed?.lastAgentTurn?.text == "Forge owns two.")
+		#expect(parsed?.durationText == "7:01")
+	}
+
+	@Test func emptySummaryStillSaysNoSpeechWasCaptured() {
+		let note = LiveMeetingNote.summary(title: "Live meeting with Relay · 0:42", turns: [])
+		#expect(note.markdown.hasSuffix(LiveMeetingNote.emptyText))
+	}
 }
