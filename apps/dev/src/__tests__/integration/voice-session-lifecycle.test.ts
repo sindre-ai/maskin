@@ -316,7 +316,12 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 			process.env.MASKIN_VOICE_OPENAI_API_KEY = 'test-key'
 			setCreateRealtimeCallFn(okCall)
 			setOpenRealtimeSocketFn(openSocket)
-			setVoiceInvokeToolFactory(() => async () => ({ content: [] }))
+			setVoiceInvokeToolFactory(async () => ({
+				tools: [],
+				invokeTool: async () => ({ content: [] }),
+				unreachableServers: [],
+				close: async () => {},
+			}))
 		})
 		afterEach(() => {
 			// biome-ignore lint/performance/noDelete: process.env coerces undefined to the string "undefined"

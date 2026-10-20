@@ -89,11 +89,11 @@ struct ChiefOfStaffThreadsTests {
 		}
 	}
 
-	@Test("quick questions are three, and a decision's first names its recommended option")
+	@Test("quick questions are three; a decision gets the mockup's three")
 	func chips() {
 		let chips = ForYouQuickQuestions.chips(for: card)
 		#expect(chips.count == 3)
-		#expect(chips[0] == "Why 7-day window?")
+		#expect(chips == ["Explain it simply", "What if I wait?", "Who\u{2019}s involved?"])
 		let thread = ForYouQuickQuestions.chips(for: ForYouCard(id: "x"))
 		#expect(thread.count == 3)
 	}

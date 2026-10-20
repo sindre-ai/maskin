@@ -6,6 +6,7 @@ import {
 	resolveMeetPeopleId,
 } from '../../../../lib/integrations/providers/google-meet/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
+import { logger } from '../../../../lib/logger'
 
 describe('google-meet provider config', () => {
 	it('has correct name and display name', () => {
@@ -34,11 +35,12 @@ describe('google-meet provider config', () => {
 		})
 	})
 
-	it('requests only the four locked scopes — openid + userinfo.email + meetings.space.readonly + meetings.space.created', () => {
+	it('requests only the five locked scopes — openid + userinfo.email + userinfo.profile + meetings.space.readonly + meetings.space.created', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
 		expect(config.auth.config.scopes).toEqual([
 			'openid',
 			'https://www.googleapis.com/auth/userinfo.email',
+			'https://www.googleapis.com/auth/userinfo.profile',
 			'https://www.googleapis.com/auth/meetings.space.readonly',
 			'https://www.googleapis.com/auth/meetings.space.created',
 		])
@@ -158,6 +160,7 @@ describe('resolveMeetPeopleId', () => {
 	})
 
 	it('throws when the People API responds non-2xx', async () => {
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: false,
 			status: 403,
@@ -166,5 +169,9 @@ describe('resolveMeetPeopleId', () => {
 		} as Response)
 
 		await expect(resolveMeetPeopleId('ya29.a0test')).rejects.toThrow(/HTTP 403/)
+		expect(warnSpy).toHaveBeenCalledWith('Google People API call failed', {
+			httpStatus: 403,
+			body: 'PERMISSION_DENIED',
+		})
 	})
 })

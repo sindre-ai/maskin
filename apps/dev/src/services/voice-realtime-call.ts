@@ -1,6 +1,5 @@
 import type { Database } from '@maskin/db'
-import { VOICE_REALTIME_TOOLS } from '@maskin/mcp'
-import type { InvokeTool } from '@maskin/mcp'
+import type { InvokeTool, VoiceRealtimeTool } from '@maskin/mcp'
 import WebSocket from 'ws'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
@@ -52,6 +51,7 @@ export interface CreateRealtimeCallInput {
 	instructions: string
 	voice: string
 	model: string
+	tools: VoiceRealtimeTool[]
 }
 
 export type CreateRealtimeCallOutcome =
@@ -91,10 +91,8 @@ async function defaultCreateRealtimeCall(
 			},
 			output: { voice: input.voice },
 		},
-		// The v1 whitelist, pinned here (tech spec §Auth flow step 3). The channel
-		// re-enforces it per call, so this list and the gate share one source:
-		// @maskin/mcp.
-		tools: VOICE_REALTIME_TOOLS,
+		// Every MCP tool chat has, read from the server (see createVoiceToolkit).
+		tools: input.tools,
 		tool_choice: 'auto',
 	}
 	const form = new FormData()
@@ -225,6 +223,8 @@ export interface AttachVoiceCallInput {
 	session: VoiceSessionRow
 	agentName: string
 	invokeTool: InvokeTool
+	/** Releases what the call's tools hold open (connections to the agent's MCP servers). */
+	dispose?: () => Promise<void> | void
 	callId: string
 	apiKey: string
 	callsUrl?: string
@@ -257,6 +257,13 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	const now = input.now ?? Date.now
 	const openSocket = input.openSocket ?? openSocketFn
 	const url = realtimeSocketUrl(input.callId, input.callsUrl)
+
+	let disposed = false
+	const dispose = () => {
+		if (disposed) return
+		disposed = true
+		Promise.resolve(input.dispose?.()).catch(() => {})
+	}
 
 	let socket: RealtimeSocket | null = null
 	let opened = false
@@ -398,6 +405,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			resolve(ok)
 		}
 		const fail = (reason: string) => {
+			dispose()
 			closedByUs = true
 			try {
 				socket?.close()
@@ -422,6 +430,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				opened = true
 				liveCalls.set(session.id, {
 					close: () => {
+						dispose()
 						closedByUs = true
 						socket?.close()
 					},
@@ -442,6 +451,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 					if (!settled) fail('closed before open')
 					return
 				}
+				dispose()
 				if (closedByUs) return
 				liveCalls.delete(session.id)
 				logger.warn('Voice server socket dropped mid-call; ending the call', {

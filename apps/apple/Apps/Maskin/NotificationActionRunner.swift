@@ -77,6 +77,8 @@ struct NotificationActionRunner: Sendable {
 		switch outcome {
 		case .answered(let text):
 			content.body = "You chose \u{201C}\(Self.excerpt(text))\u{201D}"
+		case .deferred(let when):
+			content.body = "Later \u{00B7} \(when). It comes back to For you then."
 		case .queued(let text):
 			content.body =
 				"Saved \u{201C}\(Self.excerpt(text))\u{201D}. It sends when you're back online."

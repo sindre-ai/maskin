@@ -38,7 +38,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isMaskinMcpEntry(entry: unknown): entry is Record<string, unknown> {
+export function isMaskinMcpEntry(entry: unknown): entry is Record<string, unknown> {
 	if (!isPlainObject(entry)) return false
 	const e = entry as Record<string, unknown>
 	if (e.type !== undefined && e.type !== 'http') return false
