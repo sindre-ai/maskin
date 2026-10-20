@@ -12,6 +12,7 @@ import type { ActorResponse, AgentAccessView, AgentGrantAccess } from '@/lib/api
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS } from '@maskin/shared'
+import { Lock } from 'lucide-react'
 
 type IntegrationRowData = AgentAccessView['integrations'][number]
 type CredentialRowData = AgentAccessView['credentials'][number]
@@ -78,6 +79,49 @@ function IntegrationRow({
 	)
 }
 
+/**
+ * A custom tool server: on or off for this agent. Turning it on for one agent is the same
+ * grant as on the Integrations page, so this is a shortcut, not a second place to configure.
+ */
+function ToolServerRow({
+	row,
+	agentId,
+	workspaceId,
+}: {
+	row: IntegrationRowData
+	agentId: string
+	workspaceId: string
+}) {
+	const setGrant = useSetAgentGrant(workspaceId, row.integration_id)
+	const removeGrant = useRemoveAgentGrant(workspaceId, row.integration_id)
+	const canChange = useCanChange(row.created_by)
+	const busy = setGrant.isPending || removeGrant.isPending
+	const on = row.access !== 'none'
+	// Back to the default when the choice matches it, so the grant list stays free of redundant rows.
+	const matchesDefault = (next: boolean) => next === (row.default_access !== 'none')
+
+	return (
+		<li className="flex items-center gap-2 py-2">
+			<div className="min-w-0 flex-1">
+				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
+				<p className="text-xs text-muted-foreground">
+					{on ? (row.source === 'default' ? 'On for all agents' : 'On') : 'Off'}
+				</p>
+			</div>
+			<Switch
+				checked={on}
+				disabled={!canChange || busy}
+				aria-label={`${row.name} for this agent`}
+				onCheckedChange={(next) =>
+					matchesDefault(next)
+						? removeGrant.mutate(agentId)
+						: setGrant.mutate({ actorId: agentId, access: next ? 'read_write' : 'none' })
+				}
+			/>
+		</li>
+	)
+}
+
 /** Always, not at all, or only in the chats a person allowed it in. */
 export function credentialStatus(
 	row: Pick<CredentialRowData, 'has_access' | 'chat_count'>,
@@ -133,23 +177,49 @@ function CredentialRow({
 export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const { data } = useAgentAccess(workspaceId, agent.id)
-	if (!data || (data.integrations.length === 0 && data.credentials.length === 0)) return null
+	if (!data) return null
+	const integrations = data.integrations.filter((r) => r.kind !== 'tool_server')
+	const toolServers = data.integrations.filter((r) => r.kind === 'tool_server')
 
 	return (
 		<section aria-labelledby="agent-access-heading" className="flex flex-col gap-2.5">
-			<AgentSectionHeading id="agent-access-heading" title="Access" />
+			<AgentSectionHeading id="agent-access-heading" title="Tools and access" />
 			<div className="rounded-xl border border-border bg-card px-4 py-2">
-				{data.integrations.length > 0 && (
-					<ul className="divide-y divide-border" aria-label="Integrations">
-						{data.integrations.map((row) => (
-							<IntegrationRow
-								key={row.integration_id}
-								row={row}
-								agentId={agent.id}
-								workspaceId={workspaceId}
-							/>
-						))}
-					</ul>
+				<ul className="divide-y divide-border" aria-label="Tools">
+					{/* On every agent and not changeable: without it an agent cannot do anything in Maskin. */}
+					<li className="flex items-center gap-2 py-2">
+						<div className="min-w-0 flex-1">
+							<p className="truncate text-sm font-medium text-foreground">{data.maskin_mcp.name}</p>
+							<p className="text-xs text-muted-foreground">Every agent has it</p>
+						</div>
+						<span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+							<Lock className="h-3.5 w-3.5" aria-hidden="true" />
+							{AGENT_ACCESS_LABELS[data.maskin_mcp.access]}
+						</span>
+					</li>
+					{toolServers.map((row) => (
+						<ToolServerRow
+							key={row.integration_id}
+							row={row}
+							agentId={agent.id}
+							workspaceId={workspaceId}
+						/>
+					))}
+				</ul>
+				{integrations.length > 0 && (
+					<>
+						<p className="settings-label pb-1 pt-3">Integrations</p>
+						<ul className="divide-y divide-border" aria-label="Integrations">
+							{integrations.map((row) => (
+								<IntegrationRow
+									key={row.integration_id}
+									row={row}
+									agentId={agent.id}
+									workspaceId={workspaceId}
+								/>
+							))}
+						</ul>
+					</>
 				)}
 				{data.credentials.length > 0 && (
 					<>
@@ -167,8 +237,8 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 					</>
 				)}
 				<p className="pb-2 pt-2 text-xs text-muted-foreground">
-					Applies to new sessions. The same access is shown under Settings → Integrations and
-					Keychain.
+					Applies to new sessions. Add or edit tool servers under Settings → Integrations; the same
+					access is shown there and under Keychain.
 				</p>
 			</div>
 		</section>

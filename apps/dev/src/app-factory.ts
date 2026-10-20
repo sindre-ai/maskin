@@ -34,6 +34,7 @@ import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
+import customMcpServersRoutes from './routes/custom-mcp-servers'
 import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
@@ -411,6 +412,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)

@@ -77,6 +77,7 @@ async function stub(page: Page, workspaceId: string, creator: string, state: Sta
 		const access = own?.access ?? state.defaultAgentAccess
 		return route.fulfill({
 			json: {
+				maskin_mcp: { name: 'Maskin', access: 'read_write', locked: true },
 				integrations: [
 					{
 						integration_id: LINEAR_ID,
@@ -87,6 +88,7 @@ async function stub(page: Page, workspaceId: string, creator: string, state: Sta
 						default_access: state.defaultAgentAccess,
 						server_attached: access !== 'none',
 						created_by: creator,
+						kind: 'integration',
 					},
 				],
 				credentials: [],

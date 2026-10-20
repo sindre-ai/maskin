@@ -1,6 +1,6 @@
 import { AgentAccessSection, credentialStatus } from '@/components/agents/agent-access-section'
 import type { ActorResponse, AgentAccessView } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +23,7 @@ const agent = { id: 'agent-1', name: 'Reviewer', type: 'agent' } as ActorRespons
 
 function data(over: Partial<AgentAccessView> = {}): AgentAccessView {
 	return {
+		maskin_mcp: { name: 'Maskin', access: 'read_write', locked: true },
 		integrations: [
 			{
 				integration_id: 'int-linear',
@@ -33,6 +34,7 @@ function data(over: Partial<AgentAccessView> = {}): AgentAccessView {
 				default_access: 'read',
 				server_attached: true,
 				created_by: 'human-1',
+				kind: 'integration',
 			},
 		],
 		credentials: [
@@ -79,6 +81,7 @@ describe('AgentAccessSection', () => {
 					default_access: 'none',
 					server_attached: false,
 					created_by: 'human-1',
+					kind: 'integration',
 				},
 			],
 		})
@@ -145,9 +148,77 @@ describe('AgentAccessSection', () => {
 		expect(screen.getByRole('switch', { name: 'Stripe for this agent' })).toBeDisabled()
 	})
 
-	it('renders nothing when there is nothing to show', () => {
-		view = { integrations: [], credentials: [] }
-		const { container } = render(<AgentAccessSection agent={agent} />)
-		expect(container).toBeEmptyDOMElement()
+	it('always lists the Maskin MCP as read & write with nothing to switch', () => {
+		view = data({ integrations: [], credentials: [] })
+		render(<AgentAccessSection agent={agent} />)
+		const tools = screen.getByRole('list', { name: 'Tools' })
+		expect(within(tools).getByText('Maskin')).toBeInTheDocument()
+		expect(within(tools).getByText('Read & write')).toBeInTheDocument()
+		expect(within(tools).queryByRole('switch')).not.toBeInTheDocument()
+		expect(within(tools).queryByRole('combobox')).not.toBeInTheDocument()
+	})
+
+	describe('a custom tool server', () => {
+		const server = (over: Record<string, unknown> = {}) => ({
+			...data().integrations[0],
+			integration_id: 'int-docs',
+			provider: 'custom-mcp',
+			name: 'Docs search',
+			access: 'none' as const,
+			source: 'default' as const,
+			default_access: 'none' as const,
+			kind: 'tool_server' as const,
+			...over,
+		})
+
+		it('is on or off, not a level, and sits with the tools rather than the integrations', () => {
+			view = data({ integrations: [server()] })
+			render(<AgentAccessSection agent={agent} />)
+			const tools = screen.getByRole('list', { name: 'Tools' })
+			expect(within(tools).getByText('Docs search')).toBeInTheDocument()
+			expect(within(tools).getByText('Off')).toBeInTheDocument()
+			expect(screen.queryByRole('combobox', { name: 'Access to Docs search' })).toBeNull()
+			expect(screen.queryByRole('list', { name: 'Integrations' })).toBeNull()
+		})
+
+		it('turns on with its own grant when the default is off', async () => {
+			view = data({ integrations: [server()] })
+			render(<AgentAccessSection agent={agent} />)
+			await userEvent
+				.setup()
+				.click(screen.getByRole('switch', { name: 'Docs search for this agent' }))
+			expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read_write' })
+		})
+
+		it('turns off with a No access grant when it is on for every agent', async () => {
+			view = data({
+				integrations: [server({ access: 'read', default_access: 'read', server_attached: true })],
+			})
+			render(<AgentAccessSection agent={agent} />)
+			expect(screen.getByText('On for all agents')).toBeInTheDocument()
+			await userEvent
+				.setup()
+				.click(screen.getByRole('switch', { name: 'Docs search for this agent' }))
+			expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'none' })
+		})
+
+		it('drops the grant when the choice matches the default', async () => {
+			// An explicit On while the default is Off: switching it off is back to the default.
+			view = data({
+				integrations: [
+					server({
+						access: 'read_write',
+						source: 'grant',
+						default_access: 'none',
+						server_attached: true,
+					}),
+				],
+			})
+			render(<AgentAccessSection agent={agent} />)
+			await userEvent
+				.setup()
+				.click(screen.getByRole('switch', { name: 'Docs search for this agent' }))
+			expect(removeGrant).toHaveBeenCalledWith('agent-1')
+		})
 	})
 })

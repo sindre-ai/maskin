@@ -12,6 +12,7 @@ import {
 	upsertAgentGrant,
 } from '../lib/integrations/agent-grants'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { logger } from '../lib/logger'
 import {
 	agentGrantAccessSchema,
@@ -141,6 +142,22 @@ async function loadEditable(
 	}
 }
 
+/**
+ * Whether this access level makes no sense for the integration. A saved key or login is on or
+ * off (read_write or no row). A custom tool server is on (read_write) or off (none): Maskin
+ * cannot tell which of an arbitrary server's tools only read, so there is no read-only level.
+ */
+function levelNotAllowed(
+	target: { provider: string; providerMode: string },
+	access: string,
+): 'keychain_access' | 'custom_access' | null {
+	if (isKeychainMode(target.providerMode as never)) {
+		return access !== 'read_write' ? 'keychain_access' : null
+	}
+	if (target.provider === CUSTOM_MCP_PROVIDER && access === 'read') return 'custom_access'
+	return null
+}
+
 function failure(reason: string): {
 	error: ReturnType<typeof createApiError>
 	status: 400 | 403 | 404 | 409
@@ -164,6 +181,14 @@ function failure(reason: string): {
 		case 'outside':
 			return {
 				error: createApiError('BAD_REQUEST', 'That actor is not an agent in this workspace'),
+				status: 400,
+			}
+		case 'custom_access':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'A custom tool server is on or off for an agent: use read_write or none',
+				),
 				status: 400,
 			}
 		case 'keychain_access':
@@ -234,8 +259,9 @@ app.openapi(replaceGrantsRoute, (async (c) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
 		const keychain = isKeychainMode(target.providerMode as never)
-		if (keychain && grants.some((g) => g.access !== 'read_write')) {
-			return 'keychain_access' as const
+		for (const g of grants) {
+			const bad = levelNotAllowed(target, g.access)
+			if (bad) return bad
 		}
 		if (
 			!(await actorsAreWorkspaceAgents(
@@ -328,9 +354,8 @@ app.openapi(putGrantRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
-		if (isKeychainMode(target.providerMode as never) && access !== 'read_write') {
-			return 'keychain_access' as const
-		}
+		const bad = levelNotAllowed(target, access)
+		if (bad) return bad
 		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [actorId]))) return 'outside' as const
 
 		const previous = await upsertAgentGrant(tx, {
