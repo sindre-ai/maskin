@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { evictActor, evictApiKey, evictMembership, verifyPassword } from '@maskin/auth'
+import { evictActor, evictMembership, revokeActorKeys, verifyPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -153,7 +152,7 @@ app.openapi(deleteRoute, async (c) => {
 		await lockActorForOwnershipClaim(tx, actorId)
 		// Lock the person's row so two deletions, or a deletion racing a transfer, can't interleave.
 		const [locked] = await tx
-			.select({ id: actors.id, apiKey: actors.apiKey })
+			.select({ id: actors.id })
 			.from(actors)
 			.where(eq(actors.id, actorId))
 			.for('update')
@@ -205,16 +204,17 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(userDisplaySettings).where(eq(userDisplaySettings.actorId, actorId))
 		await tx.delete(slackUserLinks).where(eq(slackUserLinks.actorId, actorId))
 
-		// The row stays (records elsewhere reference it) but nothing about the person does. The key
-		// is replaced with a random value nobody holds; null password and email mean no sign-in and
-		// a free email.
+		// The row stays (records elsewhere reference it) but nothing about the person does. Every
+		// key is revoked and the legacy plaintext column is cleared; null password and email mean no
+		// sign-in and a free email.
+		await revokeActorKeys(tx, actorId)
 		await tx
 			.update(actors)
 			.set({
 				name: DELETED_ACTOR_NAME,
 				email: null,
 				passwordHash: null,
-				apiKey: `deleted_${randomUUID().replaceAll('-', '')}`,
+				apiKey: null,
 				description: null,
 				systemPrompt: null,
 				tools: null,
@@ -229,7 +229,6 @@ app.openapi(deleteRoute, async (c) => {
 
 		return {
 			kind: 'deleted' as const,
-			oldApiKey: locked.apiKey,
 			workspaceIds: memberships.map((m) => m.workspaceId).filter((id) => !purgedIds.has(id)),
 			purged,
 		}
@@ -248,7 +247,6 @@ app.openapi(deleteRoute, async (c) => {
 	}
 
 	// Takes effect on the very next request, not when the cached lookups expire.
-	evictApiKey(result.oldApiKey)
 	evictActor(actorId)
 	for (const workspaceId of result.workspaceIds) evictMembership(actorId, workspaceId)
 	for (const p of result.purged) {

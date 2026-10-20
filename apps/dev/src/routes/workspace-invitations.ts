@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword, validateApiKey } from '@maskin/auth'
+import { hashPassword, issueApiKey, validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -91,9 +91,10 @@ function isInviteExpired(invite: { expiresAt: Date; status: string }): boolean {
 
 function stripActorSecretsForResponse(
 	actor: typeof actors.$inferSelect,
+	apiKey: string,
 ): z.infer<typeof actorResponseInAcceptSchema> {
 	const {
-		apiKey,
+		apiKey: _legacyApiKey,
 		passwordHash: _passwordHash,
 		systemPrompt,
 		llmProvider,
@@ -105,7 +106,7 @@ function stripActorSecretsForResponse(
 		system_prompt: systemPrompt,
 		llm_provider: llmProvider,
 		llm_config: llmConfig,
-		api_key: apiKey ?? '',
+		api_key: apiKey,
 	} as z.infer<typeof actorResponseInAcceptSchema>
 }
 
@@ -313,7 +314,9 @@ app.post('/:token/accept', async (c) => {
 			)
 		}
 
-		const { key: apiKey } = generateApiKey()
+		// Hashed at rest, so the new account's key is minted inside the accept transaction and shown
+		// once, in this response.
+		let apiKey = ''
 		const passwordHash = await hashPassword(body.password ?? '')
 		const displayName = (body.name ?? body.email ?? '').trim() || (body.email ?? '')
 
@@ -341,7 +344,6 @@ app.post('/:token/accept', async (c) => {
 						type: 'human',
 						name: displayName,
 						email: body.email,
-						apiKey,
 						passwordHash,
 						createdBy: null,
 					})
@@ -354,6 +356,7 @@ app.post('/:token/accept', async (c) => {
 					// instead of a TypeError deep in the join below.
 					throw new Error('Actor insert returned no row')
 				}
+				apiKey = (await issueApiKey(tx, { actorId: insertedActor.id, kind: 'primary' })).key
 
 				// Lock workspace, run seat-cap check exactly like POST /workspaces/:id/members.
 				const [locked] = await tx
@@ -467,7 +470,7 @@ app.post('/:token/accept', async (c) => {
 
 		return c.json(
 			{
-				actor: stripActorSecretsForResponse(outcome.actor),
+				actor: stripActorSecretsForResponse(outcome.actor, apiKey),
 				workspaceId: outcome.workspaceId,
 			},
 			201,

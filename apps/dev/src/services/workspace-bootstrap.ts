@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -192,7 +191,6 @@ export async function seedDefaultAgentActors(
 					llmConfig: spec.llmConfig,
 					tools: spec.tools,
 					metadata: spec.metadata,
-					apiKey: generateApiKey().key,
 					createdBy,
 				})
 				.returning()
@@ -256,7 +254,6 @@ export async function ensureChiefOfStaffActor(
 			llmConfig: chiefSpec.llmConfig,
 			tools: chiefSpec.tools,
 			metadata: chiefSpec.metadata,
-			apiKey: generateApiKey().key,
 			createdBy,
 		})
 		.returning()
@@ -466,7 +463,6 @@ export async function bootstrapDefaultAgents(
 					systemPrompt,
 					tools: (agent.tools ?? null) as Record<string, unknown> | null,
 					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
-					apiKey: generateApiKey().key,
 					createdBy,
 				})
 				.returning()
