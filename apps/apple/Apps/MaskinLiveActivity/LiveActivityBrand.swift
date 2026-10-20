@@ -35,8 +35,8 @@ private struct LiveActivityMarkShape: Shape {
 	}
 }
 
-/// The agent's tile: its first letter on the signal tint (the platform agent "Maskin" shows the
-/// logo tile instead, never a letter).
+/// The agent's tile: up to two letters on the Patina avatar gradient, as in the mockup ("Co"); the
+/// platform agent "Maskin" shows the logo tile instead, never letters.
 struct LiveActivityAgentTile: View {
 	let name: String
 	var size: CGFloat = 44
@@ -46,13 +46,41 @@ struct LiveActivityAgentTile: View {
 			if name.trimmingCharacters(in: .whitespaces).lowercased() == "maskin" {
 				LiveActivityMarkTile(size: size)
 			} else {
-				Text(String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased())
+				let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+				Text(Self.initials(name))
 					.font(MaskinTypeface.sans(size * 0.4, weight: .bold, relativeTo: .caption))
 					.foregroundStyle(MaskinColor.avFg)
 					.frame(width: size, height: size)
-					.background(MaskinGradient.avatar, in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
+					.background(MaskinGradient.avatar, in: shape)
 			}
 		}
+		.accessibilityHidden(true)
+	}
+
+	/// First two letters of the first word ("Chief of Staff" gives "Ch" in the mockup's "Co" style).
+	static func initials(_ name: String) -> String {
+		let word = name.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "?"
+		let letters = word.filter { $0.isLetter || $0.isNumber }
+		guard let first = letters.first else { return "?" }
+		return String(first).uppercased() + letters.dropFirst().prefix(1).lowercased()
+	}
+}
+
+/// The "someone is talking" level bars (4 x 4pt, signal). A Live Activity cannot animate on its
+/// own, so the heights are fixed; they dim while muted.
+struct LiveActivityLevelBars: View {
+	var muted = false
+	private static let heights: [CGFloat] = [0.5, 1, 0.7, 0.85]
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s2) {
+			ForEach(Array(Self.heights.enumerated()), id: \.offset) { _, h in
+				Capsule().fill(MaskinColor.sigHi)
+					.frame(width: 4, height: 24 * h)
+			}
+		}
+		.frame(height: 24)
+		.opacity(muted ? 0.35 : 1)
 		.accessibilityHidden(true)
 	}
 }

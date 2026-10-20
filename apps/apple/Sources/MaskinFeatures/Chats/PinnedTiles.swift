@@ -21,6 +21,9 @@ struct PinnedTiles<Menu: View>: View {
 	@State private var dragging: String?
 	@State private var dragOffset: CGSize = .zero
 	@State private var frames: [String: CGRect] = [:]
+	@State private var dragEndedAt = Date.distantPast
+	/// The lifted tile was dragged (or swapped): its release is a reorder, not a tap.
+	@State private var moved = false
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	private static var space: String { "pinnedTiles" }
@@ -31,10 +34,18 @@ struct PinnedTiles<Menu: View>: View {
 	var body: some View {
 		LazyVGrid(columns: Self.columns, spacing: MaskinSpace.s4 + 1) {
 			ForEach(tiles) { tile in
-				PinnedTile(
-					tile: tile, currentActorID: currentActorID, workingAgentIDs: workingAgentIDs,
-					lifted: dragging == tile.id
-				)
+				// A real Button opens the chat on the first tap. A tap gesture racing the long-press
+				// reorder gesture and the context menu inside a List row was dropped or delayed.
+				Button {
+					// Not after a reorder drag; a press that lifted the tile but never moved is a tap.
+					if !(dragging != nil && moved), Date().timeIntervalSince(dragEndedAt) > 0.3 { onOpen(tile) }
+				} label: {
+					PinnedTile(
+						tile: tile, currentActorID: currentActorID, workingAgentIDs: workingAgentIDs,
+						lifted: dragging == tile.id
+					)
+				}
+				.buttonStyle(.plain)
 				.overlay(alignment: .topLeading) {
 					if let picking, case .conversation(let c) = tile.kind {
 						SelectionCheckbox(isPicked: picking.contains(c.id)).padding(MaskinSpace.s4)
@@ -47,10 +58,8 @@ struct PinnedTiles<Menu: View>: View {
 						Color.clear.preference(key: TileFrameKey.self, value: [tile.id: geo.frame(in: .named(Self.space))])
 					}
 				}
-				.onTapGesture { if dragging == nil { onOpen(tile) } }
-				.gesture(picking == nil ? dragGesture(for: tile) : nil)
+				.simultaneousGesture(picking == nil ? dragGesture(for: tile) : nil)
 				.contextMenu { if picking == nil { menu(tile) } }
-				.accessibilityAddTraits(.isButton)
 				.accessibilityAction(named: "Move earlier") { move(tile, by: -1) }
 				.accessibilityAction(named: "Move later") { move(tile, by: 1) }
 			}
@@ -71,12 +80,14 @@ struct PinnedTiles<Menu: View>: View {
 				case .first(true):
 					if dragging != tile.id {
 						dragging = tile.id
+						moved = false
 						dragOffset = .zero
 						MaskinHaptics.play(.medium)
 					}
 				case .second(true, let drag?):
 					guard let frame = frames[tile.id] else { return }
 					dragOffset = CGSize(width: drag.location.x - frame.midX, height: drag.location.y - frame.midY)
+					if hypot(drag.translation.width, drag.translation.height) > MaskinSpace.s5 { moved = true }
 					if let target = frames.first(where: { $0.key != tile.id && $0.value.contains(drag.location) })?.key {
 						onMove(tile.id, target)
 						MaskinHaptics.play(.selection)
@@ -86,6 +97,10 @@ struct PinnedTiles<Menu: View>: View {
 				}
 			}
 			.onEnded { _ in
+				// Held past the lift delay but let go without moving: the person meant to open it.
+				let wasTap = dragging == tile.id && !moved
+				if dragging != nil { dragEndedAt = Date() }
+				if wasTap { onOpen(tile) }
 				dragging = nil
 				dragOffset = .zero
 			}

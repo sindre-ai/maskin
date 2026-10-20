@@ -518,6 +518,7 @@ app.openapi(loopActivityRoute, (async (c) => {
 		'session_completed',
 		'session_failed',
 		'session_timeout',
+		'session_stopped',
 		'session_paused',
 	]
 

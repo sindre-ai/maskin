@@ -119,3 +119,27 @@ export function stampMaskinSessionHeader<T extends Record<string, unknown> | nul
 	}
 	return (changed ? out : mcpServers) as T
 }
+
+/**
+ * The Maskin MCP server as every agent gets it. It is attached to every session
+ * whether or not the agent's own config lists it: without it an agent cannot read or
+ * write anything in Maskin, so it is not a choice anyone makes per agent. The
+ * placeholders are expanded inside the container (see agent-run.sh's setup_mcps()).
+ */
+export const MASKIN_MCP_SERVER_KEY = 'maskin'
+export const MASKIN_MCP_SERVER = {
+	type: 'http',
+	url: '${MASKIN_API_URL}/mcp',
+	headers: {
+		Authorization: 'Bearer ${MASKIN_API_KEY}',
+		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
+	},
+} as const
+
+/** True when any of the given MCP maps already carries the Maskin MCP server. */
+export function hasMaskinMcpEntry(
+	...maps: Array<Record<string, unknown> | null | undefined>
+): boolean {
+	return maps.some((map) => !!map && Object.values(map).some((entry) => isMaskinMcpEntry(entry)))
+}

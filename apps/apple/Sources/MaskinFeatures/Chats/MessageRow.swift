@@ -391,3 +391,66 @@ struct ResumeBanner: View {
 		.accessibilityElement(children: .contain)
 	}
 }
+
+extension View {
+	/// The shape the long-press menu lifts (iOS); elsewhere the view as it is.
+	func contextPreview<S: Shape>(_ shape: S) -> some View {
+		#if os(iOS)
+		contentShape(.contextMenuPreview, shape)
+		#else
+		self
+		#endif
+	}
+}
+
+/// The agent is composing a reply (before any activity shows): its name above three pulsing 7pt dots
+/// in an agent-shaped bubble. Dots always mean composing; work gets equalizer bars (`WorkingBars`).
+struct TypingBubble: View {
+	let agent: ChatParticipant
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			HStack(spacing: MaskinSpace.s3) {
+				ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id)
+					.accessibilityHidden(true)
+				Text(agent.name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+			}
+			dots
+				.padding(.horizontal, MaskinSpace.s10 - MaskinSpace.s1)
+				.padding(.vertical, MaskinSpace.s9)
+				.background(
+					MaskinSurface.card,
+					in: UnevenRoundedRectangle(
+						topLeadingRadius: MaskinSpace.s3, bottomLeadingRadius: MaskinRadius.tile,
+						bottomTrailingRadius: MaskinRadius.tile, topTrailingRadius: MaskinRadius.tile,
+						style: .continuous))
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("\(agent.name) is typing")
+	}
+
+	/// Three 7pt dots, pulsing over 1s and staggered by 0.2s.
+	private var dots: some View {
+		HStack(spacing: MaskinSpace.s2) {
+			ForEach(0..<3, id: \.self) { i in
+				Circle().fill(MaskinColor.ink5).frame(width: MaskinSpace.s3 + MaskinSpace.s1 / 2, height: MaskinSpace.s3 + MaskinSpace.s1 / 2)
+					.phaseAnimator([0.3, 1.0], trigger: reduceMotion) { view, phase in
+						view.opacity(reduceMotion ? 0.7 : phase)
+					} animation: { _ in
+						.easeInOut(duration: 0.5).delay(Double(i) * 0.2)
+					}
+			}
+		}
+	}
+}
+
+/// Three small equalizer bars in signal green: "working on a task" (live activity, Flows rows,
+/// handoff cards). Still under Reduce Motion.
+struct WorkingBars: View {
+	var body: some View {
+		VoiceWaveform(bars: 3, height: MaskinSpace.s8, barWidth: MaskinSpace.s1, tint: MaskinColor.sig)
+			.fixedSize()
+	}
+}

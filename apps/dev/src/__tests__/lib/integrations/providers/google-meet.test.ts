@@ -6,6 +6,7 @@ import {
 	resolveMeetPeopleId,
 } from '../../../../lib/integrations/providers/google-meet/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
+import { logger } from '../../../../lib/logger'
 
 describe('google-meet provider config', () => {
 	it('has correct name and display name', () => {
@@ -125,46 +126,47 @@ describe('resolveExternalId', () => {
 describe('resolveMeetPeopleId', () => {
 	afterEach(() => vi.restoreAllMocks())
 
-	it('extracts metadata.sources[0].id from a People.get(me) response', async () => {
+	it('returns the account id from the userinfo response', async () => {
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: true,
 			text: () => Promise.resolve(''),
-			json: () =>
-				Promise.resolve({
-					resourceName: 'people/c123456789',
-					metadata: { sources: [{ type: 'PROFILE', id: '123456789' }] },
-				}),
+			json: () => Promise.resolve({ id: '123456789', email: 'a@example.com' }),
 		} as Response)
 
 		const peopleId = await resolveMeetPeopleId('ya29.a0test')
 
 		expect(peopleId).toBe('123456789')
 		expect(fetchSpy).toHaveBeenCalledWith(
-			'https://people.googleapis.com/v1/people/me?personFields=metadata',
+			'https://www.googleapis.com/oauth2/v2/userinfo',
 			expect.objectContaining({
 				headers: { Authorization: 'Bearer ya29.a0test' },
 			}),
 		)
 	})
 
-	it('throws when metadata.sources is empty', async () => {
+	it('throws when the response has no id', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: true,
 			text: () => Promise.resolve(''),
-			json: () => Promise.resolve({ metadata: { sources: [] } }),
+			json: () => Promise.resolve({ email: 'a@example.com' }),
 		} as Response)
 
-		await expect(resolveMeetPeopleId('ya29.a0test')).rejects.toThrow(/metadata\.sources/)
+		await expect(resolveMeetPeopleId('ya29.a0test')).rejects.toThrow(/missing id/)
 	})
 
-	it('throws when the People API responds non-2xx', async () => {
+	it('throws and logs status and body when userinfo responds non-2xx', async () => {
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			ok: false,
-			status: 403,
-			text: () => Promise.resolve('PERMISSION_DENIED'),
+			status: 401,
+			text: () => Promise.resolve('UNAUTHENTICATED'),
 			json: () => Promise.resolve({}),
 		} as Response)
 
-		await expect(resolveMeetPeopleId('ya29.a0test')).rejects.toThrow(/HTTP 403/)
+		await expect(resolveMeetPeopleId('ya29.a0test')).rejects.toThrow(/HTTP 401/)
+		expect(warnSpy).toHaveBeenCalledWith('Google userinfo call failed while resolving People id', {
+			httpStatus: 401,
+			body: 'UNAUTHENTICATED',
+		})
 	})
 })

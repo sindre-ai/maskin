@@ -15,8 +15,6 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 		]),
 		mode: 'cards',
 		onModeChange: vi.fn(),
-		sort: 'attention',
-		onSortChange: vi.fn(),
 		filterPills: false,
 		onFilterPillsChange: vi.fn(),
 		bulkActions: [
@@ -42,13 +40,13 @@ describe('ForYouHeader', () => {
 		expect(props.onTypeFilterChange).toHaveBeenCalledWith('bet')
 	})
 
-	it('reads the active view, filter and sort back on the menu trigger', () => {
+	it('reads the active view and filter back on the menu trigger', () => {
 		renderHeader({ mode: 'list' })
 		expect(screen.getByRole('button', { name: 'View options' })).toHaveTextContent('List')
 
-		renderHeader({ mode: 'cards', typeFilter: 'bet', sort: 'chrono' })
+		renderHeader({ mode: 'cards', typeFilter: 'bet' })
 		expect(screen.getAllByRole('button', { name: 'View options' })[1]).toHaveTextContent(
-			'Cards · Bets · Chronological',
+			'Cards · Bets',
 		)
 	})
 
@@ -61,13 +59,13 @@ describe('ForYouHeader', () => {
 		expect(props.onModeChange).toHaveBeenCalledWith('list')
 	})
 
-	it('changes the sort from the menu', async () => {
+	it('offers no sort: the Chief of Staff sets the order', async () => {
 		const user = userEvent.setup()
-		const { props } = renderHeader()
+		renderHeader()
 
 		await user.click(screen.getByRole('button', { name: 'View options' }))
-		await user.click(await screen.findByRole('menuitem', { name: /Chronological/ }))
-		expect(props.onSortChange).toHaveBeenCalledWith('chrono')
+		await screen.findByRole('menuitem', { name: /^List/ })
+		expect(screen.queryByRole('menuitem', { name: /Chronological/ })).not.toBeInTheDocument()
 	})
 
 	it('filters by type from the SHOW section', async () => {

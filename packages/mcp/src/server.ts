@@ -2,6 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+	type MentionNameResolution,
+	type MentionParticipant,
+	resolveMentionNames,
+} from './mention-names'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
@@ -1099,7 +1104,7 @@ async function createSessionAndWait(
 
 	let sessionId = session.id
 	const deadline = Date.now() + WAIT_LIMIT_MS
-	const terminalStatuses = ['completed', 'failed', 'timeout']
+	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
 	// §17.6: when a session hits a subscription limit its terminal report
 	// carries retried_session_id — the id of the retry the scheduler
 	// enqueued. Follow the redirect so a caller waiting here sees the retry's
@@ -3880,6 +3885,24 @@ export function createMcpServer(config: McpConfig) {
 					setupApiCaller(config),
 				)
 				withUrl = { ...withUrl, setup }
+				// What this agent can use: the same description the Integrations, Keychain and agent
+				// pages and its launch prompt read, so it cannot differ from any of them.
+				if (wsId) {
+					try {
+						const access = await apiCall(
+							config,
+							'GET',
+							`/api/actors/${result.id}/access`,
+							undefined,
+							{
+								workspaceId: wsId,
+							},
+						)
+						withUrl = { ...withUrl, access }
+					} catch {
+						// Not every caller may see it; the rest of the actor is still worth returning.
+					}
+				}
 			}
 
 			const heroCard: HeroCardPayload = {
@@ -4659,6 +4682,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					name: args.name,
 					description: args.description,
+					...(args.kind !== undefined ? { kind: args.kind } : {}),
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
@@ -4685,6 +4709,7 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
+			if (args.kind) params.set('kind', args.kind)
 			params.set('limit', String(pagination.limit + 1))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -4777,6 +4802,7 @@ export function createMcpServer(config: McpConfig) {
 			const body: Record<string, unknown> = {}
 			if (args.name !== undefined) body.name = args.name
 			if (args.description !== undefined) body.description = args.description
+			if (args.kind !== undefined) body.kind = args.kind
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
@@ -5005,7 +5031,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, ...body } = args
+			const { workspace_id, conversation_id, mention_names, ...body } = args
+			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
+			// nobody. Resolve against the live participant list and report misses.
+			let unresolvedMentions: MentionNameResolution['unresolved'] = []
+			if (mention_names?.length) {
+				const conversation = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${conversation_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { participants?: MentionParticipant[] }
+				const { resolved, unresolved } = resolveMentionNames(
+					mention_names,
+					conversation.participants ?? [],
+				)
+				unresolvedMentions = unresolved
+				if (resolved.length > 0) {
+					const mentions = Array.from(new Set([...(body.metadata?.mentions ?? []), ...resolved]))
+					body.metadata = { ...body.metadata, mentions }
+				}
+			}
 			// SESSION_ID is injected by session-manager into every agent
 			// container's env — stamping it here lets the conversations route
 			// attribute this message back to the session that produced it
@@ -5021,13 +5068,17 @@ export function createMcpServer(config: McpConfig) {
 				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
 				{ workspaceId: workspace_id },
 			)
+			const withMentionReport =
+				unresolvedMentions.length > 0
+					? { ...(result as Record<string, unknown>), unresolved_mentions: unresolvedMentions }
+					: result
 			return {
 				_meta: meta(
 					'post_conversation_message',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withMentionReport, null, 2) }],
 			}
 		},
 	)
@@ -5820,10 +5871,10 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Notifications ────────────────────────────────────────
-	// Temporarily hidden from the MCP surface while we rethink the notification
-	// product flow. Tool definitions remain in `tools.ts` so re-enabling is a
-	// matter of uncommenting these `registerAppTool` calls.
-	/*
+	// create_notification, list_notifications and update_notification are live: the
+	// Chief of Staff curates the For You list with them. get_notification and
+	// delete_notification stay hidden while we rethink the wider notification flow;
+	// their definitions remain in `tools.ts`, so re-enabling is uncommenting them.
 	registerAppTool(
 		server,
 		'create_notification',
@@ -5894,6 +5945,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	/*
 	registerAppTool(
 		server,
 		'get_notification',
@@ -5912,6 +5964,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 		},
 	)
+	*/
 
 	registerAppTool(
 		server,
@@ -5937,6 +5990,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	/*
 	registerAppTool(
 		server,
 		'delete_notification',
@@ -6093,20 +6147,27 @@ export function createMcpServer(config: McpConfig) {
 					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
 				)
 			}
+			let deliveredTo: string | undefined
 			try {
-				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+				const posted = (await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
 					questions: args.questions.map((q) => ({
 						question: q.question,
 						header: q.header,
 						multi_select: q.multi_select ?? false,
 						options: q.options,
 					})),
-				})
+				})) as { delivered_to?: string } | undefined
+				deliveredTo = posted?.delivered_to
 			} catch (err) {
 				// 409 is the normal answer for a session with no chat to ask in.
 				console.error('ask_user_question: could not post the question', err)
 				return reply(
 					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			if (deliveredTo === 'chief_of_staff') {
+				return reply(
+					'Your question has been sent to the person in their chat with the Chief of Staff. Their answer goes there, not back to this session, so do not wait for it. Choose the most reasonable option yourself, state the assumption you made, and continue.',
 				)
 			}
 			return reply(
@@ -6500,6 +6561,247 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
+				content: [{ type: 'text' as const, text }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'request_keychain_credential',
+		{
+			description: tools.request_keychain_credential.description,
+			inputSchema: tools.request_keychain_credential.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// The human fills in a card in the chat; the value goes straight to the vault and
+			// never passes through the model. A 409 means the session has no human on the
+			// other end (autonomous run, or not an agent session at all).
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_keychain_credential',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return {
+					_meta: toolMeta,
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'There is no chat to show a card in. Say in your reply what credential you need and where the user can add it (Settings → Keychain). Do not ask for the secret in plain text.',
+						},
+					],
+				}
+			}
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/keychain-card`,
+					{
+						kind: args.kind,
+						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
+						...(args.hint ? { hint: args.hint } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)
+			} catch (err) {
+				if (parseApiErrorStatus(err) !== 409) throw err
+				return {
+					_meta: toolMeta,
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'This session has no person in a chat to ask, so no card could be shown. Say in your reply what credential you need and where it can be added (Settings → Keychain). Do not ask for the secret in plain text.',
+						},
+					],
+				}
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_keychain_credentials',
+		{
+			description: tools.list_keychain_credentials.description,
+			inputSchema: tools.list_keychain_credentials.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'list_keychain_credentials',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return {
+					_meta: toolMeta,
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'This is not an agent session, so there is no Keychain to list.',
+						},
+					],
+				}
+			}
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${sessionId}/keychain-credentials`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: toolMeta,
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				structuredContent: result as Record<string, unknown>,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'request_keychain_access',
+		{
+			description: tools.request_keychain_access.description,
+			inputSchema: tools.request_keychain_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_keychain_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply which credential you need and that a person can share it with you in Settings → Keychain.',
+				)
+			}
+			try {
+				const res = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/keychain-access-card`,
+					{
+						credential_name: args.credential_name,
+						...(args.hint ? { hint: args.hint } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { already_granted?: boolean }
+				if (res.already_granted) {
+					return {
+						_meta: toolMeta,
+						content: [
+							{
+								type: 'text' as const,
+								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+							},
+						],
+					}
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply which credential you need and that it can be shared with you in Settings → Keychain.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'No credential with that name exists. Call list_keychain_credentials for the exact names, or request_keychain_credential to ask the user to add a new one.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_integration_access',
+		{
+			description: tools.update_integration_access.description,
+			inputSchema: tools.update_integration_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const toolMeta = meta(
+				'update_integration_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const opts = { workspaceId: args.workspace_id }
+			const applied: string[] = []
+			const failed: string[] = []
+			const run = async (label: string, call: () => Promise<unknown>) => {
+				try {
+					await call()
+					applied.push(label)
+				} catch (err) {
+					failed.push(`${label}: ${err instanceof Error ? err.message : 'failed'}`)
+				}
+			}
+			if (args.default_agent_access) {
+				await run(`default → ${args.default_agent_access}`, () =>
+					apiCall(
+						config,
+						'PUT',
+						`/api/integrations/${args.integration_id}/default-access`,
+						{ defaultAgentAccess: args.default_agent_access },
+						opts,
+					),
+				)
+			}
+			for (const entry of args.agent_access ?? []) {
+				const path = `/api/integrations/${args.integration_id}/grants/${entry.agent_id}`
+				await run(`${entry.agent_id} → ${entry.access}`, () =>
+					entry.access === 'default'
+						? apiCall(config, 'DELETE', path, undefined, opts)
+						: apiCall(config, 'PUT', path, { access: entry.access }, opts),
+				)
+			}
+			const text = [
+				applied.length ? `Applied: ${applied.join('; ')}.` : 'Nothing was applied.',
+				failed.length ? `Failed: ${failed.join('; ')}.` : '',
+				'Applies to sessions started after this.',
+			]
+				.filter(Boolean)
+				.join(' ')
+			return {
+				_meta: toolMeta,
+				...(failed.length && !applied.length ? { isError: true } : {}),
 				content: [{ type: 'text' as const, text }],
 			}
 		},

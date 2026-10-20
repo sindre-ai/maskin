@@ -108,12 +108,15 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 	public var latestEventId: Int?
 	public var latestActivityAt: Date?
 	public var mention: ForYouMention?
+	/// Position in the Chief of Staff's ranked list (0 is first). `nil` for a card that did not come
+	/// from that list, which is then ordered by the reader's sort setting instead.
+	public var rank: Int?
 
 	public init(
 		id: String, entityType: String = "object", objectTitle: String? = nil,
 		objectType: String? = nil, status: String? = nil, unreadCount: Int = 1,
 		maxAttention: Int? = nil, latestEventId: Int? = nil, latestActivityAt: Date? = nil,
-		mention: ForYouMention? = nil
+		mention: ForYouMention? = nil, rank: Int? = nil
 	) {
 		self.id = id
 		self.entityType = entityType
@@ -125,6 +128,7 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 		self.latestEventId = latestEventId
 		self.latestActivityAt = latestActivityAt
 		self.mention = mention
+		self.rank = rank
 	}
 
 	public enum Kind: Sendable, Equatable {
@@ -219,18 +223,4 @@ enum MentionText {
 extension String {
 	var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 	var nonEmpty: String? { isEmpty ? nil : self }
-}
-
-// MARK: - Formatting
-
-public enum ForYouFormat {
-	/// The "held 3d" note: how long a card that still needs a person has sat in the
-	/// feed. Nothing is said until it has waited a full day.
-	public static func heldNote(since date: Date?, now: Date = Date()) -> String? {
-		guard let date else { return nil }
-		let days = Int(now.timeIntervalSince(date) / 86_400)
-		if days < 1 { return nil }
-		if days >= 7 { return "held 7d+" }
-		return "held \(days)d"
-	}
 }

@@ -45,10 +45,13 @@ Portal: enable **App Groups** with `group.io.maskin.app` on `io.maskin.app` and 
 ## Apple App Site Association
 Serve at `https://maskin.io/.well-known/apple-app-site-association`: HTTPS, **no redirect**,
 `Content-Type: application/json`, no file extension. The web host's SPA catch-all must not shadow it.
-Replace `TEAMID` with the Apple Team ID. Paths come from the web routes
+Replace `TEAMID` with the Apple Team ID. The app declares only `maskin.io`: `www.maskin.io` 301s to the apex and
+Apple does not follow redirects, and `app.maskin.io` has no DNS record. The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
+the JSON below is what that serves. Paths come from the web routes
 `/{workspaceId}/objects/{objectId}`, `/{workspaceId}/chats/{id}` and the workspace inbox
-`/{workspaceId}/notifications` (see `DeepLink.swift`); the app ignores any other path, but listing only
-these keeps everything else opening in the browser.
+`/{workspaceId}/notifications` (see `DeepLink.swift`), plus workspace invitations,
+`/invite?token=<raw>` (see `InviteLink.swift`); the `?token` query component means a bare `/invite` stays in
+the browser. The app ignores any other path, but listing only these keeps everything else opening in the browser.
 
 ```json
 {
@@ -57,6 +60,7 @@ these keeps everything else opening in the browser.
       {
         "appIDs": ["TEAMID.io.maskin.app"],
         "components": [
+          { "/": "/invite", "?": { "token": "?*" } },
           { "/": "/*/objects/*" },
           { "/": "/*/chats/*" },
           { "/": "/*/notifications" }
@@ -70,3 +74,12 @@ these keeps everything else opening in the browser.
 Verify: `curl -sI https://maskin.io/.well-known/apple-app-site-association` (200, application/json),
 then on a device `xcrun simctl openurl booted https://maskin.io/<workspaceId>/objects/<id>` (simulator
 needs `applinks:maskin.io?mode=developer` or a real install). `xcrun simctl openurl booted maskin://<workspaceId>/objects/<id>` tests the custom scheme with no hosting.
+
+## Invitation links
+`https://maskin.io/invite?token=<raw>` and `maskin://invite?token=<raw>` open the invite screen
+(`MaskinFeatures/Invites/InviteView.swift`). `InviteCoordinator` keeps the token in `UserDefaults` (`invite.pending.v1`, at most 7 days)
+so it survives sign-in and a cold launch; it is forgotten on Accept, Decline, a dead invite, or closing the screen while signed in.
+Signed in, Accept posts `POST /api/invites/{token}/accept` with the stored key and no `X-Workspace-Id`, then switches to the returned
+workspace. A different signed-in email than the invited one asks first. Signed-out people without an account see a pointer to maskin.io:
+`InviteStore.createAccount` is the single hook FE-2 (native sign-up) sets to start account creation instead.
+Test: `xcrun simctl openurl booted "maskin://invite?token=<raw>"`.

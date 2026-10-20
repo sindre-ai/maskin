@@ -98,6 +98,12 @@ struct MaskinComposerSnapshotTests {
 		let busy = MaskinComposer(model: empty, config: config(), busy: true, onStop: {}, onSend: {})
 			.composerPreview(.init())
 		#expect(busy.lastSlot == .stop)
+		#expect(busy.showsMicBesideStop, "a busy agent must not take dictation away")
+		let room = MaskinComposer(model: empty, config: config(mic: false, goLive: true), busy: true, onStop: {}, onSend: {})
+			.composerPreview(.init())
+		#expect(room.lastSlot == .stop && !room.showsMicBesideStop, "a composer without a mic gets none beside Stop")
+		let idle = MaskinComposer(model: empty, config: config(), busy: false, onStop: {}, onSend: {}).composerPreview(.init())
+		#expect(!idle.showsMicBesideStop && idle.lastSlot == .mic)
 		#expect(MaskinComposer(model: typed, config: config(), busy: true, onStop: {}, onSend: {}).lastSlot == .send)
 		#expect(MaskinComposer(model: empty, config: config(), busy: true, onSend: {}).composerPreview(.init()).lastSlot == .mic, "busy without onStop cannot show Stop")
 	}

@@ -116,6 +116,8 @@ private struct AgentDetailHost: View {
 	var onDeleted: () -> Void = {}
 	@State private var store: AgentDetailStore
 	@State private var flows: [LoopSummary] = []
+	@State private var drivenObjects: [WorkObject] = []
+	@State private var triggers: TriggersStore
 	private let loopsAPI: APILoopsSource?
 	private let agentID: String
 
@@ -124,6 +126,10 @@ private struct AgentDetailHost: View {
 		self.onDeleted = onDeleted
 		self.agentID = agentID
 		loopsAPI = environment.workspaceId.map { APILoopsSource(client: environment.client, workspaceID: $0) }
+		_triggers = State(
+			initialValue: TriggersStore(
+				api: APITriggersSource(client: environment.client, workspaceID: environment.workspaceId ?? ""),
+				events: environment.events, cache: environment.snapshotCache))
 		_store = State(
 			initialValue: AgentDetailStore(
 				agentID: agentID,
@@ -132,13 +138,22 @@ private struct AgentDetailHost: View {
 	}
 
 	var body: some View {
-		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows)
+		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows, triggers: triggers, objects: drivenObjects)
 			.task { await store.start() }
+			.task { await triggers.start() }
 			.task {
 				// Flows the agent works in: a best-effort read, so a failure just hides the card.
 				guard let all = try? await loopsAPI?.loops() else { return }
 				flows = all.filter { $0.agentIDs.contains(agentID) }
 			}
-			.onDisappear { store.stop() }
+			.task {
+				// The objects this agent drives: also best-effort, an empty tab on failure.
+				let query = ObjectsQuery(driver: agentID, limit: ServerLimits.maxPageSize, sort: .updated)
+				drivenObjects = (try? await ObjectsServices(environment: environment).remote.list(query)) ?? []
+			}
+			.onDisappear {
+				store.stop()
+				triggers.stop()
+			}
 	}
 }

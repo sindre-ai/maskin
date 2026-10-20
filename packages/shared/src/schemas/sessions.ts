@@ -12,6 +12,7 @@ export const sessionStatusSchema = z.enum([
 	'completed',
 	'failed',
 	'timeout',
+	'user_stopped',
 ])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 
