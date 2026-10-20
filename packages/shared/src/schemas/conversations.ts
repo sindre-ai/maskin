@@ -268,6 +268,11 @@ export const postMessageSchema = z.object({
 	// config.conversation — see conversations route for the ownership check.
 	// Ignored (silently) otherwise, e.g. for human-authored messages.
 	session_id: z.string().uuid().optional(),
+	// Post as a reply in the thread rooted at this message. The root must be a
+	// top-level message of the same conversation (threads do not nest).
+	thread_root_id: z.number().int().positive().optional(),
+	// With thread_root_id: also show the reply in the main timeline.
+	also_in_channel: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({
@@ -281,6 +286,16 @@ export const messageQuerySchema = z.object({
 	before_id: z.coerce.number().int().positive().optional(),
 	after_id: z.coerce.number().int().positive().optional(),
 	limit: z.coerce.number().int().min(1).max(200).default(50),
+	// Return only the replies of this thread (newest-first like the main list).
+	thread_root_id: z.coerce.number().int().positive().optional(),
+})
+
+export const threadListQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).default(30),
+})
+
+export const markThreadReadSchema = z.object({
+	last_read_message_id: z.number().int().positive(),
 })
 
 export const updateConversationParticipantStateSchema = z
