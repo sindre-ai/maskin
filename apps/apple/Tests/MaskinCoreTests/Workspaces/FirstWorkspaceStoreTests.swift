@@ -19,23 +19,22 @@ private func signedInWithNothing() -> AuthSession {
 	return auth
 }
 
-/// Answers `create` immediately, or parks it until `release()` so a test can tap twice.
+/// Answers `create` immediately, or parks it on `gate` so a test can tap twice.
 private final class FakeCreator: WorkspaceAdminAPI, @unchecked Sendable {
 	private let lock = NSLock()
 	private var _calls: [(name: String, key: String)] = []
-	private var gate: CheckedContinuation<Void, Never>?
 	var failure: Error?
-	var hold = false
+	/// When set, `create` parks here (after recording its call) until the test releases it.
+	var gate: Gate?
 	var calls: [(name: String, key: String)] { lock.withLock { _calls } }
 
 	func rename(workspaceId: String, name: String, idempotencyKey: String) async throws {}
 	func create(name: String, idempotencyKey: String) async throws -> CreatedWorkspace {
 		lock.withLock { _calls.append((name, idempotencyKey)) }
-		if hold { await withCheckedContinuation { c in lock.withLock { gate = c } } }
+		await gate?.wait()
 		if let failure { throw failure }
 		return CreatedWorkspace(id: "ws-new", name: name)
 	}
-	func release() { lock.withLock { gate?.resume(); gate = nil } }
 }
 
 @MainActor
@@ -135,13 +134,17 @@ struct FirstWorkspaceStoreTests {
 	func doubleTap() async {
 		let (workspaces, _) = await makeWorkspaces()
 		let api = FakeCreator()
-		api.hold = true
+		let gate = Gate()
+		api.gate = gate
 		let store = makeStore(api, workspaces)
 		store.name = "Acme"
 		let first = Task { await store.create() }
-		while !store.isCreating { await Task.yield() }
+		// Held inside the server call until the second tap has been attempted, so "in flight" is a
+		// fact of the test and not a scheduling accident.
+		await gate.waitUntilStarted()
+		#expect(store.isCreating)
 		#expect(await store.create() == false)
-		api.release()
+		await gate.release()
 		#expect(await first.value)
 		#expect(api.calls.count == 1)
 	}
