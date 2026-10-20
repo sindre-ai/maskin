@@ -220,17 +220,3 @@ extension String {
 	var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 	var nonEmpty: String? { isEmpty ? nil : self }
 }
-
-// MARK: - Formatting
-
-public enum ForYouFormat {
-	/// The "held 3d" note: how long a card that still needs a person has sat in the
-	/// feed. Nothing is said until it has waited a full day.
-	public static func heldNote(since date: Date?, now: Date = Date()) -> String? {
-		guard let date else { return nil }
-		let days = Int(now.timeIntervalSince(date) / 86_400)
-		if days < 1 { return nil }
-		if days >= 7 { return "held 7d+" }
-		return "held \(days)d"
-	}
-}

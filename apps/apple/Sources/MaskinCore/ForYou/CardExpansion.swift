@@ -11,8 +11,9 @@ public final class CardExpansion {
 
 	public init() {}
 
-	/// What keeps a card open without the reader asking: the composer has focus, it holds text, or
-	/// a Chief of Staff thread about the card is open.
+	/// What keeps a card open without the reader asking: the composer has focus or a Chief of Staff
+	/// thread about the card is open. Typed text does NOT: Show less folds the card and keeps the
+	/// text, and the folded card carries a "Draft" tag (the review's "collapsing loses your text").
 	public struct Engagement: Equatable, Sendable {
 		public var composerFocused: Bool
 		public var hasDraft: Bool
@@ -24,7 +25,7 @@ public final class CardExpansion {
 			self.threadOpen = threadOpen
 		}
 
-		public var isEngaged: Bool { composerFocused || hasDraft || threadOpen }
+		public var isEngaged: Bool { composerFocused || threadOpen }
 	}
 
 	/// Expanded when opened by hand or engaged.

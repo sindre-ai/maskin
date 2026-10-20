@@ -2,6 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+	type MentionNameResolution,
+	type MentionParticipant,
+	resolveMentionNames,
+} from './mention-names'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
@@ -5008,7 +5013,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, ...body } = args
+			const { workspace_id, conversation_id, mention_names, ...body } = args
+			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
+			// nobody. Resolve against the live participant list and report misses.
+			let unresolvedMentions: MentionNameResolution['unresolved'] = []
+			if (mention_names?.length) {
+				const conversation = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${conversation_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { participants?: MentionParticipant[] }
+				const { resolved, unresolved } = resolveMentionNames(
+					mention_names,
+					conversation.participants ?? [],
+				)
+				unresolvedMentions = unresolved
+				if (resolved.length > 0) {
+					const mentions = Array.from(new Set([...(body.metadata?.mentions ?? []), ...resolved]))
+					body.metadata = { ...body.metadata, mentions }
+				}
+			}
 			// SESSION_ID is injected by session-manager into every agent
 			// container's env — stamping it here lets the conversations route
 			// attribute this message back to the session that produced it
@@ -5024,13 +5050,17 @@ export function createMcpServer(config: McpConfig) {
 				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
 				{ workspaceId: workspace_id },
 			)
+			const withMentionReport =
+				unresolvedMentions.length > 0
+					? { ...(result as Record<string, unknown>), unresolved_mentions: unresolvedMentions }
+					: result
 			return {
 				_meta: meta(
 					'post_conversation_message',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withMentionReport, null, 2) }],
 			}
 		},
 	)

@@ -1,3 +1,4 @@
+import { logger } from '../../../logger'
 import type { StoredCredentials } from '../../types'
 import { resolveGoogleEmail } from '../_google/userinfo'
 
@@ -27,8 +28,9 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
  * carry the People-id (not the email) as the resource reference; the
  * webhook fan-out looks the row up by matching this stored id.
  *
- * Scopes: `openid` alone grants `people.get(me)` — no `directory.readonly`
+ * Scopes: `userinfo.profile` grants `people.get(me)` — no `directory.readonly`
  * needed (CTO 2026-09-10 deferral; see Reshape §4.1 addendum / S12 smoke).
+ * `openid` + `userinfo.email` alone got a 403 from Google in prod (2026-10-14).
  *
  * Shape: the response's `metadata.sources[]` array contains one entry per
  * source that populated the profile. The first entry's `id` is the stable
@@ -42,6 +44,10 @@ export async function resolveMeetPeopleId(accessToken: string): Promise<string> 
 	})
 	if (!res.ok) {
 		const text = await res.text()
+		logger.warn('Google People API call failed', {
+			httpStatus: res.status,
+			body: text.slice(0, 2000),
+		})
 		throw new Error(`Failed to resolve Google People id: HTTP ${res.status} ${text}`)
 	}
 	const data = (await res.json()) as {

@@ -208,3 +208,31 @@ struct NotificationActionHandlerTests {
 		#expect(queue.writes.first?.lastEventId == 42)
 	}
 }
+
+@Suite("NotificationActionHandler Later")
+struct NotificationActionHandlerLaterTests {
+	@Test func laterIsSavedOnThisDeviceAndSendsNothing() async {
+		let calls = Calls()
+		let defaults = UserDefaults(suiteName: "later-\(UUID().uuidString)")!
+		let morning = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
+		let backend = FakeBackend(calls: calls)
+		let handler = NotificationActionHandler(
+			secrets: signedIn(), backend: { _, _ in backend }, queue: FakeQueue(), now: { morning },
+			laterDefaults: defaults)
+		let outcome = await handler.perform(.later, userText: nil, payload: payload)
+		#expect(outcome == .deferred("This evening"))
+		#expect(await calls.comments.isEmpty)
+		#expect(await calls.reads.isEmpty)
+		#expect(LaterStore.read(defaults: defaults, workspace: "ws-1")["obj-1"]?.label == "This evening")
+	}
+
+	@Test func laterWorksWithoutASignedInSession() async {
+		let defaults = UserDefaults(suiteName: "later-\(UUID().uuidString)")!
+		let backend = FakeBackend(calls: Calls())
+		let handler = NotificationActionHandler(
+			secrets: InMemorySecretStore(), backend: { _, _ in backend }, queue: FakeQueue(),
+			laterDefaults: defaults)
+		let outcome = await handler.perform(.later, userText: nil, payload: payload)
+		if case .deferred = outcome {} else { Issue.record("expected .deferred, got \(outcome)") }
+	}
+}
