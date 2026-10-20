@@ -1490,6 +1490,8 @@ export interface LatestMentionDecisionOption {
  * here; `object_id` says which object it came from.
  */
 export interface LatestMentionDecisionDraft {
+	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
+	id?: string
 	object_id?: string
 	label?: string
 	to?: string
@@ -1502,6 +1504,8 @@ export interface LatestMentionDecision {
 	ask: string
 	options: LatestMentionDecisionOption[]
 	draft?: LatestMentionDecisionDraft
+	/** One card, several messages: each shows as its own preview with Send and Skip. */
+	drafts?: LatestMentionDecisionDraft[]
 }
 
 export interface LatestMention {

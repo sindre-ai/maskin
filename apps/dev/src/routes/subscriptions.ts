@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	type DecisionDraft,
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
@@ -169,10 +170,13 @@ async function fillDraftBodies(
 	mentions: LatestMention[],
 	loaded: Map<string, typeof objects.$inferSelect>,
 ): Promise<void> {
-	const drafts = mentions.flatMap((m) => (m.decision?.draft ? [m.decision.draft] : []))
+	const allDrafts = mentions.flatMap((m) => [
+		...(m.decision?.draft ? [m.decision.draft] : []),
+		...(m.decision?.drafts ?? []),
+	])
 	const missing = [
 		...new Set(
-			drafts.flatMap((d) => (d.object_id && !loaded.has(d.object_id) ? [d.object_id] : [])),
+			allDrafts.flatMap((d) => (d.object_id && !loaded.has(d.object_id) ? [d.object_id] : [])),
 		),
 	]
 	const fetched = new Map<string, string | null>()
@@ -184,18 +188,28 @@ async function fillDraftBodies(
 		for (const row of rows) fetched.set(row.id, row.content)
 	}
 
-	for (const mention of mentions) {
-		const draft = mention.decision?.draft
-		if (!mention.decision || !draft) continue
+	// One draft, filled from its object's live text, or null when there is nothing
+	// to show (object gone or empty, and no stored body).
+	const fill = (draft: DecisionDraft): DecisionDraft | null => {
 		const live = draft.object_id
 			? (loaded.get(draft.object_id)?.content ?? fetched.get(draft.object_id) ?? null)
 			: null
 		const body = (live?.trim() ? live : draft.body)?.slice(0, DRAFT_BODY_MAX)
-		if (!body) {
-			mention.decision.draft = undefined
-			continue
+		return body ? { ...draft, label: draft.label ?? 'Draft', body } : null
+	}
+
+	for (const mention of mentions) {
+		const decision = mention.decision
+		if (!decision) continue
+		if (decision.draft) decision.draft = fill(decision.draft) ?? undefined
+		if (decision.drafts) {
+			// A message with nothing to show is left out, the rest of the stack stays.
+			const filled = decision.drafts.flatMap((d) => {
+				const f = fill(d)
+				return f ? [f] : []
+			})
+			decision.drafts = filled.length > 0 ? filled : undefined
 		}
-		mention.decision.draft = { ...draft, label: draft.label ?? 'Draft', body }
 	}
 }
 
