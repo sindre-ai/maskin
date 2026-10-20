@@ -55,7 +55,7 @@ function instanceSlugOf(url: string, provider: string): string | null {
 	const base = providerMcpPath(provider)
 	const at = url.indexOf(base)
 	if (at === -1) return null
-	const rest = url.slice(at + base.length).split(/[?#]/)[0]
+	const rest = url.slice(at + base.length).split(/[?#]/)[0] ?? ''
 	if (rest === '' || rest === '/') return ''
 	if (!rest.startsWith('/')) return null // e.g. `/mcpx`, a different endpoint
 	return rest.slice(1).replace(/\/+$/, '')
