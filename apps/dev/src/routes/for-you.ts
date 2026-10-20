@@ -4,8 +4,14 @@ import { events, notifications, objects, readState, sessions } from '@maskin/db/
 import { FOR_YOU_KIND, commentDecisionSchema, parseForYouMetadata } from '@maskin/shared'
 import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
-import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import {
+	decisionFeedItemSchema,
+	errorSchema,
+	objectResponseSchema,
+	workspaceIdHeader,
+} from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { loadDecisionFeed } from '../services/message-decisions'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { toLatestMention } from './subscriptions'
 
@@ -37,8 +43,10 @@ const CLOSED_OBJECT_STATUSES = [
 ]
 
 const forYouItemSchema = z.object({
-	notification_id: z.string().uuid(),
-	rank: z.number(),
+	/** Null for a decision card that showed up on its own, before anyone ranked it. */
+	notification_id: z.string().uuid().nullable(),
+	/** Null until the Chief of Staff ranks the item; unranked cards follow the ranked ones. */
+	rank: z.number().nullable(),
 	headline: z.string(),
 	rationale: z.string().nullable(),
 	created_at: z.string().nullable(),
@@ -46,6 +54,8 @@ const forYouItemSchema = z.object({
 	entity_id: z.string().uuid().nullable(),
 	session_id: z.string().uuid().nullable(),
 	object: objectResponseSchema.optional(),
+	/** Set when the item is a decision card in a chat: answer it in place, or open its thread. */
+	chat_decision: decisionFeedItemSchema.optional(),
 	latest_mention: z
 		.object({
 			event_id: z.number(),
@@ -100,7 +110,18 @@ app.openapi(listForYouRoute, async (c) => {
 		const meta = parseForYouMetadata(row.metadata)
 		return meta ? [{ row, meta }] : []
 	})
-	if (candidates.length === 0) return c.json({ items: [] }, 200)
+
+	// Decision cards in chats that are addressed to the caller and still open. They reach the list
+	// on their own, so nobody has to go looking for them in a chat; a ranked item that points at
+	// one just gives it a headline, a reason and a place in the order.
+	const decisionCards = await loadDecisionFeed(db, {
+		workspaceId,
+		callerId: actorId,
+		state: 'open',
+		scope: 'mine',
+		limit: 100,
+	})
+	const decisionByMessage = new Map(decisionCards.map((d) => [d.message_id, d]))
 
 	const objectIds = [
 		...new Set(candidates.flatMap((x) => (x.row.objectId ? [x.row.objectId] : []))),
@@ -169,6 +190,14 @@ app.openapi(listForYouRoute, async (c) => {
 
 	const items = candidates
 		.filter(({ row, meta }) => {
+			// An ask about a decision card is moot once the card is answered, withdrawn, or no longer
+			// addressed to this person.
+			if (
+				meta.source_decision_message_id !== undefined &&
+				!decisionByMessage.has(meta.source_decision_message_id)
+			) {
+				return false
+			}
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
 			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
 				return false
@@ -200,6 +229,10 @@ app.openapi(listForYouRoute, async (c) => {
 			const obj = row.objectId ? objectById.get(row.objectId) : undefined
 			const source =
 				meta.source_comment_id !== undefined ? sourceById.get(meta.source_comment_id) : undefined
+			const card =
+				meta.source_decision_message_id !== undefined
+					? decisionByMessage.get(meta.source_decision_message_id)
+					: undefined
 			return {
 				notification_id: row.id,
 				rank: meta.rank,
@@ -211,10 +244,48 @@ app.openapi(listForYouRoute, async (c) => {
 				session_id: row.sessionId ?? null,
 				...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
 				...(source ? { latest_mention: toLatestMention(source) } : {}),
+				...(card ? { chat_decision: card } : {}),
 			}
 		})
 
-	return c.json({ items }, 200)
+	// Cards nobody has ranked yet follow the ranked items, most urgent first.
+	const ranked = new Set(
+		items.flatMap((i) => (i.chat_decision ? [i.chat_decision.message_id] : [])),
+	)
+	const unranked = decisionCards.filter((d) => !ranked.has(d.message_id))
+	const unrankedObjectIds = [
+		...new Set(
+			unranked.flatMap((d) => (d.object_id && !objectById.has(d.object_id) ? [d.object_id] : [])),
+		),
+	]
+	if (unrankedObjectIds.length > 0) {
+		const more = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, unrankedObjectIds)))
+		for (const o of more) objectById.set(o.id, o)
+	}
+	const automatic = unranked.flatMap((d) => {
+		const obj = d.object_id ? objectById.get(d.object_id) : undefined
+		// The task the card is about is already closed: nothing left to decide.
+		if (obj && CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return []
+		return [
+			{
+				notification_id: null,
+				rank: null,
+				headline: d.decision.title,
+				rationale: null,
+				created_at: d.created_at,
+				entity_type: d.object_id ? ('object' as const) : null,
+				entity_id: d.object_id,
+				session_id: null,
+				...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
+				chat_decision: d,
+			},
+		]
+	})
+
+	return c.json({ items: [...items, ...automatic] }, 200)
 })
 
 export default app

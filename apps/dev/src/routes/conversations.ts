@@ -58,7 +58,11 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
-import { isChiefOfStaff, loadDecisionsByMessage } from '../services/message-decisions'
+import {
+	isChiefOfStaff,
+	loadDecisionFeed,
+	loadDecisionsByMessage,
+} from '../services/message-decisions'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { ensureObjectChat, importObjectComments } from '../services/object-chat-sync'
@@ -996,82 +1000,8 @@ app.openapi(listDecisionsRoute, (async (c) => {
 	if (scope === 'all' && !(await isChiefOfStaff(db, workspaceId, callerId))) {
 		return c.json(createApiError('FORBIDDEN', 'Only the Chief of Staff sees every decision'), 403)
 	}
-
-	const base = db
-		.select({
-			messageId: messages.id,
-			conversationId: conversations.id,
-			conversationTitle: conversations.title,
-			subjectType: conversations.subjectType,
-			subjectId: conversations.subjectId,
-			content: messages.content,
-			metadata: messages.metadata,
-			createdAt: messages.createdAt,
-			authorId: actors.id,
-			authorName: actors.name,
-			authorType: actors.type,
-			status: messageDecisions.status,
-			attention: messageDecisions.attention,
-			answerOptionIndex: messageDecisions.answerOptionIndex,
-			answeredBy: messageDecisions.answeredBy,
-			answeredAt: messageDecisions.answeredAt,
-			withdrawnReason: messageDecisions.withdrawnReason,
-			// Table-qualified literal SQL: a Drizzle column here renders unqualified and binds to the
-			// inner alias (known-pitfalls.md, correlated subquery).
-			replyCount: sql<number>`(SELECT count(*)::int FROM messages r WHERE r.thread_root_id = messages.id)`,
-		})
-		.from(messageDecisions)
-		.innerJoin(messages, eq(messages.id, messageDecisions.messageId))
-		.innerJoin(conversations, eq(conversations.id, messages.conversationId))
-		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.$dynamic()
-
-	const where = [eq(conversations.workspaceId, workspaceId), eq(messageDecisions.status, state)]
-	const rows = await (scope === 'all'
-		? base.where(and(...where))
-		: base
-				.innerJoin(
-					conversationParticipants,
-					and(
-						eq(conversationParticipants.conversationId, conversations.id),
-						eq(conversationParticipants.actorId, callerId),
-						isNull(conversationParticipants.leftAt),
-					),
-				)
-				.where(and(...where, sql`${callerId}::uuid = ANY(${messageDecisions.forActorIds})`))
-	)
-		.orderBy(sql`${messageDecisions.attention} DESC NULLS LAST`, desc(messages.id))
-		.limit(limit)
-
 	return c.json({
-		decisions: rows.flatMap((r) => {
-			const decision = (r.metadata as { decision?: unknown } | null)?.decision
-			if (!decision) return []
-			return [
-				{
-					message_id: r.messageId,
-					conversation_id: r.conversationId,
-					conversation_title: r.conversationTitle,
-					object_id: r.subjectType === 'object' ? r.subjectId : null,
-					content: r.content,
-					decision,
-					attention: r.attention,
-					status: r.status as 'open' | 'answered' | 'withdrawn',
-					withdrawn_reason: r.withdrawnReason,
-					created_at: r.createdAt?.toISOString() ?? null,
-					posted_by: { id: r.authorId, name: r.authorName, type: r.authorType },
-					reply_count: r.replyCount,
-					answer:
-						r.answerOptionIndex === null
-							? null
-							: {
-									option_index: r.answerOptionIndex,
-									answered_by: r.answeredBy,
-									answered_at: r.answeredAt?.toISOString() ?? null,
-								},
-				},
-			]
-		}) as z.infer<typeof decisionFeedItemSchema>[],
+		decisions: await loadDecisionFeed(db, { workspaceId, callerId, state, scope, limit }),
 	})
 }) as RouteHandler<typeof listDecisionsRoute, Env>)
 

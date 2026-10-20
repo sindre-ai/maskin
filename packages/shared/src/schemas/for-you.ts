@@ -29,6 +29,12 @@ export const forYouMetadataSchema = z.object({
 		.describe(
 			'Event id of the comment carrying the ask. The item drops once the human replies to or dismisses that thread.',
 		),
+	source_decision_message_id: z
+		.preprocess((v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v), z.number().int())
+		.optional()
+		.describe(
+			'Message id of a decision card in a chat, when the ask is one. The card shows in For You on its own once it is addressed to the person; set this to give it a headline, a reason and a rank. The item drops once the card is answered or withdrawn.',
+		),
 	only_while_status: z
 		.array(z.string().min(1))
 		.min(1)
