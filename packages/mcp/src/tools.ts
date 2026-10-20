@@ -2,6 +2,7 @@ import {
 	HUMAN_MESSAGE_STYLE_SHORT,
 	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
+	firstStepSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -597,7 +598,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored. The person who asked you gets a "Meet {name}" chat from the new agent automatically, so do not send them a second hello. Pass first_steps with 2 to 3 steps specific to the job the agent was made for, written as things the person can say to the agent. Use action "send" only for a step that reads and reports (a tap sends it as written, so prompt must equal label) and "fill" for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes. Pass needed_integrations for the tools the agent cannot do the job without.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -641,6 +642,22 @@ export const tools = {
 					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job. To give the agent the tools of a connected integration, call list_integration_providers and copy the `mcp.server` of that provider in under the provider name; connecting the integration by itself does NOT expose any tools unless its `mcp.autoInject` is true. `type` is required on each entry ("stdio" or "http") — omitting it fails validation with a bare "Invalid input".',
 				),
 			llm_config: actorLlmConfigSchema,
+			first_steps: z
+				.array(firstStepSchema)
+				.min(1)
+				.max(4)
+				.optional()
+				.describe(
+					'Agents only. 2 to 3 steps specific to this agent\'s job, shown to the person as buttons in the new agent\'s intro chat. Each is { label (max 60), prompt (max 200), action }. action "send" sends the prompt as written when tapped, so prompt must equal label and not end in a space; use it only for steps that read and report. action "fill" puts the prompt in the message box for the person to finish; it may end in a space. Plain text, no line breaks. Nothing is stored on the agent.',
+				),
+			needed_integrations: z
+				.array(z.string().min(1).max(100))
+				.min(1)
+				.max(4)
+				.optional()
+				.describe(
+					'Agents only. Provider names of the integrations this agent cannot do its job without, for example "linear", "gmail", "slack", "github". The intro names up to 3 of them and points the person to Settings, Integrations. Names with no tools an agent could use are ignored.',
+				),
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()

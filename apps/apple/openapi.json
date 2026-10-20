@@ -4836,6 +4836,48 @@
 									"workspace_id": {
 										"type": "string",
 										"format": "uuid"
+									},
+									"first_steps": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"label": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 60
+												},
+												"prompt": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200
+												},
+												"action": {
+													"type": "string",
+													"enum": [
+														"send",
+														"fill"
+													]
+												}
+											},
+											"required": [
+												"label",
+												"prompt",
+												"action"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 4
+									},
+									"needed_integrations": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"minItems": 1,
+										"maxItems": 4
 									}
 								},
 								"required": [
