@@ -48,6 +48,84 @@ struct ThreadDivider: View {
 	}
 }
 
+/// A system line in the chat ("Sales Rep sent the connection request"): a small teal marker, the
+/// words, and the time on the right. Not a bubble and not a divider.
+struct SystemLine: View {
+	let message: ChatMessage
+
+	var body: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+			RoundedRectangle(cornerRadius: MaskinSpace.s1, style: .continuous)
+				.fill(MaskinColor.sig)
+				.frame(width: MaskinSpace.s3 + 1, height: MaskinSpace.s3 + 1)
+				.accessibilityHidden(true)
+			Text(message.content)
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink5)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			if let time = message.createdAt {
+				RelativeTime(time, style: .clock)
+					.font(MaskinTypeface.sans(MaskinFontSize.t11, relativeTo: .caption2))
+					.foregroundStyle(MaskinColor.inkPlaceholder)
+			}
+		}
+		.padding(.vertical, MaskinSpace.s4)
+		.accessibilityElement(children: .combine)
+	}
+}
+
+/// How long a message may run before it folds to about six lines with "Show more".
+enum LongMessage {
+	static let characters = 320
+	static let lines = 7
+	static let collapsedHeight: CGFloat = 150
+
+	static func isLong(_ text: String) -> Bool {
+		text.count > characters || text.split(separator: "\n", omittingEmptySubsequences: false).count > lines
+	}
+}
+
+private struct FoldedMessage: ViewModifier {
+	let folded: Bool
+
+	func body(content: Content) -> some View {
+		if folded {
+			content
+				.frame(maxHeight: LongMessage.collapsedHeight, alignment: .top)
+				.clipped()
+				.mask(
+					LinearGradient(
+						stops: [.init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
+						startPoint: .top, endPoint: .bottom))
+		} else {
+			content
+		}
+	}
+}
+
+extension View {
+	fileprivate func folded(_ folded: Bool) -> some View { modifier(FoldedMessage(folded: folded)) }
+}
+
+private struct ShowMoreButton: View {
+	let expanded: Bool
+	var onInverse = false
+	let action: () -> Void
+
+	var body: some View {
+		Button {
+			withAnimation(MaskinMotion.standard) { action() }
+		} label: {
+			Text(expanded ? "Show less" : "Show more")
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold, relativeTo: .subheadline))
+				.foregroundStyle(onInverse ? MaskinSurface.onInverse : MaskinColor.sigInk)
+				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s4, alignment: .leading)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+	}
+}
+
 /// What a message attaches: photos as pictures (one large, several as tiles) and every other file
 /// as a chip. Each opens the file.
 struct MessageAttachments: View {
@@ -155,6 +233,8 @@ struct MessageRow: View {
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var rowWidth: CGFloat = 0
+	/// A long message starts folded; the reader unfolds it here.
+	@State private var unfolded = false
 
 	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
 	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
@@ -188,6 +268,9 @@ struct MessageRow: View {
 		default: actions.onReadAloud?()
 		}
 	}
+
+	private var isLong: Bool { LongMessage.isLong(bodyText) }
+	private var folded: Bool { isLong && !unfolded }
 
 	private var shownText: String { messageOverride.text(original: message.content) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
@@ -236,6 +319,8 @@ struct MessageRow: View {
 									.textSelection(.enabled)
 								if message.editedAt != nil { EditedMark() }
 							}
+							.folded(folded)
+							if isLong { ShowMoreButton(expanded: unfolded, onInverse: true) { unfolded.toggle() } }
 						}
 					}
 					.environment(\.markdownHugsContent, true)
@@ -284,6 +369,8 @@ struct MessageRow: View {
 						if !bodyText.isEmpty {
 							MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
 								.textSelection(.enabled)
+								.folded(folded)
+							if isLong { ShowMoreButton(expanded: unfolded) { unfolded.toggle() } }
 						}
 						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
 						if message.isErrorReply, let onTryAgain = actions.onTryAgain {
