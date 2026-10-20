@@ -181,6 +181,48 @@ export const messageIntegrationConnectSchema = z.object({
 	provider: z.string().min(1).max(100),
 })
 
+/**
+ * What a draft is, so the card can pick its chip, its fields and its button
+ * verb. A new kind is a new member here and a row in the web card's KIND table.
+ */
+export const draftKindSchema = z.enum(['email', 'linkedin_post', 'linkedin_message'])
+
+/**
+ * An agent's draft of an outbound text, surfaced into chat as an editable card.
+ * Backend-owned, never accepted from a client (the POST /messages route strips
+ * it, same as `question`).
+ *
+ * The draft itself lives on a task, not on the message: `objectId` points at it
+ * and the card reads it live, so an edit made in chat, in For you or on the task
+ * page is one edit, and a scrolled-back thread never shows stale text. Only what
+ * the task cannot say for itself is stored here.
+ */
+export const messageDraftSchema = z.object({
+	/** The task holding the draft: `content` is the body, `metadata.draft_*` the rest. */
+	object_id: z.string().uuid(),
+	kind: draftKindSchema,
+	/** Recipient shown read-only on the card, e.g. "Mette Holm, Northwind". Email only. */
+	to: z.string().min(1).max(300).optional(),
+	/** The channel's hard limit in characters, e.g. 300 for a LinkedIn connection note. */
+	char_limit: z.number().int().positive().max(100_000).optional(),
+})
+
+/**
+ * The draft's state on the task a draft card points at. `original_*` is what the
+ * agent wrote, kept so the card can say "Edited" and restore it.
+ *
+ * Stored as flat `draft_*` keys in the task's `metadata` (see DRAFT_METADATA_KEYS),
+ * because object metadata is flat by design (`safeMetadataSchema`) and a nested
+ * `metadata.draft` object would be rejected with a 400.
+ */
+export const draftTaskStateSchema = z.object({
+	state: z.enum(['draft', 'approved']),
+	subject: z.string().max(998).optional(),
+	original_subject: z.string().max(998).optional(),
+	original_body: z.string().max(100_000),
+	approved_at: z.string().datetime().optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -205,6 +247,8 @@ export const messageMetadataSchema = z.object({
 	question_answer: messageQuestionAnswerSchema.optional(),
 	/** Backend-owned: an agent's request to connect an integration, shown as a card. */
 	integration_connect: messageIntegrationConnectSchema.optional(),
+	/** Backend-owned: an agent's draft of an outbound text, shown as an editable card. */
+	draft: messageDraftSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 })
@@ -224,6 +268,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		question: _question,
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
+		draft: _draft,
 		...rest
 	} = metadata
 	return rest as T
@@ -317,6 +362,9 @@ export const updateConversationParticipantStateSchema = z
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
+export type MessageDraft = z.infer<typeof messageDraftSchema>
+export type DraftKind = z.infer<typeof draftKindSchema>
+export type DraftTaskState = z.infer<typeof draftTaskStateSchema>
 export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>
 export type MessageQuestionItem = z.infer<typeof messageQuestionItemSchema>
 export type MessageQuestionAnswer = z.infer<typeof messageQuestionAnswerSchema>
@@ -353,3 +401,66 @@ export function formatIntegrationConnectAsMarkdown(displayName: string): string 
 export const sessionAskSchema = z.object({
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
 })
+
+/**
+ * The plain-markdown rendering of a draft, used as the message's `content` so
+ * every reader that isn't the chat UI (MCP tools, notifications, search) sees
+ * the text itself and not just a pointer to it.
+ */
+export function formatDraftAsMarkdown(draft: {
+	to?: string
+	subject?: string
+	body: string
+}): string {
+	const head = [
+		draft.to ? `**To:** ${draft.to}` : null,
+		draft.subject ? `**Subject:** ${draft.subject}` : null,
+	].filter((line): line is string => line !== null)
+	const quoted = draft.body
+		.split('\n')
+		.map((line) => (line ? `> ${line}` : '>'))
+		.join('\n')
+	return [...head, quoted].join('\n\n')
+}
+
+/** The task `metadata` keys that hold a draft's state. */
+export const DRAFT_METADATA_KEYS = {
+	state: 'draft_state',
+	subject: 'draft_subject',
+	original_subject: 'draft_original_subject',
+	original_body: 'draft_original_body',
+	approved_at: 'draft_approved_at',
+} as const
+
+/** Reads a draft's state off a task's metadata; null when absent or malformed. */
+export function readDraftTaskState(
+	metadata: Record<string, unknown> | null | undefined,
+): DraftTaskState | null {
+	const get = (key: keyof typeof DRAFT_METADATA_KEYS) => {
+		const value = metadata?.[DRAFT_METADATA_KEYS[key]]
+		return value === null ? undefined : value
+	}
+	const parsed = draftTaskStateSchema.safeParse({
+		state: get('state'),
+		subject: get('subject'),
+		original_subject: get('original_subject'),
+		original_body: get('original_body'),
+		approved_at: get('approved_at'),
+	})
+	return parsed.success ? parsed.data : null
+}
+
+/**
+ * The flat metadata keys for a draft state, ready to spread over a task's
+ * existing metadata. Absent optional fields become `null`, so a write that
+ * clears one (undoing an approval) overwrites the old value instead of leaving it.
+ */
+export function draftTaskStateToMetadata(state: DraftTaskState): Record<string, string | null> {
+	return {
+		[DRAFT_METADATA_KEYS.state]: state.state,
+		[DRAFT_METADATA_KEYS.subject]: state.subject ?? null,
+		[DRAFT_METADATA_KEYS.original_subject]: state.original_subject ?? null,
+		[DRAFT_METADATA_KEYS.original_body]: state.original_body,
+		[DRAFT_METADATA_KEYS.approved_at]: state.approved_at ?? null,
+	}
+}

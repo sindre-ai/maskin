@@ -10,17 +10,18 @@ vi.mock('@tanstack/react-router', async () => {
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
+const DEFAULT_OBJECT = {
+	id: 'obj-1',
+	workspaceId: 'ws-1',
+	type: 'bet',
+	title: 'Retry window',
+	status: 'active',
+}
+let mockObject: Record<string, unknown> = DEFAULT_OBJECT
+
 vi.mock('@/hooks/use-objects', () => ({
-	useObject: () => ({
-		data: {
-			id: 'obj-1',
-			workspaceId: 'ws-1',
-			type: 'bet',
-			title: 'Retry window',
-			status: 'active',
-		},
-		isLoading: false,
-	}),
+	useObject: () => ({ data: mockObject, isLoading: false }),
+	useUpdateObject: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const retryMutate = vi.fn()
@@ -80,6 +81,32 @@ const CHART_MESSAGE = [
 	}),
 	'```',
 ].join('\n')
+
+describe('MessageBubble draft card', () => {
+	it('shows an editable draft card for a message carrying metadata.draft', () => {
+		mockObject = {
+			id: 'task-1',
+			type: 'task',
+			content: 'Hi Tom, congrats on the new role.',
+			metadata: {
+				draft_state: 'draft',
+				draft_original_body: 'Hi Tom, congrats on the new role.',
+			},
+		}
+
+		renderBubble(
+			buildMessage({
+				metadata: { draft: { object_id: 'task-1', kind: 'linkedin_message', char_limit: 300 } },
+			}),
+		)
+
+		expect(screen.getByRole('textbox', { name: 'Draft text' })).toHaveValue(
+			'Hi Tom, congrats on the new role.',
+		)
+		expect(screen.getByRole('button', { name: 'Approve and send' })).toBeInTheDocument()
+		mockObject = DEFAULT_OBJECT
+	})
+})
 
 describe('MessageBubble', () => {
 	it('renders an own message as an ink plate with no avatar or name', () => {

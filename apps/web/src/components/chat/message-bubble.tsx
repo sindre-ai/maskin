@@ -15,6 +15,7 @@ import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { DraftCard } from './draft-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
@@ -324,6 +325,12 @@ export function MessageBubble({
 						conversationId={message.conversationId}
 						provider={message.metadata.integration_connect.provider}
 					/>
+				) : null}
+				{/* An agent's draft of an email or post, shown as an editable card. Like
+				    the other cards it adds the affordance, not the information: the
+				    message's markdown already quotes the draft. */}
+				{message.metadata?.draft ? (
+					<DraftCard workspaceId={workspaceId} draft={message.metadata.draft} />
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip
 				    (bet/444b-handed-off-strip). Renders inside the agent branch under

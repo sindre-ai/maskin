@@ -2033,6 +2033,20 @@ export interface MessageIntegrationConnect {
 	provider: string
 }
 
+export type DraftKind = 'email' | 'linkedin_post' | 'linkedin_message'
+
+/**
+ * An agent's draft of an outbound text, surfaced into chat as an editable card.
+ * Only a pointer: the text lives on the task `object_id`. Mirrors
+ * messageDraftSchema in packages/shared.
+ */
+export interface MessageDraft {
+	object_id: string
+	kind: DraftKind
+	to?: string
+	char_limit?: number
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -2066,6 +2080,8 @@ export interface MessageMetadata {
 	 * connect an integration, rendered as a Connect card.
 	 */
 	integration_connect?: MessageIntegrationConnect
+	/** Backend-owned: an agent's draft of an outbound text, shown as an editable card. */
+	draft?: MessageDraft
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }
