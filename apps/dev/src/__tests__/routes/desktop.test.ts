@@ -1,13 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/feature-flags', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../lib/feature-flags')>()),
-	isFlagEnabledForWorkspace: vi.fn(),
-}))
-
 import { consumeDesktopTicket } from '../../lib/desktop-ticket'
-import { isFlagEnabledForWorkspace } from '../../lib/feature-flags'
 import desktopRoutes from '../../routes/desktop'
 
 const WS = '11111111-1111-4111-8111-111111111111'
@@ -72,7 +66,6 @@ const del = (app: TestApp, query = `?agent_id=${AGENT}`) =>
 describe('read-only viewers', () => {
 	beforeEach(() => {
 		process.env.INTEGRATION_ENCRYPTION_KEY = 'ab'.repeat(32)
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
 	})
 
 	const writes: Array<[string, string, string, unknown?]> = [
@@ -120,7 +113,6 @@ describe('read-only viewers', () => {
 describe('POST /api/desktop/connect', () => {
 	beforeEach(() => {
 		process.env.INTEGRATION_ENCRYPTION_KEY = 'ab'.repeat(32)
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
 	})
 
 	it('returns a ticket bound to the workspace, actor and agent, plus the VNC password', async () => {
@@ -162,15 +154,6 @@ describe('POST /api/desktop/connect', () => {
 		expect(existing.inserts).toHaveLength(0)
 	})
 
-	it('404s when the flag is off and never touches an agent-server', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-		const ensure = vi.fn()
-		const { app } = build({ ensure })
-
-		expect((await post(app)).status).toBe(404)
-		expect(ensure).not.toHaveBeenCalled()
-	})
-
 	it('503s when no desktop can be started', async () => {
 		const { app } = build({ ensure: vi.fn(async () => null) })
 		expect((await post(app)).status).toBe(503)
@@ -192,9 +175,7 @@ describe('POST /api/desktop/connect', () => {
 })
 
 describe('DELETE /api/desktop', () => {
-	beforeEach(() => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
-	})
+	beforeEach(() => {})
 
 	it('removes the desktop and records an event', async () => {
 		const { app, inserts } = build({ remove: vi.fn(async () => true) })
@@ -213,15 +194,6 @@ describe('DELETE /api/desktop', () => {
 		expect(await res.json()).toEqual({ removed: false })
 		expect(inserts).toHaveLength(0)
 	})
-
-	it('404s when the flag is off', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-		const remove = vi.fn()
-		const { app } = build({ remove })
-
-		expect((await del(app)).status).toBe(404)
-		expect(remove).not.toHaveBeenCalled()
-	})
 })
 
 const control = (app: TestApp, path: string, body?: unknown, query = `?agent_id=${AGENT}`) =>
@@ -232,24 +204,7 @@ const control = (app: TestApp, path: string, body?: unknown, query = `?agent_id=
 	})
 
 describe('agent control routes', () => {
-	beforeEach(() => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
-	})
-
-	it('404s every control route without touching the service when the flag is off', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-		const controlFn = vi.fn()
-		const { app } = build({ control: controlFn })
-
-		for (const [path, body] of [
-			['screenshot', undefined],
-			['input', { action: 'move', x: 1, y: 1 }],
-			['exec', { command: 'ls' }],
-		] as const) {
-			expect((await control(app, path, body)).status).toBe(404)
-		}
-		expect(controlFn).not.toHaveBeenCalled()
-	})
+	beforeEach(() => {})
 
 	it('screenshot returns the desktop image and records no event (it is a read)', async () => {
 		const shot = { image_base64: 'abc', mime_type: 'image/jpeg', width: 1280, height: 720 }
@@ -352,7 +307,6 @@ describe('agent control routes', () => {
 describe('whose computer', () => {
 	beforeEach(() => {
 		process.env.INTEGRATION_ENCRYPTION_KEY = 'ab'.repeat(32)
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
 	})
 
 	it('an agent gets its own desktop without naming it', async () => {
@@ -458,15 +412,6 @@ describe('whose computer', () => {
 			expect(await (await list(app)).json()).toEqual({
 				desktops: [{ agent_id: OTHER_AGENT, status: 'suspended' }],
 			})
-		})
-
-		it('404s when the flag is off and does not ask any server', async () => {
-			vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-			const listFn = vi.fn()
-			const { app } = build({ list: listFn })
-
-			expect((await list(app)).status).toBe(404)
-			expect(listFn).not.toHaveBeenCalled()
 		})
 
 		it('returns an empty list when a server is down instead of failing', async () => {

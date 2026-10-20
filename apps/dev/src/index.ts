@@ -24,7 +24,6 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
-import { FLAGS, isFlagEnabledForWorkspace } from './lib/feature-flags'
 import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
@@ -561,8 +560,6 @@ httpServer.on('upgrade', (req, socket, head) => {
 	}
 	handleDesktopStreamUpgrade(req, socket, head, {
 		isMember: (actorId, workspaceId) => isWorkspaceMember(db, actorId, workspaceId),
-		isEnabled: (actorId, workspaceId) =>
-			isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId }),
 		canAccess: (actorId, workspaceId, agentId) =>
 			canAccessDesktop(db, actorId, workspaceId, agentId),
 		locate: (workspaceId, agentId) => desktopService.locate(workspaceId, agentId),

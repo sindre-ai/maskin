@@ -9,13 +9,6 @@ import { AgentStorageManager } from '../../services/agent-storage'
 import { insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-// The flag is read from env; this suite is about what the route does to the
-// database and storage, so it is switched on for every workspace here.
-vi.mock('../../lib/feature-flags', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../lib/feature-flags')>()),
-	isFlagEnabledForWorkspace: () => true,
-}))
-
 const { default: desktopTeachRoutes } = await import('../../routes/desktop-teach')
 
 type Env = {

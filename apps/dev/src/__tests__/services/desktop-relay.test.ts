@@ -30,7 +30,6 @@ function fakeReq(url: string, rawHeaders: string[] = []) {
 
 const okDeps = () => ({
 	isMember: vi.fn(async () => true),
-	isEnabled: vi.fn(() => true),
 	canAccess: vi.fn(async () => true),
 	locate: vi.fn(async () => ({
 		server: {
@@ -73,9 +72,8 @@ describe('handleDesktopStreamUpgrade', () => {
 		}
 	})
 
-	it('403s when the flag is off, the actor left, or may no longer reach that agent', async () => {
+	it('403s when the actor left, or may no longer reach that agent', async () => {
 		const patches = [
-			{ isEnabled: vi.fn(() => false) },
 			{ isMember: vi.fn(async () => false) },
 			// e.g. an agent whose ticket names a colleague, or the agent was removed
 			{ canAccess: vi.fn(async () => false) },

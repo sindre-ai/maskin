@@ -4,13 +4,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
  * E2E coverage for an agent's computer: the Computer section of the agent page
- * and its expand-to-popup, gated behind the `workspace-desktop` flag.
+ * and its expand-to-popup.
  *
  * CI has no agent-server or microVM, so the computer itself is faked at the
  * network edges the page touches: `GET /api/desktop` (which agents have one, and
  * whether it is asleep), `POST /api/desktop/connect` and the `/api/desktop/stream`
- * WebSocket. What this spec proves is the wiring and layout: the flag boundary,
- * that opening the page never starts or wakes a computer on its own, the ticket
+ * WebSocket. What this spec proves is the wiring and layout: that opening the page never starts or wakes a computer on its own, the ticket
  * hand-off, error and retry states, the popup, and no horizontal overflow at the
  * ship-gate viewports. The live VNC picture is covered by the manual run in
  * docker/desktop-test/README.md.
@@ -18,10 +17,6 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const CONNECT = /\/api\/desktop\/connect/
 const LIST = /\/api\/desktop$/
-
-async function setFlag(page: Page, value: 'on' | 'off') {
-	await page.addInitScript((v) => localStorage.setItem('ff:workspace-desktop', v), value)
-}
 
 async function expectNoHorizontalOverflow(page: Page) {
 	const overflow = await page.evaluate(
@@ -59,7 +54,6 @@ test.describe("An agent's computer", () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page, 'on')
 			const agent = await seedAgent(account)
 			await listing(page, agent.id)
 			let connectCalls = 0
@@ -83,7 +77,6 @@ test.describe("An agent's computer", () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page, 'on')
 			const agent = await seedAgent(account)
 			await listing(page, agent.id, 'suspended')
 			let connectCalls = 0
@@ -105,7 +98,6 @@ test.describe("An agent's computer", () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page, 'on')
 			const agent = await seedAgent(account)
 			await listing(page, agent.id)
 			let connectCalls = 0
@@ -137,7 +129,6 @@ test.describe("An agent's computer", () => {
 
 		test(`expands into a popup that fits the screen at ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page, 'on')
 			const agent = await seedAgent(account)
 			await listing(page, agent.id, 'running')
 			// Never fulfilled: the computer stays in its starting state.
@@ -163,7 +154,6 @@ test.describe("An agent's computer", () => {
 		page,
 		account,
 	}) => {
-		await setFlag(page, 'on')
 		const agent = await seedAgent(account)
 		await listing(page, agent.id, 'running')
 		let connectUrl = ''
@@ -197,30 +187,8 @@ test.describe("An agent's computer", () => {
 		await expect(page.getByText("Couldn't open the desktop")).toBeVisible()
 	})
 
-	test('is absent when the flag is off, and the old Desktop page and nav entry are gone', async ({
-		page,
-		account,
-	}) => {
+	test('has no Desktop entry in the sidebar', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
-		await setFlag(page, 'off')
-		const agent = await seedAgent(account)
-		let desktopCalls = 0
-		await page.route(/\/api\/desktop/, async (route) => {
-			desktopCalls += 1
-			await route.abort()
-		})
-
-		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
-
-		await expect(page.getByRole('heading', { name: 'Sessions' })).toBeVisible()
-		await expect(page.getByRole('region', { name: 'Computer' })).toHaveCount(0)
-		await expect(page.getByRole('link', { name: 'Desktop' })).toHaveCount(0)
-		expect(desktopCalls).toBe(0)
-	})
-
-	test('has no Desktop entry in the sidebar even with the flag on', async ({ page, account }) => {
-		await page.setViewportSize({ width: 1024, height: 768 })
-		await setFlag(page, 'on')
 
 		await page.goto(`/${account.workspaceId}`)
 
@@ -231,7 +199,6 @@ test.describe("An agent's computer", () => {
 	for (const scheme of ['light', 'dark'] as const) {
 		test(`renders the section and its error state in ${scheme} mode`, async ({ page, account }) => {
 			await page.emulateMedia({ colorScheme: scheme })
-			await setFlag(page, 'on')
 			const agent = await seedAgent(account)
 			await listing(page, agent.id, 'running')
 			await page.route(CONNECT, (route) =>

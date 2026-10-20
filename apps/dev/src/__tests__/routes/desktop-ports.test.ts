@@ -1,12 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/feature-flags', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../lib/feature-flags')>()),
-	isFlagEnabledForWorkspace: vi.fn(),
-}))
-
-import { isFlagEnabledForWorkspace } from '../../lib/feature-flags'
 import desktopRoutes from '../../routes/desktop'
 
 const WS = '11111111-1111-4111-8111-111111111111'
@@ -86,9 +80,7 @@ const located = (serverId = SERVER_A) => ({
 })
 
 describe('POST /api/desktop/ports', () => {
-	beforeEach(() => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
-	})
+	beforeEach(() => {})
 
 	it('opens the port on the server that hosts both the computer and the session', async () => {
 		const ensure = vi.fn(async () => located())
@@ -221,15 +213,6 @@ describe('POST /api/desktop/ports', () => {
 		expect((await expose(app, { session_id: 'nope', guest_port: 5173 })).status).toBe(400)
 	})
 
-	it('404s when the flag is off', async () => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
-		const ensure = vi.fn()
-		const { app } = build({ session: liveSession(), service: { ensure, ports: vi.fn() } })
-
-		expect((await expose(app, { session_id: SESSION, guest_port: 5173 })).status).toBe(404)
-		expect(ensure).not.toHaveBeenCalled()
-	})
-
 	it('refuses an agent that names a colleague’s computer', async () => {
 		const ensure = vi.fn()
 		const { app } = build({ session: liveSession(), service: { ensure, ports: vi.fn() } })
@@ -246,9 +229,7 @@ describe('POST /api/desktop/ports', () => {
 })
 
 describe('GET and DELETE /api/desktop/ports', () => {
-	beforeEach(() => {
-		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
-	})
+	beforeEach(() => {})
 
 	it('lists without starting a computer: none yet means no ports', async () => {
 		const ensure = vi.fn()

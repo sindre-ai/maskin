@@ -31,7 +31,6 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
@@ -1427,9 +1426,7 @@ app.openapi(keychainCardRoute, (async (c) => {
 // whose from the message author, so an agent cannot point it at another agent's) and
 // its Done button posts a message, which is what hands control back. Same gates as
 // /keychain-card: only the agent that owns an interactive chat session may post, and
-// anything else gets a 409 so the tool can say there is nobody to ask. Behind the same
-// `workspace-desktop` flag as the computer itself, so a card is never posted for a
-// computer the person cannot open.
+// anything else gets a 409 so the tool can say there is nobody to ask.
 const computerCardRoute = createRoute({
 	method: 'post',
 	path: '/{id}/computer-card',
@@ -1484,10 +1481,6 @@ app.openapi(computerCardRoute, (async (c) => {
 	}
 
 	await isWorkspaceWriter(db, actorId, session.workspaceId)
-
-	if (!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId })) {
-		return c.json(createApiError('NOT_FOUND', 'Computers are not available in this workspace'), 404)
-	}
 
 	if (!session.interactive || !session.conversationId) {
 		return c.json(

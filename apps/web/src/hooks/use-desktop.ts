@@ -3,10 +3,6 @@ import { queryKeys } from '@/lib/query-keys'
 import type { TeachRequest } from '@maskin/shared'
 import { useMutation, useQuery } from '@tanstack/react-query'
 
-// Feature flag id for agent computers (see apps/dev/src/lib/feature-flags.ts).
-// Read once, in AgentDetailView: the computer lives on the agent page only.
-export const DESKTOP_FLAG = 'workspace-desktop'
-
 /**
  * Connect to one agent's computer. A mutation rather than a query: each call
  * mints a single-use ticket, so the response must never be cached or replayed,

@@ -11,7 +11,6 @@ import { resolveDesktopAgent } from '../lib/desktop-access'
 import { signDesktopTicket } from '../lib/desktop-ticket'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
@@ -166,9 +165,6 @@ async function gate(c: Ctx, { write = true }: { write?: boolean } = {}): Promise
 	if (write) assertWorkspaceWriterRole(c.get('workspaceRole') as string | undefined)
 	const workspaceId = (c.req.header('x-workspace-id') ?? '').toLowerCase()
 	const actorId = c.get('actorId') as string
-	if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId })) {
-		return c.json(createApiError('NOT_FOUND', 'Desktop is not available'), 404)
-	}
 	const access = await resolveDesktopAgent(c.get('db') as Database, {
 		actorId,
 		actorType: c.get('actorType') as string | undefined,
@@ -226,9 +222,6 @@ app.openapi(connectRoute, async (c) => {
 app.openapi(listRoute, async (c) => {
 	const workspaceId = (c.req.header('x-workspace-id') ?? '').toLowerCase()
 	const actorId = c.get('actorId')
-	if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId })) {
-		return c.json(createApiError('NOT_FOUND', 'Desktop is not available'), 404)
-	}
 	let desktops = await serviceFor(c)
 		.list(workspaceId)
 		.catch((err) => {

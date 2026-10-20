@@ -23,7 +23,6 @@ const DROPPED_HEADERS = new Set(['host', 'authorization', 'cookie'])
 
 export interface DesktopRelayDeps {
 	isMember: (actorId: string, workspaceId: string) => Promise<boolean>
-	isEnabled: (actorId: string, workspaceId: string) => boolean
 	// May this actor reach THIS agent's desktop right now? (An agent: only its
 	// own. A person: any agent in a workspace they belong to.)
 	canAccess: (actorId: string, workspaceId: string, agentId: string) => Promise<boolean>
@@ -80,10 +79,9 @@ export async function handleDesktopStreamUpgrade(
 	}
 
 	try {
-		// Re-check at upgrade time, not just at ticket time: membership, the flag, or
+		// Re-check at upgrade time, not just at ticket time: membership or
 		// the agent's place in the workspace may have changed in the 30s between the two.
 		if (
-			!deps.isEnabled(claims.actorId, claims.workspaceId) ||
 			!(await deps.isMember(claims.actorId, claims.workspaceId)) ||
 			!(await deps.canAccess(claims.actorId, claims.workspaceId, claims.agentId))
 		) {
