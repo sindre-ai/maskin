@@ -149,6 +149,13 @@ describe('GET /api/for-you', () => {
 		expect(await list()).toHaveLength(1)
 	})
 
+	it('keeps an item whose source comment id was written as a string', async () => {
+		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
+		const sourceId = await comment(obj.id, agentId)
+		await item({ objectId: obj.id }, { source_comment_id: String(sourceId) })
+		expect(await list()).toHaveLength(1)
+	})
+
 	it('drops an item whose object is no longer in the status the ask assumed', async () => {
 		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'proposed' })
 		await item({ objectId: obj.id }, { only_while_status: ['proposed'] })

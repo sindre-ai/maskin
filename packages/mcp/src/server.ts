@@ -5933,6 +5933,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.type) params.set('type', args.type)
+			if (args.kind) params.set('kind', args.kind)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const result = await apiCall(config, 'GET', `/api/notifications?${params}`, undefined, {
