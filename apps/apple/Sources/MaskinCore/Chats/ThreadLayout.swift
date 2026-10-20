@@ -81,8 +81,15 @@ public enum ThreadLayout {
 		var lastDay: Date?
 		var previous: ChatMessage?
 		// The first message from someone else past the cursor, and how many such there are.
-		let unread = cursor.map { cursor in
-			messages.filter {
+		// Answering a message means having read everything before it, so the reader's own latest
+		// message counts as read state too (the server cursor can lag: they replied elsewhere).
+		var lastOwn = 0
+		if let me = currentActorID {
+			lastOwn = messages.last { $0.actorID == me && !$0.isSystem && $0.serverID != nil }?.serverID ?? 0
+		}
+		let unread: [ChatMessage] = cursor.map { (cursor: Int) -> [ChatMessage] in
+			let cursor = max(cursor, lastOwn)
+			return messages.filter {
 				!$0.isSystem && ($0.serverID ?? 0) > cursor && ($0.serverID != nil) && $0.actorID != currentActorID
 			}
 		} ?? []
