@@ -34,7 +34,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { evictBillingUsage } from './billing-usage-cache'
 import { logger } from './logger'
@@ -245,6 +245,23 @@ export async function purgeWorkspace(
 		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
+	// The Keychain chain head and the row counts are read before the audit trail goes, because they
+	// are the only record of the delete that outlives it.
+	const [lastLogRow] = await tx
+		.select({ id: credentialAccessLog.id, rowHash: credentialAccessLog.rowHash })
+		.from(credentialAccessLog)
+		.where(eq(credentialAccessLog.workspaceId, workspaceId))
+		.orderBy(sql`${credentialAccessLog.id} desc`)
+		.limit(1)
+	const [logCount] = await tx
+		.select({ n: sql<number>`count(*)::int` })
+		.from(credentialAccessLog)
+		.where(eq(credentialAccessLog.workspaceId, workspaceId))
+	const [snapshotCount] = await tx
+		.select({ n: sql<number>`count(*)::int` })
+		.from(credentialChainSnapshots)
+		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
+
 	// Edges have no foreign keys and join objects or files; an edge is the workspace's if either
 	// end is one of its objects or files.
 	await tx
@@ -271,23 +288,6 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceCreditLedger).where(eq(workspaceCreditLedger.workspaceId, workspaceId))
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
-	// The chain head and the counts are read before the audit trail goes, because they are the only
-	// record of the delete that outlives it.
-	const [lastLogRow] = await tx
-		.select({ id: credentialAccessLog.id, rowHash: credentialAccessLog.rowHash })
-		.from(credentialAccessLog)
-		.where(eq(credentialAccessLog.workspaceId, workspaceId))
-		.orderBy(desc(credentialAccessLog.id))
-		.limit(1)
-	const [logCount] = await tx
-		.select({ n: count() })
-		.from(credentialAccessLog)
-		.where(eq(credentialAccessLog.workspaceId, workspaceId))
-	const [snapshotCount] = await tx
-		.select({ n: count() })
-		.from(credentialChainSnapshots)
-		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
-
 	// The audit trail dies with the workspace. The snapshot table is append-only by trigger; that
 	// trigger lets a DELETE through only while this transaction-local flag is set (migration 0097).
 	await tx.execute(sql`SELECT set_config('maskin.purging_workspace', 'on', true)`)
