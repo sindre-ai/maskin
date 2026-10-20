@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, messages, workspaceMembers, workspaces } from '@maskin/db/schema'
-import type { FirstStep } from '@maskin/shared'
+import type { FirstStep, MessageMetadata } from '@maskin/shared'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
@@ -108,6 +108,7 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 				agentId: actor.id,
 				content: rendered.content,
 				delivery: { kind: 'agent_intro', version: 1 },
+				extraMetadata: introMetadata(rendered, neededTools.providers),
 			})
 			return chat.id
 		})
@@ -138,6 +139,29 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 			stage,
 		})
 	}
+}
+
+/**
+ * The buttons and rows data written once with the intro, never edited. Keys are
+ * left out when there is nothing to draw, so a no-key intro and the minimal
+ * fallback stay plain text. The tools are provider names only: their status is
+ * read live by the web.
+ */
+function introMetadata(
+	rendered: RenderedIntro,
+	providers: string[],
+): Pick<MessageMetadata, 'suggested_steps' | 'needed_tools' | 'plain_tail'> {
+	const metadata: Pick<MessageMetadata, 'suggested_steps' | 'needed_tools' | 'plain_tail'> = {}
+	if (rendered.steps.length > 0) metadata.suggested_steps = rendered.steps
+	if (rendered.neededToolNames.length > 0) {
+		metadata.needed_tools = providers
+			.slice(0, rendered.neededToolNames.length)
+			.map((provider) => ({ provider }))
+	}
+	if ((metadata.suggested_steps || metadata.needed_tools) && rendered.plainTailCount > 0) {
+		metadata.plain_tail = rendered.plainTailCount
+	}
+	return metadata
 }
 
 function skip(args: IntroduceArgs, reason: SkipReason): void {
@@ -205,14 +229,20 @@ async function introsDeliveredTo(db: Database, recipientId: string): Promise<num
  * console), or when it repeats. Only the first 3 are shown; every dropped or cut
  * name counts in hints_dropped. Never throws on content.
  */
-function resolveNeededTools(names: string[] | undefined): { names: string[]; dropped: number } {
-	if (!names || names.length === 0) return { names: [], dropped: 0 }
+function resolveNeededTools(names: string[] | undefined): {
+	/** Catalog provider names, parallel to the display names. */
+	providers: string[]
+	names: string[]
+	dropped: number
+} {
+	if (!names || names.length === 0) return { providers: [], names: [], dropped: 0 }
 	const usable = new Map(
 		listProviders()
 			.filter((p) => p.config.mcp)
 			.map((p) => [p.config.name, p.config.displayName] as const),
 	)
 	const shown: string[] = []
+	const shownProviders: string[] = []
 	const seen = new Set<string>()
 	for (const raw of names) {
 		const provider = raw.trim().toLowerCase()
@@ -220,9 +250,14 @@ function resolveNeededTools(names: string[] | undefined): { names: string[]; dro
 		if (!display || seen.has(provider)) continue
 		seen.add(provider)
 		shown.push(display)
+		shownProviders.push(provider)
 	}
 	const kept = shown.slice(0, MAX_NEEDED_TOOLS)
-	return { names: kept, dropped: names.length - kept.length }
+	return {
+		providers: shownProviders.slice(0, MAX_NEEDED_TOOLS),
+		names: kept,
+		dropped: names.length - kept.length,
+	}
 }
 
 async function renderIntro(

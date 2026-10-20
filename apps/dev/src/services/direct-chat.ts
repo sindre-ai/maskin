@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { conversationParticipants, conversations } from '@maskin/db/schema'
-import type { MessageDelivery } from '@maskin/shared'
+import type { MessageDelivery, MessageMetadata } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import {
@@ -58,6 +58,8 @@ export interface PostToDirectChatArgs {
 	agentId: string
 	content: string
 	delivery: MessageDelivery
+	/** Backend-owned keys written in the same insert as the delivery marker. */
+	extraMetadata?: Pick<MessageMetadata, 'suggested_steps' | 'needed_tools' | 'plain_tail'>
 }
 
 /**
@@ -75,7 +77,7 @@ export async function postToDirectChat(
 		workspaceId: args.workspaceId,
 		actorId: args.agentId,
 		content: args.content,
-		metadata: { delivery: args.delivery },
+		metadata: { ...args.extraMetadata, delivery: args.delivery },
 		sessionId: null,
 	})
 	if (!created) throw new Error('postToDirectChat: insert was suppressed')

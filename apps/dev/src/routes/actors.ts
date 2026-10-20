@@ -77,6 +77,7 @@ type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		workspaceRole?: string
+		maskinSessionId?: string
 	}
 }
 

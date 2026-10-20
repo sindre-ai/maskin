@@ -26124,6 +26124,78 @@
 												"required": [
 													"kind"
 												]
+											},
+											"suggested_steps": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 60
+														},
+														"prompt": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 200
+														},
+														"action": {
+															"type": "string",
+															"enum": [
+																"send",
+																"fill"
+															]
+														}
+													},
+													"required": [
+														"label",
+														"prompt",
+														"action"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											},
+											"needed_tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"provider": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														}
+													},
+													"required": [
+														"provider"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 3
+											},
+											"plain_tail": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 10
+											},
+											"from_suggested_step": {
+												"type": "object",
+												"properties": {
+													"intro_message_id": {
+														"type": "integer"
+													},
+													"index": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 3
+													}
+												},
+												"required": [
+													"intro_message_id",
+													"index"
+												]
 											}
 										}
 									}
@@ -28035,6 +28107,78 @@
 												},
 												"required": [
 													"kind"
+												]
+											},
+											"suggested_steps": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 60
+														},
+														"prompt": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 200
+														},
+														"action": {
+															"type": "string",
+															"enum": [
+																"send",
+																"fill"
+															]
+														}
+													},
+													"required": [
+														"label",
+														"prompt",
+														"action"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											},
+											"needed_tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"provider": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														}
+													},
+													"required": [
+														"provider"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 3
+											},
+											"plain_tail": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 10
+											},
+											"from_suggested_step": {
+												"type": "object",
+												"properties": {
+													"intro_message_id": {
+														"type": "integer"
+													},
+													"index": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 3
+													}
+												},
+												"required": [
+													"intro_message_id",
+													"index"
 												]
 											}
 										}
