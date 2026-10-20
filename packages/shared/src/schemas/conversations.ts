@@ -353,3 +353,18 @@ export function formatIntegrationConnectAsMarkdown(displayName: string): string 
 export const sessionAskSchema = z.object({
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
 })
+
+export const MESSAGE_REACTION_MAX_LENGTH = 16
+
+/** One emoji (possibly several code points: skin tones, ZWJ sequences, variation selectors). */
+export const reactionEmojiSchema = z
+	.string()
+	.min(1)
+	.max(MESSAGE_REACTION_MAX_LENGTH)
+	.refine((v) => /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u.test(v), {
+		message: 'Must be an emoji',
+	})
+
+export const addReactionSchema = z.object({ emoji: reactionEmojiSchema })
+
+export const removeReactionQuerySchema = z.object({ emoji: reactionEmojiSchema })

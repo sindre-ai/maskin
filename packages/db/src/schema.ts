@@ -739,6 +739,23 @@ export const messages = pgTable(
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
 
+// One emoji one actor put on one message. The primary key makes adding idempotent and lets
+// the same person use several different emoji on a message.
+export const messageReactions = pgTable(
+	'message_reactions',
+	{
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		emoji: text('emoji').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.messageId, t.actorId, t.emoji] })],
+)
+
 // Chat turns waiting for an agent's interactive conversation session to
 // become writable. A message that arrives while the (conversation, agent)
 // session is still booting (pending/starting/queued) is buffered here by the

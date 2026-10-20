@@ -4,17 +4,20 @@ import {
 	actors,
 	conversationParticipants,
 	conversations,
+	messageReactions,
 	messages,
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
 	addConversationParticipantsSchema,
+	addReactionSchema,
 	conversationListQuerySchema,
 	createConversationSchema,
 	editMessageSchema,
 	messageQuerySchema,
 	postMessageSchema,
+	removeReactionQuerySchema,
 	stripServerOwnedMetadata,
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
@@ -39,6 +42,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { loadReactionsByMessage } from '../services/message-reactions'
 import type { SessionManager } from '../services/session-manager'
 import {
 	anchorSpawnedSessionsToMessage,
@@ -789,6 +793,12 @@ app.openapi(listMessagesRoute, (async (c) => {
 		actorId: callerId,
 	})
 
+	const reactions = await loadReactionsByMessage(
+		db,
+		callerId,
+		page.map((m) => m.id),
+	)
+
 	// Handoffs no message carries yet ride on the newest page only.
 	const pendingHandoffs = query.before_id
 		? undefined
@@ -804,6 +814,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 				({
 					...serialize(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
+					reactions: reactions.get(m.id) ?? [],
 				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
 		),
 		has_more: hasMore,
@@ -1121,6 +1132,128 @@ app.openapi(editMessageRoute, (async (c) => {
 		200,
 	)
 }) as RouteHandler<typeof editMessageRoute, Env>)
+
+// PUT /:id/messages/:messageId/reactions - React with an emoji (idempotent)
+const addReactionRoute = createRoute({
+	method: 'put',
+	path: '/{id}/messages/{messageId}/reactions',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'React to a message with an emoji',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: addReactionSchema } } },
+	},
+	responses: {
+		204: { description: 'Reaction recorded' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+// DELETE /:id/messages/:messageId/reactions?emoji= - Take your reaction back
+const removeReactionRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/messages/{messageId}/reactions',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Remove your emoji reaction from a message',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		query: removeReactionQuerySchema,
+	},
+	responses: {
+		204: { description: 'Reaction removed (or was not there)' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+/** The message must be a real (non-system) message of a conversation the caller is in. */
+async function findReactableMessage(
+	db: Database,
+	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
+): Promise<boolean> {
+	const row = await loadConversationWithAuth(db, args.conversationId, args.callerId)
+	if (!row || row.conversation.workspaceId !== args.workspaceId) return false
+	const [message] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.where(
+			and(
+				eq(messages.id, args.messageId),
+				eq(messages.conversationId, args.conversationId),
+				eq(messages.kind, 'message'),
+			),
+		)
+		.limit(1)
+	return Boolean(message)
+}
+
+app.openapi(addReactionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { emoji } = c.req.valid('json')
+
+	if (!(await findReactableMessage(db, { conversationId: id, messageId, callerId, workspaceId }))) {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	const inserted = await db
+		.insert(messageReactions)
+		.values({ messageId, actorId: callerId, emoji })
+		.onConflictDoNothing()
+		.returning({ messageId: messageReactions.messageId })
+	// Only a change is an event: repeating a reaction must not wake every open chat.
+	if (inserted.length > 0) {
+		// `message_updated` makes open clients re-read the page, which carries the reactions.
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_updated',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId, reaction: { emoji, added: true } },
+		})
+	}
+	return c.body(null, 204)
+}) as RouteHandler<typeof addReactionRoute, Env>)
+
+app.openapi(removeReactionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { emoji } = c.req.valid('query')
+
+	if (!(await findReactableMessage(db, { conversationId: id, messageId, callerId, workspaceId }))) {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	const removed = await db
+		.delete(messageReactions)
+		.where(
+			and(
+				eq(messageReactions.messageId, messageId),
+				eq(messageReactions.actorId, callerId),
+				eq(messageReactions.emoji, emoji),
+			),
+		)
+		.returning({ messageId: messageReactions.messageId })
+	if (removed.length > 0) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_updated',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId, reaction: { emoji, added: false } },
+		})
+	}
+	return c.body(null, 204)
+}) as RouteHandler<typeof removeReactionRoute, Env>)
 
 // POST /:id/messages/:messageId/retry - Ask agents to respond to a message again
 const retryMessageRoute = createRoute({
