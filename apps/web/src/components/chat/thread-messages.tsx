@@ -15,7 +15,7 @@ import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
@@ -140,7 +140,20 @@ export function ThreadMessages({
 	// grow the scroller upward. Cleared once applied.
 	const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
 	const pageCount = data?.pages.length ?? 0
-	const [isNearBottom, setIsNearBottom] = useState(true)
+	// A ref, not state: it only steers scrolling, and it has to be reset
+	// synchronously when the reader opens a different conversation.
+	const nearBottomRef = useRef(true)
+	const messagesContentRef = useRef<HTMLDivElement | null>(null)
+	const hasMessages = messages.length > 0
+
+	// Opening a conversation always starts at its newest message. This component
+	// is reused across conversations, so without a reset the previous thread's
+	// message count and scroll position leak into the next one.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger — a different thread was opened — and its value is not read inside the effect.
+	useLayoutEffect(() => {
+		lastMessageCountRef.current = 0
+		nearBottomRef.current = true
+	}, [conversationId])
 
 	// Auto-scroll to the newest message on first load and whenever a new
 	// message arrives while the user is already near the bottom (own sends,
@@ -151,9 +164,24 @@ export function ThreadMessages({
 		const grew = messages.length > lastMessageCountRef.current
 		lastMessageCountRef.current = messages.length
 		if (!grew) return
-		if (!isNearBottom) return
+		if (!nearBottomRef.current) return
 		bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
-	}, [messages.length, isNearBottom])
+	}, [messages.length])
+
+	// Rows keep growing after they mount (markdown, images, activity cards,
+	// session chips), which pushes the newest message below the fold of a view
+	// that was scrolled to the bottom a moment earlier. Follow that growth for as
+	// long as the reader hasn't scrolled away.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: hasMessages and conversationId only decide when the scroller element exists / is replaced, so the observer re-attaches to it; neither is read inside.
+	useEffect(() => {
+		const content = messagesContentRef.current
+		if (!content || typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(() => {
+			if (nearBottomRef.current) bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
+		})
+		observer.observe(content)
+		return () => observer.disconnect()
+	}, [hasMessages, conversationId])
 
 	// Auto-load older messages when the user scrolls to the top of the thread.
 	// The button below stays as an accessible fallback for keyboard users and
@@ -198,7 +226,7 @@ export function ThreadMessages({
 		const el = scrollerRef.current
 		if (!el) return
 		const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-		setIsNearBottom(distanceFromBottom < 120)
+		nearBottomRef.current = distanceFromBottom < 120
 	}
 
 	if (isLoading) {
@@ -306,7 +334,7 @@ export function ThreadMessages({
 					) : null}
 				</div>
 			) : null}
-			<div className="flex flex-col gap-4">
+			<div ref={messagesContentRef} className="flex flex-col gap-4">
 				{visibleMessages.map((message, index) => {
 					const prev = visibleMessages[index - 1]
 					const isLast = index === visibleMessages.length - 1
