@@ -34,7 +34,7 @@ import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
-import { handleDesktopStreamUpgrade } from './services/desktop-relay'
+import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
@@ -547,7 +547,19 @@ nodeWebSocket?.injectWebSocket(server)
 // the raw http.Server — see services/desktop-relay.ts. Any other upgrade
 // request is refused rather than left hanging.
 const desktopService = createWorkspaceDesktopService(db)
-;(server as Server).on('upgrade', (req, socket, head) => {
+const httpServer = server as Server
+// injectWebSocket (voice) installed its own 'upgrade' listener, and it answers EVERY
+// upgrade it is shown: for a path it does not know it passes the request to the HTTP
+// app, gets a 401 and closes the socket, before ours could act. So take over: one
+// listener that sends desktop stream upgrades to the relay and everything else to the
+// voice handler, and no request is ever seen by both.
+const voiceUpgradeListeners = httpServer.listeners('upgrade') as Array<(...args: unknown[]) => void>
+httpServer.removeAllListeners('upgrade')
+httpServer.on('upgrade', (req, socket, head) => {
+	if (!isDesktopStreamRequest(req)) {
+		for (const listener of voiceUpgradeListeners) listener.call(httpServer, req, socket, head)
+		return
+	}
 	handleDesktopStreamUpgrade(req, socket, head, {
 		isMember: (actorId, workspaceId) => isWorkspaceMember(db, actorId, workspaceId),
 		isEnabled: (actorId, workspaceId) =>

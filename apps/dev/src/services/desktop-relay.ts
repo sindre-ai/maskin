@@ -44,6 +44,16 @@ function reject(socket: Duplex, status: number, text: string): void {
 	socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
 }
 
+/**
+ * True for a WebSocket upgrade aimed at the desktop stream. Synchronous on purpose: the
+ * server has to decide WHICH upgrade handler gets a request before any of them runs,
+ * because the voice WebSocket handler answers every upgrade it is shown (a path it does
+ * not know gets a 401 and a closed socket), so the two must never both see one.
+ */
+export function isDesktopStreamRequest(req: Pick<IncomingMessage, 'url'>): boolean {
+	return new URL(req.url ?? '', 'http://localhost').pathname === DESKTOP_STREAM_PATH
+}
+
 /** Returns true if the request was ours (handled or rejected). */
 export async function handleDesktopStreamUpgrade(
 	req: IncomingMessage,

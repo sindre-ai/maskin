@@ -1,7 +1,11 @@
 import { Duplex, PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { signDesktopTicket } from '../../lib/desktop-ticket'
-import { DESKTOP_STREAM_PATH, handleDesktopStreamUpgrade } from '../../services/desktop-relay'
+import {
+	DESKTOP_STREAM_PATH,
+	handleDesktopStreamUpgrade,
+	isDesktopStreamRequest,
+} from '../../services/desktop-relay'
 
 const WS = '11111111-1111-4111-8111-111111111111'
 const ACTOR = '22222222-2222-4222-8222-222222222222'
@@ -151,5 +155,25 @@ describe('handleDesktopStreamUpgrade', () => {
 		const second = fakeSocket()
 		await handleDesktopStreamUpgrade(fakeReq(url), second.sock, Buffer.alloc(0), okDeps())
 		expect(second.written.join('')).toMatch(/^HTTP\/1\.1 401/)
+	})
+})
+
+// The server hands each upgrade to exactly one handler: the voice WebSocket handler answers
+// every upgrade it is shown (an unknown path gets a 401 and a closed socket), so a desktop
+// stream must never reach it.
+describe('isDesktopStreamRequest', () => {
+	it.each([
+		[DESKTOP_STREAM_PATH, true],
+		[`${DESKTOP_STREAM_PATH}?ticket=abc`, true],
+		['/api/voice/ws', false],
+		['/api/desktop/stream/extra', false],
+		['/api/desktop', false],
+		['/', false],
+	])('%s -> %s', (url, expected) => {
+		expect(isDesktopStreamRequest({ url })).toBe(expected)
+	})
+
+	it('is false when there is no url', () => {
+		expect(isDesktopStreamRequest({ url: undefined })).toBe(false)
 	})
 })
