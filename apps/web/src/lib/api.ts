@@ -1531,6 +1531,8 @@ export interface LatestMentionDecisionOption {
  * here; `object_id` says which object it came from.
  */
 export interface LatestMentionDecisionDraft {
+	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
+	id?: string
 	object_id?: string
 	label?: string
 	to?: string
@@ -1543,6 +1545,8 @@ export interface LatestMentionDecision {
 	ask: string
 	options: LatestMentionDecisionOption[]
 	draft?: LatestMentionDecisionDraft
+	/** One card, several messages: each shows as its own preview with Send and Skip. */
+	drafts?: LatestMentionDecisionDraft[]
 }
 
 export interface LatestMention {
@@ -1914,7 +1918,7 @@ export interface IntegrationResponse {
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
-export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
 
 export interface AgentGrant {
 	actorId: string
@@ -2342,7 +2346,7 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'read_write'
+		access: 'none' | 'read' | 'ask_first' | 'read_write'
 		source: 'grant' | 'default'
 		default_access: 'read' | 'none'
 		server_attached: boolean

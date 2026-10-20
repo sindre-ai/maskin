@@ -265,6 +265,8 @@ export const messageMetadataSchema = z.object({
 	computer_request: messageComputerRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/** Backend-owned: the `commented` event this message was copied from (object chats). */
+	comment_event_id: z.number().int().optional(),
 })
 
 /**
@@ -285,12 +287,22 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
 		computer_request: _computerRequest,
+		comment_event_id: _commentEventId,
 		...rest
 	} = metadata
 	return rest as T
 }
 
+/** What a group chat is about: an object (task, bet, insight) or an installed loop. */
+export const conversationSubjectSchema = z.object({
+	type: z.enum(['object', 'loop']),
+	id: z.string().uuid(),
+})
+
 export const createConversationSchema = z.object({
+	// With a subject, asking again returns the chat that already exists for it
+	// (and adds any new participants) instead of creating a second one.
+	subject: conversationSubjectSchema.optional(),
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
 	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
 	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
@@ -314,6 +326,8 @@ export const conversationListQuerySchema = z.object({
 	// default "Chats" list, archived ones need an explicit filter to surface.
 	archived: booleanQueryParam.default(false),
 	unread_only: booleanQueryParam.optional(),
+	subject_type: z.enum(['object', 'loop']).optional(),
+	subject_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -478,3 +492,18 @@ export function formatComputerRequestAsMarkdown(task: string): string {
 export const sessionAskSchema = z.object({
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
 })
+
+export const MESSAGE_REACTION_MAX_LENGTH = 16
+
+/** One emoji (possibly several code points: skin tones, ZWJ sequences, variation selectors). */
+export const reactionEmojiSchema = z
+	.string()
+	.min(1)
+	.max(MESSAGE_REACTION_MAX_LENGTH)
+	.refine((v) => /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u.test(v), {
+		message: 'Must be an emoji',
+	})
+
+export const addReactionSchema = z.object({ emoji: reactionEmojiSchema })
+
+export const removeReactionQuerySchema = z.object({ emoji: reactionEmojiSchema })

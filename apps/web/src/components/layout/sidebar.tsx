@@ -10,8 +10,7 @@ import {
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
-import { useUnread } from '@/hooks/use-subscriptions'
+import { useForYou } from '@/hooks/use-for-you'
 import {
 	CHATS_ROUTE,
 	CORE_NAV_ITEMS,
@@ -42,8 +41,10 @@ const marketplaceItem: NavItemDef = {
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
 	const hasObjectTypes = useHasObjectsNavItem()
-	const { data: unread } = useUnread(workspaceId)
-	const unreadCount = unread?.items.length ?? 0
+	// The badge counts what the For You page lists (the Chief of Staff's curated items),
+	// not every unread mention, so the two always agree.
+	const { data: forYou } = useForYou(workspaceId)
+	const unreadCount = forYou?.items.length ?? 0
 	const chatUnread = useChatUnreadCount(workspaceId)
 
 	const navItems = useMemo(
