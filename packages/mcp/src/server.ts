@@ -6740,6 +6740,68 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'show_computer',
+		{
+			description: tools.show_computer.description,
+			inputSchema: tools.show_computer.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat opens the agent's OWN computer; the person acts there and
+			// presses Done, which sends the agent a message. A 409 means the session has no
+			// human on the other end (autonomous run, or not an agent session at all).
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'show_computer',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply what you need the user to do on the computer.',
+				)
+			}
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/computer-card`,
+					{ task: args.task },
+					{ workspaceId: args.workspace_id },
+				)
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what you need the user to do.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'Computers are not available in this workspace, so no card could be shown. Say in your reply what you need the user to do.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done. Then call desktop_screenshot to see what changed before you carry on.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_integration_access',
 		{
 			description: tools.update_integration_access.description,

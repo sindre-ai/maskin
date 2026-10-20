@@ -2275,6 +2275,12 @@ export interface MessageKeychainAccessRequest {
 	hint?: string
 }
 
+/** An agent asking the person to act on its own computer (the card opens it). */
+export interface MessageComputerRequest {
+	session_id: string
+	task: string
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -2312,6 +2318,7 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }

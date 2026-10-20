@@ -1832,6 +1832,20 @@ export const tools = {
 				),
 		}),
 	},
+	show_computer: {
+		description:
+			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, solving a CAPTCHA, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			task: z
+				.string()
+				.min(1)
+				.max(500)
+				.describe(
+					'What the user should do on the computer, in one or two sentences, e.g. "Approve the 2FA prompt on e-conomic, then press Done."',
+				),
+		}),
+	},
 	update_integration_access: {
 		description:
 			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (read & write), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
