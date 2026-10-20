@@ -46,16 +46,21 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * Edit and delete check for a notification loaded by ID. Returns false for a
  * non-member (the caller answers 404). A viewer may change only a notification
  * addressed to them, so they can still mark their own read; changing anyone
- * else's is a 403, as for every other write.
+ * else's is a 403, as for every other write. A viewer may not write metadata
+ * even on their own: metadata.response is what a responder leaves for the
+ * source agent, and responding is a writer action.
  */
 async function mayChangeNotification(
 	db: Database,
 	actorId: string,
 	notification: { workspaceId: string; targetActorId: string | null },
+	editsMetadata = false,
 ): Promise<boolean> {
 	const role = await getWorkspaceRole(db, actorId, notification.workspaceId)
 	if (role === null) return false
-	if (role === 'viewer' && notification.targetActorId !== actorId) throw new ViewerReadOnlyError()
+	if (role === 'viewer' && (notification.targetActorId !== actorId || editsMetadata)) {
+		throw new ViewerReadOnlyError()
+	}
 	return true
 }
 
@@ -269,7 +274,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 	// Verify notification exists and actor may change it
 	const [existing] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1)
 
-	if (!existing || !(await mayChangeNotification(db, actorId, existing))) {
+	if (!existing || !(await mayChangeNotification(db, actorId, existing, !!body.metadata))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 	}
 

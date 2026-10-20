@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import { files, voiceSessions, workspaceMembers } from '@maskin/db/schema'
+import { files, notifications, voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, mapStatusToCode } from '../../lib/errors'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
@@ -443,6 +443,31 @@ describe('Viewer role is read-only', () => {
 
 			const del = await app.request(jsonDelete(`/api/notifications/${own?.id}`, bearerOnly))
 			expect(del.status).toBe(200)
+		})
+
+		it('returns 403 to a viewer who writes metadata on their own notification', async () => {
+			const app = createApp()
+			const own = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: viewerId,
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/notifications/${own?.id}`,
+					{ status: 'resolved', metadata: { response: 'forged' } },
+					bearerOnly,
+				),
+			)
+			expect(res.status).toBe(403)
+
+			const [row] = await db
+				.select()
+				.from(notifications)
+				.where(eq(notifications.id, own?.id as string))
+			expect(row?.status).toBe('pending')
+			expect(row?.metadata).toBeNull()
 		})
 
 		it('keeps a non-member on 404 for edit and delete', async () => {
