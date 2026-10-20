@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects } from '@maskin/db/schema'
-import { commentDecisionSchema } from '@maskin/shared'
-import { and, desc, eq, gt, sql } from 'drizzle-orm'
+import { commentDecisionSchema, readChanges } from '@maskin/shared'
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { canActWithoutAsking, canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
@@ -168,6 +168,40 @@ function sendFailureFor(err: GmailSendError): Fail {
 const SEND_APPROVAL_HOWTO =
 	'Post a decision comment (create_comment with `decision` and the person in `mentions`) whose `draft` holds the email: `to` with the real address ("Mette Holm <mette@northwind.dk>"), and the text starting with a line "Subject: ..." then the body. Mark the option that sends as destructive. End your turn; when the person has chosen it, call gmail_send_email with approval_comment_id set to the id of your comment.'
 
+/**
+ * Whether the draft's text changed after the person's tap. Moving the task to another
+ * status, changing its driver or an agent touching it does not change what they approved,
+ * so only a logged change to `content` counts. Every object update logs a per-field diff.
+ * A write nobody logged (the object moved on, but no event explains it) is treated as a
+ * change, because then there is no way to tell.
+ */
+async function textChangedAfter(
+	db: Database,
+	workspaceId: string,
+	draftObjectId: string,
+	answer: { id: number; createdAt: Date | null },
+	updatedAt: Date | null,
+): Promise<boolean> {
+	const later = await db
+		.select({ data: events.data })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityId, draftObjectId),
+				gt(events.id, answer.id),
+				inArray(events.action, ['updated', 'status_changed']),
+			),
+		)
+		.limit(100)
+	for (const e of later) {
+		const changes = readChanges(e.data)
+		// An entry in a shape we cannot read may have touched the text.
+		if (changes === null || changes.some((c) => c.field === 'content')) return true
+	}
+	return later.length === 0 && !!updatedAt && !!answer.createdAt && updatedAt > answer.createdAt
+}
+
 /** The email an approval card asks about, once a person has chosen to send it. */
 async function loadApproval(
 	db: Database,
@@ -221,6 +255,7 @@ async function loadApproval(
 	// The person's answer: their latest reply under the card. An agent's reply never counts.
 	const [answer] = await db
 		.select({
+			id: events.id,
 			content: sql<string | null>`${events.data}->>'content'`,
 			createdAt: events.createdAt,
 		})
@@ -266,7 +301,7 @@ async function loadApproval(
 			.where(and(eq(objects.id, draft.object_id), eq(objects.workspaceId, workspaceId)))
 			.limit(1)
 		if (object?.content?.trim()) {
-			if (object.updatedAt && answer.createdAt && object.updatedAt > answer.createdAt) {
+			if (await textChangedAfter(db, workspaceId, draft.object_id, answer, object.updatedAt)) {
 				return {
 					failure: fail(
 						409,

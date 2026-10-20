@@ -558,6 +558,62 @@ describe('gmail_send_email: an approved email', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
+	it('refuses when a logged edit changed the text after the person approved it', async () => {
+		const s = await setup()
+		const { card, draftObject } = await insertApprovalCard(s)
+		await db.insert(events).values({
+			workspaceId: s.workspace.id,
+			actorId: s.agent.id,
+			action: 'updated',
+			entityType: 'task',
+			entityId: draftObject?.id as string,
+			data: { changes: [{ field: 'content', old: EMAIL_TEXT, new: 'Subject: Other\n\nElse' }] },
+		})
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(409)
+		expect(JSON.stringify(await res.json())).toContain('changed after the person approved')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('still sends when only the status or driver moved after the approval', async () => {
+		const s = await setup()
+		const { card, draftObject } = await insertApprovalCard(s)
+		await db
+			.update(objects)
+			.set({ status: 'in_progress', updatedAt: new Date(Date.now() + 5000) })
+			.where(eq(objects.id, draftObject?.id as string))
+		await db.insert(events).values({
+			workspaceId: s.workspace.id,
+			actorId: s.human,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId: draftObject?.id as string,
+			data: { changes: [{ field: 'status', old: 'todo', new: 'in_progress' }] },
+		})
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(200)
+		expect(sentMime()).toContain('Subject: Approved subject')
+	})
+
+	it('refuses when the object moved on and nothing logged why', async () => {
+		const s = await setup()
+		const { card, draftObject } = await insertApprovalCard(s)
+		await db
+			.update(objects)
+			.set({ updatedAt: new Date(Date.now() + 5000) })
+			.where(eq(objects.id, draftObject?.id as string))
+
+		expect((await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })).status).toBe(
+			409,
+		)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
 	it('sends the text as the person left it when they edited it before approving', async () => {
 		const s = await setup()
 		const { card, draftObject } = await insertApprovalCard(s)
