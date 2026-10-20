@@ -151,6 +151,9 @@ app.openapi(createSessionRoute, (async (c) => {
 					? { interactive: true, stop_on_result: true, ask_conversation_id: askConversationId }
 					: {}),
 				hop_depth: link.hopDepth,
+				// The chat this work belongs to, written whatever the routing flag says so
+				// the pre-ship baseline by session_origin exists (chat-origin-routing.ts).
+				...(link.originConversationId ? { origin_conversation_id: link.originConversationId } : {}),
 				...(body.notify_on_complete ? { notify_on_complete: true } : {}),
 			}
 		: baseConfig

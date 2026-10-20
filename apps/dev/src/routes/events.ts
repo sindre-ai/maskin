@@ -17,6 +17,11 @@ import {
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import {
+	type CommentRoutingPlan,
+	deliverRoutedComment,
+	planCommentRouting,
+} from '../services/chat-origin-routing'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
@@ -262,7 +267,7 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	// Validate the target object exists and belongs to this workspace
 	const [object] = await db
-		.select({ workspaceId: objects.workspaceId })
+		.select({ workspaceId: objects.workspaceId, title: objects.title, type: objects.type })
 		.from(objects)
 		.where(eq(objects.id, body.entity_id))
 		.limit(1)
@@ -331,19 +336,57 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, unresolvedMentions } = await postComment(db, {
+	// Work a person started in a 1-1 chat answers in that chat: a routed human's
+	// mention is dropped from the stored comment and the text goes to their chat.
+	// If planning fails the comment posts untouched, so the human is still reached.
+	let routing: CommentRoutingPlan | null = null
+	try {
+		routing = await planCommentRouting(db, {
+			workspaceId,
+			commenterId: actorId,
+			commenterType: c.get('actorType'),
+			sessionId: c.get('maskinSessionId'),
+			mentions: body.mentions,
+			hasDecision: !!body.decision,
+			attention: body.attention,
+		})
+	} catch (err) {
+		logger.warn('Comment routing failed, posting without it', {
+			actorId,
+			entityId: body.entity_id,
+			error: String(err),
+		})
+	}
+	const storedMentions = routing ? routing.storedMentions : body.mentions
+
+	const commentInput = {
 		workspaceId,
 		actorId,
 		entityId: body.entity_id,
 		content: body.content,
-		mentions: body.mentions,
+		mentions: storedMentions,
 		parentEventId,
 		attachmentFileIds: body.attachment_file_ids,
 		metadata: body.metadata,
 		decision: body.decision,
 		attention: body.attention,
 		authorSessionId: c.get('maskinSessionId'),
-	})
+	}
+	const delivery = routing?.delivery
+	const { comment, unresolvedMentions } = delivery
+		? await db.transaction(async (tx) => {
+				const posted = await postComment(tx, commentInput)
+				await deliverRoutedComment(tx, {
+					delivery,
+					workspaceId,
+					commenterId: actorId,
+					object: { id: body.entity_id, title: object.title ?? '', type: object.type },
+					commentEventId: posted.comment.id,
+					body: body.content,
+				})
+				return posted
+			})
+		: await postComment(db, commentInput)
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the
@@ -364,8 +407,8 @@ app.openapi(createCommentRoute, (async (c) => {
 	}
 
 	const unresolvedSet = new Set(unresolvedMentions)
-	const uniqueMentionedCount = body.mentions?.length
-		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
+	const uniqueMentionedCount = storedMentions?.length
+		? Array.from(new Set(storedMentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
 				.length
 		: 0
 	if (uniqueMentionedCount > 0) {
@@ -399,10 +442,10 @@ app.openapi(createCommentRoute, (async (c) => {
 		parentEventId !== undefined &&
 		!isAgentMentionFreeComment({
 			actorType: c.get('actorType'),
-			mentionCount: body.mentions?.length ?? 0,
+			mentionCount: storedMentions?.length ?? 0,
 		})
 	) {
-		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
+		const excludedAgentIds = await resolveMentionedAgentIds(db, storedMentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude
 		// them here as well — otherwise one reply queues two sessions for the same
@@ -410,7 +453,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		// 8515a7d8 insight measured as 9 comments → 18 sessions.
 		const fallbackDriverId = await resolveFallbackDriverId(db, {
 			commenterId: actorId,
-			mentionCount: body.mentions?.length ?? 0,
+			mentionCount: storedMentions?.length ?? 0,
 			parentAuthorId: opActorId,
 			objectId: body.entity_id,
 		})
@@ -449,6 +492,14 @@ app.openapi(createCommentRoute, (async (c) => {
 			entityType: 'object',
 			content: body.content,
 			hasTaskList: tasks.length > 0,
+			...(routing
+				? {
+						sessionOrigin: routing.sessionOrigin,
+						hasDecisionBlock: routing.hasDecisionBlock,
+						routedTo: routing.routedTo,
+						routeReason: routing.routeReason,
+					}
+				: {}),
 		}).catch((err) =>
 			logger.warn('trackAgentCommentPosted failed', {
 				actorId,
