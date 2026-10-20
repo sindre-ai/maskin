@@ -142,6 +142,95 @@ describe('decideToolCall', () => {
 	})
 })
 
+describe('decideToolCall for PostHog exec', () => {
+	const base = { provider: 'posthog', providerLabel: 'PostHog', toolName: 'exec' }
+	const command = (c: string) => ({ command: c })
+
+	it('lets a read-only agent run a query and refuses a write, naming the inner tool', () => {
+		const read = decideToolCall({ ...base, args: command('call query-trends {}'), access: 'read' })
+		expect(read).toMatchObject({ allowed: true, kind: 'read', innerTool: 'query-trends' })
+
+		const denied = decideToolCall({
+			...base,
+			args: command('call dashboard-create {"name":"x"}'),
+			access: 'read',
+		})
+		expect(denied.allowed).toBe(false)
+		expect(denied.innerTool).toBe('dashboard-create')
+		expect(denied.message).toContain('exec (dashboard-create) needs write access to PostHog')
+		expect(denied.message).toContain('one query or lookup command per call')
+		expect(denied.message).not.toContain('"name"')
+	})
+
+	it('refuses with no inner tool when the command does not parse', () => {
+		const denied = decideToolCall({ ...base, args: command('help ; call x {}'), access: 'read' })
+		expect(denied).toMatchObject({ allowed: false, kind: 'write' })
+		expect(denied.innerTool).toBeUndefined()
+		expect(denied.message).toContain('exec needs write access to PostHog')
+	})
+
+	it('lets read & write do the write and refuses everything at no access', () => {
+		const write = command('call dashboard-create {}')
+		const read = command('call query-trends {}')
+		expect(decideToolCall({ ...base, args: write, access: 'read_write' }).allowed).toBe(true)
+		expect(decideToolCall({ ...base, args: read, access: 'none' }).allowed).toBe(false)
+		expect(decideToolCall({ ...base, args: write, access: 'none' }).allowed).toBe(false)
+	})
+
+	it('leaves the message of every other tool as it was', () => {
+		const denied = decideToolCall({
+			provider: 'linear',
+			providerLabel: 'Linear',
+			toolName: 'create_issue',
+			args: command('call query-trends {}'),
+			access: 'read',
+		})
+		expect(denied.message).not.toContain('one query or lookup command')
+		expect(denied.innerTool).toBeUndefined()
+	})
+})
+
+describe('annotateToolsList for PostHog exec', () => {
+	const result = { tools: [{ name: 'exec', description: 'Run a command.' }] }
+	type Listed = { tools: Array<{ description: string; annotations: { readOnlyHint: boolean } }> }
+	const annotate = (access: 'none' | 'read' | 'read_write') => {
+		const ctx = { provider: 'posthog', providerLabel: 'PostHog', access }
+		return (annotateToolsList(result, ctx).result as Listed).tools[0]
+	}
+
+	it('lists exec as usable to a read-only agent, says which commands run, and stays not read-only', () => {
+		const tool = annotate('read')
+		expect(tool.description).not.toContain('Unavailable')
+		expect(tool.description).toBe(
+			'Run a command. Read access: query and lookup commands run; create, update and delete commands are refused.',
+		)
+		expect(tool.annotations.readOnlyHint).toBe(false)
+	})
+
+	it('still shows exec as unavailable at no access', () => {
+		const tool = annotate('none')
+		expect(tool.description).toContain('[Unavailable: you have no access to PostHog.]')
+		expect(tool.annotations.readOnlyHint).toBe(false)
+	})
+
+	it('adds nothing for a read & write agent', () => {
+		const tool = annotate('read_write')
+		expect(tool.description).toBe('Run a command.')
+		expect(tool.annotations.readOnlyHint).toBe(false)
+	})
+
+	it('treats exec of another provider, or another name on PostHog, by the old rules', () => {
+		const execTool = { tools: [{ name: 'exec', description: 'x' }] }
+		const upperTool = { tools: [{ name: 'EXEC', description: 'y' }] }
+		const linear = { provider: 'linear', providerLabel: 'Linear', access: 'read' as const }
+		const posthog = { provider: 'posthog', providerLabel: 'PostHog', access: 'read' as const }
+		const onLinear = annotateToolsList(execTool, linear).result as Listed
+		const onPosthog = annotateToolsList(upperTool, posthog).result as Listed
+		expect(onLinear.tools[0].description).toContain('[Unavailable: needs write access to Linear')
+		expect(onPosthog.tools[0].description).toContain('[Unavailable: needs write access to PostHog')
+	})
+})
+
 describe('annotateToolsList', () => {
 	const result = {
 		tools: [
