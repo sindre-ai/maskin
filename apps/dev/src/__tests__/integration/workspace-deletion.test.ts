@@ -222,6 +222,15 @@ async function seedWorkspace(owner: Actor, opts: { name?: string; settings?: unk
 		objectId: a.id,
 	})
 
+	// The Keychain audit trail: an insert-only log and an append-only snapshot table (a trigger
+	// rejects DELETE on it). Deleting the workspace has to remove both.
+	await sql`
+		INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+		VALUES (${ws.id}, ${randomUUID()}, ${agent.id}, ${randomUUID()})`
+	await sql`
+		INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+		VALUES (${ws.id}, CURRENT_DATE, 1, 'h')`
+
 	return { ws, agent, objectA: a, objectB: b, first, fileKey }
 }
 
@@ -376,6 +385,13 @@ describe('workspace deletion (integration)', () => {
 			]),
 		)
 		expect(storage.deleted.some((k) => k.includes(bystander.ws.id))).toBe(false)
+	})
+
+	it('leaves the audit-chain snapshots append-only outside a purge', async () => {
+		const target = await seedWorkspace(me)
+		await expect(
+			sql`DELETE FROM credential_chain_snapshots WHERE workspace_id = ${target.ws.id}`,
+		).rejects.toThrow(/append-only/)
 	})
 
 	it('keeps the people, and scrubs an agent that only lived in this workspace', async () => {

@@ -10,6 +10,8 @@ import {
 	agentSkills,
 	awaitingVies,
 	conversations,
+	credentialAccessLog,
+	credentialChainSnapshots,
 	files,
 	imports,
 	installedLoops,
@@ -32,7 +34,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, inArray, notInArray, or } from 'drizzle-orm'
+import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { evictBillingUsage } from './billing-usage-cache'
 import { logger } from './logger'
@@ -81,6 +83,10 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'star_state',
 	'workspace_credit_ledger',
 	'workspace_overage_usage',
+	'agent_chat_grants',
+	'agent_grants',
+	'credential_access_log',
+	'credential_chain_snapshots',
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
@@ -111,6 +117,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'mcp_telemetry',
 	'message_thread_reads',
 	'messages',
+	'message_thread_reads',
 	'session_dispatch_attempts',
 	'slack_user_links',
 	'trigger_cooldowns',
@@ -122,6 +129,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'workspace_onboarding_prompts',
 	'workspace_skills',
 	'workspace_suppressions',
+	'live_activity_tokens',
+	'voice_sessions',
 ] as const
 
 export interface WorkspacePurgeResult {
@@ -247,6 +256,15 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceCreditLedger).where(eq(workspaceCreditLedger.workspaceId, workspaceId))
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
+	// The audit trail dies with the workspace. The snapshot table is append-only by trigger; that
+	// trigger lets a DELETE through only while this transaction-local flag is set (migration 0097).
+	await tx.execute(sql`SELECT set_config('maskin.purging_workspace', 'on', true)`)
+	await tx
+		.delete(credentialChainSnapshots)
+		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
+	await tx.delete(credentialAccessLog).where(eq(credentialAccessLog.workspaceId, workspaceId))
+	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
+	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
 	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
 	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
 	// Grants reference integrations/conversations (cascade) but also the workspace (NO ACTION).

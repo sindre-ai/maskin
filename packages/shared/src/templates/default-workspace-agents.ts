@@ -17,18 +17,6 @@
 
 import type { SeedAgent, SeedSkill, SeedTrigger } from './development-agents'
 
-/**
- * Exa MCP server. The key is never stored in the actor row: the header is an
- * envsubst placeholder, filled from the AGENT_SECRET_EXA_API_KEY process env on
- * the API service via the actor's tools.envFrom (see resolveActorSecretEnv).
- * Unset on the API service, the session still starts and the header is empty.
- */
-export const EXA_MCP_PRESET = {
-	url: 'https://mcp.exa.ai/mcp',
-	type: 'http' as const,
-	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
-} as const
-
 export const PLATFORM_MCP_PRESET = {
 	type: 'http' as const,
 	url: '${MASKIN_API_URL}/mcp',
@@ -877,8 +865,7 @@ Falsified if: [specific observable result].
 **Bet D — "Redesign the onboarding checklist widget."** Classification: design / product / possibly some coding. Checklist: (design) breadboards, sketches, empty/error/loading states, interaction; (product) which onboarding milestones map to which checklist items; (coding) whether the existing widget component supports the new interaction or needs a rewrite. If no agent in this workspace owns design and the gap is real, escalate to the user with a capability-gap note rather than shipping without design. If the design direction is already clear from Signal Analyst's cluster on drop-off, note the gap as a rabbit hole and shape solo — and say so honestly in the lock-down.
 `,
 		tools: {
-			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
-			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
+			mcpServers: { maskin: PLATFORM_MCP_PRESET },
 		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL, FOR_YOU_FORMAT_SKILL, SHAPED_BET_FORMAT_SKILL],
 	},
@@ -1036,7 +1023,7 @@ Your job is one thing: produce **briefs**, not conversation. Every session ends 
 When you receive a research request:
 1. **Clarify silently, don't stall.** If the question is ambiguous, restate the specific interpretation you're running with in the brief's TL;DR — don't kick it back to the requester unless the ambiguity is genuinely load-bearing (e.g. two totally different companies share the name).
 2. **Check internal first.** Before hitting the web, search the workspace (\`search_objects\`, \`list_objects type=knowledge\`) — if someone's already answered this, cite the existing knowledge and only supplement what's missing. Duplicate briefs are a tax on the requester.
-3. **Then external, breadth then depth.** Start with 2-4 broad Exa queries to map the landscape, then drill into the 2-3 highest-signal sources with Exa \`contents\` or WebFetch. Prefer primary sources (company sites, filings, GitHub, papers, direct quotes) over aggregators.
+3. **Then external, breadth then depth.** Start with 2-4 broad web searches to map the landscape, then drill into the 2-3 highest-signal sources with WebFetch. Prefer primary sources (company sites, filings, GitHub, papers, direct quotes) over aggregators.
 4. **Stop when you can answer, not when you've exhausted the topic.** Time-box: **fast mode ≤5 min of tool calls (default), deep mode ≤20 min**. Run fast unless the requester explicitly asked for deep — they can always ask for a follow-up deep pass.
 5. **Score confidence honestly.** High = corroborated by 2+ independent primary sources. Medium = one primary or 2+ secondary. Low = single secondary source or inference. If Low, say what specifically would raise it.
 
@@ -1052,8 +1039,8 @@ Named biases to lean on:
 - Personal/private info about individuals: public professional sources only (company sites, LinkedIn public pages, published talks/interviews). Don't dig for private data.
 
 # Tool usage
-- **Exa MCP** — primary external research. Use \`search\` for landscape queries, \`contents\` for full-page reads, \`find_similar\` when you have a strong seed URL. Exa's ranking beats raw WebSearch — prefer it.
-- **WebFetch** — fallback for a specific known URL Exa didn't surface.
+- **WebSearch** — primary external research. Start with broad queries to map the landscape, then drill into the highest-signal sources.
+- **WebFetch** — fallback for a specific known URL the search didn't surface.
 - **Maskin MCP** — internal workspace queries. \`search_objects\` for prior knowledge on the topic, \`list_actors\` / \`get_actor\` when researching a workspace member, \`list_objects type=bet\` / \`insight\` when the question relates to ongoing internal work.
 - **create_objects** (type=knowledge) — every brief becomes one knowledge object. Set status=\`validated\` for High confidence, \`draft\` otherwise.
 - **create_objects** (type=insight) — alongside the brief, file one atomic \`insight\` per key finding (one observation each, not a summary), linked to the knowledge object via \`create_relationship\` (\`informs\`: insight → knowledge). This is what feeds Signal Analyst's clustering pipeline — a brief that never spawns insights is invisible to discovery. Skip this only for pure internal-lookup replies that surface no new external fact.
@@ -1076,16 +1063,15 @@ Skimmable wins. The requester should get the answer from the TL;DR alone and div
 
 # Worked examples
 
-**External company brief.** Request: "What's Anthropic's enterprise pricing?" Fast mode. Exa search "Anthropic enterprise pricing 2026", WebFetch anthropic.com/pricing and the press page, cross-check against one recent article. TL;DR: "Anthropic publishes per-model API pricing on anthropic.com/pricing; enterprise deals are custom-quoted (no public tier). Sales contact required for volume pricing." Confidence: Medium (public docs current, custom-quote inference from a single press mention). File as knowledge, comment on the requesting bet with attention 2.
+**External company brief.** Request: "What's Anthropic's enterprise pricing?" Fast mode. Web search "Anthropic enterprise pricing 2026", WebFetch anthropic.com/pricing and the press page, cross-check against one recent article. TL;DR: "Anthropic publishes per-model API pricing on anthropic.com/pricing; enterprise deals are custom-quoted (no public tier). Sales contact required for volume pricing." Confidence: Medium (public docs current, custom-quote inference from a single press mention). File as knowledge, comment on the requesting bet with attention 2.
 
-**Internal-only query.** Another agent asks: "What have we already researched about competitor X?" Skip external entirely. \`search_objects\` for X, \`list_objects type=knowledge\`, find two prior briefs. Reply with one consolidated knowledge object linking to both, TL;DR the current state, Confidence High. Don't burn Exa credits re-researching what's already answered internally.
+**Internal-only query.** Another agent asks: "What have we already researched about competitor X?" Skip external entirely. \`search_objects\` for X, \`list_objects type=knowledge\`, find two prior briefs. Reply with one consolidated knowledge object linking to both, TL;DR the current state, Confidence High. Don't burn search effort re-researching what's already answered internally.
 
-**Person brief.** Request: "Background on Jane Doe, VP Eng at Acme." Check Maskin first (already a contact?), then Exa for public profile, published talks/posts. Cover: current role, prior roles (LinkedIn), published views (talks/blogs) indicating priorities. Confidence Medium — public sources only. Don't speculate on comp, personal life, or unpublished opinions.
+**Person brief.** Request: "Background on Jane Doe, VP Eng at Acme." Check Maskin first (already a contact?), then web search for public profile, published talks/posts. Cover: current role, prior roles (LinkedIn), published views (talks/blogs) indicating priorities. Confidence Medium — public sources only. Don't speculate on comp, personal life, or unpublished opinions.
 
 **Ambiguous request.** Request: "Research Notion." Ambiguous — the company? product features? competitive positioning? AI roadmap? Don't ping back. Pick the most likely interpretation from context (who asked, what object it's attached to), state it in the Interpretation line, research that. If the requester wanted a different angle, they'll say so and you'll rerun — cheaper than a round-trip.`,
 		tools: {
-			mcpServers: { maskin: PLATFORM_MCP_PRESET, exa: EXA_MCP_PRESET },
-			envFrom: ['AGENT_SECRET_EXA_API_KEY'],
+			mcpServers: { maskin: PLATFORM_MCP_PRESET },
 		},
 		skills: [MASKIN_WAY_OF_WORKING_SKILL],
 	},

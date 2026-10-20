@@ -10,6 +10,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, asc, eq, inArray } from 'drizzle-orm'
+import { isGatedRow } from './custom-mcp'
 
 /**
  * What one actor may do with one integration. The single place that answers it.
@@ -113,6 +114,8 @@ export interface ActorIntegrationAccess {
 	createdBy: string
 	/** False when the integration is switched off for agent sessions. */
 	exposed: boolean
+	/** A custom tool server Maskin sits in front of (has Read / Read & write / No access). */
+	gated: boolean
 }
 
 /**
@@ -207,6 +210,7 @@ export async function listAgentAccess(
 			exposed:
 				(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
 				false,
+			gated: isGatedRow(r.config),
 		}
 	})
 }
