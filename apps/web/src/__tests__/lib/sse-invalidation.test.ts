@@ -192,6 +192,22 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes the integration list, and with it every agent access view, for an integration event', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'integration',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.integrations.all(workspaceId),
+		})
+		// The per-agent access query lives under that same key, so one invalidation covers it.
+		expect(queryKeys.integrations.agentAccess(workspaceId, 'agent-1').slice(0, 2)).toEqual(
+			queryKeys.integrations.all(workspaceId),
+		)
+	})
+
 	it('invalidates workspaces for workspace entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
