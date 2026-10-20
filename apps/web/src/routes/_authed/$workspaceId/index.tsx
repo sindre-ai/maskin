@@ -2,7 +2,6 @@ import { BriefCard } from '@/components/foryou/brief-card'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
 import {
 	type FeedMode,
-	type FeedSort,
 	type ForYouBulkAction,
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
@@ -13,7 +12,8 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
+import { useForYou } from '@/hooks/use-for-you'
+import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -64,13 +64,12 @@ function ForYouFeed() {
 	useDocumentTitle('For You')
 	const { workspaceId } = useWorkspace()
 	const queryClient = useQueryClient()
-	const { data, isLoading, isError, error, refetch } = useUnread(workspaceId, undefined, true)
+	const { data, isLoading, isError, error, refetch } = useForYou(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-	const [sort, setSort] = useState<FeedSort>('attention')
 	const [filterPills, setFilterPills] = useState(false)
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
@@ -138,25 +137,13 @@ function ForYouFeed() {
 		[items],
 	)
 
-	// `attention` (default) sorts by the sender's attention score (1-5) on each
-	// card's highest-scored unread comment, highest first; unscored comments
-	// sort below any scored one. Ties fall back to latest activity.
-	// `chrono` is a straight latest-activity-first ordering.
-	const sortedRegular = useMemo(() => {
-		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
-		const byLatestDesc = (a: UnreadItem, b: UnreadItem) => {
-			const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
-			const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
-			return bt - at
-		}
-		if (sort === 'chrono') return base.slice().sort(byLatestDesc)
-		return base.slice().sort((a, b) => {
-			const aAttention = a.max_unread_attention ?? -1
-			const bAttention = b.max_unread_attention ?? -1
-			if (aAttention !== bAttention) return bAttention - aAttention
-			return byLatestDesc(a, b)
-		})
-	}, [items, sort])
+	// The Chief of Staff's rank is the order: the server returns the list
+	// already sorted, so the feed shows it as given. Onboarding sessions keep
+	// their own prompt card above it.
+	const sortedRegular = useMemo(
+		() => items.filter((item) => item.object?.type !== 'onboarding_session'),
+		[items],
+	)
 
 	const visibleRegular = useMemo(() => {
 		if (pendingKeys.size === 0 && answeredAt.size === 0) return sortedRegular
@@ -196,7 +183,7 @@ function ForYouFeed() {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
 			if (repliedKeys.has(key)) return 'waiting'
-			return classifyCardKind(item) === 'thread' ? 'fyi' : 'needs'
+			return 'needs'
 		},
 		[decided, repliedKeys],
 	)
@@ -487,18 +474,7 @@ function ForYouFeed() {
 			),
 		[filteredRegular, bucketOf],
 	)
-	const fyiCards = useMemo(
-		() => filteredRegular.filter((item) => bucketOf(item) === 'fyi'),
-		[filteredRegular, bucketOf],
-	)
-
 	const bulkActions: ForYouBulkAction[] = [
-		{
-			id: 'fyi',
-			label: 'Dismiss all FYIs',
-			count: fyiCards.length,
-			onSelect: () => dismissAll(fyiCards, 'FYIs cleared'),
-		},
 		{
 			id: 'suggested',
 			label: 'Take every suggested option',
@@ -559,7 +535,11 @@ function ForYouFeed() {
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
 			<PageHeader
 				title="For you"
-				subtitle={unreadRegular.length === 0 ? 'All caught up' : `${unreadRegular.length} unread`}
+				subtitle={
+					unreadRegular.length === 0
+						? 'All caught up'
+						: `${unreadRegular.length} ${unreadRegular.length === 1 ? 'needs' : 'need'} you`
+				}
 				scrollLocked
 			/>
 
@@ -570,8 +550,6 @@ function ForYouFeed() {
 				typeCounts={typeCounts}
 				mode={mode}
 				onModeChange={handleModeChange}
-				sort={sort}
-				onSortChange={setSort}
 				filterPills={filterPills}
 				onFilterPillsChange={setFilterPills}
 				bulkActions={bulkActions}

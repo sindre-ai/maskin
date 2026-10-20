@@ -83,6 +83,28 @@ async function mockUnreadFeed(page: Page, workspaceId: string, items: UnreadFixt
 			body: JSON.stringify({ items }),
 		})
 	})
+	// The For you page reads the Chief of Staff's curated list, not the unread
+	// stream, so each fixture is also served as one item of that list.
+	await page.route('**/api/for-you*', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				items: items.map((item, index) => ({
+					notification_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+					rank: index + 1,
+					headline: item.object.title,
+					rationale: null,
+					created_at: item.latest_activity_at,
+					entity_type: item.entity_type,
+					entity_id: item.entity_id,
+					session_id: null,
+					object: item.object,
+				})),
+			}),
+		})
+	})
 }
 
 /* ───── 1. Font-load URL integrity (AC-T2) ───── */
