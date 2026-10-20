@@ -1,4 +1,4 @@
-﻿import { vi } from 'vitest'
+﻿import { type MockInstance, vi } from 'vitest'
 
 // Mock external dependencies
 vi.mock('node:fs/promises', () => ({
@@ -89,6 +89,11 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Same call the real helper makes for an exit with no final result message,
+	// so the assertions below keep reading the tail + option the classifier got.
+	// The helper's own rule is covered in lib/credit-classifier.test.ts.
+	classifySessionExit: (tail: string, exitCode: number) =>
+		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
 }))
 
 import { execFile } from 'node:child_process'
@@ -879,6 +884,88 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
+		})
+	})
+
+	describe('startSession() — agent identity preamble', () => {
+		it('prepends the Maskin identity preamble to SYSTEM_PROMPT so the CLI provider is never named', async () => {
+			const session = buildSession({ status: 'pending', containerId: null })
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			expect(systemPrompt).toContain('You are a Maskin agent')
+			expect(systemPrompt.indexOf('You are a Maskin agent')).toBe(0)
+			// The agent's own persona still follows the preamble.
+			expect(systemPrompt).toContain('You are Workspace Coach.')
+		})
+
+		it('keeps the identity preamble ahead of the conversation preamble', async () => {
+			const session = buildSession({
+				status: 'pending',
+				containerId: null,
+				config: { conversation: true },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			const identityAt = systemPrompt.indexOf('You are a Maskin agent')
+			const conversationAt = systemPrompt.indexOf(
+				'You are in a live, interactive chat conversation',
+			)
+			expect(identityAt).toBe(0)
+			expect(conversationAt).toBeGreaterThan(identityAt)
 		})
 	})
 
@@ -1696,6 +1783,120 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('MCP health report — per-session record and cap timer', () => {
+		type Internals = {
+			emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void>
+			clearActiveSession(sessionId: string): Promise<void>
+			mcpHealth: Map<string, { timer?: NodeJS.Timeout; resolved: boolean }>
+		}
+
+		const initChunk = (servers: Array<{ name: string; status: string }>) =>
+			`${JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })}\n`
+		const toolUseChunk = (toolName: string) =>
+			`${JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id: 'toolu_1', name: toolName, input: {} }] },
+			})}\n`
+
+		let internals: Internals
+		let logSpy: MockInstance<(sessionId: string, content: string) => Promise<void>>
+
+		beforeEach(() => {
+			internals = manager as unknown as Internals
+			logSpy = vi.spyOn(manager, 'insertSystemLog').mockResolvedValue(undefined)
+		})
+
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('clears the cap timer on teardown and emits nothing afterwards', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-teardown'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+			expect(internals.mcpHealth.get(sessionId)?.timer).toBeDefined()
+			expect(vi.getTimerCount()).toBe(1)
+
+			await internals.clearActiveSession(sessionId)
+			expect(internals.mcpHealth.has(sessionId)).toBe(false)
+			expect(vi.getTimerCount()).toBe(0)
+
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('labels a server slow-unknown exactly once when nothing resolves it by the cap', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-cap'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			await vi.advanceTimersByTimeAsync(119_000)
+			expect(logSpy).toHaveBeenCalledTimes(1)
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[1]?.[1]).toContain('did not finish starting')
+			expect(logSpy.mock.calls[1]?.[1]).toContain('not a confirmed failure')
+
+			// A chunk after the cap neither re-opens the record nor emits again.
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, toolUseChunk('mcp__playwright__x'))
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('emits the correction exactly once when a pending server shows tool use', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-correction'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				toolUseChunk('mcp__playwright__browser_navigate'),
+			)
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				toolUseChunk('mcp__playwright__browser_click'),
+			)
+			// A replayed init line cannot flip it back to pending.
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[0]?.[1]).toContain('still starting')
+			expect(logSpy.mock.calls[1]?.[1]).toContain('connected after starting')
+			// Settled: the cap timer is gone and never fires a third line.
+			expect(vi.getTimerCount()).toBe(0)
+			await vi.advanceTimersByTimeAsync(300_000)
+			expect(logSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('keeps the straddle buffer after emitting so a split line later in the window still parses', async () => {
+			vi.useFakeTimers()
+			const sessionId = 'sess-mcp-straddle'
+			await internals.emitUnhealthyMcpWarningIfAny(
+				sessionId,
+				initChunk([{ name: 'playwright', status: 'pending' }]),
+			)
+			const line = toolUseChunk('mcp__playwright__browser_navigate')
+			const cut = Math.floor(line.length / 2)
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, line.slice(0, cut))
+			expect(logSpy).toHaveBeenCalledTimes(1)
+			await internals.emitUnhealthyMcpWarningIfAny(sessionId, line.slice(cut))
+			expect(logSpy).toHaveBeenCalledTimes(2)
+			expect(logSpy.mock.calls[1]?.[1]).toContain('connected after starting')
+		})
+	})
+
 	describe('startSession() — GitHub installations', () => {
 		const githubProviderConfig = {
 			config: {
@@ -2026,7 +2227,7 @@ describe('SessionManager', () => {
 				},
 			}
 
-			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+			it('auto-injects the Slack MCP server but not SLACK_BOT_TOKEN when the agent config does not reference it', async () => {
 				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
 				const fixtures = buildLaunchFixtures([integration])
 
@@ -2040,7 +2241,9 @@ describe('SessionManager', () => {
 					env: Record<string, string>
 				}
 
-				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				// The server authenticates on MASKIN_API_KEY, so the container has no use for
+				// the bot token unless the agent's own tools config asks for it.
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
 				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
 				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
 					mcpServers: Record<string, { type: string; url: string }>
@@ -2258,6 +2461,244 @@ describe('SessionManager', () => {
 					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
 				},
 			)
+		})
+
+		describe('integration tokens only reach agents that use them', () => {
+			// Google Meet: autoInject false. Slack: autoInject true, server signs in
+			// with MASKIN_API_KEY. PostHog: autoInject true, server signs in with the
+			// integration token itself.
+			const googleMeetProviderConfig = {
+				config: {
+					name: 'google-meet',
+					mcp: {
+						envKey: 'GOOGLE_MEET_TOKEN',
+						autoInject: false,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/google-meet/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
+						},
+					},
+				},
+			}
+			const posthogProviderConfig = {
+				config: {
+					name: 'posthog',
+					mcp: {
+						envKey: 'POSTHOG_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: 'https://mcp.posthog.com/mcp',
+							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+						},
+					},
+				},
+			}
+
+			const mcpKeysOf = (env: Record<string, string>) =>
+				env.MCP_SERVERS_JSON
+					? Object.keys((JSON.parse(env.MCP_SERVERS_JSON) as { mcpServers: object }).mcpServers)
+					: []
+
+			async function launchEnv(opts: {
+				provider: string
+				providerConfig: unknown
+				token: string
+				agentTools?: Record<string, unknown> | null
+				sessionMcps?: Array<Record<string, unknown>>
+			}) {
+				const integration = buildIntegration({ provider: opts.provider })
+				const fixtures = buildLaunchFixtures([integration])
+				fixtures.agent.tools = opts.agentTools ?? null
+				if (opts.sessionMcps) {
+					fixtures.session.config = {
+						...(fixtures.session.config as Record<string, unknown>),
+						mcps: opts.sessionMcps,
+					}
+				}
+				vi.mocked(getProvider).mockReturnValue(opts.providerConfig as never)
+				mockGetValidToken.mockResolvedValueOnce(opts.token)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				return (mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> })
+					.env
+			}
+
+			it('gives an agent with no reference to a non-auto-injected integration no token for it', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							maskin: {
+								type: 'http',
+								url: '${MASKIN_API_URL}/mcp',
+								headers: { Authorization: '${MASKIN_API_KEY}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBeUndefined()
+				// Not auto-injected, so no server either
+				expect(mcpKeysOf(env)).not.toContain('integration-google-meet')
+			})
+
+			it('gives an agent whose own tools config references the token that token', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							'google-meet': {
+								type: 'http',
+								url: 'https://meet.example.test/mcp',
+								headers: { Authorization: 'Bearer ${GOOGLE_MEET_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('reads a reference in a stdio server env block and ignores malformed entries', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							broken: null,
+							bare: {},
+							stdio: {
+								command: 'npx',
+								env: { MEET_ACCESS_TOKEN: '${GOOGLE_MEET_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('gives a session whose own MCP list references the token that token', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					sessionMcps: [
+						{
+							type: 'http',
+							url: 'https://meet.example.test/mcp',
+							headers: { Authorization: 'Bearer ${GOOGLE_MEET_TOKEN}' },
+						},
+					],
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('keeps the auto-injected server for every agent but leaves the token out when the server signs in without it (Slack)', async () => {
+				const env = await launchEnv({
+					provider: 'slack',
+					providerConfig: slackProviderConfig,
+					token: 'xoxb-real-bot-token',
+				})
+				expect(env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(mcpKeysOf(env)).toContain('integration-slack')
+			})
+
+			it('still gives the token to an agent that references it on an auto-inject provider (Slack)', async () => {
+				const env = await launchEnv({
+					provider: 'slack',
+					providerConfig: slackProviderConfig,
+					token: 'xoxb-real-bot-token',
+					agentTools: {
+						mcpServers: {
+							slack: {
+								type: 'stdio',
+								command: 'npx',
+								args: ['-y', '@modelcontextprotocol/server-slack'],
+								env: { SLACK_BOT_TOKEN: '${SLACK_BOT_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(mcpKeysOf(env)).toContain('integration-slack')
+			})
+
+			it('keeps token and server for every agent when the auto-injected server needs the token to sign in (PostHog)', async () => {
+				const env = await launchEnv({
+					provider: 'posthog',
+					providerConfig: posthogProviderConfig,
+					token: 'phx_token_value',
+				})
+				expect(env.POSTHOG_TOKEN).toBe('phx_token_value')
+				expect(mcpKeysOf(env)).toContain('integration-posthog')
+			})
+
+			it('does not put the token in the container for an unreferencing agent but still uses it for the preflight Slack alert', async () => {
+				const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-alert' })
+				const fixtures = buildLaunchFixtures([slackIntegration])
+				fixtures.agent.tools = {
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_broken' },
+						},
+					},
+				}
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-alert-bot-token')
+
+				const slackAuth: string[] = []
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(async (url: string | URL, init?: RequestInit) => {
+						const u = url.toString()
+						if (u === 'https://api.github.com/user') return new Response('bad', { status: 401 })
+						if (u === 'https://slack.com/api/chat.postMessage') {
+							slackAuth.push(String((init?.headers as Record<string, string>)?.Authorization))
+							return new Response(JSON.stringify({ ok: true }), {
+								status: 200,
+								headers: { 'content-type': 'application/json' },
+							})
+						}
+						throw new Error(`unexpected fetch: ${u}`)
+					}),
+				)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(slackAuth).toEqual(['Bearer xoxb-alert-bot-token'])
+			})
 		})
 
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
@@ -3041,12 +3482,15 @@ describe('SessionManager', () => {
 				(v): v is Record<string, unknown> =>
 					typeof v === 'object' && v !== null && 'totalCostUsd' in v,
 			) as Record<string, unknown>
-			expect(usageUpdate.totalCostUsd).toBe('0.1234')
-			expect(usageUpdate.inputTokens).toBe(100)
-			expect(usageUpdate.outputTokens).toBe(200)
-			expect(usageUpdate.cacheCreationInputTokens).toBe(10)
-			expect(usageUpdate.cacheReadInputTokens).toBe(20)
-			expect(usageUpdate.durationMs).toBe(5000)
+			// Usage is added onto the stored totals, so each field is a SQL
+			// expression carrying the segment's value rather than the bare value.
+			const addedValue = (field: unknown) => (field as { queryChunks: unknown[] }).queryChunks
+			expect(addedValue(usageUpdate.totalCostUsd)).toContain(0.1234)
+			expect(addedValue(usageUpdate.inputTokens)).toContain(100)
+			expect(addedValue(usageUpdate.outputTokens)).toContain(200)
+			expect(addedValue(usageUpdate.cacheCreationInputTokens)).toContain(10)
+			expect(addedValue(usageUpdate.cacheReadInputTokens)).toContain(20)
+			expect(addedValue(usageUpdate.durationMs)).toContain(5000)
 		})
 
 		it('no-ops when a concurrent call already resolved the session', async () => {
@@ -3248,6 +3692,20 @@ describe('SessionManager', () => {
 					data: '{"type":"user","message":{"role":"user","content":"hello"}}',
 				},
 			])
+		})
+
+		it('emits a turn-started event once the user turn is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockResults.insert = [{ id: 7, sessionId: session.id, stream: 'stdout', content: '{}' }]
+			const turns: unknown[] = []
+			manager.on('turn', (e) => turns.push(e))
+
+			await manager.writeInput(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+
+			expect(turns).toEqual([{ sessionId: session.id, phase: 'started' }])
 		})
 
 		// AC-T2: the persisted `session_logs` envelope tacks a
@@ -3941,7 +4399,7 @@ describe('SessionManager', () => {
 					stream: 'stdout',
 					content: `${initLine([
 						{ name: 'maskin', status: 'connected' },
-						{ name: 'playwright', status: 'pending' },
+						{ name: 'playwright', status: 'failed' },
 					])}
 `,
 				},
@@ -3949,7 +4407,7 @@ describe('SessionManager', () => {
 
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 			expect(warnings[0].content).not.toContain('maskin')
 		})
 
@@ -3962,7 +4420,7 @@ describe('SessionManager', () => {
 			const sessionId = randomUUID()
 			const line = `${initLine([
 				{ name: 'maskin', status: 'connected' },
-				{ name: 'playwright', status: 'pending' },
+				{ name: 'playwright', status: 'failed' },
 			])}
 `
 			const cut = Math.floor(line.length / 2)
@@ -3978,7 +4436,7 @@ describe('SessionManager', () => {
 			await emit(sessionId, line.slice(cut))
 			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
 			expect(warnings).toHaveLength(1)
-			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).toContain('did not connect: playwright')
 		})
 
 		// The stream re-attaches with `tail: 'all'` on resume and with a ~1s
@@ -3986,7 +4444,7 @@ describe('SessionManager', () => {
 		// The warning should read once per session, not once per reconnect.
 		it('warns only once when the init line is replayed', async () => {
 			const sessionId = randomUUID()
-			const chunk = `${initLine([{ name: 'playwright', status: 'pending' }])}
+			const chunk = `${initLine([{ name: 'playwright', status: 'failed' }])}
 `
 			const emit = (
 				manager as unknown as {
@@ -4387,6 +4845,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
 
@@ -4414,6 +4873,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
 
@@ -4442,6 +4902,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
@@ -4493,6 +4954,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
 			// The CAS update inside settleSession must return the row for the flip to land.
@@ -4534,7 +4996,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4574,7 +5036,7 @@ describe('SessionManager', () => {
 				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
 			})
 
-			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4609,7 +5071,7 @@ describe('SessionManager', () => {
 				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
 			})
 
-			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4674,6 +5136,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
@@ -4787,6 +5250,7 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[], // sumAssistantUsage fallback
 					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
@@ -4935,6 +5399,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
@@ -5026,6 +5491,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 			]
@@ -5079,7 +5545,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [session]]
 
 			await (
 				manager as unknown as {
@@ -5114,7 +5580,7 @@ describe('SessionManager', () => {
 			)
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
-			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
@@ -5174,7 +5640,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
-			mockResults.selectQueue = [[session], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -5214,6 +5680,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
 			mockResults.updateQueue = [[{ id: session.id }]]

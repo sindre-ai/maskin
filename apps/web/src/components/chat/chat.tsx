@@ -1,3 +1,5 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
+import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
 import {
 	MentionPicker,
 	type MentionPickerActor,
@@ -201,6 +203,9 @@ export interface ComposerProps {
 	 * survives that, and dies with the tab so an unsent prompt never outlives it.
 	 */
 	draftKey?: string
+	/** When set, a Call button for this agent sits beside the mic. Callers pass it
+	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
+	callAgent?: VoiceCallAgent | null
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -257,6 +262,7 @@ export function Composer({
 	value: controlledValue,
 	onValueChange,
 	draftKey,
+	callAgent,
 }: ComposerProps) {
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
@@ -1120,12 +1126,14 @@ export function Composer({
 						<DropdownMenuTrigger asChild>
 							{/* No 44 px `::before` here: Attach next to it already carries one,
 							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design. */}
+							    taps from each other. The v2 control row is 28 px by design.
+							    Attach's hit area is anchored to its right edge, so it reaches 8 px
+							    over this button; `z-[1]` keeps this one's full box on top. */}
 							<Button
 								type="button"
 								size="icon"
 								variant="outline"
-								className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
 								disabled={disabled}
 								aria-label="Add an object, file, or mention"
 							>
@@ -1178,7 +1186,7 @@ export function Composer({
 						type="button"
 						size="icon"
 						variant="ghost"
-						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:-inset-2 before:h-11 before:w-11 before:content-['']"
+						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
 						aria-label="Attach file"
@@ -1202,12 +1210,18 @@ export function Composer({
 							<Mic size={14} aria-hidden />
 						</Button>
 					) : null}
+					{callAgent ? (
+						// `ml-auto` here only when the mic didn't already claim the gap.
+						<span className={cn('inline-flex', dictation.supported ? '' : 'ml-auto')}>
+							<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
+						</span>
+					) : null}
 					<Button
 						type="submit"
 						size="icon"
 						className={cn(
 							'h-7 w-7 shrink-0 rounded-full',
-							dictation.supported ? '' : 'ml-auto',
+							dictation.supported || callAgent ? '' : 'ml-auto',
 							canSend
 								? 'bg-primary text-primary-foreground'
 								: 'bg-muted text-muted-foreground hover:bg-muted',

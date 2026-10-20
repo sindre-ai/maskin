@@ -177,6 +177,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		case 'session': {
+			// A handoff exists from the moment `create_session` runs, before any message
+			// carries it; the messages list returns it as `pending_handoffs`.
+			invalidate(queryClient, {
+				queryKey: ['conversations', 'detail'],
+				predicate: (query) => query.queryKey[3] === 'messages',
+			})
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
 			// which is coalesced below, and the paged full-history list

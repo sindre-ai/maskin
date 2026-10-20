@@ -47,6 +47,7 @@ vi.mock('../../lib/crypto', () => ({
 
 vi.mock('../../lib/workspace-auth', () => ({
 	isWorkspaceMember: vi.fn().mockResolvedValue(true),
+	assertWorkspaceWriterRole: vi.fn(),
 }))
 
 vi.mock('../../lib/logger', () => ({

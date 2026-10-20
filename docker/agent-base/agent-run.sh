@@ -293,6 +293,41 @@ setup_cdp_retry_proxy() {
   fi
 }
 
+STRIP_IMAGES_PROXY_PORT=9334
+
+# Start a local proxy in front of the model endpoint that replaces image blocks
+# with a text note, and repoint ANTHROPIC_BASE_URL at it. Only runs when
+# llm-routing.ts set MASKIN_STRIP_IMAGES=1 for a text-only model: such a model
+# answers any request holding an image (e.g. a playwright screenshot tool
+# result) with a 400 that ends the turn. Best-effort: if the proxy fails to
+# start, ANTHROPIC_BASE_URL is left pointing at the real endpoint.
+setup_strip_images_proxy() {
+  # `return 0`, not a bare `return`: that would pass on the failed test's status
+  # (1), and `set -e` would abort the whole script for every non-stripping session.
+  # Also needed when only provider exclusions are set: the proxy injects them.
+  # Also needed for the time-to-first-token guard (MASKIN_TTFT_TIMEOUT_MS).
+  [ "$MASKIN_STRIP_IMAGES" = "1" ] || [ -n "$MASKIN_PROVIDER_PREFS" ] || [ -n "$MASKIN_TTFT_TIMEOUT_MS" ] || return 0
+  [ -z "$ANTHROPIC_BASE_URL" ] && return 0
+  node /strip-images-proxy.js "$STRIP_IMAGES_PROXY_PORT" "$ANTHROPIC_BASE_URL" \
+    > >(tee "${TMPDIR:-/tmp}/strip-images-proxy.log" | sed -u 's/^/[strip-images-proxy] /' >&2) 2>&1 &
+  local proxy_pid=$!
+  local deadline=$(( $(date +%s) + 3 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+      echo "[system] WARNING: strip-images-proxy exited immediately, using ANTHROPIC_BASE_URL directly" >&2
+      return
+    fi
+    grep -q "listening on" "${TMPDIR:-/tmp}/strip-images-proxy.log" 2>/dev/null && break
+    sleep 0.2
+  done
+  if grep -q "listening on" "${TMPDIR:-/tmp}/strip-images-proxy.log" 2>/dev/null; then
+    echo "[system] strip-images proxy up, routing ANTHROPIC_BASE_URL through 127.0.0.1:${STRIP_IMAGES_PROXY_PORT}"
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:${STRIP_IMAGES_PROXY_PORT}"
+  else
+    echo "[system] WARNING: strip-images-proxy did not confirm startup, using ANTHROPIC_BASE_URL directly" >&2
+  fi
+}
+
 setup_mcps() {
   # Skip if no MCP config provided and no browser CDP endpoint
   if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
@@ -561,14 +596,19 @@ run_agent() {
       if [ -n "$MCP_CONFIG_FILE" ]; then
         mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
       fi
-      # Effort is only set on the Claude-subscription route (apps/dev sets
-      # MASKIN_CLAUDE_EFFORT there). Other routes (e.g. the Maskin-funded
-      # DeepSeek fallback) leave it unset and keep the CLI default. Validated
-      # because the value is interpolated into the CLI's arguments.
+      # Effort is set on the Claude-subscription and Maskin-funded routes
+      # (apps/dev sets MASKIN_CLAUDE_EFFORT there). Other routes leave it unset
+      # and keep the CLI default. Validated because the value is interpolated
+      # into the CLI's arguments.
       local effort_args=()
       case "${MASKIN_CLAUDE_EFFORT:-}" in
         low|medium|high|xhigh|max) effort_args=(--effort "$MASKIN_CLAUDE_EFFORT") ;;
       esac
+      # The Maskin-funded route cannot run the CLI's server-side WebSearch.
+      local search_args=()
+      if [ "${MASKIN_DISABLE_WEB_SEARCH:-}" = "1" ]; then
+        search_args=(--disallowedTools=WebSearch)
+      fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
@@ -599,6 +639,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
+            "${search_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -609,6 +650,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
+            "${search_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
@@ -619,6 +661,7 @@ run_agent() {
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
           "${effort_args[@]}" \
+          "${search_args[@]}" \
           "${mcp_args[@]}"
       fi
       ;;
@@ -657,6 +700,7 @@ install_runtime
 assert_skills_symlink
 build_context
 setup_mcps
+setup_strip_images_proxy
 setup_claude_credentials
 setup_git_identity
 setup_github_credential_helper

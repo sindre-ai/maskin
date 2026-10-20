@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,7 +34,7 @@ import {
 	Plus,
 	X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -46,15 +47,12 @@ interface ThreadHeaderProps {
 	 *  conversation, no Mark-as-unread, and no mobile ⋯ overflow menu — Pin and
 	 *  Archive stay inline at every width. */
 	v4Polish?: boolean
-	/** S2 · bet 34706e2f-graph-nodes, task 5. Composed at the route boundary
-	 *  from the `graph-provenance-writes` flag AND presence of any downstream
-	 *  produced items — the Produced toggle only mounts for the flagging actor
-	 *  so the pane doesn't ship to workspaces that have never seen a
-	 *  `produced_by` edge. */
-	producedEnabled?: boolean
-	producedCount?: number
-	producedOpen?: boolean
-	onToggleProduced?: () => void
+	/** Right-rail Overview (Threads + Produced tabs). The toggle mounts iff the
+	 *  route passes a handler, which it does when either tab's flag is on. */
+	overviewOpen?: boolean
+	/** Something changed since the Overview was last open: pulses a dot. */
+	overviewHasNew?: boolean
+	onToggleOverview?: () => void
 }
 
 const LOOP_CHIP_MAX = 24
@@ -69,10 +67,9 @@ export function ThreadHeader({
 	workspaceId,
 	conversationId,
 	v4Polish = false,
-	producedEnabled = false,
-	producedCount = 0,
-	producedOpen = false,
-	onToggleProduced,
+	overviewOpen = false,
+	overviewHasNew = false,
+	onToggleOverview,
 }: ThreadHeaderProps) {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
@@ -82,6 +79,14 @@ export function ThreadHeader({
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
 	const loopId = conversation?.loop_id ?? null
+	// Call mounts only for a thread with exactly one agent participant: a
+	// multi-agent call is v2, and with two agents there is no single agent for
+	// the button to mean.
+	const voiceAgent = useMemo(() => {
+		const agents = (conversation?.participants ?? []).filter((p) => p.actorType === 'agent')
+		const only = agents.length === 1 ? agents[0] : null
+		return only ? { id: only.actorId, name: only.actorName, type: only.actorType } : null
+	}, [conversation?.participants])
 	// Only resolve the loop when the v4 chip can render — flag off means the
 	// chip never mounts, so the lookup is skipped rather than fetched and wasted.
 	const { data: loop } = useLoop(v4Polish ? (loopId ?? '') : '', workspaceId)
@@ -302,43 +307,40 @@ export function ThreadHeader({
 						<TooltipContent>{loopName ?? loopLabel}</TooltipContent>
 					</Tooltip>
 				) : null}
-				{/* S2 Produced toggle (bet 34706e2f, task 5). Sits beside the
-				    loop chip so it reads as a per-thread indicator (a stateful
-				    label) rather than as a right-cluster action. Renders only
-				    when the parent route has resolved the
-				    `graph-provenance-writes` flag on. Count is a `<span>` with
-				    `aria-label` so screen readers hear "N items produced"
-				    rather than the pill glyph. */}
-				{producedEnabled && onToggleProduced ? (
+				{/* Overview toggle: one entry point for the right rail's Threads and
+				    Produced tabs. The dot pulses while something has changed since the
+				    pane was last open — a handoff started or finished, a new output. */}
+				{onToggleOverview ? (
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								type="button"
-								onClick={onToggleProduced}
-								aria-pressed={producedOpen}
-								aria-label={producedOpen ? 'Close Produced pane' : 'Open Produced pane'}
+								onClick={onToggleOverview}
+								aria-pressed={overviewOpen}
+								aria-label={overviewOpen ? 'Close Overview' : 'Open Overview'}
 								className={cn(
 									'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-									producedOpen &&
+									overviewOpen &&
 										'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
 								)}
 							>
 								<Layers size={11} aria-hidden />
-								Produced
-								<span
-									className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[10px] font-bold text-muted-foreground"
-									aria-label={`${producedCount} items produced`}
-								>
-									{producedCount}
-								</span>
+								Overview
+								{overviewHasNew ? (
+									<output className="relative flex h-2 w-2" aria-label="New activity">
+										<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75 motion-reduce:animate-none" />
+										<span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+									</output>
+								) : null}
 							</button>
 						</TooltipTrigger>
 						<TooltipContent>
-							{producedOpen ? 'Hide Produced pane' : 'Show Produced pane · press P'}
+							{overviewOpen ? 'Hide Overview' : 'Show Overview · press P'}
 						</TooltipContent>
 					</Tooltip>
 				) : null}
 				<span className="ml-auto" />
+				{voiceAgent ? <AgentCallButton agent={voiceAgent} variant="icon" /> : null}
 				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
 				    ⋯ menu; Focus + Close stay inline (v4 spec). v4-only. */}
 				{v4Polish ? (

@@ -172,6 +172,13 @@ const loopStepSchema = z.object({
  * for workspace-defined (custom) object types — without it only built-in types
  * have known terminal statuses.
  */
+const loopTagsSchema = z
+	.array(z.string().trim().min(1).max(40))
+	.max(10)
+	.describe(
+		'Short labels saying which team, business unit or part of the business this loop belongs to, e.g. ["Sales", "EMEA"]. Shown as filter pills and chips on Flows. Replaces the current tags; pass [] to clear.',
+	)
+
 const closedStatusesSchema = z
 	.record(z.array(z.string().min(1)))
 	.optional()
@@ -777,7 +784,7 @@ export const tools = {
 	},
 	list_workspaces: {
 		description:
-			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Each row carries `isDefault`: true for the one workspace the user chose as their default in Settings (at most one row; none if they have not chosen). Prefer it when the user does not name a workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			limit: z
 				.number()
@@ -1243,6 +1250,7 @@ export const tools = {
 					'Existing objects — of any workspace-defined type — to start running through the loop. Each becomes an `in_loop` relationship (source = loop, target = object). Objects can also be added later with update_loop.',
 				),
 			closed_statuses: closedStatusesSchema,
+			tags: loopTagsSchema.optional(),
 		}),
 	},
 	update_loop: {
@@ -1273,6 +1281,7 @@ export const tools = {
 					`New plain-language close condition. Pass an empty string to clear. ${CLOSE_CONDITION_GUIDANCE}`,
 				),
 			closed_statuses: closedStatusesSchema,
+			tags: loopTagsSchema.optional(),
 			add_steps: z
 				.array(loopStepSchema)
 				.max(20)
@@ -1350,7 +1359,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run, or @mention the agent in a comment on the object.",
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 			actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -1369,19 +1378,13 @@ export const tools = {
 				.describe(
 					'The bet, task, insight or other object this work is for. Leave it out if the work is not about a specific object.',
 				),
-			notify_on_complete: z
-				.boolean()
-				.optional()
-				.describe(
-					"Set true to get the agent's final message back when it finishes. It arrives as a new turn in your own chat if you are in one, otherwise as a comment on the object you were started from. With `wait: true` it only takes effect if the wait runs out before the agent finishes; otherwise you get the result from the call itself.",
-				),
 			spawned_by_message_id: z
 				.number()
 				.int()
 				.positive()
 				.optional()
 				.describe(
-					'The message of yours that led to this work being started, so the chat can show it next to that message. Leave it out if there is none.',
+					'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
 				),
 			wait: z
 				.boolean()
@@ -1393,7 +1396,7 @@ export const tools = {
 	},
 	list_sessions: {
 		description:
-			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window.",
+			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window. A response over the size cap is trimmed from the tail: _meta.truncated is true and next_cursor holds the updated_at of the last row returned. To continue, call again with the same filters, before set to next_cursor and offset left at 0; repeat until next_cursor is absent.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -1503,11 +1506,70 @@ export const tools = {
 			limit: z.number().int().min(1).max(500).default(100).describe('Max rows per page.'),
 		}),
 	},
+	get_session_activity: {
+		description:
+			"Get the compact agent activity trace for a session: per conversation-message turns, each with its steps (tool calls, thinking, text, errors), status and final result. Same wording as the web chat activity dropdown. Page toward older turns by passing the previous response's `oldest_log_id` as `before_log_id` while `has_older` is true. content and structuredContent carry the same full payload. This tool is read-only — to see raw log lines use `get_session` with `include_logs: true`; to change a session use `stop_session`, `pause_session` or `resume_session`.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Session ID'),
+			limit_turns: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.default(5)
+				.describe('Newest N turns to return (a turn = one conversation message answered)'),
+			message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Return only the turn triggered by this conversation message id'),
+			before_log_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Exclusive upper bound on log id; pass a previous `oldest_log_id` to page older'),
+		}),
+	},
 	stop_session: {
 		description: 'Stop a running session',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	ask_user_question: {
+		description:
+			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. It only works inside an agent session started from a chat; elsewhere there is nobody to ask, and the tool says so — then decide for yourself and state the assumption you made. Give 2 to 4 options each; a person can always type something else.',
+		inputSchema: z.object({
+			questions: z
+				.array(
+					z.object({
+						question: z.string().min(1).max(1000).describe('The full question.'),
+						header: z
+							.string()
+							.min(1)
+							.max(24)
+							.describe('A short label for the question, e.g. "Job board".'),
+						multi_select: z
+							.boolean()
+							.optional()
+							.describe('Let the person pick more than one option.'),
+						options: z
+							.array(
+								z.object({
+									label: z.string().min(1).max(200),
+									description: z.string().max(1000).optional(),
+								}),
+							)
+							.min(2)
+							.max(4),
+					}),
+				)
+				.min(1)
+				.max(4),
 		}),
 	},
 	pause_session: {
@@ -1667,7 +1729,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). OAuth providers return an install_url that must be opened in a browser to complete the flow; the callback is handled automatically by the server. API-key providers (e.g. "posthog") require `api_key` and are activated immediately, with no install_url.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
@@ -1679,7 +1741,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'API key for providers whose auth type is "api_key" (e.g. "posthog"). Required for those providers and ignored for OAuth providers.',
+					'Only for the non-chat fallback: the API key for providers whose auth type is "api_key" (e.g. "posthog"). Ignored in a chat — the user types the key into the card — so never ask the user for one.',
 				),
 		}),
 	},

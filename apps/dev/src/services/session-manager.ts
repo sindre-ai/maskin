@@ -64,7 +64,7 @@ import {
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifySessionExit } from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -79,7 +79,10 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
-import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
+import {
+	mcpServersReferenceEnvKey,
+	serverSpecReferencesEnvKey,
+} from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
@@ -94,6 +97,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -109,8 +113,17 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
+import {
+	type McpServerHealthMap,
+	applyMcpEnvelope,
+	applyMcpToolUse,
+	expireMcpPending,
+	hasPendingMcpServers,
+	parseMcpInit,
+	registerMcpInit,
+} from '../lib/mcp-health'
 import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -145,6 +158,7 @@ import {
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
+	sumAssistantUsage,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
@@ -167,6 +181,22 @@ const NO_CONTAINER_ASSIGNED_MESSAGE =
  * that never emits a newline. Matches InteractiveTurnFinalizer's cap.
  */
 const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
+
+/**
+ * How long a server that was still pending at init is watched for signs of
+ * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
+ */
+const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** Per-session MCP health record: what has been said about each server. */
+interface McpHealthSession {
+	servers: McpServerHealthMap
+	capAt: number
+	/** Cap timer; absent when nothing was pending at init. */
+	timer?: NodeJS.Timeout
+	/** True once nothing non-terminal remains. Set before the final emit. */
+	resolved: boolean
+}
 
 /**
  * Mirrors the allowlist regex enforced on the API side by
@@ -410,6 +440,16 @@ export interface SessionLogEvent extends LogChunk {
 }
 
 /**
+ * In-process turn boundary for interactive sessions, emitted as `'turn'`.
+ * `started`: a user turn was written to the CLI's stdin (a human message, a
+ * seed turn, or a replay). `finished`: the turn's closing message was posted.
+ * Consumed by the Live Activity fan-out; never persisted.
+ */
+export type SessionTurnEvent =
+	| { sessionId: string; phase: 'started' }
+	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
+
+/**
  * §17.5 companion parser at the two completion paths: convert the classifier's
  * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
  * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
@@ -559,12 +599,13 @@ export class SessionManager extends EventEmitter {
 	private readonly mcpHealthBuffers = new Map<string, string>()
 
 	/**
-	 * Sessions that have already had their MCP health reported. The init line
-	 * is replayed whenever the log stream re-attaches (`tail: 'all'` on resume,
-	 * `sinceUnixSec` overlap after a transient drop), and the warning should
-	 * read once per session, not once per reconnect.
+	 * Per-session MCP health record. The init line is replayed whenever the log
+	 * stream re-attaches (`tail: 'all'` on resume, `sinceUnixSec` overlap after
+	 * a transient drop), so the record is also what keeps the warning at once
+	 * per server, and what stops a replay from downgrading a server that has
+	 * since connected. Deleted only in clearActiveSession.
 	 */
-	private readonly mcpHealthReported = new Set<string>()
+	private readonly mcpHealth = new Map<string, McpHealthSession>()
 
 	constructor(
 		private db: Database,
@@ -605,6 +646,9 @@ export class SessionManager extends EventEmitter {
 			// still retries and still tells the human.
 			setModel: (sessionId, model) => this.setSessionModel(sessionId, model),
 			fallbackModel: readEmptyTurnFallbackModel(),
+			onTurnFinished: (sessionId, outcome) =>
+				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
+			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
 		})
 	}
 
@@ -984,6 +1028,17 @@ export class SessionManager extends EventEmitter {
 		// pre-stage a temp dir locally — we only own the queue handoff.
 		if (this.dispatchQueue) {
 			try {
+				// Mark the row as waiting on a machine before it is enqueued. The row
+				// otherwise keeps its default session_state='queued', which the
+				// reaper's queued-rescue reads as a dead driver after 2 min: it
+				// re-fires _driveToRunning, startSession throws on the 'starting'
+				// status, and boot-stall fails the row as startup_stalled 5 min later
+				// while it is still legitimately waiting for a slot. Written before
+				// enqueue so it cannot overwrite the dispatcher's 'running'.
+				await this.db
+					.update(sessions)
+					.set({ sessionState: 'waiting_for_machine', stateEnteredAt: new Date() })
+					.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'starting')))
 				await this.dispatchQueue.enqueue(sessionId)
 				logger.info(`Session enqueued for remote dispatch: ${sessionId}`, {
 					workspaceId: session.workspaceId,
@@ -1318,6 +1373,7 @@ export class SessionManager extends EventEmitter {
 				data: log.content,
 			} satisfies SessionLogEvent)
 		}
+		this.emit('turn', { sessionId, phase: 'started' } satisfies SessionTurnEvent)
 	}
 
 	/**
@@ -2138,6 +2194,21 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// The CLI under the session (Claude Code, Codex, …) injects its own
+		// identity text into the model's context, and an agent's own persona
+		// prompt never contradicts it — so an agent asked what it runs on
+		// answers with the underlying model/vendor instead of Maskin, which is
+		// the branding leak this fixes. We cannot remove the CLI's text, only
+		// out-instruct it; prepending to SYSTEM_PROMPT is the agent-agnostic
+		// place to do that, for the same reason the conversationPreamble below
+		// is prepended rather than left to the first user turn. It states a true
+		// identity and asks the agent to decline, never to deny: told to hide a
+		// fact about itself, the model refuses and quotes the instruction back,
+		// and told only "you are a Maskin agent" it answers a closed "are you
+		// <vendor>?" with a false "No".
+		const identityPreamble =
+			"You are a Maskin agent. Maskin is the product you belong to and speak for, so when someone asks who or what you are, that is your answer. Maskin does not publish details about the model or vendor behind its agents, so you decline to discuss them. That includes yes-or-no questions such as whether you are a particular model: answer that you can't confirm or deny it, not yes and not no, because either answer would disclose or misstate what is behind you. Never say anything untrue about yourself.\n\n"
+
 		// A conversation-triggered session's own system prompt is the agent's
 		// full persona/workflow doc (often long and domain-specific, e.g. an
 		// autonomous bet-shaping or triage workflow) — it says nothing about
@@ -2156,7 +2227,13 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
+		// A helper another agent started from a chat. It is interactive only so it
+		// can ask the person something, and it ends the moment it gives a result.
+		const helperPreamble =
+			sessionConfig.stop_on_result === true
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
+				: ''
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
 ${HUMAN_MESSAGE_STYLE}`
 
@@ -2305,7 +2382,12 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
 				oauthExpiresAtTaken = resolved.oauthExpiresAt
-				routeModelName = resolved.modelName
+				// maskin_plan names its model on the result; a BYO endpoint's model is
+				// the ANTHROPIC_MODEL it was configured with.
+				routeModelName =
+					resolved.route === LLM_ROUTE_CUSTOM
+						? resolved.envVars.ANTHROPIC_MODEL
+						: resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -2366,11 +2448,11 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
-		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
-		// OpenRouter model that will actually run: the follow-on local cost
-		// resolver keys OpenRouter's pricing table on that value, and without
+		// On the maskin_plan and workspace_custom routes we ALSO stamp
+		// `sessions.model_name` with the model that will actually run: the local
+		// cost resolver keys OpenRouter's pricing table on that value, and without
 		// it every non-Anthropic session reads as an Opus-priced number.
-		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// claude_oauth and the API-key routes leave `model_name` null on purpose —
 		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
@@ -2382,7 +2464,7 @@ ${HUMAN_MESSAGE_STYLE}`
 				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
 			)
 			const modelNameToPersist =
-				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				(routeTaken === LLM_ROUTE_MASKIN_PLAN || routeTaken === LLM_ROUTE_CUSTOM) &&
 				routeModelName &&
 				routeModelName !== session.modelName
 					? routeModelName
@@ -2451,6 +2533,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const integrationTokens: Record<string, string> = {}
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2593,7 +2676,26 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (accessToken !== null) {
 				const envVarName =
 					mcp?.envKey ?? `${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
-				envVars[envVarName] = accessToken
+				// Server-side copy, for code in this process that needs a provider
+				// token without the container ever seeing it (the preflight Slack alert).
+				integrationTokens[envVarName] = accessToken
+				// The container only gets the token if the agent is meant to use it:
+				// its own tools config (or the session's MCP list) references the
+				// token variable, or the MCP server auto-injected below needs it to
+				// sign in. Anything else would hand every shell-capable agent in the
+				// workspace a credential it has no use for.
+				const agentUsesToken =
+					mcpServersReferenceEnvKey(agentToolsMcpServers, envVarName) ||
+					mcpServersReferenceEnvKey(sessionConfig.mcps, envVarName)
+				if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
+					envVars[envVarName] = accessToken
+				} else {
+					logger.debug('Integration token not injected; agent config does not reference it', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						provider: integration.provider,
+					})
+				}
 			}
 			if (autoInjectServer) {
 				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
@@ -2677,6 +2779,8 @@ ${HUMAN_MESSAGE_STYLE}`
 			'ANTHROPIC_MODEL',
 			'ANTHROPIC_SMALL_FAST_MODEL',
 			'MASKIN_CLAUDE_EFFORT',
+			'MAX_THINKING_TOKENS',
+			'MASKIN_DISABLE_WEB_SEARCH',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -2799,7 +2903,7 @@ ${HUMAN_MESSAGE_STYLE}`
 						statusSnippet: v.statusSnippet,
 					})),
 				})
-				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
 						botToken: slackBotToken,
@@ -3162,6 +3266,12 @@ ${HUMAN_MESSAGE_STYLE}`
 					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
+						if (
+							chunk.stream === 'stdout' &&
+							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
+						) {
+							continue
+						}
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
 							await this.emitUnhealthyMcpWarningIfAny(sessionId, chunk.data)
@@ -3564,9 +3674,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
-			exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (classifiedFailureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
@@ -3903,6 +4011,7 @@ ${HUMAN_MESSAGE_STYLE}`
 	 */
 	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
+		let tokensOnly = false
 		try {
 			const drained = this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
@@ -3918,6 +4027,12 @@ ${HUMAN_MESSAGE_STYLE}`
 			if (!usage) {
 				usage = await extractSessionUsage(this.db, sessionId)
 			}
+			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
+			// to the tokens the assistant messages reported. Cost stays null.
+			if (!usage) {
+				usage = await sumAssistantUsage(this.db, sessionId)
+				tokensOnly = usage !== null
+			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
 		}
@@ -3928,10 +4043,14 @@ ${HUMAN_MESSAGE_STYLE}`
 		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
 		// lookup failure falls back to the CLI figure rather than losing the
 		// segment's cost entirely.
+		// A tokens-only segment (no `result` envelope) skips this: it has no
+		// reported cost, and pricing its tokens here would be a guess.
 		let resolvedCostUsd = usage.totalCostUsd
 		try {
-			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
-			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			if (!tokensOnly) {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			}
 		} catch (err) {
 			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
 				sessionId,
@@ -4209,6 +4328,102 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
+		)
+	}
+
+	/**
+	 * Ends a helper session (one an agent started from a chat, config.stop_on_result)
+	 * once it has returned its result. A helper runs interactively so it can ask
+	 * the person a question, but an interactive session never exits on its own;
+	 * without this it would sit idle, holding a container, until the timeout.
+	 *
+	 * Settled through settleSession like any other end, so the row reads
+	 * completed (or failed), `notify_on_complete` still sends the result back to
+	 * the agent that started it, and `wait: true` callers see it finish.
+	 */
+	async finishHelperSession(
+		sessionId: string,
+		outcome: { isError: boolean; text: string },
+	): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session || session.status !== 'running') return
+
+		const settled = await settleSession(
+			session.id,
+			outcome.isError
+				? {
+						kind: 'fail',
+						classification: 'unknown',
+						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
+						resultText: outcome.text,
+						// Same settle source the idle close uses: the remote stop endpoint
+						// validates it against a fixed list, and this is a close-out of an
+						// idle interactive session.
+						source: 'idle-watcher',
+					}
+				: {
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'idle-watcher',
+						resultText: outcome.text,
+					},
+			this.buildSettleDeps(),
+		)
+		if (settled.alreadySettled) return
+
+		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
+
+		if (!session.agentServerId && session.containerId) {
+			await this.containers.remove(session.containerId).catch((err) =>
+				logger.warn('Failed to remove helper container', {
+					sessionId: session.id,
+					containerId: session.containerId,
+					error: String(err),
+				}),
+			)
+		}
+
+		if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+			const now = new Date()
+			await this.db
+				.update(actors)
+				.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+				.where(eq(actors.id, session.actorId))
+				.catch((err) =>
+					logger.warn('Failed to sync agentState after helper finished', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		this.telemetry.recordSessionEnded({
+			sessionId: session.id,
+			endReason: outcome.isError ? 'failed' : 'completed',
+			durationMs: elapsedMs(session.startedAt, session.createdAt),
+			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+		})
+
+		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
+		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+		await this.insertSystemLog(session.id, 'Session completed — result returned').catch((err) =>
+			logger.warn('Failed to write helper close system log', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
+
+		await this.clearActiveSession(session.id)
+		await this.cleanupBrowserSidecar(session.id)
+		await this.cleanupSession(session.id)
+
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after helper finished', { error: String(err) }),
 		)
 	}
 
@@ -5291,6 +5506,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// paths (queue-drain rejection, remote sessions) that have no
 		// activeSessions entry to key off.
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 	}
 
 	/**
@@ -5307,6 +5523,9 @@ ${HUMAN_MESSAGE_STYLE}`
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
 		for (const line of lines) {
+			if (line.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, line.content)) {
+				continue
+			}
 			if (line.stream === 'stdout') {
 				await this.emitGithubCauseTagIfAny(sessionId, line.content)
 				await this.emitUnhealthyMcpWarningIfAny(sessionId, line.content)
@@ -5358,16 +5577,29 @@ ${HUMAN_MESSAGE_STYLE}`
 	}
 
 	/**
-	 * Surface MCP servers that never connected, from the runtime's own `init`
-	 * envelope. A server stuck at "pending"/"failed" contributes no tools, and
-	 * nothing else in the pipeline notices — the agent simply finds the
-	 * capability missing and tells the user it was never wired, while the
-	 * service behind it looks healthy everywhere else. Emitting a `system` log
-	 * makes it visible to both the user and the agent. Errors are swallowed: a
-	 * health-check hiccup must not drop the original log write.
+	 * Surface MCP servers that are not up, from the runtime's own `init`
+	 * envelope. A server stuck at "failed" contributes no tools, and nothing
+	 * else in the pipeline notices — the agent simply finds the capability
+	 * missing and tells the user it was never wired, while the service behind it
+	 * looks healthy everywhere else. Emitting a `system` log makes it visible
+	 * to both the user and the agent.
+	 *
+	 * A server that is only "pending" at init is not a failure: it is reported
+	 * as still starting, then re-sampled event by event on this same stream
+	 * (MCP tool use proves it is up) until it settles or the cap timer fires.
+	 * Corrections are a second log line; system logs are append-only. Errors are
+	 * swallowed: a health-check hiccup must not drop the original log write.
 	 */
 	private async emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void> {
-		if (chunk.length === 0 || this.mcpHealthReported.has(sessionId)) return
+		if (chunk.length === 0) return
+
+		const existing = this.mcpHealth.get(sessionId)
+		if (existing?.resolved) return
+		// Checked before any parse work so a chunk after the cap cannot re-open it.
+		if (existing && Date.now() >= existing.capAt) {
+			await this.expireMcpHealth(sessionId, existing)
+			return
+		}
 
 		let lines: string[]
 		try {
@@ -5376,9 +5608,7 @@ ${HUMAN_MESSAGE_STYLE}`
 			lines = split.lines
 			const { remainder } = split
 			if (remainder.length > MAX_BUFFERED_MCP_HEALTH_BYTES) {
-				// A stream that never emits a newline must not eat memory. The
-				// init line comes first in a session, so a remainder this large
-				// means we are long past it and nothing is left to detect.
+				// A stream that never emits a newline must not eat memory.
 				this.mcpHealthBuffers.delete(sessionId)
 			} else if (remainder) {
 				this.mcpHealthBuffers.set(sessionId, remainder)
@@ -5396,19 +5626,66 @@ ${HUMAN_MESSAGE_STYLE}`
 		for (const line of lines) {
 			if (line.length === 0) continue
 			try {
-				const unhealthy = detectUnhealthyMcpServers(line)
-				if (!unhealthy) continue
-				this.mcpHealthReported.add(sessionId)
-				this.mcpHealthBuffers.delete(sessionId)
-				logger.warn('MCP servers did not connect for session', { sessionId, servers: unhealthy })
-				await this.insertSystemLog(sessionId, formatUnhealthyMcpWarning(unhealthy))
-				return
+				await this.processMcpHealthLine(sessionId, line)
 			} catch (err) {
 				logger.warn('mcp health check failed for a line', {
 					sessionId,
 					error: err instanceof Error ? err.message : String(err),
 				})
 			}
+		}
+	}
+
+	private async processMcpHealthLine(sessionId: string, line: string): Promise<void> {
+		let entry = this.mcpHealth.get(sessionId)
+		if (entry?.resolved) return
+
+		const init = parseMcpInit(line)
+		let messages: string[]
+		if (init && !entry) {
+			const servers: McpServerHealthMap = new Map()
+			messages = registerMcpInit(servers, init)
+			if (servers.size === 0) return
+			entry = { servers, capAt: Date.now() + MCP_HEALTH_RESAMPLE_CAP_MS, resolved: false }
+			this.mcpHealth.set(sessionId, entry)
+			logger.warn('MCP servers not connected at init', { sessionId, count: servers.size })
+			if (hasPendingMcpServers(servers)) {
+				const armed = entry
+				armed.timer = setTimeout(() => {
+					void this.expireMcpHealth(sessionId, armed)
+				}, MCP_HEALTH_RESAMPLE_CAP_MS)
+				armed.timer.unref()
+			}
+		} else if (!entry) {
+			return
+		} else {
+			messages = init ? applyMcpEnvelope(entry.servers, init) : applyMcpToolUse(entry.servers, line)
+		}
+
+		// Settle before awaiting any emit, so a concurrent chunk or the cap timer
+		// cannot double-emit.
+		if (!hasPendingMcpServers(entry.servers)) {
+			entry.resolved = true
+			clearTimeout(entry.timer)
+		}
+		for (const message of messages) await this.insertSystemLog(sessionId, message)
+	}
+
+	/** The cap fired (timer or chunk): still-pending servers become slow-unknown. */
+	private async expireMcpHealth(sessionId: string, entry: McpHealthSession): Promise<void> {
+		// The timer can outlive the session; the record is gone after teardown.
+		if (entry.resolved || this.mcpHealth.get(sessionId) !== entry) return
+		entry.resolved = true
+		clearTimeout(entry.timer)
+		try {
+			for (const message of expireMcpPending(entry.servers)) {
+				await this.insertSystemLog(sessionId, message)
+			}
+		} catch (err) {
+			logger.warn('mcp health cap emit failed', {
+				sessionId,
+				error: err instanceof Error ? err.message : String(err),
+			})
 		}
 	}
 
@@ -5500,9 +5777,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null
-				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
-				: null
+			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,
@@ -5521,19 +5796,41 @@ ${HUMAN_MESSAGE_STYLE}`
 		// in flight), in which case stopSession has already recorded the request.
 		const userStopped = status === 'failed' && (stoppedByUser || this.stopRequested.has(sessionId))
 
-		// Written as absolute figures (not settle's additive delta): the parse
-		// above reads this session's whole stdout tail, so it already holds every
-		// segment. Only applied while the row is still open.
-		const usageColumns = usage
-			? {
-					totalCostUsd: resolvedCostUsd?.toString() ?? null,
-					inputTokens: usage.inputTokens,
-					outputTokens: usage.outputTokens,
-					cacheCreationInputTokens: usage.cacheCreationInputTokens,
-					cacheReadInputTokens: usage.cacheReadInputTokens,
-					durationMs: usage.durationMs,
-				}
-			: null
+		// Add this segment's usage onto the stored totals, like handleCompletion does
+		// through accumulateSessionUsage: a session that was paused and resumed
+		// already carries the earlier segments' usage, and the result envelope in
+		// the logs only reports the last segment. stopSession()'s provisional write
+		// carries no usage: the genuine report that follows reads the same logs, so
+		// adding on both would count one envelope twice. The genuine report adds.
+		const usageColumns =
+			usage && !stoppedByUser
+				? {
+						totalCostUsd:
+							resolvedCostUsd != null
+								? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
+								: undefined,
+						inputTokens:
+							usage.inputTokens != null
+								? sql`COALESCE(${sessions.inputTokens}, 0) + ${usage.inputTokens}`
+								: undefined,
+						outputTokens:
+							usage.outputTokens != null
+								? sql`COALESCE(${sessions.outputTokens}, 0) + ${usage.outputTokens}`
+								: undefined,
+						cacheCreationInputTokens:
+							usage.cacheCreationInputTokens != null
+								? sql`COALESCE(${sessions.cacheCreationInputTokens}, 0) + ${usage.cacheCreationInputTokens}`
+								: undefined,
+						cacheReadInputTokens:
+							usage.cacheReadInputTokens != null
+								? sql`COALESCE(${sessions.cacheReadInputTokens}, 0) + ${usage.cacheReadInputTokens}`
+								: undefined,
+						durationMs:
+							usage.durationMs != null
+								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
+								: undefined,
+					}
+				: null
 
 		// A thrown DB error here must not permanently strand the session: giving
 		// up immediately would skip the audit event, the terminal system log
@@ -5547,6 +5844,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		let settled: SettleResult | undefined
 		let alreadyResolved = false
 		let rowMissing = false
+		let usageApplied = false
 		let settleErr: unknown
 		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
 			try {
@@ -5567,11 +5865,13 @@ ${HUMAN_MESSAGE_STYLE}`
 					alreadyResolved = true
 					break
 				}
-				if (usageColumns) {
+				// Additive, so it must not be re-applied if a retry follows a settle failure.
+				if (usageColumns && !usageApplied) {
 					await this.db
 						.update(sessions)
 						.set(usageColumns)
 						.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, resolvedStatuses)))
+					usageApplied = true
 				}
 				// The agent-server owns the sandbox and the workspace is already in
 				// S3, so settle only writes the row, the event and telemetry.
@@ -5750,6 +6050,7 @@ ${HUMAN_MESSAGE_STYLE}`
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
+		thinkingRowThrottle.forget(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
@@ -5777,7 +6078,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		sessionId: string,
 		exitCode: number | null,
 		stoppedByUser: boolean,
-		usageColumns: Partial<typeof sessions.$inferInsert> | null,
+		usageColumns: Record<string, SQL | undefined> | null,
 	): Promise<void> {
 		let existing: typeof sessions.$inferSelect | undefined
 		try {
@@ -5889,7 +6190,8 @@ ${HUMAN_MESSAGE_STYLE}`
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.turnFinalizer.forgetSession(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
-		this.mcpHealthReported.delete(sessionId)
+		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
+		this.mcpHealth.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })

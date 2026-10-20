@@ -465,6 +465,7 @@ describe('Invites — GET /preview', () => {
 			workspaceId,
 			inviterId,
 			email: 'Preview@Example.com',
+			role: 'viewer',
 		})
 
 		const res = await app().request(
@@ -478,6 +479,7 @@ describe('Invites — GET /preview', () => {
 		expect(body.workspaceName).toBe(workspaceName)
 		expect(body.inviteEmail).toBe('Preview@Example.com')
 		expect(body.inviterName).toBeTruthy()
+		expect(body.role).toBe('viewer')
 		expect(body.expiresAt).toEqual(expect.any(String))
 	})
 

@@ -118,6 +118,33 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 	return cleaned.length > 0 ? cleaned : null
 }
 
+/** Longest tag we show, and the most per loop: tags are short labels, not sentences. */
+const LOOP_TAG_MAX_LENGTH = 40
+const LOOP_TAG_MAX_COUNT = 10
+
+/**
+ * Extract a loop's `metadata.tags`: the non-empty strings, trimmed, de-duplicated
+ * (case-insensitively, first spelling wins) and capped. Anything else in the
+ * array is dropped — same tolerance as the other metadata readers, a hand-edited
+ * blob must not 500 the page.
+ */
+function readLoopTags(meta: Record<string, unknown>): string[] {
+	const raw = meta.tags
+	if (!Array.isArray(raw)) return []
+	const seen = new Set<string>()
+	const tags: string[] = []
+	for (const entry of raw) {
+		if (typeof entry !== 'string') continue
+		const tag = entry.trim().slice(0, LOOP_TAG_MAX_LENGTH)
+		const key = tag.toLowerCase()
+		if (tag.length === 0 || seen.has(key)) continue
+		seen.add(key)
+		tags.push(tag)
+		if (tags.length >= LOOP_TAG_MAX_COUNT) break
+	}
+	return tags
+}
+
 const listLoopsQuerySchema = z.object({
 	id: z.string().uuid().optional().openapi({
 		description:
@@ -348,6 +375,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 					? meta.close_condition
 					: null
 			const targets = readLoopTargets(meta)
+			const tags = readLoopTags(meta)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -389,6 +417,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				pill,
 				entryCondition,
 				closeCondition,
+				tags,
 				inProgressCount: stats.inProgressCount,
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,

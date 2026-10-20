@@ -808,6 +808,42 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_session_activity handler', () => {
+		const sid = '11111111-1111-4111-8111-111111111111'
+		const payload = {
+			session_id: sid,
+			turns: [{ message_id: 7, steps: [{ id: '1-0', kind: 'tool_use', label: 'Using Read' }] }],
+			oldest_log_id: 1,
+			has_older: false,
+		}
+
+		it('forwards paging params and returns the same full payload on both channels', async () => {
+			mockFetchSuccess(payload)
+			const handler = getHandler('get_session_activity')
+			const result = (await handler({
+				id: sid,
+				limit_turns: 3,
+				message_id: 7,
+				before_log_id: 99,
+			})) as { content: Array<{ text: string }>; structuredContent: unknown }
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain(`/api/sessions/${sid}/activity?`)
+			expect(calledUrl).toContain('limit_turns=3')
+			expect(calledUrl).toContain('message_id=7')
+			expect(calledUrl).toContain('before_log_id=99')
+			expect(result.structuredContent).toEqual(payload)
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('states it is read-only and names its write counterparts', async () => {
+			const { tools } = await import('../tools')
+			const d = tools.get_session_activity.description
+			expect(d).toContain('read-only')
+			expect(d).toContain('stop_session')
+		})
+	})
+
 	describe('update_objects handler — file attachments', () => {
 		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
 			// PATCH the object, GET (per file, returns empty → not yet attached),
@@ -2070,6 +2106,39 @@ describe('tool handlers', () => {
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
 			})
 
+			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { tags: ['Old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', tags: ['Sales', 'EMEA'] })
+				await handler({ id: 'loop-1', tags: [] })
+
+				expect(patches[0]?.metadata).toEqual({ tags: ['Sales', 'EMEA'] })
+				expect(patches[1]?.metadata).toEqual({ tags: [] })
+			})
+
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
 				const relationshipDeletes: string[] = []
 				let patchBody: Record<string, unknown> | undefined
@@ -2298,10 +2367,20 @@ describe('tool handlers', () => {
 			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
 		})
 
-		it('flag off: not in the body, so the create route sees what it saw before', async () => {
+		it('always on, so a caller that does not wait still hears back', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
-			expect(postedBody(vi.mocked(fetch))).not.toHaveProperty('notify_on_complete')
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
+		})
+
+		it('cannot be switched off: a caller passing false still hears back', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				notify_on_complete: false,
+			})
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
 		})
 	})
 
@@ -2414,6 +2493,21 @@ describe('tool handlers', () => {
 			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
 		})
 
+		it('unset and the wait times out: still asks for the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n0')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+			await resultPromise
+
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
 		it('flag on and the helper finishes inside the wait: no PATCH, the caller has the result inline', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -2523,7 +2617,7 @@ describe('tool handlers', () => {
 			expect(parsed.logs_error).toEqual(expect.any(String))
 		})
 
-		it('flag off and the wait times out: no PATCH, as before', async () => {
+		it('passing false does not stop the return being registered when the wait times out', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')
 
@@ -2531,12 +2625,12 @@ describe('tool handlers', () => {
 				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
+				notify_on_complete: false,
 			})
 			await vi.advanceTimersByTimeAsync(3_800_000)
+			await resultPromise
 
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('notify_on_complete')
-			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
 		})
 
 		it('a failed PATCH does not fail the call; it says the return was not registered', async () => {
@@ -4742,6 +4836,36 @@ describe('tool handlers', () => {
 			})
 		})
 
+		it('list_workspaces shows which workspace is the default', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).includes('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'ws-1', name: 'Maskin', role: 'owner', isDefault: false },
+								{ id: 'ws-2', name: 'Reflect Studio', role: 'member', isDefault: true },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_workspaces')
+			const result = (await handler({})) as {
+				structuredContent: {
+					workspaces: Array<{ id: string; isDefault: boolean }>
+					heroCard: { objects?: Array<{ title: string | null; contextLine?: string }> }
+				}
+			}
+
+			expect(
+				Object.fromEntries(result.structuredContent.workspaces.map((w) => [w.id, w.isDefault])),
+			).toEqual({ 'ws-1': false, 'ws-2': true })
+			const cards = result.structuredContent.heroCard.objects ?? []
+			expect(cards.find((o) => o.title === 'Reflect Studio')?.contextLine).toContain('default')
+			expect(cards.find((o) => o.title === 'Maskin')?.contextLine).not.toContain('default')
+		})
+
 		it('list_workspaces strips credentials and billing from settings, keeping the schema', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -6405,5 +6529,35 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', '')
 		build({})
 		expect((await createSessionHeaders())['X-Maskin-Session-Id']).toBeUndefined()
+	})
+
+	// post_conversation_message stamps the same id into the request body, for
+	// messages.session_id (cost and token drill-down).
+	async function postMessageBody(): Promise<Record<string, unknown>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'hello',
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		return JSON.parse((call?.[1] as RequestInit).body as string)
+	}
+
+	it('post_conversation_message stamps config.maskinSessionId, ahead of the host SESSION_ID', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await postMessageBody()).session_id).toBe(callerSession)
+	})
+
+	it('post_conversation_message falls back to SESSION_ID on stdio', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({})
+		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 })

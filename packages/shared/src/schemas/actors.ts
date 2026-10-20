@@ -66,6 +66,9 @@ export const updateActorSchema = z.object({
 	memory: z.record(z.unknown()).optional(),
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
+	// The caller's own default workspace; null clears it. Only accepted when the
+	// target actor is the caller, and only for a workspace the caller belongs to.
+	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 export const actorParamsSchema = z.object({
@@ -100,6 +103,14 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
+	// Projected from actors.metadata->>'voice_enabled'. Read-only on this
+	// endpoint (write is POST /actors/:id/voice-mode); mirrors the same
+	// projection pattern that already exposes installedLoopId. Optional at
+	// the type level so existing fixtures and callers that pre-date the
+	// voice bet don't have to synthesise a value — the discovery surfaces
+	// treat `undefined` as "voice off" via a strict `=== true` check.
+	voice_enabled: z.boolean().optional(),
+	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
@@ -122,6 +133,11 @@ export const actorListItemSchema = z.object({
 	// the seek partner off the response.
 	createdAt: z.string().nullable().optional(),
 	role: z.string().optional(),
+	// Projected from actors.metadata->>'voice_enabled' — same pattern
+	// actorResponseSchema uses. Optional so existing fixtures don't need to
+	// synthesise a value; the discovery surfaces treat `undefined` as "voice
+	// off" via a strict `=== true` check.
+	voice_enabled: z.boolean().optional(),
 	workspaces: z
 		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
 		.optional(),

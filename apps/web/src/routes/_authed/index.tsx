@@ -1,3 +1,4 @@
+import { CreateFirstWorkspace } from '@/components/layout/create-first-workspace'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { getLastWorkspaceId } from '@/lib/last-workspace'
@@ -18,9 +19,10 @@ function IndexRedirect() {
 		)
 	}
 
-	// Authenticated users with no workspaces have nothing to access
+	// A signed-in account with no workspaces (e.g. it deleted its last one) must
+	// not be sent to /signup, which would create a new actor. Let it create one.
 	if (!workspaces?.length) {
-		return <Navigate to="/signup" />
+		return <CreateFirstWorkspace />
 	}
 
 	// Land on the last workspace the user opened. The remembered id is only

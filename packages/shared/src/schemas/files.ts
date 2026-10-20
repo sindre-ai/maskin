@@ -156,6 +156,9 @@ export const fileDetailSchema = fileListItemSchema.extend({
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
 	annotations: fileAnnotationsSchema.default([]),
+	// Set on create/update responses when the save succeeded but the viewer
+	// will not render the content as written (e.g. outside resources in HTML).
+	warning: z.string().optional(),
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>
