@@ -35,6 +35,54 @@ export const ACTOR_DESCRIPTION_MAX_LENGTH = 80
  */
 export const ACTOR_DESCRIPTION_MAX_STORED_LENGTH = 2000
 
+/** Plain text only: a control character, which includes a newline, is rejected. */
+function hasControlCharacter(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		const code = text.charCodeAt(i)
+		if (code < 0x20 || code === 0x7f) return true
+	}
+	return false
+}
+
+const planText = (max: number) =>
+	z
+		.string()
+		.min(1)
+		.max(max)
+		.refine((text) => !hasControlCharacter(text), 'No control characters or line breaks')
+
+/**
+ * One first step a creator writes for a new agent. Not trimmed: a fill step may
+ * end in a space on purpose ("Here is a first task for you: "). A send step is
+ * sent as written the moment it is tapped, so what the person reads on the
+ * button must be exactly what is sent: prompt equals label, no trailing space.
+ */
+export const firstStepSchema = z
+	.object({
+		label: planText(60),
+		prompt: planText(200),
+		action: z.enum(['send', 'fill']),
+	})
+	.superRefine((step, ctx) => {
+		if (step.action !== 'send') return
+		if (step.prompt.trim() !== step.label.trim()) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['prompt'],
+				message: 'A send step must have the same words in prompt and label',
+			})
+		}
+		if (/\s$/.test(step.prompt)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['prompt'],
+				message: 'A send step must not end in a space',
+			})
+		}
+	})
+
+export type FirstStep = z.infer<typeof firstStepSchema>
+
 export const createActorSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: actorTypeSchema,
@@ -50,6 +98,12 @@ export const createActorSchema = z.object({
 	// Agents only: the workspace the new agent is born into. The caller must be a
 	// member of it. Never accepted for humans (signup mints its own workspace).
 	workspace_id: z.string().uuid().optional(),
+	// Agents only (ignored for humans). Hints for the new agent's intro message;
+	// nothing here is stored on the actor. Shape errors are 400s. Content problems
+	// never fail creation: a provider name that is unknown, or has no tools an
+	// agent could use, is dropped by the intro and counted.
+	first_steps: z.array(firstStepSchema).min(1).max(4).optional(),
+	needed_integrations: z.array(z.string().min(1).max(100)).min(1).max(4).optional(),
 })
 
 export const loginSchema = z.object({

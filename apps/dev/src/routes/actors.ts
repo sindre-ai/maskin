@@ -401,6 +401,7 @@ app.openapi(createActorRoute, async (c) => {
 			creator: { id: creatorId, type: creatorType },
 			claimedSessionId: c.get('maskinSessionId'),
 			clientSource,
+			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
 		})
 	}
 

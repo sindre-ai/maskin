@@ -197,7 +197,7 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		expect(msgs[0]?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
 		expect(msgs[0]?.content).toContain(`I'm ${name}`)
 		expect(msgs[0]?.content).toContain(
-			'I only start work when you ask, so nothing runs until you reply.',
+			"I'll reply here. Only things that need your decision go to For You.",
 		)
 
 		// What the chat list shows the person.
@@ -330,7 +330,6 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 			.from(messages)
 			.where(eq(messages.conversationId, chat?.id as string))
 		expect(msg?.content).toContain('Chief of Staff set me up for you.')
-		expect(msg?.content).not.toContain('nothing runs until you reply')
 		expect(msg?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
 
 		const list = await createConversationsApp().request(
@@ -531,7 +530,8 @@ describe('Agent intro — render', () => {
 
 		const text = await introTextFor(ws, `Keyed ${randomUUID()}`, bearer(key))
 
-		expect(text).toContain('1. Give me a first job.')
+		expect(text).toContain('Start with one of these, or tell me what you need.')
+		expect(text).toContain('1. What can you help me with?\n2. Give me a first task')
 		expect(text).not.toContain("I can't run yet.")
 	})
 
@@ -545,5 +545,175 @@ describe('Agent intro — render', () => {
 
 		expect(text).toContain("I can't run yet. Connect your Claude subscription or API key")
 		expect(text).toContain("I'll reply here. Only things that need your decision go to For You.")
+	})
+})
+
+describe('Agent intro — hints from the creator', () => {
+	async function withKey(wsId: string) {
+		await db
+			.update(workspaces)
+			.set({ settings: { llm_keys: { anthropic: 'sk-ant-test' } } })
+			.where(eq(workspaces.id, wsId))
+	}
+
+	async function introTextOf(agentId: string): Promise<string | undefined> {
+		const chats = await waitFor(async () => {
+			const rows = await introChatsFor(agentId)
+			return rows.length > 0 ? rows : undefined
+		})
+		const [msg] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.conversationId, chats?.[0]?.conversation.id as string))
+		return msg?.content
+	}
+
+	it("shows the creator's steps first and names the needed tools, through POST /api/actors", async () => {
+		const { ws, key } = await setup()
+		await withKey(ws.id)
+
+		const res = await createAgent(
+			{
+				name: `Hinted ${randomUUID()}`,
+				workspace_id: ws.id,
+				first_steps: [
+					{ label: 'Summarise open bugs', prompt: 'Summarise open bugs', action: 'send' },
+					{ label: 'Draft a reply', prompt: 'Draft a reply to: ', action: 'fill' },
+				],
+				needed_integrations: ['linear', 'gmail'],
+			},
+			bearer(key),
+		)
+		expect(res.status).toBe(201)
+		const created = (await res.json()) as { id: string }
+
+		const text = await introTextOf(created.id)
+		expect(text).toContain(
+			'1. Summarise open bugs\n2. Draft a reply\n3. What can you help me with?',
+		)
+		expect(text).toContain(
+			"For this job I use Linear and Gmail. Add any that aren't connected yet under Settings, Integrations.",
+		)
+		expect(text?.trimEnd().endsWith('?')).toBe(false)
+
+		const sent = await waitFor(() => {
+			const calls = capturesOf('agent_intro_sent')
+			return calls.length > 0 ? calls : undefined
+		})
+		expect(sent?.[0]?.[2]).toMatchObject({
+			steps_source: 'creator',
+			steps_count: 3,
+			needed_tools_count: 2,
+			hints_dropped: 0,
+		})
+	})
+
+	it('uses the generic steps and reports steps_source generic when the creator passes none', async () => {
+		const { ws, key } = await setup()
+		await withKey(ws.id)
+
+		const res = await createAgent(
+			{ name: `Plain ${randomUUID()}`, workspace_id: ws.id },
+			bearer(key),
+		)
+		const created = (await res.json()) as { id: string }
+
+		expect(await introTextOf(created.id)).toContain(
+			'1. What can you help me with?\n2. Give me a first task',
+		)
+		const sent = await waitFor(() => {
+			const calls = capturesOf('agent_intro_sent')
+			return calls.length > 0 ? calls : undefined
+		})
+		expect(sent?.[0]?.[2]).toMatchObject({
+			steps_source: 'generic',
+			steps_count: 2,
+			needed_tools_count: 0,
+			hints_dropped: 0,
+		})
+	})
+
+	it('drops unknown providers and providers with no tools, and counts them', async () => {
+		const { ws, key } = await setup()
+		await withKey(ws.id)
+
+		const res = await createAgent(
+			{
+				name: `Dropper ${randomUUID()}`,
+				workspace_id: ws.id,
+				needed_integrations: ['linear', 'not-a-provider', 'skjald', 'google-search-console'],
+			},
+			bearer(key),
+		)
+		expect(res.status).toBe(201)
+		const created = (await res.json()) as { id: string }
+
+		const text = await introTextOf(created.id)
+		expect(text).toContain('For this job I use Linear. ')
+		expect(text).not.toContain('Skjald')
+		const sent = await waitFor(() => {
+			const calls = capturesOf('agent_intro_sent')
+			return calls.length > 0 ? calls : undefined
+		})
+		expect(sent?.[0]?.[2]).toMatchObject({ needed_tools_count: 1, hints_dropped: 3 })
+	})
+
+	it('returns 400 and writes nothing for a malformed step', async () => {
+		const { ws, key } = await setup()
+		const name = `Bad shape ${randomUUID()}`
+
+		const mismatch = await createAgent(
+			{
+				name,
+				workspace_id: ws.id,
+				first_steps: [{ label: 'Read my inbox', prompt: 'Delete my inbox', action: 'send' }],
+			},
+			bearer(key),
+		)
+		const lineBreak = await createAgent(
+			{
+				name,
+				workspace_id: ws.id,
+				first_steps: [{ label: 'two\nlines', prompt: 'ok', action: 'fill' }],
+			},
+			bearer(key),
+		)
+
+		expect(mismatch.status).toBe(400)
+		expect(lineBreak.status).toBe(400)
+		const { actors } = await import('@maskin/db/schema')
+		expect(await db.select().from(actors).where(eq(actors.name, name))).toHaveLength(0)
+	})
+
+	it('lets a plain member pass hints but still refuses tools with a 403', async () => {
+		const { ws } = await setup()
+		const memberKey = `ank_member${randomUUID()}`
+		const member = await insertMember(ws.id, {
+			type: 'human',
+			name: 'Plain Member',
+			apiKey: memberKey,
+		})
+		setFlagFor(member.id)
+
+		const withHints = await createAgent(
+			{
+				name: `Member hints ${randomUUID()}`,
+				workspace_id: ws.id,
+				first_steps: [{ label: 'Read my inbox', prompt: 'Read my inbox', action: 'send' }],
+			},
+			bearer(memberKey),
+		)
+		const withTools = await createAgent(
+			{
+				name: `Member tools ${randomUUID()}`,
+				workspace_id: ws.id,
+				first_steps: [{ label: 'Read my inbox', prompt: 'Read my inbox', action: 'send' }],
+				tools: { mcpServers: {} },
+			},
+			bearer(memberKey),
+		)
+
+		expect(withHints.status).toBe(201)
+		expect(withTools.status).toBe(403)
 	})
 })

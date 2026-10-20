@@ -52,6 +52,8 @@ test.describe('Agent intro chat', () => {
 		await expect(page.getByPlaceholder(`Reply to ${name}…`)).toBeVisible()
 		// The chat list's snippet repeats the same text beside the thread, so take the first match.
 		await expect(page.getByText(`I'm ${name}.`).first()).toBeVisible()
-		await expect(page.getByText('Three ways to get me going:').first()).toBeVisible()
+		await expect(
+			page.getByText('Start with one of these, or tell me what you need.').first(),
+		).toBeVisible()
 	})
 })

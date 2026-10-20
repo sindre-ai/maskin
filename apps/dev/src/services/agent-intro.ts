@@ -1,15 +1,16 @@
 import type { Database } from '@maskin/db'
 import { actors, messages, workspaceMembers, workspaces } from '@maskin/db/schema'
-import { buildWebAppHref } from '@maskin/shared'
+import type { FirstStep } from '@maskin/shared'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
-import { frontendBaseUrl } from '../lib/file-urls'
+import { listProviders } from '../lib/integrations/registry'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import {
 	type AgentIntroInput,
+	type RenderedIntro,
 	renderAgentIntro,
 	renderMinimalAgentIntro,
 } from './agent-intro-template'
@@ -18,6 +19,8 @@ import { resolveHumanBehindSession } from './session-origin'
 
 /** At this many intros to one person inside the last 10 minutes, the next one is skipped. */
 const INTRO_CAP = 5
+/** The intro names at most this many needed tools. */
+const MAX_NEEDED_TOOLS = 3
 
 type IntroStage = 'resolve' | 'lock' | 'find' | 'insert' | 'render'
 type ResolvedVia = 'creator' | 'chat' | 'person_started'
@@ -30,6 +33,12 @@ type SkipReason =
 	| 'not_member'
 	| 'exists'
 
+/** What the creator passed on the create call to shape the intro. Nothing here is stored. */
+export type IntroHints = {
+	firstSteps?: FirstStep[]
+	neededIntegrations?: string[]
+}
+
 export type IntroduceArgs = {
 	db: Database
 	actor: typeof actors.$inferSelect
@@ -38,6 +47,7 @@ export type IntroduceArgs = {
 	creator: { id: string; type: string }
 	claimedSessionId: string | undefined
 	clientSource: string | undefined
+	hints?: IntroHints
 }
 
 /**
@@ -68,7 +78,8 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 		}
 
 		stage = 'render'
-		const content = await renderIntro(args, recipient.humanId)
+		const neededTools = resolveNeededTools(args.hints?.neededIntegrations)
+		const rendered = await renderIntro(args, recipient.humanId, neededTools.names)
 
 		stage = 'lock'
 		const posted = await args.db.transaction(async (tx) => {
@@ -95,13 +106,14 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 				conversationId: chat.id,
 				workspaceId: args.workspaceId,
 				agentId: actor.id,
-				content,
+				content: rendered.content,
 				delivery: { kind: 'agent_intro', version: 1 },
 			})
 			return chat.id
 		})
 		if (!posted) return skip(args, 'exists')
 
+		const creatorSteps = args.hints?.firstSteps?.length ?? 0
 		void capturePosthogEvent('agent_intro_sent', recipient.humanId, {
 			agent_id: actor.id,
 			workspace_id: args.workspaceId,
@@ -113,6 +125,10 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 			creator_actor_id: creator.id,
 			resolved_via: recipient.via,
 			origin_hops: recipient.hops,
+			steps_source: creatorSteps > 0 ? 'creator' : 'generic',
+			steps_count: rendered.steps.length,
+			needed_tools_count: rendered.neededToolNames.length,
+			hints_dropped: neededTools.dropped,
 		})
 	} catch (err) {
 		logger.error('Agent intro failed', { agentId: actor.id, stage, err })
@@ -182,7 +198,38 @@ async function introsDeliveredTo(db: Database, recipientId: string): Promise<num
 	return rows[0]?.n ?? 0
 }
 
-async function renderIntro(args: IntroduceArgs, recipientId: string): Promise<string> {
+/**
+ * The display names of the integrations the creator says the agent needs, in the
+ * creator's order. A name is dropped when it is not in the catalog, or when its
+ * provider has no tools an agent could use (no MCP surface: skjald, google-search-
+ * console), or when it repeats. Only the first 3 are shown; every dropped or cut
+ * name counts in hints_dropped. Never throws on content.
+ */
+function resolveNeededTools(names: string[] | undefined): { names: string[]; dropped: number } {
+	if (!names || names.length === 0) return { names: [], dropped: 0 }
+	const usable = new Map(
+		listProviders()
+			.filter((p) => p.config.mcp)
+			.map((p) => [p.config.name, p.config.displayName] as const),
+	)
+	const shown: string[] = []
+	const seen = new Set<string>()
+	for (const raw of names) {
+		const provider = raw.trim().toLowerCase()
+		const display = usable.get(provider)
+		if (!display || seen.has(provider)) continue
+		seen.add(provider)
+		shown.push(display)
+	}
+	const kept = shown.slice(0, MAX_NEEDED_TOOLS)
+	return { names: kept, dropped: names.length - kept.length }
+}
+
+async function renderIntro(
+	args: IntroduceArgs,
+	recipientId: string,
+	neededToolNames: string[],
+): Promise<RenderedIntro> {
 	const { db, actor, workspaceId, creator } = args
 	const [recipient] = await db
 		.select({ name: actors.name })
@@ -199,16 +246,15 @@ async function renderIntro(args: IntroduceArgs, recipientId: string): Promise<st
 		creatorName = row?.name ?? ''
 	}
 
-	const mcpServers = (actor.tools as { mcpServers?: Record<string, unknown> } | null)?.mcpServers
 	const input: AgentIntroInput = {
 		agentName: actor.name,
 		description: actor.description,
 		recipientName: recipient?.name ?? '',
-		toolNames: Object.keys(mcpServers ?? {}).filter((name) => name !== 'maskin'),
-		agentPageUrl: '',
-		canRun: true,
 		createdByAgent: creator.type !== 'human',
 		creatorName,
+		canRun: true,
+		creatorSteps: args.hints?.firstSteps,
+		neededToolNames,
 	}
 
 	try {
@@ -229,10 +275,6 @@ async function renderIntro(args: IntroduceArgs, recipientId: string): Promise<st
 			},
 		})
 		input.canRun = credentials !== null
-		input.agentPageUrl = buildWebAppHref(frontendBaseUrl(), workspaceId, {
-			kind: 'agent',
-			id: actor.id,
-		})
 		return renderAgentIntro(input)
 	} catch (err) {
 		// A failure here must not cost the person their hello: fall back to name and
@@ -246,6 +288,11 @@ async function renderIntro(args: IntroduceArgs, recipientId: string): Promise<st
 			workspace_id: workspaceId,
 			stage: 'render',
 		})
-		return renderMinimalAgentIntro(input)
+		return {
+			content: renderMinimalAgentIntro(input),
+			steps: [],
+			neededToolNames: [],
+			plainTailCount: 0,
+		}
 	}
 }

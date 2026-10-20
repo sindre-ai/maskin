@@ -1314,6 +1314,29 @@ describe('tool handlers', () => {
 			expect(create?.body).toMatchObject({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
 		})
 
+		it('forwards first_steps and needed_integrations on the agent create call', async () => {
+			const requests = recordRequests()
+			const firstSteps = [
+				{ label: 'Summarise open bugs', prompt: 'Summarise open bugs', action: 'send' },
+				{ label: 'Draft a reply', prompt: 'Draft a reply to: ', action: 'fill' },
+			]
+
+			const handler = getHandler('create_actor')
+			await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				first_steps: firstSteps,
+				needed_integrations: ['linear', 'gmail'],
+			})
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).toMatchObject({
+				first_steps: firstSteps,
+				needed_integrations: ['linear', 'gmail'],
+			})
+		})
+
 		it('does not add the agent to the workspace in a second call, and reports member', async () => {
 			const requests = recordRequests()
 
