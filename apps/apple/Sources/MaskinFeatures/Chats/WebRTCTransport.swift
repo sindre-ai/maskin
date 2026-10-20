@@ -109,7 +109,7 @@ final class WebRTCTransport: RealtimeTransport {
 
 	// MARK: SDP, as plain strings so nothing non-Sendable crosses an await
 
-	nonisolated private static func createOffer(_ peer: RTCPeerConnection) async throws -> String {
+	private static func createOffer(_ peer: RTCPeerConnection) async throws -> String {
 		let constraints = RTCMediaConstraints(
 			mandatoryConstraints: ["OfferToReceiveAudio": "true"], optionalConstraints: nil)
 		return try await withCheckedThrowingContinuation { continuation in
@@ -124,7 +124,7 @@ final class WebRTCTransport: RealtimeTransport {
 		}
 	}
 
-	nonisolated private static func setLocal(_ peer: RTCPeerConnection, sdp: String) async throws {
+	private static func setLocal(_ peer: RTCPeerConnection, sdp: String) async throws {
 		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
 			peer.setLocalDescription(RTCSessionDescription(type: .offer, sdp: sdp)) { @Sendable error in
 				if let error { continuation.resume(throwing: error) } else { continuation.resume() }
@@ -132,7 +132,7 @@ final class WebRTCTransport: RealtimeTransport {
 		}
 	}
 
-	nonisolated private static func setRemote(_ peer: RTCPeerConnection, sdp: String) async throws {
+	private static func setRemote(_ peer: RTCPeerConnection, sdp: String) async throws {
 		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
 			peer.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: sdp)) { @Sendable error in
 				if let error { continuation.resume(throwing: error) } else { continuation.resume() }
