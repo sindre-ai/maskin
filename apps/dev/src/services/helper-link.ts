@@ -33,6 +33,8 @@ export type SpawnLink =
 			spawnedBySessionId: string
 			hopDepth: number
 			originConversationId: string | null
+			/** The sender's own chat (sessions.conversation_id), not one stamped on it. */
+			senderConversationId: string | null
 	  }
 	| { linked: false; reason: SpawnLinkRefusal | null }
 
@@ -104,5 +106,6 @@ export async function resolveSpawnLink(
 		spawnedBySessionId: ctx.claimedSessionId,
 		hopDepth,
 		originConversationId: originConversationOf(sender),
+		senderConversationId: sender.conversationId,
 	}
 }

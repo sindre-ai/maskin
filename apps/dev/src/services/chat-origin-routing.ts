@@ -5,7 +5,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
-import { originConversationOf } from './session-origin'
+import { originConversationOf, resolveHumanBehindSession } from './session-origin'
 
 /**
  * Work a person started in a 1-1 chat answers in that chat. A human @mentioned
@@ -201,6 +201,39 @@ export async function planCommentRouting(
 	plan.routedTo = humanStillMentioned ? 'for_you' : plan.delivery ? 'chat' : 'none'
 	plan.routeReason = plan.delivery ? 'routed' : (firstKept ?? 'no_origin')
 	return plan
+}
+
+/**
+ * Whether a helper started by `senderSessionId` returns to the sender's chat
+ * without being asked to (notify_on_complete defaults on). Only when the sender
+ * is itself a chat session, the chat is a 1-1 between one person and one agent,
+ * and the routing flag is on for that person. A sender with no
+ * chat of its own (cron, loop, object-started, a helper) keeps today's default.
+ */
+export async function returnsToChatByDefault(
+	db: Database,
+	args: {
+		senderSessionId: string
+		senderConversationId: string | null
+		creatorId: string
+		workspaceId: string
+	},
+): Promise<boolean> {
+	if (!args.senderConversationId) return false
+	const human = await resolveHumanBehindSession(db, {
+		claimedSessionId: args.senderSessionId,
+		creatorId: args.creatorId,
+		workspaceId: args.workspaceId,
+	})
+	if (!human.ok || !isFlagEnabled(human.humanId, FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING)) return false
+	// Group chats are untouched, as for comments: the walk above names the person
+	// who woke the session even in a group, so the chat itself is checked too.
+	const chat = await directChatState(db, {
+		conversationId: args.senderConversationId,
+		workspaceId: args.workspaceId,
+		humanId: human.humanId,
+	})
+	return chat === 'direct'
 }
 
 /**

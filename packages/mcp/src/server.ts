@@ -1080,7 +1080,7 @@ async function createSessionAndWait(
 	args: z.infer<typeof tools.create_session.inputSchema>,
 ) {
 	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
-	// ignored, and it is never sent on this create call (registered below instead).
+	// ignored, and it is never true on this create call (registered below instead).
 	const {
 		workspace_id,
 		wait: _wait,
@@ -1089,10 +1089,17 @@ async function createSessionAndWait(
 	} = args as typeof args & { notify_on_complete?: unknown }
 	const wsOpts = { workspaceId: workspace_id }
 
-	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
-	// call returns the result inline, so it is only registered (below) if the
-	// wait runs out.
-	const session = (await apiCall(config, 'POST', '/api/sessions', createBody, wsOpts)) as {
+	// 1. Create session. notify_on_complete is sent as false here: this call
+	// returns the result inline, so it is only registered (below) if the wait runs
+	// out. False, not omitted, because an omitted value defaults on for a helper
+	// started from a chat, and the waiting caller would get the result twice.
+	const session = (await apiCall(
+		config,
+		'POST',
+		'/api/sessions',
+		{ ...createBody, notify_on_complete: false },
+		wsOpts,
+	)) as {
 		id: string
 		status: string
 	}
