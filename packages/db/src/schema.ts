@@ -832,11 +832,24 @@ export const conversations = pgTable(
 		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
 		// the same transaction as every message insert.
 		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		// What a group chat is about: an object (task/bet/insight) or an installed
+		// loop. Polymorphic, so no FK; the create route checks the target exists in
+		// the workspace. NULL for ordinary chats.
+		subjectType: text('subject_type'),
+		subjectId: uuid('subject_id'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One group chat per subject: asking for it again finds the existing one.
+		uniqueIndex('conversations_subject_uniq')
+			.on(t.workspaceId, t.subjectType, t.subjectId)
+			.where(sql`${t.subjectId} IS NOT NULL`),
+		check(
+			'conversations_subject_check',
+			sql`(${t.subjectType} IS NULL AND ${t.subjectId} IS NULL) OR (${t.subjectType} IN ('object', 'loop') AND ${t.subjectId} IS NOT NULL)`,
+		),
 		check(
 			'conversations_title_auto_state_check',
 			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
@@ -936,6 +949,10 @@ export const messages = pgTable(
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
 		// re-post every past turn of every live chat. See migration 0061.
+		// A comment copied into an object's chat lands once, however often the copy runs.
+		uniqueIndex('messages_comment_event_uniq')
+			.on(t.conversationId, sql`((${t.metadata}->>'comment_event_id'))`)
+			.where(sql`(${t.metadata}->>'comment_event_id') IS NOT NULL`),
 		uniqueIndex('messages_final_output_dedupe_uniq')
 			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
 			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),
@@ -945,6 +962,23 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
+
+// One emoji one actor put on one message. The primary key makes adding idempotent and lets
+// the same person use several different emoji on a message.
+export const messageReactions = pgTable(
+	'message_reactions',
+	{
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		emoji: text('emoji').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.messageId, t.actorId, t.emoji] })],
+)
 
 // Per-actor read cursor for one thread. Advance-only (GREATEST on write), like
 // conversation_participants.last_read_message_id. A missing row means the actor

@@ -345,6 +345,8 @@ export const conversationListItemResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	title: z.string(),
+	subjectType: z.enum(['object', 'loop']).nullable(),
+	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
@@ -452,8 +454,18 @@ export const spawnedSessionResponseSchema = z.object({
  * List response only — the POST 201 path keeps `messageResponseSchema` so the
  * two surfaces can evolve independently.
  */
+export const messageReactionSchema = z.object({
+	emoji: z.string(),
+	count: z.number(),
+	/** The caller is one of the people who reacted. */
+	reactedByMe: z.boolean(),
+	actors: z.array(z.object({ actorId: z.string().uuid(), actorName: z.string() })),
+})
+
 export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
 	spawned_sessions: z.array(spawnedSessionResponseSchema),
+	/** Reactions grouped by emoji, in the order each emoji was first used. */
+	reactions: z.array(messageReactionSchema),
 	/** Present on a thread root that has replies. */
 	thread: threadSummarySchema.nullable(),
 })
