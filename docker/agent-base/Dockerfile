@@ -12,6 +12,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq ca-certificates openssh-client gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
+# AWS CLI v2 (pinned) — used by the Infra & DevOps agent for the Agent Keychain
+# Ops track (KMS, S3 Object Lock, IAM, CloudTrail). No credentials are baked in;
+# the CLI does nothing until a session is given AWS_* env. unzip is installed
+# only for this step and removed with the installer files. Bump the version
+# deliberately. Arch is picked from uname so the build works on x86_64 and arm64.
+ARG AWS_CLI_VERSION=2.37.9
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m)-${AWS_CLI_VERSION}.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/aws /tmp/awscliv2.zip \
+    && apt-get purge -y unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && aws --version
+
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
