@@ -116,6 +116,7 @@ private struct AgentDetailHost: View {
 	var onDeleted: () -> Void = {}
 	@State private var store: AgentDetailStore
 	@State private var flows: [LoopSummary] = []
+	@State private var drivenObjects: [WorkObject] = []
 	@State private var triggers: TriggersStore
 	private let loopsAPI: APILoopsSource?
 	private let agentID: String

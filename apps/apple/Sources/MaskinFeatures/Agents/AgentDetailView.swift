@@ -177,29 +177,129 @@ struct AgentDetailContent: View {
 	var objects: [WorkObject] = []
 	var onOpenObject: (String) -> Void = { _ in }
 
-	/// The agent page's tabs: how it is set up, what it drives, and what it has done.
-	enum Tab: String, CaseIterable, Identifiable {
+	/// The agent page's sub pages, listed under the hero: how it is set up, what wakes it, what it
+	/// drives, and what it has done.
+	enum Page: String, CaseIterable, Identifiable {
 		case setup = "Setup"
+		case triggers = "Triggers"
 		case objects = "Objects"
 		case sessions = "Sessions"
 		var id: String { rawValue }
-	}
 
-	@State private var tab: Tab = .setup
+		var symbol: String {
+			switch self {
+			case .setup: "slider.horizontal.3"
+			case .triggers: "bolt"
+			case .objects: "square.stack"
+			case .sessions: "clock.arrow.circlepath"
+			}
+		}
+	}
 
 	var body: some View {
 		hero
 		if let live = store.liveSession {
 			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
 		}
-		Picker("Show", selection: $tab) {
-			ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+		VStack(spacing: 0) {
+			ForEach(Page.allCases) { page in
+				NavigationLink {
+					subpage(page)
+				} label: {
+					pageRow(page)
+				}
+				.buttonStyle(.plain)
+				if page != Page.allCases.last { Divider().overlay(MaskinSurface.separator) }
+			}
 		}
-		.pickerStyle(.segmented)
-		switch tab {
-		case .setup: setupCards
-		case .objects: objectCards
-		case .sessions: sessionCards
+		.padding(.horizontal, MaskinSpace.s10)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.agentSurface()
+	}
+
+	private func summary(_ page: Page) -> String {
+		switch page {
+		case .setup: "Instructions, tools, skills"
+		case .triggers: triggers.isEmpty ? "None" : "\(triggers.count)"
+		case .objects: objects.isEmpty ? "None" : "\(objects.count)"
+		case .sessions: store.sessions.isEmpty ? "No runs yet" : "\(store.sessions.count) recent"
+		}
+	}
+
+	private func pageRow(_ page: Page) -> some View {
+		HStack(spacing: MaskinSpace.s5) {
+			Image(systemName: page.symbol)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(width: MaskinSpace.s10)
+				.accessibilityHidden(true)
+			Text(page.rawValue).maskinText(.body).foregroundStyle(MaskinColor.ink)
+			Spacer(minLength: MaskinSpace.s3)
+			Text(summary(page)).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(1)
+			Image(systemName: "chevron.right")
+				.foregroundStyle(MaskinColor.ink5)
+				.accessibilityHidden(true)
+		}
+		.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s3)
+		.contentShape(Rectangle())
+		.accessibilityElement(children: .combine)
+	}
+
+	private func subpage(_ page: Page) -> some View {
+		ScrollView {
+			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+				switch page {
+				case .setup: setupCards
+				case .triggers: triggerCards
+				case .objects: objectCards
+				case .sessions: sessionCards
+				}
+			}
+			.padding(MaskinSpace.s9)
+			.frame(maxWidth: 720, alignment: .leading)
+			.frame(maxWidth: .infinity)
+		}
+		.ambientBackground()
+		.navigationTitle(page.rawValue)
+		#if os(iOS)
+		.navigationBarTitleDisplayMode(.inline)
+		#endif
+	}
+
+	@ViewBuilder private var triggerCards: some View {
+		card("Triggers", action: onNewTrigger.map { ("New trigger", "plus", $0) }) {
+			if triggers.isEmpty {
+				Text("Nothing wakes this agent yet. Add a schedule or an event.")
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+			} else {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(triggers) { trigger in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: trigger.kind.symbol)
+								.foregroundStyle(trigger.enabled ? MaskinColor.ink3 : MaskinColor.ink5)
+								.accessibilityHidden(true)
+							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+								Text(trigger.name)
+									.maskinText(.subhead)
+									.foregroundStyle(trigger.enabled ? MaskinColor.ink2 : MaskinColor.ink4)
+									.lineLimit(1)
+								Text(trigger.summary)
+									.maskinText(.caption)
+									.foregroundStyle(MaskinColor.ink5)
+									.lineLimit(2)
+							}
+							Spacer(minLength: MaskinSpace.s3)
+							Toggle(
+								"Enabled",
+								isOn: Binding(get: { trigger.enabled }, set: { onToggleTrigger(trigger.id, $0) })
+							)
+							.labelsHidden()
+							.controlSize(.small)
+							.accessibilityLabel("\(trigger.name) enabled")
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -247,41 +347,6 @@ struct AgentDetailContent: View {
 								.accessibilityHidden(true)
 							Text(skill).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
 							Spacer(minLength: 0)
-						}
-					}
-				}
-			}
-		}
-		card("Triggers", action: onNewTrigger.map { ("New trigger", "plus", $0) }) {
-			if triggers.isEmpty {
-				Text("Nothing wakes this agent yet. Add a schedule or an event.")
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
-			} else {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(triggers) { trigger in
-						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: trigger.kind.symbol)
-								.foregroundStyle(trigger.enabled ? MaskinColor.ink3 : MaskinColor.ink5)
-								.accessibilityHidden(true)
-							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-								Text(trigger.name)
-									.maskinText(.subhead)
-									.foregroundStyle(trigger.enabled ? MaskinColor.ink2 : MaskinColor.ink4)
-									.lineLimit(1)
-								Text(trigger.summary)
-									.maskinText(.caption)
-									.foregroundStyle(MaskinColor.ink5)
-									.lineLimit(2)
-							}
-							Spacer(minLength: MaskinSpace.s3)
-							Toggle(
-								"Enabled",
-								isOn: Binding(get: { trigger.enabled }, set: { onToggleTrigger(trigger.id, $0) })
-							)
-							.labelsHidden()
-							.controlSize(.small)
-							.accessibilityLabel("\(trigger.name) enabled")
 						}
 					}
 				}
