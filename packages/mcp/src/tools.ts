@@ -1656,6 +1656,12 @@ export const tools = {
 				.optional()
 				.describe('Filter by notification status'),
 			type: z.enum(['needs_input', 'recommendation', 'good_news', 'alert']).optional(),
+			kind: z
+				.string()
+				.min(1)
+				.max(64)
+				.optional()
+				.describe('Only notifications whose metadata.kind equals this, e.g. "for_you".'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
