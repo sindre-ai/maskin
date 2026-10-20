@@ -46,6 +46,10 @@ public struct SettingsScreen: View {
 							symbol: "person.crop.circle", title: "Your profile",
 							detail: environment.auth.session?.name)
 					}
+					NavigationLink(value: SettingsRoute.deleteAccount) {
+						SettingsRow(
+							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
+					}
 				}
 				if services.workspaceId != nil {
 					Section {
@@ -63,6 +67,9 @@ public struct SettingsScreen: View {
 							if let url = services.webURL("extensions") { openURL(url) }
 						} label: {
 							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
+						}
+						NavigationLink(value: SettingsRoute.deleteWorkspace) {
+							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
 						}
 					} header: {
 						Text("Setup")
@@ -110,6 +117,14 @@ public struct SettingsScreen: View {
 						currentName: services.workspace?.name ?? "", role: services.role)
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
+				case .deleteAccount:
+					DeleteAccountView(
+						store: services.accountDeletionStore { [environment, runtime] in
+							if let runtime { await runtime.signOut() } else { environment.signOut() }
+						})
+				case .deleteWorkspace:
+					DeleteWorkspaceView(
+						store: services.workspaceDeletionStore(workspaceId: services.workspaceId ?? ""))
 				}
 			}
 			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
