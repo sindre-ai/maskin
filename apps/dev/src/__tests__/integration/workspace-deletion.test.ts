@@ -614,15 +614,7 @@ describe('workspace deletion (integration)', () => {
 		const target = await seedWorkspace(me, { name: 'Audited' })
 		const bystander = await seedWorkspace(other, { name: 'Audited bystander' })
 
-		for (const ws of [target.ws, bystander.ws]) {
-			// The insert trigger assigns id/hashes/read_at; the log has no FK on actor or integration.
-			await sql`
-				INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
-				VALUES (${ws.id}, ${randomUUID()}, ${me.id}, 'req-1')`
-			await sql`
-				INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
-				VALUES (${ws.id}, '2026-01-01', 1, 'hash')`
-		}
+		// seedWorkspace already inserts one log row and one snapshot row per workspace.
 
 		// The snapshot table is still append-only for anything that is not the workspace cascade.
 		await expect(
