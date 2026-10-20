@@ -59,18 +59,20 @@ export function renderAgentIntro(input: AgentIntroInput): string {
 		: "I can't run yet. Connect your Claude subscription or API key under Settings, Keys, then reply here."
 	const tools = input.toolNames.length > 0 ? input.toolNames.join(', ') : 'none yet'
 
-	const lines = [
-		openingLine(input),
+	const steps = [
 		'Three ways to get me going:',
 		`1. ${firstJob}`,
 		`2. Check what I can use. Tools: ${tools}. Skills: none yet, you can add some on my agent page (${input.agentPageUrl}).`,
 		'3. Want me on a schedule? Ask me to set one up, or add a trigger on my agent page.',
 	]
+	const closing: string[] = []
 	// An agent that was set up by another agent may already have a job, so the
 	// "nothing runs" line would be false for it.
 	if (!input.createdByAgent) {
-		lines.push('I only start work when you ask, so nothing runs until you reply.')
+		closing.push('I only start work when you ask, so nothing runs until you reply.')
 	}
-	lines.push("I'll reply here. Only things that need your decision go to For You.")
-	return lines.join('\n')
+	closing.push("I'll reply here. Only things that need your decision go to For You.")
+	// Blank lines between the three blocks: the chat renders markdown, where a
+	// closing line right under the list would be read as part of item 3.
+	return [openingLine(input), steps.join('\n'), closing.join('\n')].join('\n\n')
 }

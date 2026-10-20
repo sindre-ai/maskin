@@ -16,9 +16,8 @@ import {
 import { findOrCreateDirectChat, postToDirectChat } from './direct-chat'
 import { resolveHumanBehindSession } from './session-origin'
 
-/** More than this many intros to one person inside the window and the next is skipped. */
+/** At this many intros to one person inside the last 10 minutes, the next one is skipped. */
 const INTRO_CAP = 5
-const INTRO_CAP_WINDOW_MINUTES = 10
 
 type IntroStage = 'resolve' | 'lock' | 'find' | 'insert' | 'render'
 type ResolvedVia = 'creator' | 'chat' | 'person_started'
@@ -177,7 +176,7 @@ async function introsDeliveredTo(db: Database, recipientId: string): Promise<num
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.created_by = ${recipientId}
-			AND c.created_at > now() - make_interval(mins => ${INTRO_CAP_WINDOW_MINUTES})
+			AND c.created_at > now() - interval '10 minutes'
 			AND m.metadata->'delivery'->>'kind' = 'agent_intro'
 	`)) as unknown as Array<{ n: number }>
 	return rows[0]?.n ?? 0

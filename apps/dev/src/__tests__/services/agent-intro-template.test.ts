@@ -45,6 +45,12 @@ describe('renderAgentIntro', () => {
 		expect(text.endsWith(PROMISE)).toBe(true)
 	})
 
+	it('puts a blank line between the greeting, the three ways and the closing lines', () => {
+		const text = renderAgentIntro(base)
+		expect(text).toContain('\n\nThree ways to get me going:\n1. ')
+		expect(text).toContain(`on my agent page.\n\n${NOTHING_RUNS}`)
+	})
+
 	it('falls back to a plain line when the description is null or blank', () => {
 		for (const description of [null, '', '   ']) {
 			expect(renderAgentIntro({ ...base, description }).split('\n')[0]).toBe(
