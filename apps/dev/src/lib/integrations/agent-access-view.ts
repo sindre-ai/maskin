@@ -21,7 +21,7 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'read_write'
+		access: 'none' | 'read' | 'ask_first' | 'read_write'
 		/** 'grant': this agent's own entry. 'default': the integration's default for agents. */
 		source: 'grant' | 'default'
 		default_access: 'read' | 'none'

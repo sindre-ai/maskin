@@ -4,6 +4,9 @@ import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createApiError } from '../../lib/errors'
 import {
+	canActWithoutAsking,
+	canRead,
+	canWrite,
 	effectiveAccess,
 	listAgentAccess,
 	resolveAgentAccess,
@@ -161,7 +164,7 @@ describe('agent_grants table semantics (Integration)', () => {
 		).rejects.toThrow()
 	})
 
-	it('rejects an access value outside none/read/read_write, including the retired write', async () => {
+	it('rejects an access value outside none/read/ask_first/read_write, including the retired write', async () => {
 		const s = await setup()
 		const slack = await insertIntegration(s)
 		const err = await db
@@ -343,6 +346,58 @@ describe('grants routes (Integration)', () => {
 			access: 'write',
 		})
 		expect(res.status).toBe(400)
+	})
+
+	it('offers "Ask first" for Gmail only', async () => {
+		const s = await setup()
+		const gmail = await insertIntegration(s, { provider: 'gmail' })
+		const slack = await insertIntegration(s)
+		const app = appFor(s.human)
+
+		const ok = await req(app, 'PUT', `/${gmail.id}/grants/${s.agentA.id}`, s.ws.id, {
+			access: 'ask_first',
+		})
+		const refused = await req(app, 'PUT', `/${slack.id}/grants/${s.agentA.id}`, s.ws.id, {
+			access: 'ask_first',
+		})
+
+		expect(ok.status).toBe(200)
+		expect(refused.status).toBe(400)
+		expect(JSON.stringify(await refused.json())).toContain('Ask first')
+		const [row] = await db.select().from(agentGrants).where(eq(agentGrants.integrationId, gmail.id))
+		expect(row.access).toBe('ask_first')
+		expect(
+			await db.select().from(agentGrants).where(eq(agentGrants.integrationId, slack.id)),
+		).toEqual([])
+	})
+
+	it('applies the same rule when every grant is replaced at once', async () => {
+		const s = await setup()
+		const gmail = await insertIntegration(s, { provider: 'gmail' })
+		const slack = await insertIntegration(s)
+		const app = appFor(s.human)
+		const body = { grants: [{ actorId: s.agentA.id, access: 'ask_first' }] }
+
+		expect((await req(app, 'PUT', `/${gmail.id}/grants`, s.ws.id, body)).status).toBe(200)
+		expect((await req(app, 'PUT', `/${slack.id}/grants`, s.ws.id, body)).status).toBe(400)
+	})
+
+	it('resolves "Ask first" as an agent that may use write tools but not act on its own', async () => {
+		const s = await setup()
+		const gmail = await insertIntegration(s, { provider: 'gmail' })
+		await insertAgentGrant(db, {
+			workspaceId: s.ws.id,
+			integrationId: gmail.id,
+			actorId: s.agentA.id,
+			access: 'ask_first',
+		})
+
+		const access = await resolveAgentAccess(db, s.ws.id, gmail.id, s.agentA.id)
+
+		expect(access).toBe('ask_first')
+		expect(canRead(access as 'ask_first')).toBe(true)
+		expect(canWrite(access as 'ask_first')).toBe(true)
+		expect(canActWithoutAsking(access as 'ask_first')).toBe(false)
 	})
 
 	it('404s for an integration in another workspace', async () => {

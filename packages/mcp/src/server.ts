@@ -6179,6 +6179,52 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'gmail_send_email',
+		{
+			description: tools.gmail_send_email.description,
+			inputSchema: tools.gmail_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/send',
+					{
+						to: args.to,
+						cc: args.cc,
+						subject: args.subject,
+						body: args.body,
+						approval_comment_id: args.approval_comment_id,
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { message_id: string; mode: 'approved_draft' | 'direct' }
+				return reply(
+					sent.mode === 'approved_draft'
+						? 'Sent: the email went out exactly as the person approved it. Do not send it again.'
+						: 'Sent. Do not send it again.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_sessions',
 		{
 			description: tools.list_sessions.description,

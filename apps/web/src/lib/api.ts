@@ -1873,7 +1873,7 @@ export interface IntegrationResponse {
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
-export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
 
 export interface AgentGrant {
 	actorId: string
@@ -2301,7 +2301,7 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'read_write'
+		access: 'none' | 'read' | 'ask_first' | 'read_write'
 		source: 'grant' | 'default'
 		default_access: 'read' | 'none'
 		server_attached: boolean

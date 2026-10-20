@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database, Transaction } from '@maskin/db'
 import { agentChatGrants, agentGrants, integrations, sessions } from '@maskin/db/schema'
+import { supportsAskFirst } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -153,10 +154,12 @@ async function loadEditable(
 function levelNotAllowed(
 	target: { provider: string; providerMode: string; gated: boolean },
 	access: string,
-): 'keychain_access' | 'custom_access' | null {
+): 'keychain_access' | 'custom_access' | 'ask_first_unsupported' | null {
 	if (isKeychainMode(target.providerMode as never)) {
 		return access !== 'read_write' ? 'keychain_access' : null
 	}
+	// "Ask first" is a promise that the tool can wait for a person; only some providers can.
+	if (access === 'ask_first' && !supportsAskFirst(target.provider)) return 'ask_first_unsupported'
 	if (target.provider === CUSTOM_MCP_PROVIDER && !target.gated && access === 'read') {
 		return 'custom_access'
 	}
@@ -186,6 +189,14 @@ function failure(reason: string): {
 		case 'outside':
 			return {
 				error: createApiError('BAD_REQUEST', 'That actor is not an agent in this workspace'),
+				status: 400,
+			}
+		case 'ask_first_unsupported':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'"Ask first" is only available for integrations that can wait for a person to approve an action (today: Gmail). Use read or read_write.',
+				),
 				status: 400,
 			}
 		case 'custom_access':
