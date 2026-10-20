@@ -40,6 +40,7 @@ describe('LinkedObjectPreviews', () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		render(<LinkedObjectPreviews workspaceId={WS} content={`Draft: /objects/${ID}`} />)
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
 		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
 	})
 
