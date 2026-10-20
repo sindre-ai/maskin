@@ -4,7 +4,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // T1 shell gate — renders the full object-detail shell at each ship-gate
 // viewport (375 / 768 / 1024) against a seeded object carrying the fixture
 // metadata contract (_ask, _evidence_*, _fold_*): ask banner renders the
-// agent's open question, "Answer it ↓" moves focus to the answer control,
+// agent's open question, "Answer it ↓" opens the object's group chat,
 // kv rows come from public metadata, the evidence block sits behind its own
 // fold, and the document fold expands to its markdown. No horizontal scroll.
 // The evidence row is inline (no "Evidence" fold) since the v2 port.
@@ -50,9 +50,13 @@ test.describe('Object detail shell — document sections', () => {
 			await expect(page.getByText(/Open question/)).toBeVisible()
 			await expect(page.getByText(new RegExp(ASK))).toBeVisible()
 
-			// "Answer it ↓" moves focus to the answer control.
+			// "Answer it ↓" opens the object's group chat, where comments are written.
 			await page.getByRole('button', { name: /answer it/i }).click()
-			await expect(page.getByPlaceholder(/^Comment/)).toBeFocused()
+			await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15000 })
+			await page.goBack()
+			await expect(page.getByRole('heading', { level: 1, name: 'Shell bet' })).toBeVisible({
+				timeout: 15000,
+			})
 
 			// Body: the document content. Custom fields are the drawer's, not the
 			// body's — the mockup lists them under CUSTOM FIELDS (1447–1455).
