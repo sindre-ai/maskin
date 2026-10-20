@@ -3,13 +3,18 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Billing (2C): the plan, its state and this period's usage, read-only. There is deliberately no
-/// button that opens a purchase page: App Review 3.1.1 forbids pointing out of the app to buy,
-/// so plan changes and credits are handled outside it. See the D2 report for the open question.
+/// Billing (2C): the plan, its state and this period's usage, read-only. Owners get the mockup's
+/// "Manage on web" button; there is no in-app purchase. Whether App Review 3.1.1 accepts that link
+/// is the open question from the D2 report: pass `manageURL: nil` to drop it.
 struct BillingView: View {
 	@State private var store: BillingStore
-	init(store: BillingStore) {
+	@Environment(\.openURL) private var openURL
+	/// The web billing page, set only for owners (2C: non-owners see the summary without the button).
+	private let manageURL: URL?
+
+	init(store: BillingStore, manageURL: URL? = nil) {
 		_store = State(initialValue: store)
+		self.manageURL = manageURL
 	}
 
 	var body: some View {
@@ -26,6 +31,9 @@ struct BillingView: View {
 					])
 				}
 				PageFootnote(text: "This is a summary of your plan and this period's usage.")
+				if let manageURL {
+					Button("Manage on web") { openURL(manageURL) }.buttonStyle(.primaryAction)
+				}
 			} else {
 				switch store.phase {
 				case .failed(let message): PageStatus(text: message)

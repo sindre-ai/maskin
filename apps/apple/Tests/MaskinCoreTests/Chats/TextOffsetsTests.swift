@@ -32,4 +32,11 @@ struct TextOffsetsTests {
 		let text = "abc"
 		#expect(TextOffsets.characterOffsets(of: text.endIndex..<text.endIndex, in: text) == 3..<3)
 	}
+
+	@Test func returnsNilForAStaleIndexInsideAnotherCharacter() {
+		let old = "abcdef"
+		let stale = old.index(old.startIndex, offsetBy: 2)..<old.index(old.startIndex, offsetBy: 3)
+		// Offset 2 is inside the family emoji's first scalar here: in bounds, not on a boundary.
+		#expect(TextOffsets.characterOffsets(of: stale, in: "a👨‍👩‍👧b") == nil)
+	}
 }

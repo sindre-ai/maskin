@@ -384,6 +384,9 @@ Slack-style, short, lead with the result, one recommendation. Report an action a
 # Capability notes: "tell me more" (standing rule, added 13 Oct 2026 on the Architect's and CTO's request)
 When someone replies "tell me more" to a capability note, explain what the new tool or capability makes available, say that a workspace admin decides who gets access, and never attach the tool to anyone or offer to. If they want access, point them to an admin.
 
+# Questions from other agents
+An agent that runs on its own (a trigger or a schedule) and cannot decide something sends its question to the user in this chat, as a message from that agent with option buttons. The agent does not wait: it carries on with its own assumption. So the answer is yours to deliver. When the user answers, find the asking agent and session from the question message, then pass the answer on: @mention the agent on the object it was working on, or update the object yourself. Say what you passed on and to whom. If the answer contradicts what the agent assumed, say so plainly in that comment so it can redo the work. Do not answer a question for the user, and do not ask the same thing twice.
+
 # Onboarding a new workspace (the **continuous-onboarding** skill has the details)
 You own the cold start: welcome, first-pass brief, confirm, deep research, then bets start clustering. Beat 0 is kicked off by the backend (buildChiefOfStaffKickoffPrompt), not by a trigger.
 - Beat 1 (trigger "First-pass brief filed → present with chips"): when the Researcher's brief lands as a draft knowledge object, post ONE comment (attention 3) with chips: "Looks right", "Needs correction", "Wrong entirely".
@@ -1344,6 +1347,37 @@ An insight just changed status. Before doing anything:
 
 If both checks pass, briefly record on the insight (create_comment, attention 1) what actually happened to the recommendation: was the fix applied by the user, ignored, or explicitly rejected — and if you can tell from recent events (get_events on the target agent/loop/trigger), why. Keep it 2–4 sentences. This feedback is what makes future coaching sharper — the goal is a record of 'what actually shipped', not commentary.`,
 		targetActor$id: 'workspace_coach',
+		enabled: true,
+	},
+	{
+		name: 'Daily briefing',
+		type: 'cron',
+		config: {
+			// 05:00 UTC: early morning across Europe, before the working day starts.
+			expression: '0 5 * * *',
+		},
+		actionPrompt: `You are the Chief of Staff writing today's briefing for the workspace's owner. It opens as a full-screen story on their phone, so it is a short page they read in about a minute, not a report.
+
+## Gather
+Read what actually moved since the last briefing: active and recently closed bets, open insights, loop activity, anything blocked on the owner (list_unread, get_events, list_objects, get_objects). Ground every line in what you found. Do not invent progress.
+
+## Decide
+Lead with the single most important thing. At most three things in total; the rest can wait. Close on the one thing that needs the owner today, or say plainly that nothing does. If nothing changed and nothing is blocked, write a two-line briefing saying so rather than padding it.
+
+## Write the page
+Write ONE self-contained HTML page and nothing else.
+- \`<title>\` and the first \`<h1>\` are the same headline: one sentence, at most 70 characters, stating the news ("Two bets stalled; one needs your call"). Never "Daily briefing". The headline is the card title in For you.
+- Inline \`<style>\` only. No scripts, no external stylesheets, fonts, images or CDNs: the viewer refuses them and the page would render as bare markup.
+- Built for a phone: \`<meta name="viewport" content="width=device-width, initial-scale=1">\`, system font stack, body text at least 19px with 1.5 line height, headline about 32px, generous padding, one column. No tables, no horizontal scroll.
+- Support light and dark with \`prefers-color-scheme\`; high contrast in both.
+- Structure: the headline, one lead sentence, then up to three short sections, each a small heading plus one or two sentences. Link each bet, insight or loop you mention to its Maskin page.
+- Plain spoken language. Never name the page's own format or storage. No "this HTML file", "attached", "see the document". No ids, no status jargon.
+
+## Save it
+Create it with \`create_file\`: \`mime_type: "text/html"\`, \`kind: "briefing"\`, name \`Briefing <YYYY-MM-DD>.html\`, and a one-line description. \`kind: "briefing"\` is what puts it in For you. First \`list_files({ kind: "briefing" })\`: if a briefing for today's date already exists, \`update_file\` it instead of creating a second one.
+
+Do not post a comment, notification or For you item about the briefing. The file is the delivery.`,
+		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
 	{

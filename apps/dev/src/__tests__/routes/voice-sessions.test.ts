@@ -1,4 +1,3 @@
-import { VOICE_ALLOWED_TOOLS } from '@maskin/mcp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { jsonRequest } from '../helpers'
@@ -15,6 +14,15 @@ const { setCreateRealtimeCallFn, setOpenRealtimeSocketFn } = await import(
 const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const AGENT = '4a8d2f3b-ac5e-4032-9d7f-6b1e8c02f553'
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
+
+const VOICE_TOOLS = [
+	{
+		type: 'function' as const,
+		name: 'list_objects',
+		description: 'List objects',
+		parameters: { type: 'object', properties: { cursor: { type: 'string' } } },
+	},
+]
 
 const ENV_KEYS = ['FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES'] as const
 
@@ -253,10 +261,15 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(createCall).not.toHaveBeenCalled()
 	})
 
-	it('sends the offer to the GA calls endpoint with the pinned model and the tool whitelist', async () => {
+	it('sends the offer to the GA calls endpoint with the pinned model and the full MCP tool list', async () => {
 		enableFlagFor(HUMAN)
 		openSocketImmediately()
-		setVoiceInvokeToolFactory(() => vi.fn())
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response('v=0 vendor answer', {
 				status: 201,
@@ -297,7 +310,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		}
 		expect(sent.type).toBe('realtime')
 		expect(sent.model).toBe('gpt-realtime-2.1')
-		expect(sent.tools.map((t) => t.name).sort()).toEqual([...VOICE_ALLOWED_TOOLS].sort())
+		expect(sent.tools).toEqual(VOICE_TOOLS)
 		expect(sent.tool_choice).toBe('auto')
 	})
 
@@ -312,7 +325,12 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			queueMicrotask(() => handlers.onError(new Error('refused')))
 			return { send: vi.fn(), close: vi.fn() }
 		})
-		setVoiceInvokeToolFactory(() => vi.fn())
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[sessionRow()],

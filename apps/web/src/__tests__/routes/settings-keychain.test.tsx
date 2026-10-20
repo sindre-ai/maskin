@@ -132,16 +132,9 @@ beforeEach(() => {
 })
 
 describe('Keychain layout route', () => {
-	it('renders the child page when the flag is on', () => {
+	it('renders the child page', () => {
 		render(<Layout />)
 		expect(screen.getByText('child route')).toBeInTheDocument()
-	})
-
-	it('answers not found when the flag is off', () => {
-		mockFlag.mockReturnValue(false)
-		render(<Layout />)
-		expect(screen.getByText('Page not found')).toBeInTheDocument()
-		expect(screen.queryByText('child route')).not.toBeInTheDocument()
 	})
 })
 

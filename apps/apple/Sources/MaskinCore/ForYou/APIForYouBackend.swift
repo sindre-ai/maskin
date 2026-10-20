@@ -70,7 +70,13 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 								DecisionOption(
 									label: $0.label, consequences: $0.consequences,
 									recommended: $0.recommended ?? false,
-									destructive: false)  // not in this server's spec yet
+									destructive: $0.destructive ?? false)
+							},
+							// The server fills `body` from the draft object's current description, so a
+							// draft without text (an object that is gone or empty) shows no box.
+							draft: d.draft.flatMap { draft in
+								guard let body = draft.body, !body.isEmpty else { return nil }
+								return DecisionDraft(label: draft.label ?? "Draft", to: draft.to, body: body)
 							})
 					})
 			}

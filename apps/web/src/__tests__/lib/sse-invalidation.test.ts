@@ -452,7 +452,7 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.paged)).toBe(true)
 	})
 
-	it.each(['session_credit_debited', 'session_budget_stopped'])(
+	it.each(['session_credit_debited', 'session_budget_stopped', 'session_stopped'])(
 		'%s still refetches billing usage',
 		(action) => {
 			const { qc, keys, invalidated } = seededClient()

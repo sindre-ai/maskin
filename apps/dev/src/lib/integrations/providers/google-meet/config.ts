@@ -10,8 +10,10 @@ import type { ProviderConfig } from '../../types'
  * exercised, and the callback can persist a Meet integration row.
  *
  * Scope choices (per bet lock-down, Reshape §1):
- *  - `openid` + `userinfo.email` — `resolveGoogleEmail` (external_id) and
- *    `people.get(me)` (People-id fetch at callback) both ride these two.
+ *  - `openid` + `userinfo.email` — `resolveGoogleEmail` (external_id).
+ *  - `userinfo.profile` — `people.get(me)` (People-id fetch at callback).
+ *    `openid` + `userinfo.email` alone got a 403 in prod (2026-10-14). It is
+ *    non-sensitive, so no extra Google verification.
  *  - `meetings.space.readonly` — read conferenceRecords / transcripts /
  *    participants / recordings; JTBDs #1–#3 + #5.
  *  - `meetings.space.created` — create Meet spaces via
@@ -44,6 +46,7 @@ export const config: ProviderConfig = {
 			scopes: [
 				'openid',
 				'https://www.googleapis.com/auth/userinfo.email',
+				'https://www.googleapis.com/auth/userinfo.profile',
 				'https://www.googleapis.com/auth/meetings.space.readonly',
 				'https://www.googleapis.com/auth/meetings.space.created',
 			],

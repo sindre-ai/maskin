@@ -2,6 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+	type MentionNameResolution,
+	type MentionParticipant,
+	resolveMentionNames,
+} from './mention-names'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
@@ -1099,7 +1104,7 @@ async function createSessionAndWait(
 
 	let sessionId = session.id
 	const deadline = Date.now() + WAIT_LIMIT_MS
-	const terminalStatuses = ['completed', 'failed', 'timeout']
+	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
 	// §17.6: when a session hits a subscription limit its terminal report
 	// carries retried_session_id — the id of the retry the scheduler
 	// enqueued. Follow the redirect so a caller waiting here sees the retry's
@@ -4677,6 +4682,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					name: args.name,
 					description: args.description,
+					...(args.kind !== undefined ? { kind: args.kind } : {}),
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
@@ -4703,6 +4709,7 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
+			if (args.kind) params.set('kind', args.kind)
 			params.set('limit', String(pagination.limit + 1))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -4795,6 +4802,7 @@ export function createMcpServer(config: McpConfig) {
 			const body: Record<string, unknown> = {}
 			if (args.name !== undefined) body.name = args.name
 			if (args.description !== undefined) body.description = args.description
+			if (args.kind !== undefined) body.kind = args.kind
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
@@ -5023,7 +5031,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, ...body } = args
+			const { workspace_id, conversation_id, mention_names, ...body } = args
+			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
+			// nobody. Resolve against the live participant list and report misses.
+			let unresolvedMentions: MentionNameResolution['unresolved'] = []
+			if (mention_names?.length) {
+				const conversation = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${conversation_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { participants?: MentionParticipant[] }
+				const { resolved, unresolved } = resolveMentionNames(
+					mention_names,
+					conversation.participants ?? [],
+				)
+				unresolvedMentions = unresolved
+				if (resolved.length > 0) {
+					const mentions = Array.from(new Set([...(body.metadata?.mentions ?? []), ...resolved]))
+					body.metadata = { ...body.metadata, mentions }
+				}
+			}
 			// SESSION_ID is injected by session-manager into every agent
 			// container's env — stamping it here lets the conversations route
 			// attribute this message back to the session that produced it
@@ -5039,13 +5068,17 @@ export function createMcpServer(config: McpConfig) {
 				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
 				{ workspaceId: workspace_id },
 			)
+			const withMentionReport =
+				unresolvedMentions.length > 0
+					? { ...(result as Record<string, unknown>), unresolved_mentions: unresolvedMentions }
+					: result
 			return {
 				_meta: meta(
 					'post_conversation_message',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withMentionReport, null, 2) }],
 			}
 		},
 	)
@@ -5264,6 +5297,7 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				tags,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
 			const existingTriggerIds = args.trigger_ids ?? []
@@ -5318,6 +5352,7 @@ export function createMcpServer(config: McpConfig) {
 				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
 				if (close_condition !== undefined) metadata.close_condition = close_condition
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
+				if (tags !== undefined) metadata.tags = tags
 
 				const node: Record<string, unknown> = {
 					$id: 'loop',
@@ -5429,6 +5464,7 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				tags,
 				add_steps,
 				add_trigger_ids,
 				remove_trigger_ids,
@@ -5519,6 +5555,7 @@ export function createMcpServer(config: McpConfig) {
 					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
 					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+					if (tags !== undefined) metadataPatch.tags = tags
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
@@ -6107,20 +6144,27 @@ export function createMcpServer(config: McpConfig) {
 					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
 				)
 			}
+			let deliveredTo: string | undefined
 			try {
-				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+				const posted = (await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
 					questions: args.questions.map((q) => ({
 						question: q.question,
 						header: q.header,
 						multi_select: q.multi_select ?? false,
 						options: q.options,
 					})),
-				})
+				})) as { delivered_to?: string } | undefined
+				deliveredTo = posted?.delivered_to
 			} catch (err) {
 				// 409 is the normal answer for a session with no chat to ask in.
 				console.error('ask_user_question: could not post the question', err)
 				return reply(
 					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			if (deliveredTo === 'chief_of_staff') {
+				return reply(
+					'Your question has been sent to the person in their chat with the Chief of Staff. Their answer goes there, not back to this session, so do not wait for it. Choose the most reasonable option yourself, state the assumption you made, and continue.',
 				)
 			}
 			return reply(

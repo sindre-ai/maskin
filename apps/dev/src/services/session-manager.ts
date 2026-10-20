@@ -41,7 +41,6 @@ import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp
 import {
 	AGENT_PUSH_DIRECTORIES,
 	HUMAN_MESSAGE_STYLE,
-	type SessionResult,
 	type SessionResultFailureReason,
 	buildSetModelRequest,
 	githubOwnerLoginToEnvKey,
@@ -70,9 +69,9 @@ import {
 	trackAgentSessionStartedWithPrompt,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
-import { trackSessionAiGeneration } from '../lib/analytics/ai-generation-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { evictBillingUsage } from '../lib/billing-usage-cache'
 import {
 	SESSION_OAUTH_EXPIRES_AT_KEY,
 	isAuthErrorAtAccessTokenExpiry,
@@ -187,7 +186,6 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
-import { returnToSender } from './helper-return'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -203,7 +201,9 @@ import {
 	type SessionSettleRow,
 	type SettleDependencies,
 	type SettleOutcome,
+	type SettleResult,
 	type StoppedSandboxOutcome,
+	type TerminalClassification,
 	settleSession,
 } from './session-lifecycle'
 import {
@@ -521,6 +521,22 @@ function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | n
 	const parsed = Date.parse(failureReason.reset_at)
 	if (Number.isNaN(parsed)) return null
 	return new Date(parsed)
+}
+
+/**
+ * The settle classification for a sandbox exit seen by handleCompletion or
+ * markRemoteSessionComplete. Keeps the budget-stop and credit-exhaustion
+ * reasons distinguishable from a plain non-zero exit.
+ */
+function classifyExit(args: {
+	userStopped: boolean
+	status: 'completed' | 'failed'
+	failureReason: SessionResultFailureReason | null
+}): TerminalClassification {
+	if (args.userStopped) return 'human_stop'
+	if (args.status === 'completed') return 'agent_completed'
+	if (!args.failureReason) return 'unknown'
+	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
 export class SessionManager extends EventEmitter {
@@ -1463,12 +1479,17 @@ export class SessionManager extends EventEmitter {
 				throw new Error(`Agent server ${session.agentServerId} not found`)
 			}
 			const client = new AgentServerClient({ server: serverRow })
+			// Recorded before the RPC: the agent-server's own completion report can
+			// reach markRemoteSessionComplete while this call is still in flight, and
+			// it needs to know the exit was a stop.
+			this.stopRequested.add(sessionId)
 			try {
 				// User-initiated stop from `SessionManager.stopSession` — settle
 				// runs later via `markRemoteSessionComplete`, so this call just
 				// tears the sandbox down and reports the outcome (unused here).
 				await client.stopSession(sessionId, { reason: 'stop', source: 'user-stop' })
 			} catch (err) {
+				this.stopRequested.delete(sessionId)
 				// Sanitize before rethrowing — the route handler surfaces this
 				// message verbatim to the API caller (apps/dev/src/routes/sessions.ts),
 				// and AgentServerHttpError's raw message embeds the agent-server's
@@ -1512,16 +1533,16 @@ export class SessionManager extends EventEmitter {
 			// completion. Treat this explicit, successful stop as authoritative
 			// instead of waiting on a callback that might never arrive.
 			//
-			// This write is provisional, not final: the agent-server's own
-			// monitorSession loop is usually still alive (a stop request doesn't
-			// kill that process) and will independently POST a genuine
+			// This settles the session as user_stopped, once, and that is final: the
+			// agent-server's own monitorSession loop is usually still alive (a stop
+			// request doesn't kill that process) and will independently POST a
 			// /sessions/:id/complete report a few seconds later with a real exit
 			// code (see FORCED_STOP_EXIT_CODE in apps/agent-server/src/index.ts).
-			// stoppedByUser marks this row so that later report is allowed to
-			// overwrite it instead of silently losing the race — see
-			// markRemoteSessionComplete's CAS condition below.
+			// That report finds the row already stopped, so it emits no second event
+			// and only back-fills the exit code and usage — see
+			// handleDroppedRemoteReport.
 			//
-			// A `false` return means the provisional write couldn't even be
+			// A `false` return means the stop write couldn't even be
 			// confirmed (DB unreachable) — this method's own caller already
 			// treats the sandbox-level stop as successful (the remote kill
 			// already happened), so there's nothing to retry or rethrow here;
@@ -1532,7 +1553,7 @@ export class SessionManager extends EventEmitter {
 				stoppedByUser: true,
 			})
 			if (!confirmed) {
-				logger.warn('Provisional stop write could not be confirmed (DB unreachable)', {
+				logger.warn('Stop write could not be confirmed (DB unreachable)', {
 					sessionId,
 				})
 			}
@@ -1547,6 +1568,41 @@ export class SessionManager extends EventEmitter {
 		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
+	}
+
+	/**
+	 * Stops the sandboxes of sessions whose rows were just deleted (workspace purge). stopSession
+	 * cannot be used: it reads the row, which is gone. This reuses the same teardown settleSession
+	 * runs (agent-server /stop RPC for remote sessions, ContainerManager for local ones). Best
+	 * effort and never throws: a failure leaves a sandbox for the idle/wall timeouts to reap.
+	 */
+	async stopSandboxesForPurge(
+		rows: {
+			id: string
+			workspaceId: string
+			containerId: string | null
+			agentServerId: string | null
+		}[],
+	): Promise<void> {
+		for (const r of rows) {
+			try {
+				if (!r.agentServerId) this.stopRequested.add(r.id)
+				await this.settleStopSandbox(
+					{ ...r, actorId: '', status: 'running' } as unknown as SessionSettleRow,
+					{
+						kind: 'stop',
+						classification: 'human_stop',
+						source: 'user-stop',
+						reason: 'workspace deleted',
+					},
+				)
+			} catch (err) {
+				logger.warn('purge: stopping session sandbox failed', {
+					sessionId: r.id,
+					error: String(err),
+				})
+			}
+		}
 	}
 
 	/**
@@ -2258,7 +2314,7 @@ export class SessionManager extends EventEmitter {
 		// agent into calling the MCP tool — it has to tell the agent that its
 		// closing words ARE the reply, and that a heads-up is optional.
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody.\n\n'
 			: ''
 		// A helper another agent started from a chat. It is interactive only so it
 		// can ask the person something, and it ends the moment it gives a result.
@@ -3752,6 +3808,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		'completed',
 		'failed',
 		'timeout',
+		'user_stopped',
 		'paused',
 		'snapshotting',
 	] as const
@@ -4035,36 +4092,35 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					}
 				: null)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+		// A stop the user asked for ends as user_stopped, not failed. A budget stop
+		// also goes through stopSession (so it sits in stopRequested too) but it is
+		// a failure with a reason (the chat toast keys on failed plus
+		// plan_cap_exceeded), so it keeps the failed mapping.
+		const userStopped =
+			status === 'failed' && !budgetStopReason && this.stopRequested.has(sessionId)
 
 		// SSE clients subscribed to /logs/stream rely on the "Session
-		// completed|failed|timed out|paused" system log to emit their `done`
-		// event and close. If any DB write below throws, subscribers would sit
+		// completed|failed|stopped|timed out|paused" system log to emit their `done`
+		// event and close. If the settle below throws, subscribers would sit
 		// in the 30s keep-alive loop indefinitely — so swallow persistence
 		// errors here and always attempt the terminal system log.
 		try {
-			await this.db
-				.update(sessions)
-				.set({
-					status,
-					result: {
-						exit_code: exitCode,
-						...(failureReason ? { failure_reason: failureReason } : {}),
-						// Read (not deleted) here — the telemetry emit below still
-						// consumes the flag via stopRequested.delete(). Distinct from
-						// the remote path's provisional `stopped_by_user` marker
-						// (which gates markRemoteSessionComplete's CAS overwrite):
-						// this one only tells the UI to render a user-initiated stop
-						// as "stopped", not a failure.
-						...(this.stopRequested.has(sessionId) ? { user_stop_requested: true } : {}),
-					},
-					completedAt: new Date(),
-					updatedAt: new Date(),
-					currentActivity: null,
-					...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
-				})
-				.where(eq(sessions.id, sessionId))
+			// The learnings were pushed above and the exit watcher owns the container
+			// teardown below, so settle only writes the row, the event and telemetry.
+			await settleSession(
+				sessionId,
+				{
+					kind: userStopped ? 'stop' : status === 'completed' ? 'complete' : 'fail',
+					classification: classifyExit({ userStopped, status, failureReason }),
+					source: 'sandbox-exit',
+					exitCode: exitCode ?? undefined,
+					failureReason: failureReason ?? undefined,
+					retryAt: scheduledRetryAt ?? undefined,
+				},
+				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+			)
 		} catch (err) {
-			logger.error('Failed to update session status in handleCompletion', {
+			logger.error('Failed to settle session in handleCompletion', {
 				sessionId,
 				status,
 				error: String(err),
@@ -4072,15 +4128,15 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 
 		// Sync agentState on the actor so the agents overview reflects terminal status.
-		// completed → idle (agent finished cleanly), failed → failed (needs attention).
-		// Skip if the agent still has other active sessions, so one finishing
-		// session doesn't prematurely flip an agent that's still working.
+		// completed or user_stopped → idle (nothing needs attention), failed → failed
+		// (needs attention). Skip if the agent still has other active sessions, so one
+		// finishing session doesn't prematurely flip an agent that's still working.
 		try {
 			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
 				await this.db
 					.update(actors)
 					.set({
-						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentState: status === 'completed' || userStopped ? 'idle' : 'failed',
 						agentStateUpdatedAt: new Date(),
 						updatedAt: new Date(),
 					})
@@ -4093,43 +4149,17 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			})
 		}
 
-		try {
-			await recordEvent(this.db, {
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: `session_${status}`,
-				entityType: 'session',
-				entityId: sessionId,
-				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
-			})
-		} catch (err) {
-			logger.error('Failed to insert completion event in handleCompletion', {
-				sessionId,
-				status,
-				error: String(err),
-			})
-		}
-
-		// Tell the session that started this one how it ended (no-op for an
-		// unlinked session). This path writes the terminal status itself and never
-		// goes through settleSession, so it has to call the return on its own.
-		void returnToSender(this.db, sessionId, { sessionManager: this })
-
 		// G1: emit `agent_session_completed` dev-side with the workspace-skill
 		// provisioning counts recorded at session start (+ any staging report).
 		// See `trackAgentSessionCompletedWithSkills` for why this rides alongside
 		// the frontend emission rather than replacing it. Fire-and-forget; a
-		// PostHog outage must not block the terminal path.
-		if (status === 'completed' || status === 'failed' || status === 'timeout') {
+		// PostHog outage must not block the terminal path. A user stop has no
+		// outcome in that event's vocabulary; settle's unified event carries it.
+		if (!userStopped) {
 			void this.emitCompletedWithSkills(session, status)
 		}
-		void this.emitAiGenerationAfterCompletion(
-			session,
-			this.stopRequested.has(sessionId) ? 'user_stopped' : status,
-			usage,
-		)
 
-		if (status === 'failed') {
+		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
@@ -4158,7 +4188,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				output_tokens: usage.outputTokens ?? 0,
 				total_cost_usd: usage.totalCostUsd ?? 0,
 				duration_ms: usage.durationMs ?? 0,
-				status,
+				status: userStopped ? 'user_stopped' : status,
 			}).catch((err) => {
 				logger.warn('Failed maskin_plan_session_completed PostHog emit', {
 					sessionId,
@@ -4171,8 +4201,9 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
 		}
 
+		const terminalLog = `Session ${userStopped ? 'stopped' : status} with exit code ${exitCode}`
 		try {
-			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+			await this.insertSystemLog(sessionId, terminalLog)
 		} catch (err) {
 			logger.error('Failed to write terminal system log — SSE clients may hang', {
 				sessionId,
@@ -4186,12 +4217,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				sessionId,
 				logId: -Date.now(),
 				stream: 'system',
-				data: `Session ${status} with exit code ${exitCode}`,
+				data: terminalLog,
 			})
 		}
 
-		const wasUserStopped = this.stopRequested.delete(sessionId)
-		const endReason: RuntimeEndReason = wasUserStopped
+		this.stopRequested.delete(sessionId)
+		const endReason: RuntimeEndReason = userStopped
 			? 'user_stopped'
 			: status === 'completed'
 				? 'completed'
@@ -5610,49 +5641,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 	}
 
-	/**
-	 * `$ai_generation` for the local completion path. `session` is the row as it
-	 * was read before this completion wrote anything, and `usage` is the segment
-	 * `accumulateSessionUsage` just added on top of it, so the cumulative totals
-	 * are rebuilt here rather than re-reading the row (an extra select per
-	 * completion). Best-effort, like every other analytics emit on this path.
-	 */
-	private async emitAiGenerationAfterCompletion(
-		session: typeof sessions.$inferSelect,
-		outcome: 'completed' | 'failed' | 'user_stopped',
-		usage: SessionUsage | null,
-	): Promise<void> {
-		try {
-			const config = (session.config as Record<string, unknown>) ?? {}
-			const route = typeof config.llm_route === 'string' ? config.llm_route : ''
-			const segmentCostUsd = usage
-				? await resolveSessionCostUsd({ route, modelName: session.modelName, usage })
-				: null
-			await trackSessionAiGeneration({
-				sessionId: session.id,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				outcome,
-				config,
-				modelName: session.modelName,
-				inputTokens: (session.inputTokens ?? 0) + (usage?.inputTokens ?? 0),
-				outputTokens: (session.outputTokens ?? 0) + (usage?.outputTokens ?? 0),
-				cacheReadTokens: (session.cacheReadInputTokens ?? 0) + (usage?.cacheReadInputTokens ?? 0),
-				cacheCreationTokens:
-					(session.cacheCreationInputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0),
-				costUsd: Number(session.totalCostUsd ?? 0) + (segmentCostUsd ?? 0),
-				activeMs: (session.durationMs ?? 0) + (usage?.durationMs ?? 0),
-				startedAt: session.startedAt,
-				completedAt: new Date(),
-			})
-		} catch (err) {
-			logger.warn('Failed to emit $ai_generation after local completion', {
-				sessionId: session.id,
-				error: String(err),
-			})
-		}
-	}
-
 	async insertSystemLog(sessionId: string, content: string): Promise<void> {
 		const [log] = await this.db
 			.insert(sessionLogs)
@@ -6080,59 +6068,34 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	}
 
 	/**
-	 * Mark a remote agent-server session as completed or failed. Mirrors the
-	 * relevant parts of `handleCompletion` but skips local Docker cleanup (the
-	 * agent-server owns the sandbox lifecycle; the workspace is already in S3).
+	 * Mark a remote agent-server session as completed or failed, or as stopped
+	 * when `stoppedByUser` is set. Mirrors the relevant parts of
+	 * `handleCompletion` but skips local Docker cleanup (the agent-server owns
+	 * the sandbox lifecycle; the workspace is already in S3).
 	 *
-	 * Uses a compare-and-set UPDATE (status NOT IN the terminal/transitional
-	 * set, in the WHERE clause, with `.returning()` in place of a preliminary
-	 * SELECT) so two concurrent calls for the same session — e.g. a stop
-	 * request racing the agent-server's async completion report, or two
-	 * racing stop requests — can never both observe 'running' and both write
-	 * a terminal event. Exactly one call's UPDATE matches the row; the other
-	 * gets zero rows back and no-ops.
+	 * The terminal write goes through settleSession, whose compare-and-set
+	 * (status NOT IN the terminal set) means two concurrent calls for the same
+	 * session — e.g. a stop request racing the agent-server's async completion
+	 * report, or two racing stop requests — can never both write a terminal
+	 * event. Exactly one call wins; the other no-ops.
+	 *
+	 * A user stop is final: it settles as user_stopped with one session_stopped
+	 * event. The agent-server's own completion report that follows a stop is not
+	 * a second terminal write, it only back-fills the real exit code and usage
+	 * onto the stopped row (see backfillStoppedRemoteSession).
 	 */
 	private static readonly CAS_UPDATE_RETRIES = 3
 	private static readonly CAS_UPDATE_RETRY_DELAY_MS = 150
 
 	/**
-	 * True if a terminal-or-transitional row is still eligible to be
-	 * overwritten by an incoming completion signal.
-	 *
-	 * Normally a terminal row is final — but `stopSession()` writes a
-	 * *provisional* terminal row (marked `result.stopped_by_user`) before the
-	 * agent-server's own async monitor has had a chance to report the real
-	 * exit code. Without this escape hatch, that later genuine report always
-	 * loses the CAS (0 rows match) and is silently dropped — the exact bug
-	 * this method exists to fix (see docs/runbooks/agent-session-failures-2026-08-11.md,
-	 * Issue 3). A genuine report (`stoppedByUser === false`) is allowed to
-	 * overwrite such a row; a stop request is never allowed to clobber an
-	 * already-terminal row (genuine or provisional).
-	 */
-	private static canOverwriteTerminalRow(
-		existing: Pick<typeof sessions.$inferSelect, 'status' | 'result'>,
-		stoppedByUser: boolean,
-	): boolean {
-		if (
-			!(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
-				existing.status,
-			)
-		) {
-			return true
-		}
-		if (stoppedByUser) return false
-		return existing.result?.stopped_by_user === true
-	}
-
-	/**
 	 * Returns `false` only when the outcome could not be confirmed at all —
-	 * the CAS UPDATE failed after retries AND the fallback read-only lookup
-	 * also failed, so we have no idea what state the row is in. Every other
-	 * path (row updated, session not found, already resolved by a concurrent
-	 * call) is a legitimate terminal outcome and returns `true`, even though
-	 * no write happened in the "already resolved" cases — retrying those
-	 * wouldn't change anything. Callers that can meaningfully retry (e.g. the
-	 * `/complete` HTTP route, which can return a non-2xx to trigger the
+	 * settling failed after retries AND the fallback read-only lookup also
+	 * failed (or the row is still open), so we have no idea what state the row
+	 * is in. Every other path (row settled, session not found, already resolved
+	 * by a concurrent call) is a legitimate terminal outcome and returns `true`,
+	 * even though no write happened in the "already resolved" cases — retrying
+	 * those wouldn't change anything. Callers that can meaningfully retry (e.g.
+	 * the `/complete` HTTP route, which can return a non-2xx to trigger the
 	 * agent-server's own retry loop) should surface a `false` return as a
 	 * failure instead of reporting success.
 	 */
@@ -6166,8 +6129,8 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			})
 		}
 
-		// Resolve the route-aware cost before the CAS loop so both writes below
-		// use the same figure. Best-effort for the same reason as the tail read:
+		// Resolve the route-aware cost before the settle loop so every write below
+		// uses the same figure. Best-effort for the same reason as the tail read:
 		// stopSession() calls this after the sandbox is already dead, so a throw
 		// here would surface as a spurious "stop failed" 400. On failure the
 		// CLI-reported cost is used, which is the pre-existing behaviour.
@@ -6206,6 +6169,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// only the CLI-banner tail is available on this side, same as handleCompletion.
 		const scheduledRetryAt = pickRetryAt(failureReason)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+		// A stop ends as user_stopped, not failed. The explicit stop write says so
+		// itself; an agent-server report can also land first (the stop RPC is still
+		// in flight), in which case stopSession has already recorded the request.
+		const userStopped = status === 'failed' && (stoppedByUser || this.stopRequested.has(sessionId))
 
 		// Add this segment's usage onto the stored totals, like handleCompletion does
 		// through accumulateSessionUsage: a session that was paused and resumed
@@ -6213,7 +6180,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// the logs only reports the last segment. stopSession()'s provisional write
 		// carries no usage: the genuine report that follows reads the same logs, so
 		// adding on both would count one envelope twice. The genuine report adds.
-		const segmentUsageSet =
+		const segmentUsage =
 			usage && !stoppedByUser
 				? {
 						totalCostUsd:
@@ -6241,67 +6208,71 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 								: undefined,
 					}
-				: {}
+				: null
 
-		const result: SessionResult = stoppedByUser
-			? { exit_code: exitCode, stopped_by_user: true }
-			: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) }
+		// Drizzle rejects an update with nothing to set, so an envelope without any
+		// usage figure leaves this null rather than an object of undefined fields.
+		const usageColumns =
+			segmentUsage && Object.values(segmentUsage).some((v) => v !== undefined) ? segmentUsage : null
 
-		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
-		// permanently strand the session: giving up immediately would skip the
-		// audit event, the terminal system log (which SSE /logs/stream clients
-		// need to close), activeSessionId clearing, and the queue drain below —
-		// leaving a connected client hanging until the watchdog reaper eventually
-		// fires. Retry a few times with linear backoff before accepting that, per
-		// the retry pattern already used for transient errors in
-		// pushSessionWorkspace (apps/agent-server/src/services/session-workspace.ts).
-		let updated: typeof sessions.$inferSelect | undefined
-		let updateErr: unknown
+		// A thrown DB error here must not permanently strand the session: giving
+		// up immediately would skip the audit event, the terminal system log
+		// (which SSE /logs/stream clients need to close), activeSessionId
+		// clearing, and the queue drain below — leaving a connected client hanging
+		// until the watchdog reaper eventually fires. Retry a few times with linear
+		// backoff before accepting that, per the retry pattern already used for
+		// transient errors in pushSessionWorkspace
+		// (apps/agent-server/src/services/session-workspace.ts).
+		const resolvedStatuses: string[] = [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]
+		let settled: SettleResult | undefined
+		let alreadyResolved = false
+		let rowMissing = false
+		let usageApplied = false
+		let settleErr: unknown
 		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
 			try {
-				;[updated] = await this.db
-					.update(sessions)
-					.set({
-						status,
-						// A genuine completion report is allowed to overwrite the
-						// provisional stopSession() write (see the CAS condition
-						// below), clearing the `stopped_by_user` marker that gates
-						// that overwrite — but the fact that the user asked for the
-						// stop must survive, or the UI flips a user-initiated stop
-						// into a scary "failed" a few seconds after showing it
-						// correctly. Carry it forward as `user_stop_requested`, a
-						// UI-only flag the CAS never looks at, so the row can't be
-						// overwritten a second time.
-						result: stoppedByUser
-							? result
-							: sql`${JSON.stringify(result)}::jsonb || (CASE WHEN ${sessions.result} ->> 'stopped_by_user' = 'true' OR ${sessions.result} ->> 'user_stop_requested' = 'true' THEN '{"user_stop_requested": true}'::jsonb ELSE '{}'::jsonb END)`,
-						completedAt: new Date(),
-						updatedAt: new Date(),
-						currentActivity: null,
-						...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
-						...segmentUsageSet,
-					})
-					.where(
-						and(
-							eq(sessions.id, sessionId),
-							stoppedByUser
-								? notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES])
-								: or(
-										notInArray(sessions.status, [
-											...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES,
-										]),
-										// Allow a genuine completion report to overwrite a row
-										// still carrying stopSession()'s provisional marker — see
-										// canOverwriteTerminalRow's comment above.
-										sql`(${sessions.result} ->> 'stopped_by_user') = 'true'`,
-									),
-						),
-					)
-					.returning()
-				updateErr = undefined
+				const [existing] = await this.db
+					.select({ status: sessions.status })
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+				settleErr = undefined
+				if (!existing) {
+					rowMissing = true
+					break
+				}
+				// Paused and snapshotting rows are not settle's to flip, so they are
+				// dropped here; the four truly terminal statuses are guarded by
+				// settle's own compare-and-set.
+				if (resolvedStatuses.includes(existing.status)) {
+					alreadyResolved = true
+					break
+				}
+				// Additive, so it must not be re-applied if a retry follows a settle failure.
+				if (usageColumns && !usageApplied) {
+					await this.db
+						.update(sessions)
+						.set(usageColumns)
+						.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, resolvedStatuses)))
+					usageApplied = true
+				}
+				// The agent-server owns the sandbox and the workspace is already in
+				// S3, so settle only writes the row, the event and telemetry.
+				settled = await settleSession(
+					sessionId,
+					{
+						kind: userStopped ? 'stop' : status === 'completed' ? 'complete' : 'fail',
+						classification: classifyExit({ userStopped, status, failureReason }),
+						source: userStopped ? 'user-stop' : 'sandbox-exit',
+						exitCode: exitCode ?? undefined,
+						failureReason: failureReason ?? undefined,
+						retryAt: scheduledRetryAt ?? undefined,
+					},
+					this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				)
 				break
 			} catch (err) {
-				updateErr = err
+				settleErr = err
 				if (attempt < SessionManager.CAS_UPDATE_RETRIES) {
 					await new Promise((resolve) =>
 						setTimeout(resolve, SessionManager.CAS_UPDATE_RETRY_DELAY_MS * attempt),
@@ -6309,31 +6280,25 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				}
 			}
 		}
-		if (updateErr) {
+		if (settleErr) {
 			// Best-effort: a DB hiccup here must not surface as a thrown error to
 			// stopSession()'s caller, which would otherwise report a 400 "stop
 			// failed" even though the remote sandbox kill already succeeded.
-			logger.error('Failed to update remote session status after retries', {
+			logger.error('Failed to settle remote session after retries', {
 				sessionId,
 				status,
-				error: String(updateErr),
+				error: String(settleErr),
 			})
-			// The CAS UPDATE never persisted after all retries — most likely a
-			// transient DB outage, not a lost race (a lost race returns 0 rows
-			// without throwing, handled by the `!updated` check below). Returning
-			// here unconditionally would skip every side effect below and strand
-			// the session at 'running' with a hung SSE /logs/stream client — the
-			// exact bug class this method exists to fix. Do one read-only lookup
-			// to decide whether those side effects should still run.
-			let fallback: typeof sessions.$inferSelect | undefined
+			// One read-only lookup to decide what the failure means.
+			let fallback: { status: string } | undefined
 			try {
 				;[fallback] = await this.db
-					.select()
+					.select({ status: sessions.status })
 					.from(sessions)
 					.where(eq(sessions.id, sessionId))
 					.limit(1)
 			} catch (err) {
-				logger.error('Fallback session lookup after CAS retries also failed — giving up', {
+				logger.error('Fallback session lookup after settle retries also failed — giving up', {
 					sessionId,
 					error: String(err),
 				})
@@ -6343,95 +6308,44 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				return false
 			}
 			if (!fallback) {
-				logger.warn('Completion signal dropped — session not found (fallback lookup)', {
-					sessionId,
-					droppedExitCode: exitCode,
-					droppedStoppedByUser: stoppedByUser,
-				})
-				return true
+				rowMissing = true
+			} else if (resolvedStatuses.includes(fallback.status)) {
+				// Another call resolved this session while our retries were failing.
+				alreadyResolved = true
+			} else {
+				// The row is still open and settling keeps failing. Say so, so a caller
+				// that can retry (the /complete route) does.
+				return false
 			}
-			// Another call already resolved this session while our retries were
-			// failing (its own report landed, or a concurrent call won the CAS) —
-			// no-op to avoid a duplicate terminal event, unless this is a genuine
-			// report allowed to overwrite stopSession()'s provisional row (see
-			// canOverwriteTerminalRow's comment above).
-			if (!SessionManager.canOverwriteTerminalRow(fallback, stoppedByUser)) {
-				logger.warn(
-					'Completion signal dropped — session already terminal (fallback lookup after CAS error)',
-					{
-						sessionId,
-						droppedExitCode: exitCode,
-						droppedStoppedByUser: stoppedByUser,
-						currentStatus: fallback.status,
-						currentResult: fallback.result,
-					},
-				)
-				return true
-			}
-			// Best-effort: try once more to persist the status directly (not
-			// CAS-guarded — the read above just confirmed no other call has
-			// resolved it). If this also fails, still fall through to the side
-			// effects below so the session doesn't hang forever, matching the
-			// pre-CAS code's unconditional fallthrough on an UPDATE error.
-			try {
-				await this.db
-					.update(sessions)
-					.set({
-						status,
-						result,
-						completedAt: new Date(),
-						updatedAt: new Date(),
-						currentActivity: null,
-						...segmentUsageSet,
-					})
-					.where(eq(sessions.id, sessionId))
-			} catch (err) {
-				logger.error(
-					'Fallback direct status update also failed — continuing with best-effort cleanup only',
-					{ sessionId, error: String(err) },
-				)
-			}
-			updated = fallback
 		}
 
-		// No row matched: either the session doesn't exist, or it was already
-		// terminal/transitional (this call lost the race, or is a stale retry,
-		// or a genuine report arrived after a provisional stop row that this
-		// call wasn't itself eligible to overwrite). Previously this was a
-		// silent no-op — surfacing it here is what makes a dropped exit code
-		// (see docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3)
-		// diagnosable from app logs alone instead of requiring host log
-		// spelunking.
-		if (!updated) {
-			let existing: typeof sessions.$inferSelect | undefined
-			try {
-				;[existing] = await this.db
-					.select()
-					.from(sessions)
-					.where(eq(sessions.id, sessionId))
-					.limit(1)
-			} catch (err) {
-				logger.warn('Failed to look up session while logging a dropped completion signal', {
-					sessionId,
-					error: String(err),
-				})
-			}
-			logger.warn('Completion signal dropped — session already terminal or not found', {
-				sessionId,
-				droppedExitCode: exitCode,
-				droppedStoppedByUser: stoppedByUser,
-				currentStatus: existing?.status ?? null,
-				currentResult: existing?.result ?? null,
-			})
+		this.stopRequested.delete(sessionId)
+
+		// Nothing to settle: the session doesn't exist, was already terminal or
+		// transitional (this call lost the race, or is a stale retry), or settle
+		// lost the compare-and-set to a concurrent writer.
+		if (rowMissing || alreadyResolved || !settled || settled.alreadySettled) {
+			await this.handleDroppedRemoteReport(sessionId, exitCode, stoppedByUser, usageColumns)
 			return true
 		}
+
+		let updated: typeof sessions.$inferSelect | undefined
+		try {
+			;[updated] = await this.db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+		} catch (err) {
+			logger.warn('Failed to re-read remote session after settle', {
+				sessionId,
+				error: String(err),
+			})
+		}
+		if (!updated) return true
 
 		try {
 			if (!(await this.hasOtherActiveSessions(updated.actorId, sessionId))) {
 				await this.db
 					.update(actors)
 					.set({
-						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentState: status === 'completed' || userStopped ? 'idle' : 'failed',
 						agentStateUpdatedAt: new Date(),
 						updatedAt: new Date(),
 					})
@@ -6441,63 +6355,19 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			logger.warn('Failed to sync agentState for remote session', { sessionId, error: String(err) })
 		}
 
-		try {
-			await recordEvent(this.db, {
-				workspaceId: updated.workspaceId,
-				actorId: updated.actorId,
-				action: `session_${status}`,
-				entityType: 'session',
-				entityId: sessionId,
-				data: {
-					exit_code: exitCode,
-					stopped_by_user: stoppedByUser,
-					...(failureReason ? { failure_reason: failureReason } : {}),
-				},
-			})
-		} catch (err) {
-			logger.error('Failed to insert remote session completion event', {
-				sessionId,
-				error: String(err),
-			})
-		}
-
-		// Tell the session that started this one how it ended. Skipped for
-		// stopSession()'s provisional write: its exit code is not known yet, and the
-		// genuine report that follows is the one that returns, with the right wording.
-		if (!stoppedByUser) void returnToSender(this.db, sessionId, { sessionManager: this })
+		// The terminal event, the return to the session that started this one and
+		// `$ai_generation` all come from settleSession above.
 
 		// G1: mirror the terminal `agent_session_completed` emission from the
 		// local-Docker path (handleCompletion). This runs on every remote
 		// session's terminal transition — the production path for every
 		// dispatch-created session — so the skill-provisioning counts recorded
 		// at start (and updated by `recordSkillStagingResult`) reach PostHog
-		// on both the started and completed events. Best-effort.
-		void this.emitCompletedWithSkills(updated, status)
+		// on both the started and completed events. Best-effort. A user stop has
+		// no outcome in that event's vocabulary; settle's unified event carries it.
+		if (!userStopped) void this.emitCompletedWithSkills(updated, status)
 
-		// `$ai_generation` for the finished session. Skipped for stopSession()'s
-		// provisional write: its usage is not known yet and the genuine report
-		// that overwrites it is the one that carries the totals, so emitting on
-		// both would count one session twice. `updated` is the row as persisted.
-		if (!stoppedByUser) {
-			void trackSessionAiGeneration({
-				sessionId,
-				workspaceId: updated.workspaceId,
-				actorId: updated.actorId,
-				outcome: status,
-				config: updated.config as Record<string, unknown> | null,
-				modelName: updated.modelName,
-				inputTokens: updated.inputTokens,
-				outputTokens: updated.outputTokens,
-				cacheReadTokens: updated.cacheReadInputTokens,
-				cacheCreationTokens: updated.cacheCreationInputTokens,
-				costUsd: updated.totalCostUsd,
-				activeMs: updated.durationMs,
-				startedAt: updated.startedAt,
-				completedAt: updated.completedAt ?? new Date(),
-			})
-		}
-
-		if (status === 'failed') {
+		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({
 				session: updated,
 				failureReason,
@@ -6517,8 +6387,8 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 		// Terminal system log is required for SSE /logs/stream clients to close.
 		const terminalLogMessage = stoppedByUser
-			? `Session ${status} — explicitly stopped, exit code not yet known`
-			: `Session ${status} with exit code ${exitCode}`
+			? 'Session stopped — explicitly stopped, exit code not yet known'
+			: `Session ${userStopped ? 'stopped' : status} with exit code ${exitCode}`
 		await this.insertSystemLog(sessionId, terminalLogMessage).catch((err) => {
 			logger.error('Failed to write terminal system log for remote session', {
 				sessionId,
@@ -6533,9 +6403,9 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		})
 
 		// Mirror handleCompletion (line 3340) — record the terminal
-		// runtime_session_ended payload on the successful CAS / fallback
-		// transition. Without this the production remote-dispatch path is
-		// invisible on PostHog and the bet's Criterion 3 numerator undercounts.
+		// runtime_session_ended payload on the successful transition. Without this
+		// the production remote-dispatch path is invisible on PostHog and the
+		// bet's Criterion 3 numerator undercounts.
 		// Best-effort: recordSessionEnded is fail-open internally, but keep the
 		// call inside a try/catch so any future signature change can't surface
 		// as a spurious "stop failed" 400 to stopSession()'s caller.
@@ -6568,8 +6438,65 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
 
-		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode, stoppedByUser })
+		logger.info(`Remote session ${userStopped ? 'stopped' : status}: ${sessionId}`, {
+			exitCode,
+			stoppedByUser,
+		})
 		return true
+	}
+
+	/**
+	 * A completion signal that found nothing to settle. Surfacing it as a warning
+	 * is what makes a dropped exit code (see
+	 * docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3) diagnosable
+	 * from app logs alone instead of requiring host log spelunking.
+	 *
+	 * One case is not a plain drop: the agent-server's own report arriving after
+	 * the user stopped the session. That stop already settled the row as
+	 * user_stopped (one event, final), but the report is the only source of the
+	 * real exit code and the final usage, so it is written onto the stopped row
+	 * without touching its status or emitting a second event.
+	 */
+	private async handleDroppedRemoteReport(
+		sessionId: string,
+		exitCode: number | null,
+		stoppedByUser: boolean,
+		usageColumns: Record<string, SQL | undefined> | null,
+	): Promise<void> {
+		let existing: typeof sessions.$inferSelect | undefined
+		try {
+			;[existing] = await this.db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+		} catch (err) {
+			logger.warn('Failed to look up session while logging a dropped completion signal', {
+				sessionId,
+				error: String(err),
+			})
+		}
+		logger.warn('Completion signal dropped — session already terminal or not found', {
+			sessionId,
+			droppedExitCode: exitCode,
+			droppedStoppedByUser: stoppedByUser,
+			currentStatus: existing?.status ?? null,
+			currentResult: existing?.result ?? null,
+		})
+
+		if (stoppedByUser || existing?.status !== 'user_stopped') return
+		try {
+			await this.db
+				.update(sessions)
+				.set({
+					result: sql`COALESCE(${sessions.result}, '{}'::jsonb) || ${JSON.stringify({ exit_code: exitCode })}::jsonb`,
+					updatedAt: new Date(),
+					...(usageColumns ?? {}),
+				})
+				.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'user_stopped')))
+			if (usageColumns) evictBillingUsage(existing.workspaceId)
+		} catch (err) {
+			logger.warn('Failed to back-fill exit code and usage onto a stopped remote session', {
+				sessionId,
+				error: String(err),
+			})
+		}
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

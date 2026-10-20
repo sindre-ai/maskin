@@ -76,7 +76,7 @@ struct TVSearch: View {
 		if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 			chips
 			if store.recents.isEmpty {
-				EmptyState(symbol: "mic", title: "Say what you're looking for", message: "Hold the mic on the remote.")
+				EmptyState(symbol: "mic", title: "Say what you're looking for", message: "Press and hold the mic button on your remote and ask. No typing needed.")
 			} else {
 				Text("RECENT").font(.system(size: 24, weight: .semibold, design: .monospaced)).foregroundStyle(MaskinColor.ink4)
 				ForEach(store.recents, id: \.self) { recent in

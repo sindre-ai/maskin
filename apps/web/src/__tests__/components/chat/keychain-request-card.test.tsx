@@ -19,12 +19,10 @@ vi.mock('@tanstack/react-router', async () => {
 const sendMutate = vi.fn()
 let participants: Array<{ actorId: string; actorName: string; actorType: string }> = []
 let integrations: IntegrationResponse[] = []
-let settingsUi = true
 vi.mock('@/hooks/use-conversation', () => ({
 	useConversation: () => ({ data: { participants } }),
 	useSendMessage: () => ({ mutate: sendMutate }),
 }))
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => settingsUi }))
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: integrations }),
 }))
@@ -67,7 +65,6 @@ beforeEach(() => {
 		{ actorId: 'agent-2', actorName: 'Analyst', actorType: 'agent' },
 	]
 	integrations = []
-	settingsUi = true
 	mockChatCapture.mockResolvedValue({
 		integrationId: 'int-1',
 		undoExpiresAt: '2026-10-19T10:05:00.000Z',
@@ -184,18 +181,6 @@ describe('KeychainRequestCard', () => {
 		// The message is visible to everyone in the chat and to the agent: no value in it.
 		expect(content).not.toContain(PASSWORD)
 		expect(content).not.toContain('me@example.test')
-	})
-
-	it('hides the Keychain link and pointer when the settings pages are off', async () => {
-		settingsUi = false
-		const user = userEvent.setup()
-		renderCard()
-		await fillLogin(user)
-
-		await user.click(screen.getByRole('button', { name: 'Save to Keychain' }))
-
-		expect(await screen.findByText(/to the Keychain\./)).toBeInTheDocument()
-		expect(screen.queryByRole('link', { name: 'Manage in Keychain' })).not.toBeInTheDocument()
 	})
 
 	it('does not restart the agent when its idle session could not be stopped, and says so', async () => {

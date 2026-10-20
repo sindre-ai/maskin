@@ -1460,11 +1460,24 @@ export interface LatestMentionDecisionOption {
 	recommended?: boolean
 }
 
+/**
+ * The text an agent proposes to send, shown above the buttons. The feed fills
+ * `body` from the draft object's current description, so it is always present
+ * here; `object_id` says which object it came from.
+ */
+export interface LatestMentionDecisionDraft {
+	object_id?: string
+	label?: string
+	to?: string
+	body?: string
+}
+
 export interface LatestMentionDecision {
 	title: string
 	summary: string
 	ask: string
 	options: LatestMentionDecisionOption[]
+	draft?: LatestMentionDecisionDraft
 }
 
 export interface LatestMention {

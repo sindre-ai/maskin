@@ -152,10 +152,9 @@ export function KeychainAccessRequestCard({
 	}
 
 	return (
-		<div
-			role="group"
+		<fieldset
 			aria-label={`Allow ${request.credential_name}`}
-			className="mt-2 flex flex-col gap-3 rounded-xl border border-brand/40 bg-brand-subtle p-4"
+			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-brand/40 bg-brand-subtle p-4"
 		>
 			<div className="flex items-start gap-2">
 				<Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -205,6 +204,6 @@ export function KeychainAccessRequestCard({
 					Not now
 				</Button>
 			</div>
-		</div>
+		</fieldset>
 	)
 }
