@@ -19,7 +19,7 @@ Stored credentials use envelope encryption. Each credential gets its own random
 DEK is wrapped by one master key (`KEYCHAIN_MASTER_KEY`) that is held in the environment, not in the database.
 Rows written before Keychain have no wrapped DEK and keep decrypting under
 `INTEGRATION_ENCRYPTION_KEY`. Every read goes through `getCredential`, which
-enforces the credential's scope grants and writes a hash-chained row to
+enforces the credential's agent grants (see `docs/reference/agent-access.md`) and writes a hash-chained row to
 `credential_access_log`.
 
 | Variable | Meaning |

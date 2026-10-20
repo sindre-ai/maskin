@@ -113,7 +113,7 @@ export function KeychainRequestCard({
 				sessionId: request.session_id,
 				displayName,
 				fromCard: true,
-				scopeGrants: selectedIds.map((actorId) => ({ kind: 'actor' as const, actorId })),
+				agentIds: selectedIds,
 			}
 			const res = await api.integrations.chatCapture(
 				workspaceId,

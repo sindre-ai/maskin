@@ -59,6 +59,14 @@ vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
 
+// The launch reads the agent's integration access with a query of its own. These tests queue
+// db.select() results by position, so the lookup is stubbed here and covered against real
+// Postgres in integration/agent-access-launch.test.ts.
+vi.mock('../../lib/integrations/agent-access', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/integrations/agent-access')>()),
+	listAgentAccess: vi.fn(async () => []),
+}))
+
 vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
@@ -2445,7 +2453,7 @@ describe('SessionManager', () => {
 				['absent', {}],
 				['true', { expose_to_agent_sessions: true }],
 			])(
-				'still injects both when the switch is %s (existing behaviour)',
+				'still attaches Resend through the gateway, token withheld, when the switch is %s',
 				async (_label, config) => {
 					const integration = buildIntegration({ provider: 'resend', config })
 					const fixtures = buildLaunchFixtures([integration])
@@ -2459,8 +2467,11 @@ describe('SessionManager', () => {
 					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
 						env: Record<string, string>
 					}
-					expect(createArgs.env.RESEND_API_KEY).toBe('re_live_key')
+					// Resend goes through the gateway: the key stays on the server.
+					expect(createArgs.env.RESEND_API_KEY).toBeUndefined()
+					expect(JSON.stringify(createArgs.env)).not.toContain('re_live_key')
 					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
+					expect(createArgs.env.MCP_SERVERS_JSON).toContain('/api/integrations/resend/gateway')
 				},
 			)
 		})
@@ -2546,7 +2557,7 @@ describe('SessionManager', () => {
 					.env
 			}
 
-			it('gives an agent with no reference to a non-auto-injected integration no token for it', async () => {
+			it('attaches a granted integration without the agent referencing it, but gives it no token it does not use', async () => {
 				const env = await launchEnv({
 					provider: 'google-meet',
 					providerConfig: googleMeetProviderConfig,
@@ -2562,8 +2573,8 @@ describe('SessionManager', () => {
 					},
 				})
 				expect(env.GOOGLE_MEET_TOKEN).toBeUndefined()
-				// Not auto-injected, so no server either
-				expect(mcpKeysOf(env)).not.toContain('integration-google-meet')
+				// Granted by default (read), so the server is attached for the agent.
+				expect(mcpKeysOf(env)).toContain('integration-google-meet')
 			})
 
 			it('gives an agent whose own tools config references the token that token', async () => {
@@ -2649,14 +2660,17 @@ describe('SessionManager', () => {
 				expect(mcpKeysOf(env)).toContain('integration-slack')
 			})
 
-			it('keeps token and server for every agent when the auto-injected server needs the token to sign in (PostHog)', async () => {
+			it('serves an auto-injected hosted server through the gateway and keeps its token out of the container (PostHog)', async () => {
 				const env = await launchEnv({
 					provider: 'posthog',
 					providerConfig: posthogProviderConfig,
 					token: 'phx_token_value',
 				})
-				expect(env.POSTHOG_TOKEN).toBe('phx_token_value')
+				// The agent signs in to Maskin; the provider token stays on the server.
+				expect(env.POSTHOG_TOKEN).toBeUndefined()
+				expect(JSON.stringify(env)).not.toContain('phx_token_value')
 				expect(mcpKeysOf(env)).toContain('integration-posthog')
+				expect(env.MCP_SERVERS_JSON).toContain('/api/integrations/posthog/gateway')
 			})
 
 			it('does not put the token in the container for an unreferencing agent but still uses it for the preflight Slack alert', async () => {

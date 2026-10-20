@@ -170,12 +170,18 @@ function CredentialDetailPage() {
 		me?.type === 'human' &&
 		(credential.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
-	const grants = credential.scopeGrants ?? []
-	const everyAgent = grants.some((g) => g.kind === 'workspace')
-	const grantedAgents = agents.filter((a) =>
-		grants.some((g) => g.kind === 'actor' && g.actorId === a.id),
-	)
-	const agentCount = countAgents(grants, agents)
+	const grants = credential.agentGrants ?? []
+	const grantedIds = grants.map((g) => g.actorId)
+	const grantedAgents = agents.filter((a) => grantedIds.includes(a.id))
+	const agentCount = countAgents(grantedIds, agents)
+	// Agents that were allowed in single chats, and not by a grant: they can use it there too.
+	const chatShared = agents
+		.filter((a) => !grantedIds.includes(a.id))
+		.map((a) => ({
+			agent: a,
+			chats: (credential.chatGrants ?? []).filter((g) => g.actorId === a.id).length,
+		}))
+		.filter((x) => x.chats > 0)
 
 	return (
 		<div className="max-w-[880px]">
@@ -284,7 +290,7 @@ function CredentialDetailPage() {
 						</div>
 						<div className="flex justify-between gap-3">
 							<dt className="text-muted-foreground">Scope</dt>
-							<dd className="text-right">{describeScope(credential.scopeGrants, actorName)}</dd>
+							<dd className="text-right">{describeScope(credential.agentGrants, actorName)}</dd>
 						</div>
 					</dl>
 					{assignable && (
@@ -297,6 +303,18 @@ function CredentialDetailPage() {
 									</Button>
 								)}
 							</div>
+							{chatShared.length > 0 && (
+								<div className="mt-1.5">
+									<p className="text-xs text-muted-foreground">Also allowed in single chats</p>
+									<ul className="mt-1 space-y-1 text-sm">
+										{chatShared.map(({ agent, chats }) => (
+											<li key={agent.id} className="truncate">
+												{agent.name} · {chats} {chats === 1 ? 'chat' : 'chats'}
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
 							{agentCount === 0 ? (
 								<p className="mt-1.5 text-xs text-muted-foreground">{NO_AGENT_LINE}</p>
 							) : (
@@ -305,15 +323,11 @@ function CredentialDetailPage() {
 										{agentCountLine(agentCount)}
 									</p>
 									<ul className="mt-1.5 space-y-1 text-sm">
-										{everyAgent ? (
-											<li>All agents in this workspace</li>
-										) : (
-											grantedAgents.map((agent) => (
-												<li key={agent.id} className="truncate">
-													{agent.name}
-												</li>
-											))
-										)}
+										{grantedAgents.map((agent) => (
+											<li key={agent.id} className="truncate">
+												{agent.name}
+											</li>
+										))}
 									</ul>
 								</>
 							)}
@@ -388,7 +402,7 @@ function CredentialDetailPage() {
 					}}
 					credentialName={name}
 					agents={agents.map((a) => ({ id: a.id, name: a.name }))}
-					grants={grants}
+					grantedIds={grantedIds}
 					saving={updateScope.isPending}
 					error={updateScope.isError ? scopeSaveErrorMessage(updateScope.error) : null}
 					onSave={(next) =>

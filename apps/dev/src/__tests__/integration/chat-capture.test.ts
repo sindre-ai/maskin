@@ -29,7 +29,13 @@ import { logger } from '../../lib/logger'
 import { scrubEvent } from '../../lib/sentry-scrub'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
 import type { SessionManager } from '../../services/session-manager'
-import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
+import {
+	grantedActorIds,
+	insertActor,
+	insertConversation,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 import { fakeSessionControl } from './session-control-fake'
 
@@ -139,8 +145,8 @@ describe('POST /api/integrations/chat-capture', () => {
 		expect(row?.credentials).not.toContain(CANARY)
 		expect(row?.credentials).not.toBe(CANARY)
 		expect(row?.dekCiphertext).toBeTruthy()
-		// Default scope: one actor grant for the session driver.
-		expect(row?.scopeGrants).toEqual([{ kind: 'actor', actorId: s.agent.id }])
+		// Default: the session driver holds it.
+		expect(await grantedActorIds(db, row?.id ?? '')).toEqual([s.agent.id])
 		const windowMs = (row?.undoExpiresAt?.getTime() ?? 0) - Date.now()
 		expect(windowMs).toBeGreaterThan(4 * 60_000)
 		expect(windowMs).toBeLessThanOrEqual(5 * 60_000)
@@ -203,29 +209,23 @@ describe('POST /api/integrations/chat-capture', () => {
 		await expect(getCredential(db, s.ws.id, integrationId, ctx(s.human), { kms })).rejects.toThrow()
 	})
 
-	it('honours explicit scope grants', async () => {
+	it('honours explicit agent ids', async () => {
 		const s = await setup()
 		const res = await capture(
 			appFor(s.human),
 			s.ws.id,
-			validBody(s.session.id, { scopeGrants: [{ kind: 'workspace' }] }),
+			validBody(s.session.id, { agentIds: [s.agent.id] }),
 		)
 		const { integrationId } = (await res.json()) as { integrationId: string }
-		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
-		expect(row?.scopeGrants).toEqual([{ kind: 'workspace' }])
+		expect(await grantedActorIds(db, integrationId)).toEqual([s.agent.id])
 	})
 
 	it('treats an explicit empty grant list as unassigned, not as the default', async () => {
 		const s = await setup()
-		const res = await capture(
-			appFor(s.human),
-			s.ws.id,
-			validBody(s.session.id, { scopeGrants: [] }),
-		)
+		const res = await capture(appFor(s.human), s.ws.id, validBody(s.session.id, { agentIds: [] }))
 		expect(res.status).toBe(201)
 		const { integrationId } = (await res.json()) as { integrationId: string }
-		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
-		expect(row?.scopeGrants).toEqual([])
+		expect(await grantedActorIds(db, integrationId)).toEqual([])
 		await expect(
 			getCredential(
 				db,
@@ -242,7 +242,7 @@ describe('POST /api/integrations/chat-capture', () => {
 		const res = await capture(
 			appFor(s.human),
 			s.ws.id,
-			validBody(s.session.id, { scopeGrants: [{ kind: 'actor', actorId: s.agent.id }] }),
+			validBody(s.session.id, { agentIds: [s.agent.id] }),
 		)
 		expect(res.status).toBe(201)
 	})
@@ -283,13 +283,13 @@ describe('POST /api/integrations/chat-capture', () => {
 		}
 	})
 
-	it('rejects a scope grant naming an actor outside the workspace', async () => {
+	it('rejects an agent id outside the workspace', async () => {
 		const s = await setup()
 		const outsider = await insertActor(db)
 		const res = await capture(
 			appFor(s.human),
 			s.ws.id,
-			validBody(s.session.id, { scopeGrants: [{ kind: 'actor', actorId: outsider.id }] }),
+			validBody(s.session.id, { agentIds: [outsider.id] }),
 		)
 		expect(res.status).toBe(400)
 	})

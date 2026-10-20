@@ -201,6 +201,23 @@ export const messageKeychainRequestSchema = z.object({
 	hint: z.string().min(1).max(300).optional(),
 })
 
+/**
+ * An agent's request to use a credential that already exists in the Keychain, shown as a
+ * card with Allow / Not now. Never accepted from a client. Holds no secret: the card only
+ * names the credential, and allowing it grants the agent access on the server.
+ */
+export const messageKeychainAccessRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** The credential being asked for. */
+	integration_id: z.string().uuid(),
+	/** Its name as the person knows it, e.g. "Stripe". */
+	credential_name: z.string().min(1).max(80),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** One line on what the agent needs it for. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -227,6 +244,8 @@ export const messageMetadataSchema = z.object({
 	integration_connect: messageIntegrationConnectSchema.optional(),
 	/** Backend-owned: an agent's request for a credential, shown as a Keychain card. */
 	keychain_request: messageKeychainRequestSchema.optional(),
+	/** Backend-owned: an agent's request to use an existing credential, shown as a card. */
+	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 })
@@ -247,6 +266,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
 		keychain_request: _keychainRequest,
+		keychain_access_request: _keychainAccessRequest,
 		...rest
 	} = metadata
 	return rest as T
@@ -407,6 +427,22 @@ export function formatKeychainRequestAsMarkdown(
 	const named = suggestedName ? ` for **${suggestedName}**` : ''
 	const why = hint ? ` ${hint}` : ''
 	return `I need ${what}${named}.${why} Add it with the Keychain card below, or in Settings → Keychain. It goes straight to your vault, so I never see it.`
+}
+
+/** The `keychain-access-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainAccessCardSchema = z.object({
+	/** The credential's name, as listed by `list_keychain_credentials`. */
+	credential_name: z.string().trim().min(1).max(80),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/** The plain-markdown rendering of an access card, for every reader that isn't the chat UI. */
+export function formatKeychainAccessRequestAsMarkdown(
+	credentialName: string,
+	hint?: string,
+): string {
+	const why = hint ? ` ${hint}` : ''
+	return `I'd like to use **${credentialName}** from your Keychain.${why} Allow it with the card below, or in Settings → Keychain. I never see the secret itself.`
 }
 
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */

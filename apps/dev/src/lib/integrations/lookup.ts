@@ -1,16 +1,12 @@
 import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
-import {
-	INTEGRATION_STATUS_ACTIVE,
-	type Integration,
-	type ScopeGrant,
-	integrations,
-} from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
 import { decryptStoredCredential } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { getKmsProvider } from '../keychain-kms'
+import { hasAnyAccess, resolveAgentAccess } from './agent-access'
 import { insertCredentialAccessLog } from './credential-audit'
 import {
 	CredentialNotFoundError,
@@ -179,6 +175,8 @@ export async function findIntegrationRow(
 export type CredentialReadContext = {
 	requestingActorId: string
 	requestingLoopId?: string | null
+	/** The chat the read happens in: an Allow for this one chat counts. */
+	conversationId?: string | null
 	/**
 	 * For audit. Null when the caller has no session (a human REST call, a route
 	 * that never receives the session header). Never invent one: the audit column
@@ -196,30 +194,9 @@ export interface GetCredentialDeps {
 	kms?: KmsProvider
 }
 
-function isScopeGranted(grants: unknown, ctx: CredentialReadContext): boolean {
-	if (!Array.isArray(grants)) return false
-	return (grants as ScopeGrant[]).some((grant) => {
-		switch (grant?.kind) {
-			case 'workspace':
-				return true
-			case 'actor':
-				return typeof grant.actorId === 'string' && grant.actorId === ctx.requestingActorId
-			case 'loop':
-				return (
-					typeof grant.loopId === 'string' &&
-					!!ctx.requestingLoopId &&
-					grant.loopId === ctx.requestingLoopId
-				)
-			default:
-				// Unknown kind: fail closed.
-				return false
-		}
-	})
-}
-
 /**
  * Every read of a stored credential goes through here. In order: load the row,
- * accept only active or pending_undo, enforce scope_grants against the
+ * accept only active or pending_undo, enforce agent grants against the
  * requesting actor or loop, unwrap the DEK and decrypt, then write the audit row.
  * The value is returned only after the audit row has committed, so a read with
  * no log row cannot reach a caller. A denied scope check writes an events row
@@ -248,7 +225,10 @@ export async function getCredential(
 		throw new CredentialUnavailableError(integrationId, row.status)
 	}
 
-	if (!isScopeGranted(row.scopeGrants, ctx)) {
+	const access = await resolveAgentAccess(db, workspaceId, row.id, ctx.requestingActorId, {
+		conversationId: ctx.conversationId,
+	})
+	if (access === null || !hasAnyAccess(access)) {
 		await recordEvent(db, {
 			workspaceId,
 			actorId: ctx.requestingActorId,

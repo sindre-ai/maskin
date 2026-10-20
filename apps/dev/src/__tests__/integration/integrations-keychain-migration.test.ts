@@ -66,8 +66,10 @@ describe('integrations Keychain columns (0087)', () => {
 		expect(cols.get('provider_mode')?.column_default).toContain('registered')
 		expect(cols.get('provider_mode')?.is_nullable).toBe('NO')
 		expect(cols.get('display_name')?.is_nullable).toBe('YES')
-		expect(cols.get('scope_grants')?.column_default).toContain("'[]'")
-		expect(cols.get('scope_grants')?.is_nullable).toBe('NO')
+		// scope_grants was replaced by agent_grants + default_agent_access in 0095.
+		expect(cols.has('scope_grants')).toBe(false)
+		expect(cols.get('default_agent_access')?.column_default).toContain('read')
+		expect(cols.get('default_agent_access')?.is_nullable).toBe('NO')
 		expect(cols.get('dek_ciphertext')?.is_nullable).toBe('YES')
 		expect(cols.get('source')?.column_default).toContain('admin_ui')
 		expect(cols.get('origin_session_id')?.is_nullable).toBe('YES')
@@ -93,7 +95,7 @@ describe('integrations Keychain columns (0087)', () => {
 		expect(out.provider_mode).toBe('registered')
 		expect(out.source).toBe('admin_ui')
 		expect(out.dek_ciphertext).toBeNull()
-		expect(out.scope_grants).toEqual([])
+		expect(out.default_agent_access).toBe('read')
 		expect(out.origin_session_id).toBeNull()
 		expect(out.undo_expires_at).toBeNull()
 		expect(out.display_name).toBeNull()
@@ -109,11 +111,11 @@ describe('integrations Keychain columns (0087)', () => {
 		).resolves.toBeDefined()
 	})
 
-	it('CHECK: scope_grants must be an array', async () => {
+	it('CHECK: default_agent_access must be read or none', async () => {
 		const { row } = await newIntegration()
 		await expect(
-			sql`INSERT INTO integrations ${sql({ ...row, scope_grants: sql.json({ kind: 'workspace' }) })}`,
-		).rejects.toThrow(/integrations_scope_grants_is_array/)
+			sql`INSERT INTO integrations ${sql({ ...row, default_agent_access: 'write' })}`,
+		).rejects.toThrow(/integrations_default_agent_access_enum/)
 	})
 
 	it('CHECK: source must be one of the four values', async () => {

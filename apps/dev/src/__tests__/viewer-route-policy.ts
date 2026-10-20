@@ -122,6 +122,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
 	['POST', '/api/briefing/spoken', 'Group E, generates a briefing and changes no workspace data'],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
+	[
+		'POST',
+		'/api/account/delete',
+		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
+	],
 	// Group D leftovers: the two routes that are not gated on a human admin or owner.
 	[
 		'POST',
@@ -147,6 +152,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
+	[
+		'POST',
+		'/api/integrations/:provider/gateway',
+		'MCP gateway, forwards tool calls with the provider token',
+	],
+	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
 	['POST', '/api/integrations/linkedin-unipile/mcp', 'MCP endpoint, tools act as the identity'],
 	[
 		'POST',

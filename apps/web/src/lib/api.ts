@@ -370,6 +370,9 @@ export const api = {
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
+		/** What the actor can use: integrations (level, server attached) and saved credentials. */
+		access: (id: string, workspaceId: string) =>
+			request<AgentAccessView>(`/actors/${id}/access`, { workspaceId }),
 		create: (data: CreateActorInput) =>
 			request<ActorWithKey>('/actors', { method: 'POST', body: data }),
 		update: (id: string, data: UpdateActorInput, workspaceId?: string) =>
@@ -528,10 +531,41 @@ export const api = {
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
 				{ workspaceId },
 			),
-		updateScope: (id: string, workspaceId: string, scopeGrants: KeychainScopeGrant[]) =>
-			request<{ id: string; scopeGrants: KeychainScopeGrant[] }>(`/integrations/${id}/scope`, {
+		getGrants: (id: string, workspaceId: string) =>
+			request<IntegrationGrants>(`/integrations/${id}/grants`, { workspaceId }),
+		/** Replaces every explicit grant on an integration in one step. */
+		replaceGrants: (id: string, workspaceId: string, grants: AgentGrant[]) =>
+			request<{ grants: AgentGrant[] }>(`/integrations/${id}/grants`, {
 				method: 'PUT',
-				body: { scopeGrants },
+				body: { grants },
+				workspaceId,
+			}),
+		setGrant: (id: string, workspaceId: string, actorId: string, access: AgentGrantAccess) =>
+			request<AgentGrant>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'PUT',
+				body: { access },
+				workspaceId,
+			}),
+		/** Allow the agent whose session asked in a chat to use a saved credential, and restart it. */
+		allowFromChat: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			scope: 'chat' | 'always' = 'always',
+		) =>
+			request<{ actorId: string; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-from-chat`,
+				{ method: 'POST', body: { sessionId, scope }, workspaceId },
+			),
+		removeGrant: (id: string, workspaceId: string, actorId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
+			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+				method: 'PUT',
+				body: { defaultAgentAccess },
 				workspaceId,
 			}),
 		undo: (id: string, workspaceId: string) =>
@@ -1754,14 +1788,28 @@ export interface IntegrationResponse {
 	providerMode?: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
-	/** Keychain: who may read it. Empty means nobody (fail-closed). */
-	scopeGrants?: KeychainScopeGrant[]
+	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
+	defaultAgentAccess?: 'read' | 'none'
+	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
+	agentGrants?: AgentGrant[]
+	/** Saved credentials shared with an agent for one chat only. */
+	chatGrants?: Array<{ actorId: string; conversationId: string }>
 }
 
-export type KeychainScopeGrant =
-	| { kind: 'actor'; actorId: string }
-	| { kind: 'loop'; loopId: string }
-	| { kind: 'workspace' }
+/** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+export interface AgentGrant {
+	actorId: string
+	access: AgentGrantAccess
+}
+
+export interface IntegrationGrants {
+	integrationId: string
+	mode: 'keychain' | 'standard'
+	defaultAgentAccess: 'read' | 'none'
+	grants: AgentGrant[]
+}
 
 export interface CredentialAuditEntry {
 	id: string
@@ -1786,8 +1834,8 @@ export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' |
 interface ChatCaptureBase {
 	sessionId: string
 	displayName: string
-	/** Omit for the default (the session's agent). [] means unassigned. */
-	scopeGrants?: Array<{ kind: 'actor'; actorId: string } | { kind: 'workspace' }>
+	/** Agents that may use it. Omit for the default (the session's agent). [] means unassigned. */
+	agentIds?: string[]
 	/** The secret was typed into a card an agent asked for, not the composer. */
 	fromCard?: boolean
 }
@@ -2152,6 +2200,40 @@ export interface MessageKeychainRequest {
 	hint?: string
 }
 
+/** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
+/** What an agent can use: the one description every screen and the launch prompt share. */
+export interface AgentAccessView {
+	integrations: Array<{
+		integration_id: string
+		provider: string
+		name: string
+		access: 'none' | 'read' | 'read_write'
+		source: 'grant' | 'default'
+		default_access: 'read' | 'none'
+		server_attached: boolean
+		created_by: string
+	}>
+	credentials: Array<{
+		integration_id: string
+		name: string
+		kind: 'api_key' | 'login'
+		has_access: boolean
+		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
+		scope: 'always' | 'this_chat' | null
+		/** In how many chats it is shared with this agent, apart from any grant. */
+		chat_count: number
+		created_by: string
+	}>
+}
+
+export interface MessageKeychainAccessRequest {
+	session_id: string
+	integration_id: string
+	credential_name: string
+	kind: 'api_key' | 'login'
+	hint?: string
+}
+
 /** Which options the human picked, posted back on their reply message. */
 export interface MessageQuestionAnswer {
 	question_message_id: number
@@ -2187,6 +2269,8 @@ export interface MessageMetadata {
 	integration_connect?: MessageIntegrationConnect
 	/** Backend-owned: an agent's request for a credential, rendered as a Keychain card. */
 	keychain_request?: MessageKeychainRequest
+	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
+	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }

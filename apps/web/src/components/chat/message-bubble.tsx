@@ -18,6 +18,7 @@ import { toast } from 'sonner'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
+import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
@@ -335,6 +336,16 @@ export function MessageBubble({
 						messageCreatedAt={message.createdAt}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_request}
+					/>
+				) : null}
+				{/* An agent's request_keychain_access call: Allow / Not now for a credential that
+				    already exists. Allowing grants the agent access on the server. */}
+				{message.metadata?.keychain_access_request ? (
+					<KeychainAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_access_request}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip

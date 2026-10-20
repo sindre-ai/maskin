@@ -132,7 +132,7 @@ function KeychainPage() {
 											{credential.source === 'chat_capture' && <CapturedViaChatBadge />}
 										</div>
 										<div className="mt-0.5 truncate text-xs text-muted-foreground">
-											{describeScope(credential.scopeGrants, actorName)} ·{' '}
+											{describeScope(credential.agentGrants, actorName)} ·{' '}
 											<RelativeTime date={credential.createdAt} />
 										</div>
 									</div>

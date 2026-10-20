@@ -20,9 +20,17 @@ import { createByoLogin } from '../../lib/integrations/byo-login'
 import { CredentialUndoneError } from '../../lib/integrations/errors'
 import { getCredential } from '../../lib/integrations/lookup'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
+import integrationsGrantsRoutes from '../../routes/integrations-grants'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
 import { SessionManager } from '../../services/session-manager'
-import { buildIntegration, insertActor, insertSession, insertWorkspace } from '../factories'
+import {
+	buildIntegration,
+	grantedActorIds,
+	insertActor,
+	insertAgentGrant,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 import { fakeSessionControl } from './session-control-fake'
 
@@ -62,6 +70,7 @@ function appFor(actorId: string, actorType: 'human' | 'agent' = 'human') {
 		c.json(createApiError('INTERNAL_ERROR', 'Internal server error'), { status: 500 }),
 	)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsGrantsRoutes)
 	return app
 }
 
@@ -72,16 +81,18 @@ function remove(app: ReturnType<typeof appFor>, workspaceId: string, integration
 	})
 }
 
-function putScope(
+function putGrants(
 	app: ReturnType<typeof appFor>,
 	workspaceId: string,
 	integrationId: string,
-	scopeGrants: unknown[],
+	actorIds: string[],
 ) {
-	return app.request(`/api/integrations/${integrationId}/scope`, {
+	return app.request(`/api/integrations/${integrationId}/grants`, {
 		method: 'PUT',
 		headers: { 'content-type': 'application/json', 'x-workspace-id': workspaceId },
-		body: JSON.stringify({ scopeGrants }),
+		body: JSON.stringify({
+			grants: actorIds.map((actorId) => ({ actorId, access: 'read_write' })),
+		}),
 	})
 }
 
@@ -117,10 +128,11 @@ async function setup() {
 		displayName: 'Coolify',
 		rawSecret: KEY,
 	})
-	await db
-		.update(integrations)
-		.set({ scopeGrants: [{ kind: 'actor', actorId: agent.id }] })
-		.where(eq(integrations.id, key.integrationId))
+	await insertAgentGrant(db, {
+		workspaceId: ws.id,
+		integrationId: key.integrationId,
+		actorId: agent.id,
+	})
 	const login = await createByoLogin(db, kms, {
 		workspaceId: ws.id,
 		actorId: human,
@@ -128,10 +140,11 @@ async function setup() {
 		username: 'me@example.test',
 		password: PASSWORD,
 	})
-	await db
-		.update(integrations)
-		.set({ scopeGrants: [{ kind: 'actor', actorId: agent.id }] })
-		.where(eq(integrations.id, login.integrationId))
+	await insertAgentGrant(db, {
+		workspaceId: ws.id,
+		integrationId: login.integrationId,
+		actorId: agent.id,
+	})
 	return { human, ws, agent, member, admin, keyId: key.integrationId, loginId: login.integrationId }
 }
 
@@ -301,7 +314,7 @@ describe('POST /api/integrations/:id/remove (Integration)', () => {
 	})
 })
 
-describe('PUT /api/integrations/:id/scope for a login (Integration)', () => {
+describe('PUT /api/integrations/:id/grants for a login (Integration)', () => {
 	it('lets the person change which agents can use a login, as for an API key', async () => {
 		const s = await setup()
 		const other = await insertActor(db, { type: 'agent', systemPrompt: 'Other' })
@@ -309,12 +322,10 @@ describe('PUT /api/integrations/:id/scope for a login (Integration)', () => {
 			.insert(workspaceMembers)
 			.values({ workspaceId: s.ws.id, actorId: other.id, role: 'member' })
 
-		const res = await putScope(appFor(s.human), s.ws.id, s.loginId, [
-			{ kind: 'actor', actorId: other.id },
-		])
+		const res = await putGrants(appFor(s.human), s.ws.id, s.loginId, [other.id])
 
 		expect(res.status).toBe(200)
-		expect((await rowOf(s.loginId))?.scopeGrants).toEqual([{ kind: 'actor', actorId: other.id }])
+		expect(await grantedActorIds(db, s.loginId)).toEqual([other.id])
 	})
 })
 

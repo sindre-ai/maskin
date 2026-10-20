@@ -2,7 +2,15 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
+import {
+	type AgentGrantAccess,
+	actors,
+	agentChatGrants,
+	agentGrants,
+	integrations,
+	webhookDeliveries,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
@@ -24,7 +32,6 @@ import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { requireCredentials } from '../lib/integrations/credential-column'
-import { scopeGrantsOnInsert, scopeGrantsOnReconnect } from '../lib/integrations/default-grants'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -162,6 +169,35 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		.from(integrations)
 		.where(eq(integrations.workspaceId, workspaceId))
 
+	const grantRows = await db
+		.select({
+			integrationId: agentGrants.integrationId,
+			actorId: agentGrants.actorId,
+			access: agentGrants.access,
+		})
+		.from(agentGrants)
+		.where(eq(agentGrants.workspaceId, workspaceId))
+	const chatRows = await db
+		.select({
+			integrationId: agentChatGrants.integrationId,
+			actorId: agentChatGrants.actorId,
+			conversationId: agentChatGrants.conversationId,
+		})
+		.from(agentChatGrants)
+		.where(eq(agentChatGrants.workspaceId, workspaceId))
+	const chatsByIntegration = new Map<string, { actorId: string; conversationId: string }[]>()
+	for (const g of chatRows) {
+		const list = chatsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, conversationId: g.conversationId })
+		chatsByIntegration.set(g.integrationId, list)
+	}
+	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
+	for (const g of grantRows) {
+		const list = grantsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, access: g.access })
+		grantsByIntegration.set(g.integrationId, list)
+	}
+
 	// Never expose credentials
 	const safe = results.map((r) => {
 		// dekCiphertext is the wrapped data key: ciphertext, but it has no
@@ -174,7 +210,8 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		// undecryptable blob (almost always an encryption-key rotation) or an
 		// inactive row must never take the whole integrations list down.
 		let missingScopes: string[] = []
-		if (rest.status === 'active' && credentials) {
+		// OAuth scopes only mean something for a registered provider; a saved key or login has none.
+		if (rest.status === 'active' && credentials && rest.providerMode === 'registered') {
 			try {
 				const provider = getProvider(rest.provider)
 				if (provider) {
@@ -191,7 +228,13 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			}
 		}
 
-		return { ...rest, missingScopes, needsReconnect: missingScopes.length > 0 }
+		return {
+			...rest,
+			missingScopes,
+			needsReconnect: missingScopes.length > 0,
+			agentGrants: grantsByIntegration.get(rest.id) ?? [],
+			chatGrants: chatsByIntegration.get(rest.id) ?? [],
+		}
 	})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
@@ -1332,7 +1375,6 @@ app.openapi(connectRoute, (async (c) => {
 			status: 'pending',
 			externalId: nonce,
 			credentials: '',
-			scopeGrants: scopeGrantsOnInsert(providerName),
 			createdBy: actorId,
 		})
 	} catch (err) {
@@ -1909,7 +1951,6 @@ app.openapi(callbackRoute, (async (c) => {
 				status: 'active',
 				credentials: encryptedCredentials,
 				config: activeConfig,
-				...scopeGrantsOnReconnect(providerName),
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, existingSameInstall.id))
