@@ -7,9 +7,19 @@ import SwiftUI
 struct TVFlows: View {
 	let environment: AppEnvironment
 	let loops: LoopsStore?
+	let forYou: ForYouRuntime?
 	@Binding var chromeHidden: Bool
 	@Binding var openFlow: String?
+	/// A decision on For you that a NEEDS YOU row asked to open.
+	@Binding var openDecision: String?
 	@State private var path: [String] = []
+
+	/// The For you decision behind a flow post (matched by its event), else the first thing waiting.
+	private func decide(_ postID: Int) {
+		let needs = (forYou?.store.entries ?? []).filter { $0.section == .needs && $0.record == nil }
+		let match = needs.first { $0.card.mention?.eventId == postID } ?? needs.first
+		openDecision = match?.id
+	}
 
 	private var flows: [LoopSummary] { (loops?.loops ?? []).filter { $0.status != .draft } }
 	private let columns = [GridItem(.flexible(), spacing: 40), GridItem(.flexible(), spacing: 40)]
@@ -44,7 +54,7 @@ struct TVFlows: View {
 			}
 			.ignoresSafeArea(edges: .horizontal)
 			.navigationDestination(for: String.self) { id in
-				if let loops, let flow = loops.loop(id: id) { TVFlowDetail(environment: environment, flow: flow, directory: loops.directory) }
+				if let loops, let flow = loops.loop(id: id) { TVFlowDetail(environment: environment, flow: flow, directory: loops.directory, onDecide: decide) }
 			}
 		}
 		.onChange(of: path) { _, path in chromeHidden = !path.isEmpty }
@@ -100,7 +110,7 @@ private struct TVFlowCard: View {
 				Text(flow.pill.label).font(.system(size: 24)).foregroundStyle(MaskinColor.ink4)
 				if flow.waitingCount > 0 {
 					Text("NEEDS YOU")
-						.font(.system(size: 22, weight: .semibold, design: .monospaced))
+						.font(.system(size: 24, weight: .semibold, design: .monospaced))
 						.padding(.horizontal, 16).padding(.vertical, 6)
 						.background(MaskinSurface.inverse, in: Capsule())
 						.foregroundStyle(MaskinSurface.onInverse)
@@ -111,7 +121,7 @@ private struct TVFlowCard: View {
 				}
 				if let target = flow.targets?.first {
 					Text("\(target.label) \(Int(target.actual)) of \(Int(target.target))")
-						.font(.system(size: 22, weight: .semibold, design: .monospaced))
+						.font(.system(size: 24, weight: .semibold, design: .monospaced))
 						.foregroundStyle(MaskinColor.ink4).lineLimit(1)
 				}
 			}
@@ -127,6 +137,7 @@ private struct TVFlowCard: View {
 /// goes through For you; changing a flow stays on the iPhone and iPad.
 struct TVFlowDetail: View {
 	@State private var store: LoopDetailStore
+	let onDecide: (Int) -> Void
 	@State private var tab: Tab = .outcome
 	@Environment(\.dismiss) private var dismiss
 
@@ -135,7 +146,8 @@ struct TVFlowDetail: View {
 		var id: String { rawValue }
 	}
 
-	init(environment: AppEnvironment, flow: LoopSummary, directory: ActorDirectory) {
+	init(environment: AppEnvironment, flow: LoopSummary, directory: ActorDirectory, onDecide: @escaping (Int) -> Void = { _ in }) {
+		self.onDecide = onDecide
 		let credentials = environment.auth.credentialsProvider
 		_store = State(
 			initialValue: LoopDetailStore(
@@ -230,7 +242,8 @@ struct TVFlowDetail: View {
 			Text("Nothing needs you on this flow right now.").font(.system(size: 30)).foregroundStyle(MaskinColor.ink4)
 		} else {
 			ForEach(asks.prefix(5)) { post in
-				row(title: post.text, trailing: "Decide on iPhone or Watch")
+				Button { onDecide(post.id) } label: { row(title: post.text, trailing: "Decide ›") }
+					.buttonStyle(TVFocusStyle(scale: 1.02, cornerRadius: 28))
 			}
 		}
 		if !store.steps.isEmpty {

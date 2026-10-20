@@ -135,17 +135,21 @@ public enum SignUpError: Error, Sendable, Equatable {
 public protocol Authenticating: Sendable {
 	/// `POST /api/auth/login`.
 	func login(email: String, password: String) async throws -> LoginResult
-	/// `POST /api/actors` (human signup). `idempotencyKey` is stamped on the request so a retry
+	/// `POST /api/actors` (human signup), then the signup-context knowledge object the web sign-up
+	/// also writes (best effort: the account stands without it). `idempotencyKey` is stamped on the request so a retry
 	/// after a lost response is recognised instead of 409ing on the account it just made.
-	func signUp(name: String, email: String, password: String, idempotencyKey: String) async throws
-		-> SignUpResult
+	func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult
 }
 
 extension Authenticating {
 	/// Conformers that only sign in (test doubles, the offline preview) needn't implement it.
-	public func signUp(name: String, email: String, password: String, idempotencyKey: String)
-		async throws -> SignUpResult
-	{
+	public func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult {
 		throw SignUpError.network("Sign-up isn't available here.")
 	}
 }
@@ -276,7 +280,9 @@ public final class AuthSession {
 	/// as `signIn`; on any failure nothing is stored. Marks the actor's first-use moment pending
 	/// BEFORE the session goes live, so the screen that follows can't be skipped by a quick quit.
 	/// A `workspaceProvisioningFailed` result is still a success: the account exists.
-	public func signUp(name: String, email: String, password: String) async {
+	public func signUp(
+		name: String, organization: String, role: String, email: String, password: String
+	) async {
 		guard !isSigningUp, !isSigningIn else { return }
 		isSigningUp = true
 		lastError = nil
@@ -286,7 +292,8 @@ public final class AuthSession {
 		defer { isSigningUp = false }
 		do {
 			let result = try await authenticator.signUp(
-				name: name, email: email, password: password, idempotencyKey: IdempotencyKey.make())
+				name: name, organization: organization, role: role, email: email, password: password,
+				idempotencyKey: IdempotencyKey.make())
 			let login = result.login
 			let stored = StoredSession(
 				apiKey: login.apiKey, actorId: login.actorId, name: login.name.isEmpty ? name : login.name,

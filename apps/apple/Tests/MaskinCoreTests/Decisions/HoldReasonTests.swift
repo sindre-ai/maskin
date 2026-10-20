@@ -14,8 +14,8 @@ struct HoldReasonTests {
 	@Test func emptyReasonIsSkipped() {
 		#expect(HoldReason.normalized("  \n") == nil)
 		#expect(HoldReason.normalized(" Later ") == "Later")
-		#expect(HoldReason.note(for: nil) == "Held")
-		#expect(HoldReason.note(for: "I need the numbers first") == "Held \u{00B7} I need the numbers first")
+		#expect(HoldReason.note(for: nil) == "Held \u{00B7} your reason: none given")
+		#expect(HoldReason.note(for: "I need the numbers first") == "Held \u{00B7} your reason: I need the numbers first")
 	}
 
 	@Test func subtitleNamesWhoWaits() {

@@ -11,6 +11,10 @@ protocol LiveVoiceDriving: AnyObject {
 	var isMuted: Bool { get }
 	/// Why the conversation could not start or had to stop.
 	var failure: String? { get }
+	/// A passing note for the status line (e.g. a pause), if the driver has one.
+	var notice: String? { get }
+	/// The agent has paused and it is the person's turn to speak.
+	var isYourTurn: Bool { get }
 
 	/// True when the driver keeps its own transcript, so captions come from `agentWords` rather than
 	/// from messages arriving in the chat.
@@ -27,4 +31,10 @@ protocol LiveVoiceDriving: AnyObject {
 extension LiveVoiceController: LiveVoiceDriving {
 	var capturesOwnTranscript: Bool { false }
 	var agentWords: String? { nil }
+}
+
+extension RealtimeVoiceCall {
+	/// The Realtime call talks over the person and has no pauses to hand back.
+	var notice: String? { nil }
+	var isYourTurn: Bool { false }
 }
