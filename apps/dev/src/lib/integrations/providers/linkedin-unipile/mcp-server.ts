@@ -476,8 +476,11 @@ export function registerLinkedInMcpInstance(
 export function createLinkedInMcpServer(
 	ctx: LinkedInMcpContext,
 	instances: LinkedInMcpInstanceConfig[],
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
 ): McpServer {
 	const server = new McpServer({ name: 'maskin-linkedin', version: '0.2.0' })
+	onServer?.(server)
 	for (const cfg of instances) {
 		registerLinkedInMcpInstance(server, cfg, ctx)
 	}

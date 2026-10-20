@@ -2,7 +2,7 @@ import MaskinDesign
 import SwiftUI
 
 /// A draft preview, read-only, clamped to four lines. "Read all" opens the rest in place; there is
-/// no editing here (editing a draft means Ask). "Read all" appears only when the text is cut.
+/// no editing here (changing a draft means Discuss). "Read all" appears only when the text is cut.
 struct ReadAllClamp<Content: View>: View {
 	static var lineLimit: Int { 4 }
 

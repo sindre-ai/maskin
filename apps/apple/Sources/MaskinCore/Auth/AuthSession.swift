@@ -135,17 +135,21 @@ public enum SignUpError: Error, Sendable, Equatable {
 public protocol Authenticating: Sendable {
 	/// `POST /api/auth/login`.
 	func login(email: String, password: String) async throws -> LoginResult
-	/// `POST /api/actors` (human signup). `idempotencyKey` is stamped on the request so a retry
+	/// `POST /api/actors` (human signup), then the signup-context knowledge object the web sign-up
+	/// also writes (best effort: the account stands without it). `idempotencyKey` is stamped on the request so a retry
 	/// after a lost response is recognised instead of 409ing on the account it just made.
-	func signUp(name: String, email: String, password: String, idempotencyKey: String) async throws
-		-> SignUpResult
+	func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult
 }
 
 extension Authenticating {
 	/// Conformers that only sign in (test doubles, the offline preview) needn't implement it.
-	public func signUp(name: String, email: String, password: String, idempotencyKey: String)
-		async throws -> SignUpResult
-	{
+	public func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult {
 		throw SignUpError.network("Sign-up isn't available here.")
 	}
 }
@@ -276,7 +280,9 @@ public final class AuthSession {
 	/// as `signIn`; on any failure nothing is stored. Marks the actor's first-use moment pending
 	/// BEFORE the session goes live, so the screen that follows can't be skipped by a quick quit.
 	/// A `workspaceProvisioningFailed` result is still a success: the account exists.
-	public func signUp(name: String, email: String, password: String) async {
+	public func signUp(
+		name: String, organization: String, role: String, email: String, password: String
+	) async {
 		guard !isSigningUp, !isSigningIn else { return }
 		isSigningUp = true
 		lastError = nil
@@ -286,7 +292,8 @@ public final class AuthSession {
 		defer { isSigningUp = false }
 		do {
 			let result = try await authenticator.signUp(
-				name: name, email: email, password: password, idempotencyKey: IdempotencyKey.make())
+				name: name, organization: organization, role: role, email: email, password: password,
+				idempotencyKey: IdempotencyKey.make())
 			let login = result.login
 			let stored = StoredSession(
 				apiKey: login.apiKey, actorId: login.actorId, name: login.name.isEmpty ? name : login.name,
@@ -320,6 +327,14 @@ public final class AuthSession {
 		state = .signedIn(s)
 	}
 
+	/// The selected workspace was deleted and none is left: keep the sign-in, forget the selection.
+	public func clearWorkspace() {
+		guard var s = session, s.workspaceId != nil else { return }
+		s.workspaceId = nil
+		try? persist(s)
+		state = .signedIn(s)
+	}
+
 	/// End the session. The in-memory state clears at once (requests stop carrying the key), but
 	/// if the Keychain delete fails the owed delete is remembered and finished by the next
 	/// `restore()`, so the session can't resurrect at launch.
@@ -328,6 +343,9 @@ public final class AuthSession {
 		notifySessionEnded()
 		clearStored()
 		state = .signedOut
+		// A deliberate sign-out is not an expiry. Deleting the account kills the key before the
+		// push-token unregister runs; its 401 must not leave "session ended" on the login screen.
+		sessionExpired = false
 	}
 
 	/// Call right BEFORE asking the server to rotate this actor's key. Until `adoptRotatedKey`

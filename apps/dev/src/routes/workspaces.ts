@@ -9,10 +9,13 @@ import {
 	WORKSPACE_UPDATE_DIFF_FIELDS,
 	computeChanges,
 	createWorkspaceSchema,
+	deleteWorkspaceSchema,
 	transferBillingOwnershipSchema,
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
+	workspaceDeletionPreviewSchema,
 } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
@@ -26,6 +29,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { loadMembershipFacts } from '../lib/membership-facts'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -50,6 +54,13 @@ import {
 	seatCapErrorBody,
 	seatCapForPlan,
 } from '../lib/workspace-capacity'
+import { workspaceDeletionPreview } from '../lib/workspace-deletion'
+import {
+	evictPurgedWorkspace,
+	purgeWorkspace,
+	purgeWorkspaceStorage,
+	stopPurgedSessions,
+} from '../lib/workspace-purge'
 import { workspaceForCaller } from '../lib/workspace-redaction'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
@@ -64,6 +75,7 @@ type Env = {
 		actorType: string
 		agentStorage: AgentStorageManager
 		sessionManager: SessionManager
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -765,6 +777,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 const addMemberRoute = createRoute({
 	method: 'post',
 	path: '/{id}/members',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Add member to workspace',
 	request: {
@@ -956,6 +969,7 @@ app.openapi(listMembersRoute, (async (c) => {
 const transferOwnershipRoute = createRoute({
 	method: 'post',
 	path: '/{id}/transfer-ownership',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
 	summary: 'Transfer billing ownership to another existing human member',
 	request: {
@@ -997,6 +1011,10 @@ app.openapi(transferOwnershipRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
 	const { new_owner_actor_id: newOwnerActorId } = c.req.valid('json')
+
+	// The billing owner check below ignores the role, so a viewer who holds billing ownership
+	// would pass it. A non-member falls through to the existing 403/404 answers.
+	await isWorkspaceWriter(db, callerId, workspaceId)
 
 	if (newOwnerActorId === callerId) {
 		return c.json(createApiError('BAD_REQUEST', 'Already the billing owner'), 400)
@@ -1108,15 +1126,17 @@ const updateMemberParamsSchema = idParamSchema.extend({ actorId: z.string().uuid
 // POST /{id}/transfer-ownership, which locks the actor row and enforces the
 // plan's ownership cap; accepting 'owner' here would be a second, unguarded
 // path to the same state and would let a workspace exceed that cap.
+// 'viewer' makes the member read-only: authMiddleware reads the role on every request.
 const updateMemberBodySchema = z.object({
-	role: z.enum(['admin', 'member']),
+	role: z.enum(['admin', 'member', 'viewer']),
 })
 
 const updateMemberRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/members/{actorId}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspaces'],
-	summary: "Change a workspace member's role (admin/member; owner via transfer-ownership)",
+	summary: "Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)",
 	request: {
 		params: updateMemberParamsSchema,
 		body: {
@@ -1209,7 +1229,7 @@ app.openapi(updateMemberRoute, (async (c) => {
 			.limit(1)
 		if (!locked) return { kind: 'not_found' } as const
 
-		// `role` is admin|member here, so reaching this branch is always a demotion.
+		// `role` is never owner here, so reaching this branch is always a demotion.
 		// The workspace-row lock above already serializes concurrent demotions, so
 		// this count is evaluated after any competing demotion has committed and
 		// reflects the reduced owner set rather than a stale one.
@@ -1384,5 +1404,139 @@ app.openapi(removeMemberRoute, (async (c) => {
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)
+
+// GET /api/workspaces/:id/deletion-preview
+const workspaceDeletionPreviewRoute = createRoute({
+	method: 'get',
+	path: '/{id}/deletion-preview',
+	tags: ['workspaces'],
+	summary: 'What deleting this workspace would do, and what stops it',
+	request: { params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Whether the caller can delete the workspace, and what blocks them',
+			content: { 'application/json': { schema: workspaceDeletionPreviewSchema } },
+		},
+		404: {
+			description: 'Workspace not found, or the caller is not a member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(workspaceDeletionPreviewRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id: workspaceId } = c.req.valid('param')
+
+	// By-ID route: the workspace comes from the path, so membership is checked here.
+	const [facts] = await loadMembershipFacts(db, actorId, workspaceId)
+	if (!facts) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	return c.json(workspaceDeletionPreview(actorId, c.get('actorType'), facts), 200)
+}) as RouteHandler<typeof workspaceDeletionPreviewRoute, Env>)
+
+// POST /api/workspaces/:id/delete
+const deleteWorkspaceRoute = createRoute({
+	method: 'post',
+	path: '/{id}/delete',
+	'x-viewer-policy': 'writer',
+	tags: ['workspaces'],
+	summary: 'Permanently delete a workspace and everything in it',
+	description:
+		'Hard-deletes the workspace: objects, sessions, conversations, files, triggers, integrations, events and memberships, plus its stored files. Cannot be undone. Only the billing owner (a person) may; the workspace name must be typed back; refused while a paid plan is live.',
+	request: {
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: deleteWorkspaceSchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Workspace deleted',
+			content: { 'application/json': { schema: z.object({ deleted: z.literal(true) }) } },
+		},
+		400: {
+			description: 'confirm_name does not match the workspace name',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not the billing owner, or is not a person',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found, or the caller is not a member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'A paid plan is still live; cancel it first',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(deleteWorkspaceRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const actorType = c.get('actorType')
+	const { id: workspaceId } = c.req.valid('param')
+	const { confirm_name: confirmName } = c.req.valid('json')
+
+	// isWorkspaceWriter throws a 403 for a viewer: the billing-owner check below ignores the role,
+	// so a viewer who holds billing ownership would otherwise pass it (same as transfer-ownership).
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const outcome = await db.transaction(async (tx) => {
+		// Lock first: the checks below and the purge must see one consistent workspace, and a
+		// concurrent transfer, plan change or member add waits for this to finish.
+		const [locked] = await tx
+			.select({ id: workspaces.id })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!locked) return { kind: 'not_found' as const }
+
+		const [facts] = await loadMembershipFacts(tx as unknown as Database, actorId, workspaceId)
+		if (!facts) return { kind: 'not_found' as const }
+
+		const preview = workspaceDeletionPreview(actorId, actorType, facts)
+		const blocker = preview.blockers[0]
+		if (blocker?.code === 'not_billing_owner') return { kind: 'forbidden' as const }
+		if (confirmName !== facts.workspaceName) return { kind: 'name_mismatch' as const }
+		if (blocker) return { kind: 'blocked' as const, message: blocker.message }
+
+		const result = await purgeWorkspace(tx, workspaceId)
+		return { kind: 'deleted' as const, result, name: facts.workspaceName }
+	})
+
+	switch (outcome.kind) {
+		case 'not_found':
+			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		case 'forbidden':
+			return c.json(
+				createApiError('FORBIDDEN', 'Only the billing owner can delete this workspace'),
+				403,
+			)
+		case 'name_mismatch':
+			return c.json(
+				createApiError('BAD_REQUEST', 'confirm_name must match the workspace name exactly'),
+				400,
+			)
+		case 'blocked':
+			return c.json(createApiError('CONFLICT', outcome.message), 409)
+		case 'deleted':
+			// The events table went with the workspace, so the audit record is the log line.
+			logger.info('workspace: deleted', {
+				workspaceId,
+				actorId,
+				name: outcome.name,
+				members: outcome.result.memberActorIds.length,
+			})
+			evictPurgedWorkspace(workspaceId, outcome.result)
+			await stopPurgedSessions(c.get('sessionManager'), outcome.result)
+			await purgeWorkspaceStorage(c.get('storageProvider'), workspaceId, outcome.result)
+			return c.json({ deleted: true as const }, 200)
+	}
+}) as RouteHandler<typeof deleteWorkspaceRoute, Env>)
 
 export default app

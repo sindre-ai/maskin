@@ -16,6 +16,7 @@ const {
 	mockUseConversation,
 	mockUseConversationMessages,
 	mockUseLoop,
+	mockUseActors,
 } = vi.hoisted(() => ({
 	mockNavigate: vi.fn(),
 	mockToastSuccess: vi.fn(),
@@ -25,6 +26,7 @@ const {
 	mockUseConversation: vi.fn(),
 	mockUseConversationMessages: vi.fn(),
 	mockUseLoop: vi.fn(),
+	mockUseActors: vi.fn(),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -66,6 +68,19 @@ vi.mock('@/hooks/use-conversation', async () => {
 		useConversationMessages: (...args: unknown[]) => mockUseConversationMessages(...args),
 	}
 })
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: (...args: unknown[]) => mockUseActors(...args),
+}))
+
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: () => true,
+}))
+
+// The dialog only matters once it opens; the header suite just needs the trigger.
+vi.mock('@/components/agents/voice-call-dialog', () => ({
+	VoiceCallDialog: () => null,
+}))
 
 vi.mock('@/hooks/use-loops', () => ({
 	useLoop: (...args: unknown[]) => mockUseLoop(...args),
@@ -181,6 +196,8 @@ describe('ThreadHeader — v4 actions', () => {
 		mockUseConversationMessages.mockReset()
 		mockUseLoop.mockReset()
 		mockUseLoop.mockReturnValue({ data: undefined })
+		mockUseActors.mockReset()
+		mockUseActors.mockReturnValue({ data: [] })
 		mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
 	})
 
@@ -362,5 +379,39 @@ describe('ThreadHeader — v4 actions', () => {
 				),
 			)
 		})
+	})
+})
+
+describe('ThreadHeader — Call button', () => {
+	const agentParticipant = (actorId: string, actorName: string) => ({
+		actorId,
+		actorName,
+		actorType: 'agent' as const,
+		joinedAt: null,
+		addedBy: null,
+	})
+
+	beforeEach(() => {
+		mockUseLoop.mockReturnValue({ data: undefined })
+		mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
+	})
+
+	it('mounts when the thread has exactly one agent participant', () => {
+		mockUseConversation.mockReturnValue({ data: buildConversation() })
+		renderHeader()
+		expect(screen.getByRole('button', { name: 'Call Billing Agent' })).toBeInTheDocument()
+	})
+
+	it('does not mount with two agents (multi-agent calls are v2)', () => {
+		mockUseConversation.mockReturnValue({
+			data: buildConversation({
+				participants: [
+					...buildConversation().participants,
+					agentParticipant('agent-2', 'Sales Coach'),
+				],
+			}),
+		})
+		renderHeader()
+		expect(screen.queryByRole('button', { name: /^Call / })).not.toBeInTheDocument()
 	})
 })

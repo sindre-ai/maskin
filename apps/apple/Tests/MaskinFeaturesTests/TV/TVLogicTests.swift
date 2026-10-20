@@ -56,3 +56,16 @@ struct TVDecisionAgeTests {
 		#expect(TVDecisionAge.heldTag(since: now.addingTimeInterval(-50 * 3600), now: now) == "held 2d")
 	}
 }
+
+@Suite("TVCardOptions")
+struct TVCardOptionsTests {
+	@Test func recommendedLeadsAndRestCollapse() {
+		let s = TVCardOptions.summary(labels: ["A", "B", "C"], recommended: "B")
+		#expect(s.primary == "B" && s.more == 2)
+	}
+	@Test func fallsBackToFirst() {
+		let s = TVCardOptions.summary(labels: ["A", "B"], recommended: nil)
+		#expect(s.primary == "A" && s.more == 1)
+		#expect(TVCardOptions.summary(labels: [], recommended: nil).more == 0)
+	}
+}

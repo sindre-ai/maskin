@@ -26,6 +26,45 @@ struct BriefSequenceTests {
 		#expect(sequence.startIndex == 3)
 	}
 
+	@Test("prefetch looks ahead at pages only, never past the end")
+	func prefetch() {
+		let cards = [card("brief", loop: nil), card("a1", loop: "A"), card("a2", loop: "A"), card("a3", loop: "A")]
+		let sequence = BriefSequence(slides: cards, startIndex: 0)
+		#expect(sequence.pagesToPrefetch(after: 0).map(\.id) == ["a1", "a2"])
+		#expect(sequence.pagesToPrefetch(after: 2).map(\.id) == ["a3"])
+		#expect(sequence.pagesToPrefetch(after: 3).isEmpty)
+		#expect(sequence.pagesToPrefetch(after: 0, ahead: 0).isEmpty)
+	}
+
+	@Test("a cut headline becomes the whole first sentence and the body drops it")
+	func briefingText() {
+		let first = "Vaerksted has ten bets in flight, led by Fix the confirmed MCP bugs and add basic annotations (batch 1), which is active with zero of six tasks done."
+		let script = first + " Also moving: voice. Recently closed: articles."
+		let cut = String(first.prefix(139)) + "\u{2026}"
+		let text = BriefSequence.briefingText(headline: cut, script: script)
+		#expect(text.title == first)
+		#expect(text.body == "Also moving: voice. Recently closed: articles.")
+	}
+
+	@Test("tell-me-more quotes the whole first sentence, not the cut headline")
+	func tellMeMoreFullSentence() {
+		let first = String(repeating: "word ", count: 40).trimmingCharacters(in: .whitespaces) + "."
+		let cut = String(first.prefix(139)) + "\u{2026}"
+		let card = StoryCard(
+			id: "b", unit: "Daily briefing", headline: "Good morning", updatedAt: nil,
+			content: .briefing(headline: cut, script: first + " More."))
+		let text = BriefSequence.tellMeMore(about: card)
+		#expect(text.contains(first))
+		#expect(!text.contains("\u{2026}"))
+	}
+
+	@Test("a short headline that opens the script is not repeated, and one that doesn't is left alone")
+	func briefingTextOther() {
+		#expect(BriefSequence.briefingText(headline: "All quiet.", script: "All quiet. Nothing to do.") == ("All quiet.", "Nothing to do."))
+		#expect(BriefSequence.briefingText(headline: "All quiet.", script: "All quiet.") == ("All quiet.", ""))
+		#expect(BriefSequence.briefingText(headline: "Title", script: "Something else.") == ("Title", "Something else."))
+	}
+
 	@Test("a card missing from the row is still opened")
 	func missingOpening() {
 		let extra = card("x", loop: "X")
@@ -88,6 +127,54 @@ struct BriefPlaybackTests {
 		#expect(p.isFinished && !p.isPlaying)
 		p.previous()
 		#expect(!p.isFinished && p.index == 1)
+	}
+
+	@Test("a deck steps through its cards on tap, then moves to the next slide")
+	func deckStepsThenAdvances() {
+		var p = playback()
+		p.setSteps(3)
+		#expect(p.step == 0)
+		p.next()
+		#expect(p.index == 0 && p.step == 1)
+		p.next()
+		#expect(p.index == 0 && p.step == 2)
+		p.next()
+		#expect(p.index == 1 && p.step == 0 && p.steps == 1)
+	}
+
+	@Test("back inside a deck goes to the card before, not the previous slide")
+	func deckStepsBack() {
+		var p = playback()
+		p.next()
+		p.setSteps(4)
+		p.next(); p.next()
+		#expect(p.index == 1 && p.step == 2)
+		p.previous()
+		#expect(p.index == 1 && p.step == 1)
+		p.previous()
+		p.previous()
+		#expect(p.index == 0 && p.steps == 1)
+	}
+
+	@Test("time turns a deck's cards, then moves on")
+	func deckAdvancesOnTime() {
+		var p = playback()
+		p.setSteps(2)
+		#expect(p.currentDuration == 2 * BriefPlayback.secondsPerStep)
+		p.tick(BriefPlayback.secondsPerStep)
+		#expect(p.index == 0 && p.step == 1)
+		p.tick(BriefPlayback.secondsPerStep)
+		#expect(p.index == 1 && p.step == 0)
+	}
+
+	@Test("the last card of the last deck finishes the viewer")
+	func deckEndsViewer() {
+		var p = BriefPlayback(durations: [10], autoAdvances: true)
+		p.setSteps(2)
+		p.next()
+		#expect(!p.isFinished && p.step == 1)
+		p.next()
+		#expect(p.isFinished)
 	}
 
 	@Test("back on the first slide restarts it")

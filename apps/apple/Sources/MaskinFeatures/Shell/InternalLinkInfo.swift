@@ -15,6 +15,8 @@ extension InternalLinkDirectory {
 				kindLabel: found.map { Self.label(forType: $0.type) } ?? "Object", title: found?.title)
 		case .chat:
 			return MarkdownLinkInfo(symbol: "bubble.left", kindLabel: "Chat")
+		case .file:
+			return MarkdownLinkInfo(symbol: "doc", kindLabel: "File")
 		case .notifications:
 			return MarkdownLinkInfo(symbol: "sparkles", kindLabel: "For you")
 		case .agents:

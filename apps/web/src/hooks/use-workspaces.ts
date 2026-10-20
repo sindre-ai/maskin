@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type UpdateWorkspaceInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -64,6 +64,37 @@ export function useRemoveWorkspaceMember(workspaceId: string) {
 		mutationFn: (actorId: string) => api.workspaces.members.remove(workspaceId, actorId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.members(workspaceId) })
+		},
+	})
+}
+
+export function useWorkspaceDeletionPreview(workspaceId: string, enabled: boolean) {
+	return useQuery({
+		queryKey: queryKeys.workspaces.deletionPreview(workspaceId),
+		queryFn: () => api.workspaces.deletionPreview(workspaceId),
+		enabled,
+		// A stale "can delete" answer is worse than a refetch: the plan or ownership may have changed.
+		gcTime: 0,
+	})
+}
+
+/** Drops everything cached for a workspace that no longer exists, then the list so the index route
+ * re-resolves which workspace (or the picker) to land on. */
+export function removeDeletedWorkspaceQueries(queryClient: QueryClient, workspaceId: string) {
+	queryClient.removeQueries({ queryKey: queryKeys.workspaces.detail(workspaceId) })
+	queryClient.removeQueries({ queryKey: queryKeys.workspaces.deletionPreview(workspaceId) })
+	queryClient.removeQueries({ queryKey: queryKeys.workspaces.all(), exact: true })
+}
+
+/** `deferCleanup` keeps the caches alive so the caller can keep showing UI on top of the page that
+ * is still mounted (the "delete your account too?" prompt) and call
+ * `removeDeletedWorkspaceQueries` itself when it is done. */
+export function useDeleteWorkspace(workspaceId: string, options?: { deferCleanup?: boolean }) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (confirmName: string) => api.workspaces.delete(workspaceId, confirmName),
+		onSuccess: () => {
+			if (!options?.deferCleanup) removeDeletedWorkspaceQueries(queryClient, workspaceId)
 		},
 	})
 }

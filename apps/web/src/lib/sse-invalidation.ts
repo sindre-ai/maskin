@@ -13,7 +13,11 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 // Session events that can move the credit balance or end a run. Billing usage
 // only needs a refetch on these; routine session_updated / session_started
 // traffic does not change it.
-const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
+const BILLING_INVALIDATING_ACTIONS = new Set([
+	'session_credit_debited',
+	'session_budget_stopped',
+	'session_stopped',
+])
 
 // Trailing windows for the refetches a burst of session events would otherwise
 // multiply. Agents PATCH current_activity on every step and a scheduled trigger
@@ -129,6 +133,8 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, {
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
+		// A reply on a thread can settle a curated For You item.
+		invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})
@@ -263,8 +269,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		}
+		case 'integration':
+			// A grant, a default, a connect or a disconnect: the integration list, the Keychain page
+			// and every agent's access are all under this key, so they refresh together.
+			invalidate(queryClient, { queryKey: queryKeys.integrations.all(workspaceId) })
+			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 			break
 		case 'actor':
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })

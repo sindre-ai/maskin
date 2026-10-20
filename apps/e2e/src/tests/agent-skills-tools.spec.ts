@@ -1,9 +1,9 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-test.describe('Agent detail — Skills and Tools sections', () => {
+test.describe('Agent detail — Skills and Access sections', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`renders both sections with counts, names, origins, scopes and their edit controls @ ${vp.label}`, async ({
+		test(`renders both sections, with Maskin locked on @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -34,25 +34,6 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 				expect(skillRes.ok).toBe(true)
 			}
 
-			// Seed two MCP servers so the Tools section has both glyphs and both scopes.
-			await account.api.updateActor(agent.id, {
-				tools: {
-					mcpServers: {
-						linear: {
-							type: 'http',
-							url: 'https://mcp.linear.app/mcp',
-							headers: {},
-						},
-						github: {
-							type: 'stdio',
-							command: 'npx',
-							args: ['-y', '@modelcontextprotocol/server-github'],
-							env: {},
-						},
-					},
-				},
-			})
-
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
 			// Skills section — labelled region, count, both origin groups and the seeded name.
@@ -72,35 +53,26 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 			// below depend on.
 			await expect(skills.getByRole('button', { name: 'Manage' })).toHaveCount(0)
 
-			// Tools section — labelled region, count, each tool's name and its scope.
-			const tools = page.getByRole('region', { name: 'Tools' })
+			// Access — the Maskin MCP is on every agent and cannot be switched.
+			const tools = page.getByRole('region', { name: 'Access' })
 			await expect(tools).toBeVisible()
-			await expect(tools.getByLabel('2 tools attached')).toBeVisible()
-			// Same `exact` reason as the origin labels above: each server's name is a
-			// substring of the transport line rendered directly beneath it
-			// ("linear" ⊂ the URL, "github" ⊂ the npx command).
-			await expect(tools.getByText('linear', { exact: true })).toBeVisible()
-			await expect(tools.getByText('github', { exact: true })).toBeVisible()
-			await expect(tools.getByText('https://mcp.linear.app/mcp')).toBeVisible()
-			await expect(tools.getByText('npx -y @modelcontextprotocol/server-github')).toBeVisible()
-			await expect(tools.getByRole('button', { name: 'Manage' })).toHaveCount(0)
-
-			// The per-row and add controls are reachable without a mode switch
-			// (mockup 2470–2488) — and reachable on touch, not hover-revealed.
-			await expect(tools.getByRole('button', { name: /Add Server/i })).toBeVisible()
-			await expect(tools.getByRole('button', { name: /Import \.mcp\.json/i })).toBeVisible()
-			await expect(tools.getByRole('button', { name: 'Delete server' }).first()).toBeVisible()
+			const maskin = tools.getByRole('list', { name: 'Tools' })
+			await expect(maskin.getByText('Maskin', { exact: true })).toBeVisible()
+			await expect(maskin.getByText('Read & write')).toBeVisible()
+			await expect(maskin.getByRole('switch')).toHaveCount(0)
+			// The old per-agent server editor is gone: servers are managed under Integrations.
+			await expect(tools.getByRole('button', { name: /Add Server/i })).toHaveCount(0)
 
 			// Reload preserves the surface — proves this isn't a mount-only render.
 			await page.reload()
 			await expect(page.getByRole('region', { name: 'Skills' })).toBeVisible()
-			await expect(page.getByRole('region', { name: 'Tools' })).toBeVisible()
+			await expect(page.getByRole('region', { name: 'Access' })).toBeVisible()
 
 			// Both light and dark schemes render both sections.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
 				await expect(page.getByRole('region', { name: 'Skills' })).toBeVisible()
-				await expect(page.getByRole('region', { name: 'Tools' })).toBeVisible()
+				await expect(page.getByRole('region', { name: 'Access' })).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 		})

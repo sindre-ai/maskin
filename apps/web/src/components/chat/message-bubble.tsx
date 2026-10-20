@@ -1,3 +1,4 @@
+import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -18,10 +19,13 @@ import { toast } from 'sonner'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
+import { KeychainAccessRequestCard } from './keychain-access-request-card'
+import { KeychainRequestCard } from './keychain-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
 import { useThreadsPane } from './threads-context'
+import { VoiceMessageMetaTag } from './voice-call-boundary'
 
 function copyMessage(content: string) {
 	void navigator.clipboard?.writeText(content).then(
@@ -102,6 +106,7 @@ export function MessageBubble({
 	const mentions = message.metadata?.mentions ?? []
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
+	const isVoice = message.metadata?.source === 'voice'
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -220,6 +225,7 @@ export function MessageBubble({
 						format="clock"
 						className="text-[10px] text-muted-foreground"
 					/>
+					{isVoice ? <VoiceMessageMetaTag /> : null}
 					{canCopy && !editing ? (
 						<button
 							type="button"
@@ -285,6 +291,7 @@ export function MessageBubble({
 						format="clock"
 						className="shrink-0 text-[10px] text-muted-foreground"
 					/>
+					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
 				{fileList ? <div className="mt-1.5">{fileList}</div> : null}
@@ -298,6 +305,14 @@ export function MessageBubble({
 						<MarkdownContent content={message.content} size="sm" renderVisuals />
 					</div>
 				) : null}
+				{/* What the objects this message links to say, so a draft or a page can be
+				    read without leaving the chat. */}
+				<LinkedObjectPreviews
+					workspaceId={workspaceId}
+					content={message.content}
+					conversationId={message.conversationId}
+					agentId={message.actorId}
+				/>
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
 				    message's own content already renders the questions as markdown
 				    above, so this adds the affordance rather than the information —
@@ -319,6 +334,27 @@ export function MessageBubble({
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
 						provider={message.metadata.integration_connect.provider}
+					/>
+				) : null}
+				{/* An agent's request_keychain_credential call, surfaced as a Keychain card.
+				    The person types the credential into the card; it never reaches the agent. */}
+				{message.metadata?.keychain_request ? (
+					<KeychainRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_request}
+					/>
+				) : null}
+				{/* An agent's request_keychain_access call: Allow / Not now for a credential that
+				    already exists. Allowing grants the agent access on the server. */}
+				{message.metadata?.keychain_access_request ? (
+					<KeychainAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_access_request}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip

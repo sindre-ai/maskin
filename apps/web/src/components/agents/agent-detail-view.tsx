@@ -1,3 +1,4 @@
+import { AgentAccessSection } from '@/components/agents/agent-access-section'
 import { AgentComposer } from '@/components/agents/agent-composer'
 import { AgentDetailHeader } from '@/components/agents/agent-detail-header'
 import { AgentInstructionsSection } from '@/components/agents/agent-instructions-section'
@@ -6,7 +7,6 @@ import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
 import { AgentRunPauseButton } from '@/components/agents/agent-run-pause-button'
 import { AgentSessionsSection } from '@/components/agents/agent-sessions-section'
 import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
-import { AgentToolsSection } from '@/components/agents/agent-tools-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
@@ -123,7 +123,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			/>
 			{/* Order is what the agent *is*, then what it did, then how it is
 			    configured: identity → usage → sessions → loops → instructions →
-			    skills → tools (mockup 2442–2490). */}
+			    skills → tools and access (mockup 2442–2490). */}
 			<div className="mx-auto flex max-w-3xl flex-col gap-6">
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
@@ -131,7 +131,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentLoopsSection agent={agent} />
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
-				<AgentToolsSection agent={agent} />
+				<AgentAccessSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

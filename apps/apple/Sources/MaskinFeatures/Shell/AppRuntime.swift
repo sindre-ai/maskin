@@ -124,6 +124,21 @@ public final class AppRuntime {
 		newConversationRequested = true
 	}
 
+	/// A chat with one agent started from its page. `ChatsScreen` takes it and resets it to nil:
+	/// a new conversation with the agent (the composer sheet), or straight into a live call.
+	public struct AgentChatRequest: Equatable, Identifiable, Sendable {
+		public let id = UUID()
+		public let agent: ChatParticipant
+		public let live: Bool
+	}
+	public var agentChatRequest: AgentChatRequest?
+
+	public func startChat(with agent: ChatParticipant, live: Bool = false) {
+		presentation = nil
+		selectedTab = .chats
+		agentChatRequest = AgentChatRequest(agent: agent, live: live)
+	}
+
 	public func buildInChat(_ text: String) {
 		presentation = nil
 		selectedTab = .chats
@@ -351,6 +366,8 @@ public final class AppRuntime {
 			presentation = nil
 			selectedTab = .chats
 			requestedConversationId = id
+		case .file(_, let id):
+			openFile(id)
 		case .notifications:
 			// The old inbox link: its replacement is the For You tab.
 			presentation = nil
@@ -420,6 +437,8 @@ public final class AppRuntime {
 		ForYouRuntime.deletePersistedOutbox(actorId: actorId, directory: forYouDirectory)
 		// Queued chat messages belong to this account and must never replay as another.
 		ChatsRuntime.signOut(actorId: actorId)
+		// Shares parked by the share extension live in the App Group container; same rule.
+		ShareQueue.shared()?.removeAll()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
