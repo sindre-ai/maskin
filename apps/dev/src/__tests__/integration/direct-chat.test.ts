@@ -1,4 +1,4 @@
-import { conversationParticipants, conversations, events, messages } from '@maskin/db/schema'
+import { events, conversationParticipants, conversations, messages } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { insertConversationMessage } from '../../services/conversation-messages'
 import { findDirectChat, findOrCreateDirectChat } from '../../services/direct-chat'
