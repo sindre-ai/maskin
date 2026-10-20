@@ -144,6 +144,11 @@ struct MessageRow: View {
 	var onRetrySend: () -> Void = {}
 	/// Swipe right (and the menu's Reply) start a reply; nil when there is nothing to quote.
 	var onReply: (() -> Void)?
+	/// The thread under this message, when it has replies; the pill under the bubble opens it.
+	var threadSummary: ThreadSummary?
+	var onOpenThread: () -> Void = {}
+	/// Tap on an emoji chip under the bubble (add or take back).
+	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	var onSelectVersion: (Int) -> Void = { _ in }
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
@@ -170,6 +175,7 @@ struct MessageRow: View {
 	private func perform(_ title: String) {
 		switch title {
 		case "Reply": actions.onReply?()
+		case "Reply in thread": actions.onThread?()
 		case "Copy": actions.onCopy?()
 		case "Pin", "Unpin": actions.onPin?()
 		case "Edit": actions.onEdit?()
@@ -244,6 +250,8 @@ struct MessageRow: View {
 			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
+			ReactionChips(reactions: message.reactions, isOwn: true, onToggle: onToggleReaction)
+			if let threadSummary { ThreadPill(summary: threadSummary, isOwn: true, onOpen: onOpenThread) }
 			if mentionChips.isEmpty {
 				MentionLine(names: untaggedNames, isOwn: true)
 			} else {
@@ -294,6 +302,8 @@ struct MessageRow: View {
 			}
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: false, actions: actions)
+			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
+			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
 			if !message.questions.isEmpty {
 				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
 			}

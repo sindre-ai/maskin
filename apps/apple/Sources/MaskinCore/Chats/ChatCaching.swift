@@ -6,7 +6,7 @@ import Foundation
 /// per actor and workspace by `SnapshotCache`, wiped by `DiskCache.clearAll()` on sign-out.
 enum ChatCaching {
 	/// Bump when any cached type below changes shape: a mismatch discards the entry.
-	static let version = 1
+	static let version = 2
 	static let threadMessageLimit = 50
 	static let listLimit = 50
 
@@ -41,6 +41,11 @@ enum ChatCaching {
 		var isError: Bool
 		/// Absent in caches written before handoff rows existed; they decode as none.
 		var spawnedSessions: [SpawnedSession]?
+		/// Absent in caches written before threads existed; they decode as a top-level message.
+		var threadRootID: Int?
+		var alsoInChannel: Bool?
+		var thread: ThreadSummary?
+		var reactions: [MessageReaction]?
 
 		init?(_ message: ChatMessage) {
 			guard let id = message.serverID else { return nil }
@@ -55,6 +60,10 @@ enum ChatCaching {
 			editedAt = message.editedAt
 			isError = message.isErrorReply
 			spawnedSessions = message.spawnedSessions.isEmpty ? nil : message.spawnedSessions
+			threadRootID = message.threadRootID
+			alsoInChannel = message.alsoInChannel ? true : nil
+			thread = message.thread
+			reactions = message.reactions.isEmpty ? nil : message.reactions
 			metadata = Self.sanitize(message.metadata)
 		}
 
@@ -69,7 +78,8 @@ enum ChatCaching {
 			return .confirmed(
 				serverID: serverID, conversationID: conversationID, actorID: actorID, actorName: actorName,
 				author: author, kind: kind, content: content, createdAt: createdAt, editedAt: editedAt,
-				metadata: meta, spawnedSessions: spawnedSessions ?? [])
+				metadata: meta, spawnedSessions: spawnedSessions ?? [], threadRootID: threadRootID,
+				alsoInChannel: alsoInChannel ?? false, thread: thread, reactions: reactions ?? [])
 		}
 
 		private static func sanitize(_ metadata: JSONValue?) -> JSONValue? {
