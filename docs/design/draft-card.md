@@ -61,6 +61,46 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 7. **A revision supersedes.** When the agent redrafts, it posts a new card; the old
    card should read Superseded and lock. (Not built yet.)
 
+## Related bets
+
+Read before changing the storage model or the editor.
+
+- **Rich Markdown editor across Maskin** (bet 666e3c4a). Chat and comment composers
+  stay on a plain textarea, and the CPO decided drafts go out as plain text, so this
+  card does **not** use the rich editor. Email formatting is an open question in the
+  For You bet; if it is ever rich, it applies to the email body only.
+  *Risk, untested:* the draft lives in the task's `content`, and task bodies open in
+  the TipTap editor once its flag is on. Plain text with line breaks or markdown-like
+  characters could be rewritten by a round trip, changing the text that is sent.
+  Check before enabling both.
+- **Humans fix a LinkedIn post or email draft on the For You card** (bet be4ce70f,
+  at signal, tech spec CTO-approved 2026-10-19, flag `foryou-draft-edit`). Same user
+  need, **different storage model**: that spec writes the edit as a server-stamped
+  `draft_final` on the reply and says the card never writes to the content object, so
+  one writer owns the body. This card writes the edit to a task. They have to be
+  reconciled before either ships; see Open decision.
+  Also from that spec: email waits for slice 2 and has no stored subject; LinkedIn
+  messages and replies are already gated by the send approval card, so editing them
+  here would ask for approval twice; a Sending option needs one confirm tap; go-live
+  is gated on PostHog product events flowing again; scheduled after the Slack send
+  line (about 2026-11-10), behind the file editor build.
+- **Sends wait for a person who can see the real recipient** (bet 5b25707d). Approving
+  here asks the agent to send through its normal tools, so that gate still applies to
+  the send itself.
+
+## Open decision: who owns the draft
+
+A. **Task-backed (this PR stack).** The task holds the text; chat and For you are
+   views of it. Gives drafts a structured home, which the For You bet says they lack.
+   Two writers on `content` (human edits, agent revisions), mitigated by the agent
+   posting a new card instead of editing.
+B. **`draft_final` on the reply (For You spec).** One writer. Needs the card, route
+   and tool reworked, and the chat card would read a decision block, not a task.
+
+Leaning A for chat with the For You card pointing at the same task, which means the
+For You spec is amended by its Architect and CTO. Not decided. The PRs are held as
+drafts until it is.
+
 ## Built
 
 **Slice 1 (PR #2224)**
@@ -68,8 +108,8 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
   `readDraftTaskState`, `draftTaskStateToMetadata`, `formatDraftAsMarkdown`;
   `draft` is stripped from client metadata.
 - `apps/web/src/components/chat/draft-card.tsx`: the compact card, wired into
-  `message-bubble.tsx`. Plain `Textarea`; swap in the rich-markdown-editor's
-  notification variant once that bet lands.
+  `message-bubble.tsx`. A plain `Textarea`, on purpose: drafts go out as plain text
+  (see Related bets).
 
 **Slice 3: approval wakes the agent**
 - `DraftCard` posts the approval message after the task update succeeds.
