@@ -9,6 +9,10 @@ const chatCaptureMock = vi.hoisted(() => vi.fn())
 const undoMock = vi.hoisted(() => vi.fn())
 const trackEventMock = vi.hoisted(() => vi.fn())
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 vi.mock('@/hooks/use-feature-flag', () => ({
 	useFeatureFlag: () => false,
 }))
