@@ -1992,6 +1992,10 @@ const draftTransitionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Only a person can approve a draft',
+		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'The draft is no longer in the state the card saw',
@@ -2004,6 +2008,21 @@ app.openapi(draftTransitionRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const transition = c.req.valid('json')
+
+	// Approval is a person's yes. This route accepts any workspace writer, so without this an
+	// agent could approve its own draft, and anything that acts on "approved" (an agent sending
+	// the email) would be acting on its own permission.
+	if (transition.action === 'approve' && c.get('actorType') !== 'human') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only a person can approve a draft.',
+				undefined,
+				'Show the draft on a card with post_draft and wait for the person to approve it in the chat.',
+			),
+			403,
+		)
+	}
 
 	const [existing] = await db
 		.select({ workspaceId: objects.workspaceId })

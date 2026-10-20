@@ -67,7 +67,8 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
    actual text. The two channels must say the same thing.
 3. **Degrade to the markdown.** If the task is missing, or has no draft state, the
    card renders nothing and the quoted text in the message still reads.
-4. **Approve records a yes, then says so in the chat.** It saves the approved text
+4. **Approve records a yes, then says so in the chat.** Only a person can approve:
+   the route refuses an agent with a 403, so "approved" always means a human agreed. It saves the approved text
    and `draft_state: approved` on the task, and only once that is saved posts a
    message in the conversation mentioning the drafting agent ("Approved the email to
    Mette. Send it exactly as saved in task ..."). The agent receives that as its next
