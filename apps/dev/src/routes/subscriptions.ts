@@ -152,6 +152,53 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 	}
 }
 
+/** Longest draft body the card is sent. The schema caps a stored body at the same length. */
+const DRAFT_BODY_MAX = 20_000
+
+/**
+ * Fills `decision.draft.body` from the draft object's CURRENT description, so the
+ * card shows what the object says now, not what it said when the comment was
+ * posted. Objects the feed already loaded for its cards are reused; the rest
+ * come in one keyed query, scoped to the workspace so a draft cannot point at a
+ * foreign object. A draft whose object is gone or empty falls back to a stored
+ * `body`, and with neither it is dropped rather than sent as an empty box.
+ */
+async function fillDraftBodies(
+	db: Database,
+	workspaceId: string,
+	mentions: LatestMention[],
+	loaded: Map<string, typeof objects.$inferSelect>,
+): Promise<void> {
+	const drafts = mentions.flatMap((m) => (m.decision?.draft ? [m.decision.draft] : []))
+	const missing = [
+		...new Set(
+			drafts.flatMap((d) => (d.object_id && !loaded.has(d.object_id) ? [d.object_id] : [])),
+		),
+	]
+	const fetched = new Map<string, string | null>()
+	if (missing.length > 0) {
+		const rows = await db
+			.select({ id: objects.id, content: objects.content })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, missing)))
+		for (const row of rows) fetched.set(row.id, row.content)
+	}
+
+	for (const mention of mentions) {
+		const draft = mention.decision?.draft
+		if (!mention.decision || !draft) continue
+		const live = draft.object_id
+			? (loaded.get(draft.object_id)?.content ?? fetched.get(draft.object_id) ?? null)
+			: null
+		const body = (live?.trim() ? live : draft.body)?.slice(0, DRAFT_BODY_MAX)
+		if (!body) {
+			mention.decision.draft = undefined
+			continue
+		}
+		mention.decision.draft = { ...draft, label: draft.label ?? 'Draft', body }
+	}
+}
+
 const unreadResponseSchema = z.object({
 	items: z.array(unreadItemSchema),
 })
@@ -526,6 +573,10 @@ app.openapi(listUnreadRoute, (async (c) => {
 		for (const e of fetched) mentionsByEventId.set(Number(e.id), e)
 	}
 
+	const mentions = new Map<number, LatestMention>()
+	for (const [eventId, event] of mentionsByEventId) mentions.set(eventId, toLatestMention(event))
+	await fillDraftBodies(db, workspaceId, [...mentions.values()], objectsById)
+
 	const items = rows.map((r) => {
 		const obj = r.entityType === 'object' ? objectsById.get(r.entityId) : undefined
 		const mentionEvent =
@@ -540,7 +591,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
 			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
-			...(mentionEvent ? { latest_mention: toLatestMention(mentionEvent) } : {}),
+			...(mentionEvent ? { latest_mention: mentions.get(Number(mentionEvent.id)) } : {}),
 		}
 	})
 
