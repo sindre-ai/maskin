@@ -7,7 +7,7 @@ import Testing
 @testable import MaskinAPI
 @testable import MaskinCore
 
-/// Answers the unread-feed request with a fixed body, so the test sees exactly what the card is built from.
+/// Answers the For You list request with a fixed body, so the test sees exactly what the card is built from.
 private final class FeedTransport: ClientTransport, @unchecked Sendable {
 	let json: String
 	init(_ json: String) { self.json = json }
@@ -28,8 +28,9 @@ struct DecisionDraftMappingTests {
 		let draftField = draft.map { #","draft":\#($0)"# } ?? ""
 		return """
 			{"items":[{
-			  "entity_type":"object","entity_id":"task-1","unread_count":1,"mentioning_unread_count":1,
-			  "max_unread_attention":3,"latest_event_id":42,"latest_activity_at":"2026-10-20T10:00:00.000Z",
+			  "notification_id":"11111111-1111-4111-8111-111111111111","rank":1,
+			  "headline":"Send the note to Hans?","rationale":null,"created_at":"2026-10-20T10:00:00.000Z",
+			  "entity_type":"object","entity_id":"task-1","session_id":null,
 			  "latest_mention":{
 			    "event_id":42,"actor_id":null,"created_at":"2026-10-20T10:00:00.000Z",
 			    "content":"Approve the note to Hans.","attention":3,
@@ -98,5 +99,34 @@ struct DecisionDraftMappingTests {
 
 		#expect(flagged.options.first?.destructive == true)
 		#expect(plain.options.first?.destructive == false)
+	}
+}
+
+@Suite("Chief of Staff list on the For You feed")
+struct CuratedListMappingTests {
+	private func item(_ id: String?, headline: String) -> String {
+		let entity = id.map { #""entity_type":"object","entity_id":"\#($0)""# }
+			?? #""entity_type":null,"entity_id":null"#
+		return """
+			{"notification_id":"11111111-1111-4111-8111-111111111111","rank":1,"headline":"\(headline)",
+			 "rationale":null,"created_at":"2026-10-20T10:00:00.000Z",\(entity),"session_id":null}
+			"""
+	}
+
+	private func cards(_ items: [String]) async throws -> [ForYouCard] {
+		let client = Client(
+			serverURL: URL(string: "http://localhost:3000")!,
+			transport: FeedTransport(#"{"items":[\#(items.joined(separator: ","))]}"#))
+		return try await APIForYouBackend(client: client, workspaceId: { "ws-1" })
+			.fetchFeed(workspaceId: "ws-1")
+	}
+
+	@Test("keeps the server's order as the rank and skips items with nothing to act on")
+	func ranksByPosition() async throws {
+		let result = try await cards([
+			item("b", headline: "Second"), item(nil, headline: "No object"), item("a", headline: "Third"),
+		])
+		#expect(result.map(\.id) == ["b", "a"])
+		#expect(result.map(\.rank) == [0, 2])
 	}
 }

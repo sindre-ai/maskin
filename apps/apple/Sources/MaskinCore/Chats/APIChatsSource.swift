@@ -188,6 +188,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				actorName: row.actorName, author: row.actorType == "agent" ? .agent : .human,
 				kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
 				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata))
+		case .badRequest:
+			throw ChatsHTTPError(status: 400, message: "The message was rejected.")
 		case .notFound:
 			throw ChatsHTTPError(status: 404, message: "This conversation no longer exists.")
 		case .undocumented(let status, _):
