@@ -1104,7 +1104,7 @@ export const tools = {
 		}),
 	},
 	create_comment: {
-		description: `One way to communicate with humans, alongside chat. A comment is attached to an object (bet, task, insight), so it stays with that object as a visible record. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see about that object. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it makes a comment clearer or shorter.\n\nWhen you need a human to make a call rather than just read something, put that human in \`mentions\` and fill in \`decision\` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the \`decision\` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.\n\nThread defaulting: when this session was dispatched from a comment (any triggering comment on this or another object), your reply is threaded inside that triggering thread automatically — you do not need to set \`parent_event_id\`. Pass \`parent_event_id\` explicitly only when you want to reply under a DIFFERENT comment than the one that spawned you. Set \`no_thread: true\` on the rare occasion you deliberately want a fresh top-level comment (e.g. opening a new topic on a bet) rather than a reply inside the current thread.`,
+		description: `One way to communicate with humans, alongside chat. A comment is attached to an object (bet, task, insight), so it stays with that object as a visible record. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see about that object. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it makes a comment clearer or shorter.\n\nWhen you need a human to make a call rather than just read something, put that human in \`mentions\` and fill in \`decision\` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the \`decision\` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.\n\nThread defaulting: when this session was dispatched from a comment (any triggering comment on this or another object), your reply is threaded inside that triggering thread automatically — you do not need to set \`parent_event_id\`. Pass \`parent_event_id\` explicitly only when you want to reply under a DIFFERENT comment than the one that spawned you. Set \`no_thread: true\` on the rare occasion you deliberately want a fresh top-level comment (e.g. opening a new topic on a bet) rather than a reply inside the current thread.\n\nWho gets woken: a comment wakes an agent only if you put that agent in \`mentions\`. A comment from an agent with no mentions wakes nobody, so when you hand work to another agent or need a reply, mention them; a reply with no mentions is read only by whoever opens the object. Humans you mention are notified.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1120,7 +1120,7 @@ export const tools = {
 	// ─── Conversations ───────────────────────────────────────
 	get_conversation: {
 		description:
-			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room.",
+			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room. Everyone listed sees every message, so there is no need to ask permission before addressing a human participant; to make an agent participant respond, @mention it with its actorId via `metadata.mentions` of post_conversation_message. This tool is read-only.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1138,12 +1138,19 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
 			content: z.string().min(1).max(MESSAGE_MAX_LENGTH),
 			metadata: messageMetadataSchema.optional(),
+			mention_names: z
+				.array(z.string().min(1).max(200))
+				.max(20)
+				.optional()
+				.describe(
+					'Display names of conversation participants to @mention, as get_conversation lists them (for example "Strategist"). Resolved server-side to actor IDs and merged into `metadata.mentions`, so you do not have to copy a UUID. Names that match nobody, or more than one participant, are returned in `unresolved_mentions` and are not mentioned.',
+				),
 		}),
 	},
 

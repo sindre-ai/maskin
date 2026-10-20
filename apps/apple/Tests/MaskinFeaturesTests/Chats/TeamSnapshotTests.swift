@@ -208,7 +208,7 @@ struct TeamSnapshotTests {
 		}
 	}
 
-	@Test("the New conversation sheet renders with recipients, suggestions and starters", arguments: [false, true])
+	@Test("the New conversation sheet renders with recipients and suggestions", arguments: [false, true])
 	func newConversation(dark: Bool) async throws {
 		let api = SnapshotListAPI(actors: [
 			ChatActor(participant: chief, summary: "Runs the daily briefing. Escalates blockers.", isSystem: true),
@@ -240,7 +240,6 @@ struct TeamSnapshotTests {
 				VStack(spacing: MaskinSpace.s9) {
 					Host(store: store, draft: picked, query: "", highlighted: "chief")
 					Host(store: store, draft: NewConversationDraft(), query: "research")
-					StarterChips { _ in }.padding(.horizontal, MaskinSpace.s9)
 				},
 				width: width, dark: dark, name: "new-conversation")
 		}

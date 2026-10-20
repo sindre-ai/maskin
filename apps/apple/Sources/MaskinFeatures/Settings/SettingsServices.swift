@@ -77,7 +77,13 @@ struct SettingsServices {
 	}
 
 	func integrationsStore() -> IntegrationsStore {
-		IntegrationsStore(api: source ?? NoSettingsSource(), currentRole: role)
+		#if os(iOS) || os(macOS)
+			let webAuth: (any WebAuthenticating)? = SystemWebAuthenticator()
+		#else
+			let webAuth: (any WebAuthenticating)? = nil  // connecting stays on the web
+		#endif
+		return IntegrationsStore(
+			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
 	}
 
 	func apiKeyStore() -> APIKeyStore {
@@ -131,6 +137,15 @@ struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integrations
 	func providers() async throws -> [IntegrationProvider] { throw failure }
 	func connected() async throws -> [ConnectedIntegration] { throw failure }
 	func disconnect(id: String, idempotencyKey: String) async throws { throw failure }
+	func startConnect(provider: String, idempotencyKey: String) async throws -> IntegrationConnectStart {
+		throw failure
+	}
+	func pendingInstallations(integrationId: String) async throws -> [GitHubInstallationChoice] {
+		throw failure
+	}
+	func selectInstallation(integrationId: String, installationId: String, idempotencyKey: String)
+		async throws
+	{ throw failure }
 	func regenerate(actorId: String) async throws -> SecretValue {
 		throw failure
 	}

@@ -11,12 +11,181 @@
 		}
 	],
 	"components": {
-		"schemas": {},
+		"schemas": {
+			"CreateVoiceSessionResponse": {
+				"type": "object",
+				"properties": {
+					"voice_session_id": {
+						"type": "string",
+						"format": "uuid"
+					}
+				},
+				"required": [
+					"voice_session_id"
+				]
+			},
+			"VoiceSessionRateLimited": {
+				"type": "object",
+				"properties": {
+					"error": {
+						"type": "object",
+						"properties": {
+							"code": {
+								"type": "string",
+								"enum": [
+									"RATE_LIMITED"
+								]
+							},
+							"message": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"code",
+							"message"
+						]
+					},
+					"retry_after_seconds": {
+						"type": "number"
+					}
+				},
+				"required": [
+					"error",
+					"retry_after_seconds"
+				]
+			},
+			"CreateVoiceSessionBody": {
+				"type": "object",
+				"properties": {
+					"agent_actor_id": {
+						"type": "string",
+						"format": "uuid",
+						"description": "Actor id of the agent to call. Must be an agent that is a workspace member."
+					}
+				},
+				"required": [
+					"agent_actor_id"
+				]
+			},
+			"VoiceSessionOfferResponse": {
+				"type": "object",
+				"properties": {
+					"sdp": {
+						"type": "string",
+						"description": "The SDP answer to set as the remote description."
+					},
+					"tools_available": {
+						"type": "boolean",
+						"description": "False when the server could not attach its tool connection to the call. The browser then answers every tool call with an \"unavailable\" result so the agent says so."
+					},
+					"persist_transcripts": {
+						"type": "boolean"
+					}
+				},
+				"required": [
+					"sdp",
+					"tools_available",
+					"persist_transcripts"
+				]
+			},
+			"VoiceSessionOfferBody": {
+				"type": "object",
+				"properties": {
+					"sdp": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 100000,
+						"description": "The browser’s WebRTC SDP offer."
+					}
+				},
+				"required": [
+					"sdp"
+				]
+			},
+			"HangupVoiceSessionResponse": {
+				"type": "object",
+				"properties": {
+					"voice_session_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"status": {
+						"type": "string"
+					},
+					"ended_reason": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"ended_at": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"duration_ms": {
+						"type": "number"
+					},
+					"total_cost_usd": {
+						"type": [
+							"number",
+							"null"
+						]
+					},
+					"conversation_id": {
+						"type": [
+							"string",
+							"null"
+						],
+						"format": "uuid"
+					}
+				},
+				"required": [
+					"voice_session_id",
+					"status",
+					"ended_reason",
+					"ended_at",
+					"duration_ms",
+					"total_cost_usd",
+					"conversation_id"
+				]
+			},
+			"HangupVoiceSessionBody": {
+				"type": "object",
+				"properties": {
+					"reason": {
+						"type": "string",
+						"enum": [
+							"user_hangup",
+							"network_error"
+						],
+						"description": "Why the browser is ending the call. user_hangup for End call / Esc / close; network_error when the one ICE restart did not recover the connection."
+					},
+					"input_audio_seconds": {
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 86400,
+						"description": "Seconds of microphone audio the client sent. Clamped to the call length."
+					},
+					"output_audio_seconds": {
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 86400,
+						"description": "Seconds of agent audio the client received. Clamped to the call length."
+					}
+				},
+				"required": [
+					"reason"
+				]
+			}
+		},
 		"parameters": {}
 	},
 	"paths": {
 		"/api/objects": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -2374,6 +2543,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -2651,6 +2821,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -2747,6 +2918,7 @@
 		},
 		"/api/objects/{id}/verification": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -3126,6 +3298,7 @@
 		},
 		"/api/objects/{id}/undo-write": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -3563,6 +3736,7 @@
 		},
 		"/api/objects/migrate-type": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -3772,6 +3946,7 @@
 		},
 		"/api/objects/bulk-update": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Objects"
 				],
@@ -4771,6 +4946,9 @@
 											],
 											"format": "uuid"
 										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
 										"skills": {
 											"type": "array",
 											"items": {
@@ -5323,6 +5501,9 @@
 											"role": {
 												"type": "string"
 											},
+											"voice_enabled": {
+												"type": "boolean"
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -5549,6 +5730,9 @@
 											],
 											"format": "uuid"
 										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
 										"skills": {
 											"type": "array",
 											"items": {
@@ -5656,6 +5840,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -5794,6 +5979,13 @@
 												"type": "string"
 											}
 										}
+									},
+									"default_workspace_id": {
+										"type": [
+											"string",
+											"null"
+										],
+										"format": "uuid"
 									}
 								}
 							}
@@ -5899,6 +6091,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -6121,6 +6316,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6277,12 +6473,70 @@
 								}
 							}
 						}
+					},
+					"500": {
+						"description": "Agent files could not be removed from storage; the agent was not deleted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
 					}
 				}
 			}
 		},
 		"/api/actors/{id}/api-keys": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6296,6 +6550,15 @@
 						"required": true,
 						"name": "id",
 						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": false,
+						"name": "x-workspace-id",
+						"in": "header"
 					}
 				],
 				"responses": {
@@ -6436,6 +6699,7 @@
 		},
 		"/api/actors/{id}/reset": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6559,6 +6823,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -6726,6 +6993,7 @@
 		},
 		"/api/actors/{id}/pause": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6850,6 +7118,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -7017,6 +7288,7 @@
 		},
 		"/api/actors/{id}/run": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -7157,6 +7429,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -7450,6 +7725,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -7892,6 +8170,7 @@
 				}
 			},
 			"put": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Skills"
 				],
@@ -8147,6 +8426,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Skills"
 				],
@@ -8460,6 +8740,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -8791,6 +9072,7 @@
 		},
 		"/api/actors/{actorId}/workspace-skills/batch": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -8978,6 +9260,7 @@
 		},
 		"/api/actors/{actorId}/workspace-skills/{workspaceSkillId}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -9694,6 +9977,14 @@
 													"plan"
 												]
 											},
+											"voice": {
+												"type": "object",
+												"properties": {
+													"persist_transcripts": {
+														"type": "boolean"
+													}
+												}
+											},
 											"north_star_metric": {
 												"type": "string"
 											},
@@ -9775,6 +10066,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -9812,6 +10122,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -10025,6 +10336,25 @@
 												],
 												"additionalProperties": {}
 											},
+											"llm_configured": {
+												"type": "object",
+												"properties": {
+													"anthropic": {
+														"type": "boolean"
+													},
+													"openai": {
+														"type": "boolean"
+													},
+													"custom_llm": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"anthropic",
+													"openai",
+													"custom_llm"
+												]
+											},
 											"onboardingEnabled": {
 												"type": "boolean"
 											},
@@ -10063,12 +10393,16 @@
 											"memberCount": {
 												"type": "integer",
 												"minimum": 0
+											},
+											"isDefault": {
+												"type": "boolean"
 											}
 										},
 										"required": [
 											"id",
 											"name",
 											"settings",
+											"llm_configured",
 											"onboardingEnabled",
 											"enterprise",
 											"billingOwnerId",
@@ -10076,7 +10410,8 @@
 											"createdAt",
 											"updatedAt",
 											"role",
-											"memberCount"
+											"memberCount",
+											"isDefault"
 										]
 									}
 								}
@@ -10088,6 +10423,7 @@
 		},
 		"/api/workspaces/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -10653,6 +10989,14 @@
 													"plan"
 												]
 											},
+											"voice": {
+												"type": "object",
+												"properties": {
+													"persist_transcripts": {
+														"type": "boolean"
+													}
+												}
+											},
 											"north_star_metric": {
 												"type": "string"
 											},
@@ -10731,6 +11075,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -10768,6 +11131,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -10955,6 +11319,7 @@
 		},
 		"/api/workspaces/admin/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11009,6 +11374,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11046,6 +11430,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11176,6 +11561,7 @@
 		},
 		"/api/workspaces/{id}/members": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11528,6 +11914,7 @@
 		},
 		"/api/workspaces/{id}/transfer-ownership": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11583,6 +11970,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11620,6 +12026,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11864,10 +12271,11 @@
 		},
 		"/api/workspaces/{id}/members/{actorId}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
-				"summary": "Change a workspace member's role (admin/member; owner via transfer-ownership)",
+				"summary": "Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)",
 				"parameters": [
 					{
 						"schema": {
@@ -11898,7 +12306,8 @@
 										"type": "string",
 										"enum": [
 											"admin",
-											"member"
+											"member",
+											"viewer"
 										]
 									}
 								},
@@ -12560,6 +12969,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13139,6 +13549,7 @@
 				}
 			},
 			"put": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13502,6 +13913,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -13666,6 +14078,7 @@
 		},
 		"/api/workspaces/{workspaceId}/skills/upload": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Workspace Skills"
 				],
@@ -14426,6 +14839,467 @@
 				}
 			}
 		},
+		"/api/invites/{token}/accept": {
+			"post": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"operationId": "acceptInvite",
+				"summary": "Accept an invite by token (public path; reads Authorization itself)",
+				"description": "Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1
+						},
+						"required": true,
+						"name": "token",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"format": "email"
+									},
+									"password": {
+										"type": "string",
+										"minLength": 8
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Authenticated accept: joined (or already a member)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"workspaceId",
+										"actorId"
+									]
+								}
+							}
+						}
+					},
+					"201": {
+						"description": "Signup accept: actor created and joined",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"actor": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"type": {
+													"type": "string"
+												},
+												"name": {
+													"type": "string"
+												},
+												"email": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"description": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"system_prompt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"tools": {},
+												"memory": {},
+												"llm_provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"llm_config": {},
+												"isSystem": {
+													"type": "boolean"
+												},
+												"agentState": {
+													"type": "string"
+												},
+												"agentStateUpdatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"createdAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"updatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"api_key": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"id",
+												"type",
+												"name",
+												"email",
+												"description",
+												"system_prompt",
+												"llm_provider",
+												"isSystem",
+												"agentState",
+												"agentStateUpdatedAt",
+												"createdAt",
+												"updatedAt",
+												"api_key"
+											]
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"actor",
+										"workspaceId"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing or invalid API key (authenticated branch)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Workspace seat cap reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Unknown token",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"410": {
+						"description": "Invite expired, revoked or already used",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/invites/preview": {
 			"get": {
 				"tags": [
@@ -14468,6 +15342,9 @@
 										"inviterName": {
 											"type": "string"
 										},
+										"role": {
+											"type": "string"
+										},
 										"inviteEmail": {
 											"type": "string"
 										},
@@ -14480,6 +15357,7 @@
 										"workspaceId",
 										"workspaceName",
 										"inviterName",
+										"role",
 										"inviteEmail",
 										"expiresAt"
 									]
@@ -14585,6 +15463,7 @@
 		},
 		"/api/invites": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -15168,6 +16047,7 @@
 		},
 		"/api/invites/{id}/resend": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -15463,6 +16343,7 @@
 		},
 		"/api/invites/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -15676,6 +16557,7 @@
 		},
 		"/api/relationships": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"relationships"
 				],
@@ -16226,6 +17108,7 @@
 		},
 		"/api/relationships/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"relationships"
 				],
@@ -16322,6 +17205,7 @@
 		},
 		"/api/triggers": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17015,6 +17899,7 @@
 		},
 		"/api/triggers/{id}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17337,6 +18222,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"triggers"
 				],
@@ -17525,6 +18411,12 @@
 															"null"
 														]
 													},
+													"tags": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"inProgressCount": {
 														"type": "integer",
 														"minimum": 0
@@ -17639,6 +18531,7 @@
 													"pill",
 													"entryCondition",
 													"closeCondition",
+													"tags",
 													"inProgressCount",
 													"closedCount",
 													"medianTimeToCloseMs",
@@ -18138,6 +19031,7 @@
 		},
 		"/api/integrations/skjald/authorize": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -18505,6 +19399,7 @@
 		},
 		"/api/integrations/linkedin-unipile/connect": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -18520,6 +19415,25 @@
 						"in": "header"
 					}
 				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"native_return_url": {
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
+									}
+								}
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "LinkedIn-hosted install URL for the customer to complete LinkedIn auth in.",
@@ -18540,6 +19454,63 @@
 									"required": [
 										"install_url",
 										"integration_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "native_return_url is not an allowed return target",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -18934,6 +19905,7 @@
 		},
 		"/api/integrations/github/link": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19297,6 +20269,7 @@
 		},
 		"/api/integrations/github/select-installation": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19538,6 +20511,7 @@
 		},
 		"/api/integrations/{provider}/connect": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19561,6 +20535,25 @@
 						"in": "header"
 					}
 				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"native_return_url": {
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
+									}
+								}
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "Install URL for OAuth/GitHub App, or a webhook URL + integration id for manual-auth providers",
@@ -19849,6 +20842,7 @@
 		},
 		"/api/integrations/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -19952,6 +20946,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -20140,6 +21135,7 @@
 		},
 		"/api/integrations/{id}/complete": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"integrations"
 				],
@@ -21758,6 +22754,7 @@
 		},
 		"/api/marketplace/items/{id}/uninstall": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Marketplace"
 				],
@@ -21990,6 +22987,7 @@
 		},
 		"/api/marketplace/items/{id}/install": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Marketplace"
 				],
@@ -22347,6 +23345,7 @@
 		},
 		"/api/mini-apps/regen": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Mini-apps"
 				],
@@ -22889,6 +23888,7 @@
 		},
 		"/api/billing/checkout": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -23193,6 +24193,7 @@
 		},
 		"/api/billing/credits/checkout": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -23503,6 +24504,7 @@
 		},
 		"/api/billing/cancel": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -24973,6 +25975,7 @@
 		},
 		"/api/events": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"events"
 				],
@@ -25074,6 +26077,10 @@
 														"recommended": {
 															"type": "boolean",
 															"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+														},
+														"destructive": {
+															"type": "boolean",
+															"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 														}
 													},
 													"required": [
@@ -25241,6 +26248,7 @@
 		},
 		"/api/conversations": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -25364,8 +26372,13 @@
 											"source": {
 												"type": "string",
 												"enum": [
-													"final_output"
+													"final_output",
+													"voice"
 												]
+											},
+											"voice_session_id": {
+												"type": "string",
+												"format": "uuid"
 											},
 											"final_output": {
 												"type": "object",
@@ -25528,6 +26541,9 @@
 														},
 														"minItems": 1,
 														"maxItems": 4
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -25576,6 +26592,28 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"integration_connect": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"session_id",
+													"provider"
+												]
+											},
+											"helper_return": {
+												"type": "string",
+												"format": "uuid"
 											}
 										}
 									}
@@ -25768,10 +26806,7 @@
 				"parameters": [
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							]
+							"type": "boolean"
 						},
 						"required": false,
 						"name": "pinned",
@@ -25779,10 +26814,7 @@
 					},
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							],
+							"type": "boolean",
 							"default": false
 						},
 						"required": false,
@@ -25791,10 +26823,7 @@
 					},
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							]
+							"type": "boolean"
 						},
 						"required": false,
 						"name": "unread_only",
@@ -26179,6 +27208,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -26397,6 +27427,7 @@
 		},
 		"/api/conversations/{id}/participants": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -26539,6 +27570,7 @@
 		},
 		"/api/conversations/{id}/participants/{actorId}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -26832,6 +27864,12 @@
 																"actionPrompt": {
 																	"type": "string"
 																},
+																"createdAt": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
 																"startedAt": {
 																	"type": [
 																		"string",
@@ -26869,6 +27907,21 @@
 																		"type": "string",
 																		"format": "uuid"
 																	}
+																},
+																"awaiting": {
+																	"type": [
+																		"object",
+																		"null"
+																	],
+																	"properties": {
+																		"message_id": {
+																			"type": "number"
+																		},
+																		"question": {}
+																	},
+																	"required": [
+																		"message_id"
+																	]
 																}
 															},
 															"required": [
@@ -26877,12 +27930,14 @@
 																"actorId",
 																"actorName",
 																"actionPrompt",
+																"createdAt",
 																"startedAt",
 																"completedAt",
 																"durationMs",
 																"result",
 																"currentActivity",
-																"depends_on_session_ids"
+																"depends_on_session_ids",
+																"awaiting"
 															]
 														}
 													}
@@ -26905,6 +27960,105 @@
 										},
 										"has_more": {
 											"type": "boolean"
+										},
+										"pending_handoffs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string"
+													},
+													"actorId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"actorName": {
+														"type": "string"
+													},
+													"actionPrompt": {
+														"type": "string"
+													},
+													"createdAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"startedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"completedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"durationMs": {
+														"type": [
+															"number",
+															"null"
+														]
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"additionalProperties": {}
+													},
+													"currentActivity": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"depends_on_session_ids": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"awaiting": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"message_id": {
+																"type": "number"
+															},
+															"question": {}
+														},
+														"required": [
+															"message_id"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"status",
+													"actorId",
+													"actorName",
+													"actionPrompt",
+													"createdAt",
+													"startedAt",
+													"completedAt",
+													"durationMs",
+													"result",
+													"currentActivity",
+													"depends_on_session_ids",
+													"awaiting"
+												]
+											}
 										}
 									},
 									"required": [
@@ -26975,6 +28129,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27094,8 +28249,13 @@
 											"source": {
 												"type": "string",
 												"enum": [
-													"final_output"
+													"final_output",
+													"voice"
 												]
+											},
+											"voice_session_id": {
+												"type": "string",
+												"format": "uuid"
 											},
 											"final_output": {
 												"type": "object",
@@ -27258,6 +28418,9 @@
 														},
 														"minItems": 1,
 														"maxItems": 4
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -27306,6 +28469,28 @@
 													"question_message_id",
 													"answers"
 												]
+											},
+											"integration_connect": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"session_id",
+													"provider"
+												]
+											},
+											"helper_return": {
+												"type": "string",
+												"format": "uuid"
 											}
 										}
 									},
@@ -27458,6 +28643,7 @@
 		},
 		"/api/conversations/{id}/messages/{messageId}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27704,6 +28890,7 @@
 		},
 		"/api/conversations/{id}/messages/{messageId}/retry": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27967,6 +29154,7 @@
 		},
 		"/api/sessions": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -28238,6 +29426,9 @@
 											"type": "string",
 											"format": "uuid"
 										}
+									},
+									"interactive": {
+										"type": "boolean"
 									},
 									"notify_on_complete": {
 										"type": "boolean"
@@ -29159,6 +30350,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -29219,6 +30467,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -29524,6 +30773,7 @@
 		},
 		"/api/sessions/{id}/stop": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -29732,6 +30982,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -29794,6 +31101,7 @@
 		},
 		"/api/sessions/{id}/pause": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30002,6 +31310,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30064,6 +31429,7 @@
 		},
 		"/api/sessions/{id}/resume": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30272,6 +31638,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30334,6 +31757,7 @@
 		},
 		"/api/sessions/{id}/input": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30397,6 +31821,48 @@
 												"id"
 											]
 										}
+									},
+									"question_answer": {
+										"type": "object",
+										"properties": {
+											"question_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"answers": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"header": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 24
+														},
+														"selected": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 200
+															},
+															"minItems": 1,
+															"maxItems": 4
+														}
+													},
+													"required": [
+														"header",
+														"selected"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											}
+										},
+										"required": [
+											"question_message_id",
+											"answers"
+										]
 									}
 								},
 								"required": [
@@ -30661,6 +32127,7 @@
 		},
 		"/api/sessions/{id}/ask": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -31007,6 +32474,365 @@
 				}
 			}
 		},
+		"/api/sessions/{id}/connect-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post an integration Connect card into the session chat",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"provider": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								},
+								"required": [
+									"provider"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted, or the provider is already connected and nothing was posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean"
+										},
+										"message_id": {
+											"type": "number"
+										},
+										"already_connected": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"posted"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Unknown provider",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions/{id}/logs": {
 			"get": {
 				"tags": [
@@ -31130,6 +32956,399 @@
 											"createdAt"
 										]
 									}
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/activity": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Get the agent activity trace (steps) per conversation message",
+				"description": "Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most 2000 of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 20,
+							"default": 5
+						},
+						"required": false,
+						"name": "limit_turns",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "message_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "before_log_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Activity turns, oldest to newest",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"session_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"turns": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"message_id": {
+														"type": "integer"
+													},
+													"started_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"finished_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"running",
+															"completed",
+															"failed"
+														]
+													},
+													"contains_reply": {
+														"type": "boolean"
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"text": {
+																"type": "string",
+																"maxLength": 8000
+															},
+															"is_error": {
+																"type": "boolean"
+															},
+															"log_id": {
+																"type": "integer"
+															}
+														},
+														"required": [
+															"text",
+															"is_error",
+															"log_id"
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string"
+																},
+																"kind": {
+																	"type": "string",
+																	"enum": [
+																		"tool_use",
+																		"thinking",
+																		"text",
+																		"error"
+																	]
+																},
+																"label": {
+																	"type": "string",
+																	"maxLength": 120
+																},
+																"detail": {
+																	"type": "string",
+																	"maxLength": 300
+																},
+																"started_at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"finished_at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"running",
+																		"completed",
+																		"failed"
+																	]
+																}
+															},
+															"required": [
+																"id",
+																"kind",
+																"label",
+																"started_at",
+																"finished_at",
+																"status"
+															]
+														},
+														"maxItems": 100
+													},
+													"steps_truncated": {
+														"type": "boolean"
+													},
+													"partial": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"message_id",
+													"started_at",
+													"finished_at",
+													"status",
+													"contains_reply",
+													"result",
+													"steps",
+													"steps_truncated",
+													"partial"
+												]
+											}
+										},
+										"oldest_log_id": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"has_older": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"session_id",
+										"turns",
+										"oldest_log_id",
+										"has_older"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Session was started by a different actor",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
 								}
 							}
 						}
@@ -31317,6 +33536,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -31379,6 +33655,7 @@
 		},
 		"/api/notifications": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Notifications"
 				],
@@ -31817,6 +34094,19 @@
 						},
 						"required": false,
 						"name": "offset",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"asc",
+								"desc"
+							],
+							"default": "asc"
+						},
+						"required": false,
+						"name": "order",
 						"in": "query"
 					},
 					{
@@ -32570,6 +34860,7 @@
 		},
 		"/api/notifications/{id}/respond": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Notifications"
 				],
@@ -32770,6 +35061,574 @@
 					},
 					"404": {
 						"description": "Notification not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/devices": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Register (or refresh) a push device for the current actor",
+				"description": "Upserts on (apns_token, environment). Re-registering a token that belongs to another actor moves it to the caller.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"platform": {
+										"type": "string",
+										"enum": [
+											"ios",
+											"macos",
+											"watchos",
+											"tvos"
+										]
+									},
+									"apns_token": {
+										"type": "string",
+										"minLength": 32,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									},
+									"environment": {
+										"type": "string",
+										"enum": [
+											"sandbox",
+											"production"
+										]
+									},
+									"app_version": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									}
+								},
+								"required": [
+									"platform",
+									"apns_token",
+									"environment"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Device registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actor_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"platform": {
+											"type": "string",
+											"enum": [
+												"ios",
+												"macos",
+												"watchos",
+												"tvos"
+											]
+										},
+										"environment": {
+											"type": "string",
+											"enum": [
+												"sandbox",
+												"production"
+											]
+										},
+										"app_version": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"created_at": {
+											"type": "string"
+										},
+										"last_seen_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"actor_id",
+										"platform",
+										"environment",
+										"app_version",
+										"created_at",
+										"last_seen_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/devices/{id_or_token}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Unregister one of the current actor’s push devices",
+				"description": "Prefer the device id (uuid) returned by POST /api/devices. The raw APNs token is also accepted for compatibility, but it is a credential in a URL path — clients should delete by id. Only the owner can delete.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 512
+						},
+						"required": true,
+						"name": "id_or_token",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Device removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/tokens": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
+				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"enum": [
+											"push_to_start",
+											"update"
+										]
+									},
+									"device_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"token": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"kind",
+									"device_id",
+									"token"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Token registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"kind": {
+											"type": "string",
+											"enum": [
+												"push_to_start",
+												"update"
+											]
+										},
+										"device_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"session_id": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"updated_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"kind",
+										"device_id",
+										"session_id",
+										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device or session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/tokens/{id}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Unregister one of the caller’s ActivityKit tokens (e.g. the activity ended on-device)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Token removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -33663,6 +36522,10 @@
 																				"recommended": {
 																					"type": "boolean",
 																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																				},
+																				"destructive": {
+																					"type": "boolean",
+																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 																				}
 																			},
 																			"required": [
@@ -33718,6 +36581,7 @@
 		},
 		"/api/graph": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Graph"
 				],
@@ -34248,6 +37112,7 @@
 		},
 		"/api/imports": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Imports"
 				],
@@ -34726,6 +37591,7 @@
 		},
 		"/api/imports/{id}/mapping": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Imports"
 				],
@@ -35174,6 +38040,7 @@
 		},
 		"/api/imports/{id}/confirm": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Imports"
 				],
@@ -35918,6 +38785,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -36339,6 +39207,7 @@
 		},
 		"/api/installed-loops/{id}/fork": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -36742,6 +39611,7 @@
 		},
 		"/api/installed-loops/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"installed-loops"
 				],
@@ -37053,6 +39923,7 @@
 		},
 		"/api/files": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -37085,6 +39956,15 @@
 											"null"
 										],
 										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
 									},
 									"mime_type": {
 										"type": "string",
@@ -37136,6 +40016,15 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
 											]
 										},
 										"mimeType": {
@@ -37241,6 +40130,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -37248,6 +40140,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -37404,6 +40297,17 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"enum": [
+								"briefing"
+							]
+						},
+						"required": false,
+						"name": "kind",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -37500,6 +40404,15 @@
 													"null"
 												]
 											},
+											"kind": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"briefing"
+												]
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -37526,6 +40439,7 @@
 											"workspaceId",
 											"name",
 											"description",
+											"kind",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -37640,6 +40554,15 @@
 												"null"
 											]
 										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -37743,6 +40666,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -37750,6 +40676,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -37824,6 +40751,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -37856,6 +40784,15 @@
 											"null"
 										],
 										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
 									},
 									"mime_type": {
 										"type": "string",
@@ -37972,6 +40909,15 @@
 												"null"
 											]
 										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -38075,6 +41021,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"warning": {
+											"type": "string"
 										}
 									},
 									"required": [
@@ -38082,6 +41031,7 @@
 										"workspaceId",
 										"name",
 										"description",
+										"kind",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -38213,6 +41163,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -38503,6 +41454,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -38804,6 +41756,7 @@
 		},
 		"/api/files/{id}/comments/{cid}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -39130,6 +42083,7 @@
 		},
 		"/api/files/{id}/comments/rounds": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Files"
 				],
@@ -39544,6 +42498,7 @@
 		},
 		"/api/claude-oauth": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -39820,6 +42775,7 @@
 		},
 		"/api/claude-oauth/import": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40030,6 +42986,7 @@
 		},
 		"/api/claude-oauth/nickname": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40205,6 +43162,7 @@
 		},
 		"/api/claude-oauth/promote": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -40375,6 +43333,7 @@
 		},
 		"/api/claude-oauth/swap": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"claude-oauth"
 				],
@@ -42005,6 +44964,599 @@
 									},
 									"required": [
 										"flags"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Voice"
+				],
+				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
+				"description": "Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/CreateVoiceSessionBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Voice session reserved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CreateVoiceSessionResponse"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Target agent is not voice-enabled",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Flag off, or target agent not found in caller workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Caller already has a live voice session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceSessionRateLimited"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "The reservation row could not be written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions/{id}/offer": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Voice"
+				],
+				"summary": "Connect a reserved voice session to the vendor",
+				"description": "Gated by the **voice-mode-v1** feature flag. Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/VoiceSessionOfferBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "SDP answer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceSessionOfferResponse"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Flag off, no such session for the caller, or membership lapsed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The session already took an offer, or is no longer pending",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited by the vendor; retry after `retry_after_seconds`",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceSessionRateLimited"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Vendor connect failed — the session row is marked errored so the caller can start again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions/{id}/hangup": {
+			"post": {
+				"tags": [
+					"Voice"
+				],
+				"summary": "End a voice call",
+				"description": "Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/HangupVoiceSessionBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Call ended (or already ended)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HangupVoiceSessionResponse"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Flag off, or no such voice session for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
