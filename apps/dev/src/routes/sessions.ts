@@ -1317,7 +1317,7 @@ const draftRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Session not found, or object_id is not an object in this workspace',
+			description: 'Session not found',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -1365,7 +1365,7 @@ app.openapi(draftRoute, (async (c) => {
 	// `task` is only the default for kinds with no object type of their own.
 	let newType = 'task'
 	let newStatus = 'in_review'
-	if (!draft.object_id) {
+	{
 		const [workspace] = await db
 			.select({ settings: workspaces.settings })
 			.from(workspaces)
@@ -1423,52 +1423,33 @@ app.openapi(draftRoute, (async (c) => {
 
 	const posted = await db
 		.transaction(async (tx) => {
-			let task: typeof objects.$inferSelect | undefined
-			if (draft.object_id) {
-				// Attach to an object that already holds the draft (a LinkedIn post's
-				// `content` object). Its status is not ours to move: for content it can
-				// trigger publishing. Only the body and the draft_* keys change.
-				const [existing] = await tx
-					.select()
-					.from(objects)
-					.where(and(eq(objects.id, draft.object_id), eq(objects.workspaceId, session.workspaceId)))
-					.for('update')
-					.limit(1)
-				if (!existing) throw new DraftObjectNotFound()
-				;[task] = await tx
-					.update(objects)
-					.set({
-						content: draft.body,
-						metadata: draftMetadata(existing.metadata as Record<string, unknown> | null),
-						updatedAt: new Date(),
-					})
-					.where(eq(objects.id, existing.id))
-					.returning()
-			} else {
-				;[task] = await tx
-					.insert(objects)
-					.values({
-						workspaceId: session.workspaceId,
-						type: newType,
-						title,
-						content: draft.body,
-						// Written directly, so POST /api/objects' rule against creating a task
-						// already in review does not apply: nobody is meant to start this one,
-						// it waits for its person. The agent drives it; once approved, sending
-						// is its job.
-						status: newStatus,
-						metadata: draftMetadata(null),
-						driver: session.actorId,
-						createdBy: session.actorId,
-					})
-					.returning()
-			}
+			// Always a new object. Attaching a card to an existing LinkedIn post is not
+			// supported yet: its body also holds the header, schedule and media brief,
+			// so replacing it would delete them. That needs a shared helper that edits
+			// only the post text, tracked on the For You draft-edit bet.
+			const [task] = await tx
+				.insert(objects)
+				.values({
+					workspaceId: session.workspaceId,
+					type: newType,
+					title,
+					content: draft.body,
+					// Written directly, so POST /api/objects' rule against creating a task
+					// already in review does not apply: nobody is meant to start this one,
+					// it waits for its person. The agent drives it; once approved, sending
+					// is its job.
+					status: newStatus,
+					metadata: draftMetadata(null),
+					driver: session.actorId,
+					createdBy: session.actorId,
+				})
+				.returning()
 			if (!task) return null
 
 			await recordEvent(tx, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
-				action: draft.object_id ? 'updated' : 'created',
+				action: 'created',
 				entityType: task.type,
 				entityId: task.id,
 				data: task,
@@ -1499,13 +1480,8 @@ app.openapi(draftRoute, (async (c) => {
 		})
 		.catch((err) => {
 			if (err instanceof DraftMessageNotInserted) return null
-			if (err instanceof DraftObjectNotFound) return 'not_found' as const
 			throw err
 		})
-
-	if (posted === 'not_found') {
-		return c.json(createApiError('NOT_FOUND', 'Object not found in this workspace'), 404)
-	}
 
 	if (!posted) {
 		logger.error('Draft card insert returned no row', {
@@ -1551,7 +1527,6 @@ function defaultDraftStatus(type: string, configured: string[]): string | undefi
 }
 
 class DraftMessageNotInserted extends Error {}
-class DraftObjectNotFound extends Error {}
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

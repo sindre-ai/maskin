@@ -6143,7 +6143,6 @@ export function createMcpServer(config: McpConfig) {
 					`/api/sessions/${sessionId}/draft`,
 					{
 						kind: args.kind,
-						object_id: args.object_id,
 						object_type: args.object_type,
 						status: args.status,
 						label: args.label,

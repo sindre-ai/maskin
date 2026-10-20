@@ -45,8 +45,6 @@ function errorResponse(status: number, message: string): Response {
 	} as Response
 }
 
-const OBJECT_ID = '22222222-2222-2222-2222-222222222222'
-
 describe('post_draft', () => {
 	let handler: (args: Record<string, unknown>) => Promise<ToolResult & { isError?: boolean }>
 	let fetchMock: ReturnType<typeof vi.spyOn>
@@ -87,16 +85,6 @@ describe('post_draft', () => {
 		expect(text).toContain('task-1')
 		expect(text).toContain('Nothing has been sent')
 		expect(result.isError).toBeUndefined()
-	})
-
-	it('forwards object_id so a LinkedIn post attaches to its content object', async () => {
-		createMcpServer({ ...config, maskinSessionId: SESSION_ID })
-		fetchMock.mockResolvedValue(jsonResponse({ message_id: 5, object_id: OBJECT_ID }))
-
-		await handler({ kind: 'linkedin_post', body: 'We shipped it.', object_id: OBJECT_ID })
-
-		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-		expect(JSON.parse(String(init.body)).object_id).toBe(OBJECT_ID)
 	})
 
 	it('says there is no chat, as an error, when not running in a session', async () => {

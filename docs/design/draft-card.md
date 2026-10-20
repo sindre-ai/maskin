@@ -34,11 +34,12 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 
 1. **The card is a view of an object, not a copy, and the object type is the workspace's
    choice.** Workspaces define their own object types, so nothing here hard-codes one.
-   - A draft that already has a home (a LinkedIn post's `content` object) is attached by
-     `object_id`: the card points at it, its body becomes the draft text, and its
-     status is left alone, because moving a content object (for example to `approved`)
-     can trigger publishing.
-   - Otherwise a new object is created. The agent picks its type with `object_type`
+   - A draft that already has a home (a LinkedIn post's `content` object) is **not**
+     attached yet. Its body also holds the header, schedule and media brief, so writing
+     the draft over it would delete them and break the scheduled publish. Attaching
+     needs a shared helper that edits only the post text between the POST and MEDIA
+     markers, with a hash version check; it is tracked on the For You draft-edit bet.
+   - A new object is created for every chat draft. The agent picks its type with `object_type`
      (it reads `get_workspace_schema` to see what exists); the default is `task`, which
      is where emails and messages land when the workspace has no type of their own.
      The route checks the type against the workspace (400 listing the valid types).
@@ -121,9 +122,30 @@ same task instead of carrying its own `draft_final`. That needs the For You spec
 amended by its Architect and CTO (storage model only; the always-editable box, Revert
 to draft, plain text, the confirm tap and the flag stay as specified). Until they agree
 the PRs stay drafts. For LinkedIn posts the conflict is sharper than for tasks: the
-For You spec says the card never writes to the content object body, and attaching to a
-content object means the human's edit does land in that body. The Copywriter must then
-read the post back from the object, not from its own copy.
+For You spec originally said the card never writes to the content object body; that was
+reversed (see Outcome below), on the condition that only the post text is edited.
+
+### Outcome (2026-10-20): Architect and CTO agreed, with conditions
+
+The Architect rewrote the For You tech spec (v2) and the CTO approved the direction
+(conditions file linked from the bet). It now reads and edits the object, not
+`draft_final`. Conditions that bind this work:
+
+- Edit only the post text, never the rest of the body; one shared helper for both
+  cards. Not built; this PR therefore does not attach to content objects.
+- Saves go through the server with a version check (a hash of the current text, under
+  a row lock). This card still saves straight from the browser with a plain object
+  update, which can overwrite an agent's newer text. **Known gap, must be fixed before
+  anything writes to a real post.**
+- Approve records a hash of the exact approved text on the reply, and the Copywriter
+  refuses to publish on a mismatch. Chat approval does not do this yet.
+- A LinkedIn message is edited on the send approval card, not in this box, which
+  refuses that kind. Chat still accepts `linkedin_message`; whether it should refuse
+  too is open.
+- The rich editor rewrites the POST and MEDIA marker lines (tested headless by the
+  Developer). The rich editor flag and the draft flag must not both be on for a
+  content object until the editor locks those lines. Only 2 of 12 recent LinkedIn post
+  objects use the marker format at all.
 
 ## Built
 
@@ -140,7 +162,6 @@ read the post back from the object, not from its own copy.
 
 **Slice 2: the writer**
 - `POST /api/sessions/:id/draft` (`apps/dev/src/routes/sessions.ts`) creates the task
-  (or, with `object_id`, writes the draft onto that object and logs an `updated` event)
   and posts the card message in one transaction, so a chat never shows a card for
   a task that does not exist. The task is `in_review`, driven by the agent that
   posted it; a `created` event is logged. Same gate as `/connect-card`: only the

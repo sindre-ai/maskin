@@ -400,13 +400,6 @@ export const sessionDraftSchema = z
 	.object({
 		kind: draftKindSchema,
 		/**
-		 * An existing object that already holds this draft, e.g. the `content` object
-		 * of a LinkedIn post. The card attaches to it and the object's status is left
-		 * alone. Absent: a task is created to hold the draft, which is where emails
-		 * and messages live because they have no object type of their own.
-		 */
-		object_id: z.string().uuid().optional(),
-		/**
 		 * Chip text on the card, e.g. "SLACK MESSAGE". The `kind` presets cover the
 		 * common cases; anything else is `kind: 'text'` plus a label of your own.
 		 */
