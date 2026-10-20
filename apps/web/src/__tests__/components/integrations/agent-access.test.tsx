@@ -1,5 +1,6 @@
 import {
 	AgentAccess,
+	accessOrderFor,
 	startingAccess,
 	summarizeAgentAccess,
 } from '@/components/integrations/agent-access'
@@ -104,6 +105,27 @@ describe('startingAccess', () => {
 	it('starts a new agent one step above the default', () => {
 		expect(startingAccess('read')).toBe('read_write')
 		expect(startingAccess('none')).toBe('read')
+	})
+
+	it('starts an agent added to Gmail by asking first, never by sending on its own', () => {
+		expect(startingAccess('read', 'gmail')).toBe('ask_first')
+		expect(startingAccess('none', 'gmail')).toBe('ask_first')
+		expect(startingAccess('read', 'slack')).toBe('read_write')
+	})
+})
+
+describe('accessOrderFor', () => {
+	it('offers "Ask first" for Gmail and for no other provider', () => {
+		expect(accessOrderFor('gmail')).toEqual(['read', 'ask_first', 'read_write', 'none'])
+		expect(accessOrderFor('slack')).toEqual(['read', 'read_write', 'none'])
+	})
+})
+
+describe('summarizeAgentAccess with ask first', () => {
+	it('counts agents that write only after approval apart from those that write freely', () => {
+		expect(summarizeAgentAccess('read', [{ access: 'ask_first' }, { access: 'read_write' }])).toBe(
+			'All agents can read · 1 can also write · 1 can write after you approve',
+		)
 	})
 })
 

@@ -11,12 +11,13 @@ import { useAgentAccess, useRemoveAgentGrant, useSetAgentGrant } from '@/hooks/u
 import type { ActorResponse, AgentAccessView, AgentGrantAccess } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS } from '@maskin/shared'
+import { AGENT_ACCESS_LABELS, supportsAskFirst } from '@maskin/shared'
 
 type IntegrationRowData = AgentAccessView['integrations'][number]
 type CredentialRowData = AgentAccessView['credentials'][number]
 
 const LEVELS: AgentGrantAccess[] = ['read', 'read_write', 'none']
+const LEVELS_ASK_FIRST: AgentGrantAccess[] = ['read', 'ask_first', 'read_write', 'none']
 
 /** Same rule as the Integrations and Keychain pages: whoever connected it, or an admin or owner. */
 function useCanChange(createdBy: string): boolean {
@@ -67,7 +68,7 @@ function IntegrationRow({
 					<SelectItem value="default">
 						Default ({AGENT_ACCESS_LABELS[row.default_access]})
 					</SelectItem>
-					{LEVELS.map((level) => (
+					{(supportsAskFirst(row.provider) ? LEVELS_ASK_FIRST : LEVELS).map((level) => (
 						<SelectItem key={level} value={level}>
 							{AGENT_ACCESS_LABELS[level]}
 						</SelectItem>

@@ -88,9 +88,15 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 The card does not send anything; the agent does, with the `gmail_send_email` MCP tool
 (`POST /api/integrations/gmail/send`, `apps/dev/src/routes/integrations-gmail.ts`).
 
-- **Who may send** is the agent's access to Gmail in Settings → Integrations. Write access
-  sends on its own; read-only or no access is refused with the usual access message.
-- **Who needs a person.** A recipient marked off limits is the exception: a contact with
+- **Who may send** is the agent's access to Gmail in Settings → Integrations, in the three
+  modes a coding agent's permissions use:
+  - **Read & write** ("always allow"): sends on its own.
+  - **Ask first**: may draft, and may send a draft a person approved, but a direct send is
+    refused with instructions to post a card.
+  - **Read** or none: cannot send, not even an approved draft.
+  An agent added to Gmail starts at *Ask first*; "always allow" is a deliberate choice. (Only
+  Gmail offers *Ask first*, see `ASK_FIRST_PROVIDERS` in `packages/shared/src/agent-access.ts`.)
+- **Who needs a person whatever the mode.** A recipient marked off limits: a contact with
   `protected` or `email_opt_out`, a `loss_category` of `personal_protected`, or a contact
   who `works_at` a company marked `protected` (`send-guard.ts` lists them). The tool
   refuses and tells the agent to post a card. This is the one place to add a reason.

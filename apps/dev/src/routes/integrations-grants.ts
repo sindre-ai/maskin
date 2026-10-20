@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database, Transaction } from '@maskin/db'
 import { agentChatGrants, agentGrants, integrations, sessions } from '@maskin/db/schema'
+import { supportsAskFirst } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -166,6 +167,14 @@ function failure(reason: string): {
 				error: createApiError('BAD_REQUEST', 'That actor is not an agent in this workspace'),
 				status: 400,
 			}
+		case 'ask_first_unsupported':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'"Ask first" is only available for integrations that can wait for a person to approve an action (today: Gmail). Use read or read_write.',
+				),
+				status: 400,
+			}
 		case 'keychain_access':
 			return {
 				error: createApiError(
@@ -236,6 +245,9 @@ app.openapi(replaceGrantsRoute, (async (c) => {
 		const keychain = isKeychainMode(target.providerMode as never)
 		if (keychain && grants.some((g) => g.access !== 'read_write')) {
 			return 'keychain_access' as const
+		}
+		if (grants.some((g) => g.access === 'ask_first') && !supportsAskFirst(target.provider)) {
+			return 'ask_first_unsupported' as const
 		}
 		if (
 			!(await actorsAreWorkspaceAgents(
@@ -330,6 +342,9 @@ app.openapi(putGrantRoute, (async (c) => {
 		if (!target.ok) return target.reason
 		if (isKeychainMode(target.providerMode as never) && access !== 'read_write') {
 			return 'keychain_access' as const
+		}
+		if (access === 'ask_first' && !supportsAskFirst(target.provider)) {
+			return 'ask_first_unsupported' as const
 		}
 		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [actorId]))) return 'outside' as const
 

@@ -6,7 +6,7 @@ import { readDraftTaskState } from '@maskin/shared'
 import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { canActWithoutAsking, canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -34,14 +34,15 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  * Send an email from the workspace's connected Gmail. Behind the `gmail_send_email`
  * MCP tool: Google's hosted Gmail tool can only create drafts.
  *
- * Who may send, in one place:
- *  - Write access to Gmail (Settings → Integrations, per agent) is the permission. An agent
- *    with it sends on its own; one without it is refused with the usual access message.
- *  - A recipient a person marked protected (or who opted out) is the exception: that send
- *    needs a person's approval on a draft card first, then goes through as `draft_object_id`.
- *  - An approved draft sends exactly the text and subject saved on the card, once.
- *    The approval has to have been made by a person, read from the audit log, because the
- *    approve route itself accepts any workspace writer.
+ * Who may send, in one place. Gmail access has three modes per agent, like a coding agent's
+ * permission modes (Settings → Integrations):
+ *  - Read & write ("always allow"): sends on its own, to anyone except a protected recipient.
+ *  - Ask first: may draft, but every email needs a person to approve it on a draft card first.
+ *  - Read, or no access: cannot send at all.
+ *  - A recipient a person marked protected (or who opted out) needs approval whatever the mode.
+ *  - An approved draft sends exactly the text and subject saved on the card, once. The approval
+ *    has to have been made by a person, read from the audit log as a second check on the
+ *    approve route, which also refuses an agent.
  */
 
 type Env = {
@@ -83,7 +84,7 @@ const sendRoute = createRoute({
 	tags: ['integrations'],
 	summary: 'Send an email from the connected Gmail account',
 	description:
-		'Irreversible and never retried. Needs write access to Gmail. A protected recipient needs an approved draft card (draft_object_id).',
+		'Irreversible and never retried. "Read & write" access sends directly; "Ask first" access, and any protected recipient, needs an approved draft card (draft_object_id).',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: sendBodySchema } }, required: true },
@@ -298,6 +299,16 @@ app.openapi(sendRoute, async (c) => {
 				kind: 'write',
 				access,
 			}),
+		)
+		return c.json(f.body, f.status)
+	}
+	// "Ask first" may draft and send what a person approved, but not send on its own.
+	if (!input.draft_object_id && !canActWithoutAsking(access)) {
+		const f = fail(
+			403,
+			'FORBIDDEN',
+			'Not sent. Your access to Gmail is "Ask first": a person has to approve each email before it is sent.',
+			'Show it with post_draft (kind "email", with the address in "to"), end your turn, and when the person approves, call gmail_send_email with draft_object_id.',
 		)
 		return c.json(f.body, f.status)
 	}

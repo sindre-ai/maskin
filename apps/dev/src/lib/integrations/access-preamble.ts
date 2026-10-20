@@ -4,12 +4,13 @@ import { getProvider } from './registry'
 
 const LEVEL_TEXT: Record<AgentAccess, string> = {
 	read_write: `${AGENT_ACCESS_LABELS.read_write} (${AGENT_ACCESS_EFFECT.read_write})`,
+	ask_first: `${AGENT_ACCESS_LABELS.ask_first} (${AGENT_ACCESS_EFFECT.ask_first})`,
 	read: `${AGENT_ACCESS_LABELS.read} (${AGENT_ACCESS_EFFECT.read})`,
 	none: AGENT_ACCESS_LABELS.none,
 }
 
 // Strongest first, so a mixed provider lists its best level first.
-const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'none']
+const LEVEL_ORDER: AgentAccess[] = ['read_write', 'ask_first', 'read', 'none']
 
 export function providerLabel(provider: string): string {
 	try {

@@ -76,7 +76,7 @@ function post(actorId: string, workspaceId: string, body: Record<string, unknown
 const DIRECT = { to: 'ada@example.com', subject: 'Intro', body: 'Hi Ada' }
 
 /** A workspace with Gmail connected, a person, and an agent that has (or lacks) write access. */
-async function setup(opts: { agentAccess?: 'read' | 'read_write' | null } = {}) {
+async function setup(opts: { agentAccess?: 'read' | 'ask_first' | 'read_write' | null } = {}) {
 	const human = getTestActorId()
 	const workspace = await insertWorkspace(db, human)
 	const agent = await insertActor(db, { type: 'agent' })
@@ -219,6 +219,56 @@ describe('gmail_send_email: who may send', () => {
 		const workspace = await insertWorkspace(db, human)
 
 		expect((await post(human, workspace.id, DIRECT)).status).toBe(404)
+	})
+})
+
+describe('gmail_send_email: the three modes', () => {
+	it('"Ask first" refuses a direct send and says to use a draft card', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+
+		const res = await post(s.agent.id, s.workspace.id, DIRECT)
+
+		expect(res.status).toBe(403)
+		const text = JSON.stringify(await res.json())
+		expect(text).toContain('Ask first')
+		expect(text).toContain('post_draft')
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await sendEvents(s.workspace.id, s.gmail.id)).toHaveLength(0)
+	})
+
+	it('"Ask first" sends a draft a person approved', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const draft = await insertApprovedDraft(s)
+		fetchMock.mockResolvedValueOnce(gmailOk('sent-7'))
+
+		const res = await post(s.agent.id, s.workspace.id, { draft_object_id: draft.id })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ message_id: 'sent-7', mode: 'approved_draft' })
+	})
+
+	it('"Ask first" still cannot send a draft that was not approved', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const draft = await insertApprovedDraft(s, { state: 'draft' })
+
+		expect((await post(s.agent.id, s.workspace.id, { draft_object_id: draft.id })).status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('"Read" cannot send at all, not even an approved draft', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const draft = await insertApprovedDraft(s)
+
+		expect((await post(s.agent.id, s.workspace.id, { draft_object_id: draft.id })).status).toBe(403)
+		expect((await post(s.agent.id, s.workspace.id, DIRECT)).status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('"Read & write" sends directly, to a recipient nobody marked', async () => {
+		const s = await setup({ agentAccess: 'read_write' })
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		expect((await post(s.agent.id, s.workspace.id, DIRECT)).status).toBe(200)
 	})
 })
 

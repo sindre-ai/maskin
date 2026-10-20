@@ -17,13 +17,19 @@ const INTEGRATION_ID = '55555555-5555-4555-8555-555555555555'
 
 interface State {
 	defaultAgentAccess: 'read' | 'none'
-	agentGrants: Array<{ actorId: string; access: 'none' | 'read' | 'read_write' }>
+	agentGrants: Array<{ actorId: string; access: 'none' | 'read' | 'ask_first' | 'read_write' }>
 }
 
-async function stubIntegrations(page: Page, workspaceId: string, actorId: string, state: State) {
+async function stubIntegrations(
+	page: Page,
+	workspaceId: string,
+	actorId: string,
+	state: State,
+	provider = { name: 'linear', displayName: 'Linear' },
+) {
 	await page.route('**/api/integrations/providers*', (route) =>
 		route.fulfill({
-			json: [{ name: 'linear', displayName: 'Linear', authType: 'oauth2', events: [] }],
+			json: [{ ...provider, authType: 'oauth2', events: [] }],
 		}),
 	)
 	await page.route('**/api/integrations/**', async (route) => {
@@ -56,7 +62,7 @@ async function stubIntegrations(page: Page, workspaceId: string, actorId: string
 				{
 					id: INTEGRATION_ID,
 					workspaceId,
-					provider: 'linear',
+					provider: provider.name,
 					status: 'active',
 					externalId: 'org-1',
 					config: {},
@@ -146,4 +152,58 @@ test('the access section reads in light and dark', async ({ page, account }) => 
 		await expect(page.getByRole('combobox', { name: 'Access for all other agents' })).toBeVisible()
 		await expect(page.getByRole('combobox', { name: 'Add an agent' })).toBeVisible()
 	}
+})
+
+const GMAIL = { name: 'gmail', displayName: 'Gmail' }
+
+for (const vp of SHIP_GATE_VIEWPORTS) {
+	test(`Gmail offers Ask first, and a newly added agent starts there @ ${vp.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: vp.width, height: vp.height })
+		const writer = await account.api.createAgentActor('Sales Rep', account.workspaceId)
+		const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
+		await stubIntegrations(page, account.workspaceId, account.actorId, state, GMAIL)
+
+		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await page.getByRole('button', { name: /Agent access/ }).click()
+
+		// Added to Gmail, an agent can draft but each email waits for a person.
+		await page.getByRole('combobox', { name: 'Add an agent' }).click()
+		await page.getByRole('option', { name: 'Sales Rep' }).click()
+		const level = page.getByRole('combobox', { name: 'Access for Sales Rep' })
+		await expect(level).toContainText('Ask first')
+		expect(state.agentGrants).toEqual([{ actorId: writer.id, access: 'ask_first' }])
+		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(
+			'1 can write after you approve',
+		)
+		await expect(
+			page.getByText(/sends on its own, except to contacts you marked protected/),
+		).toBeVisible()
+
+		// All three modes are there, and "always allow" is a deliberate choice.
+		await level.click()
+		for (const name of ['Read', 'Ask first', 'Read & write', 'No access']) {
+			await expect(page.getByRole('option', { name, exact: true })).toBeVisible()
+		}
+		await page.getByRole('option', { name: 'Read & write' }).click()
+		await expect(level).toContainText('Read & write')
+		expect(state.agentGrants).toEqual([{ actorId: writer.id, access: 'read_write' }])
+	})
+}
+
+test('an integration that cannot ask first does not offer it', async ({ page, account }) => {
+	await account.api.createAgentActor('Sales Rep', account.workspaceId)
+	const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
+	await stubIntegrations(page, account.workspaceId, account.actorId, state)
+	await page.goto(`/${account.workspaceId}/settings/integrations`)
+	await page.getByRole('button', { name: /Agent access/ }).click()
+	await page.getByRole('combobox', { name: 'Add an agent' }).click()
+	await page.getByRole('option', { name: 'Sales Rep' }).click()
+
+	await page.getByRole('combobox', { name: 'Access for Sales Rep' }).click()
+
+	await expect(page.getByRole('option', { name: 'Read & write' })).toBeVisible()
+	await expect(page.getByRole('option', { name: 'Ask first' })).toHaveCount(0)
 })

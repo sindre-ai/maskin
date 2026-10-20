@@ -1,7 +1,7 @@
 ---
 title: Agent access (grants)
 slug: agent-access
-description: Which agents may use an integration or a saved credential, and how — read, read & write, or none — how it is enforced, and how an agent is told.
+description: Which agents may use an integration or a saved credential, and how — read, ask first, read & write, or none — how it is enforced, and how an agent is told.
 last_updated: 2026-10-20
 ---
 
@@ -26,13 +26,13 @@ Access lives in `agent_grants` plus `integrations.default_agent_access`, resolve
 Rules that keep it that way:
 
 - Add a new place that shows or changes access by reading `describeAgentAccess` / the grants routes, not by recomputing it. "Is the MCP server attached" is `attachesServer()`, used by launch and by every report of it.
-- Wording comes from `@maskin/shared` (`AGENT_ACCESS_LABELS`, `AGENT_ACCESS_EFFECT`): "Read", "Read & write", "No access". There is no write-only level: an agent that may change something may also look at it.
+- Wording comes from `@maskin/shared` (`AGENT_ACCESS_LABELS`, `AGENT_ACCESS_EFFECT`): "Read", "Ask first", "Read & write", "No access". There is no write-only level: an agent that may change something may also look at it.
 - Web: the per-agent access query is nested under `queryKeys.integrations.all(workspaceId)`, and the SSE handler invalidates that key on every `integration` event, so an open page refreshes when access changes elsewhere.
 - `apps/dev/src/__tests__/integration/access-alignment.test.ts` changes access through every entry point and asserts the list, the agent view, the session list and a real launch agree after each. Extend it when you add an entry point.
 
 ## The model
 
-- `agent_grants` holds one row per `(integration, agent)` with `access` = `none`, `read` or `read_write`. `none` is an explicit no that beats a `read` default, so one agent can be taken off an integration the others can read. Unique on `(integration_id, actor_id)`; cascades when either side is deleted.
+- `agent_grants` holds one row per `(integration, agent)` with `access` = `none`, `read`, `ask_first` or `read_write`. `none` is an explicit no that beats a `read` default, so one agent can be taken off an integration the others can read. Unique on `(integration_id, actor_id)`; cascades when either side is deleted.
 - `integrations.default_agent_access` is what an agent with **no row** gets: `read` (the default for every ordinary integration) or `none`.
 - A **Keychain credential** (a saved API key or login) has no default and no read/write split: an agent has it or it does not. A grant row means on (stored as `read_write`, never `none`); no row means off. This holds for people too — only ordinary integrations let a person through.
 - Resolution lives in one place: `apps/dev/src/lib/integrations/agent-access.ts`. Do not re-derive it.
@@ -44,6 +44,15 @@ Rules that keep it that way:
 | Saved key or login, row exists | on |
 | Saved key or login, no row | off |
 | Actor that does not exist | none |
+
+## Ask first
+
+`ask_first` sits between `read` and `read_write`, like "ask" in a coding agent's permission modes: the agent may use the integration's tools (it can write drafts), but an action that cannot be undone waits for a person's yes. `read_write` is "always allow".
+
+- **Only a provider that can ask offers it:** `ASK_FIRST_PROVIDERS` in `packages/shared/src/agent-access.ts`, today Gmail (sending an email, approved on a draft card, see `docs/design/draft-card.md`). The grants routes answer 400 for any other provider, and the UI does not list it.
+- **What it means in code:** `canWrite` is true for it (the write tools work), `canActWithoutAsking` is true only for `read_write`. Code that does an irreversible action asks the second question.
+- **Migration 0097** turned every existing Gmail `read_write` grant into `ask_first`, because "write" on Gmail used to mean drafts only and the send tool would otherwise have made each of those agents start sending. An agent added to Gmail starts at `ask_first`.
+- Adding a provider to the set is a promise that its tool refuses the action at this level and tells the agent how to ask.
 
 ## API
 
