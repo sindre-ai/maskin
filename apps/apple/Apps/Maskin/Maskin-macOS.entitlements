@@ -11,7 +11,6 @@
 	<array>
 		<string>applinks:maskin.io</string>
 		<string>applinks:www.maskin.io</string>
-		<string>applinks:app.maskin.io</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>

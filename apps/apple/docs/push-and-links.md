@@ -6,7 +6,7 @@
 | `aps-environment` (`development` Debug / `production` Release, via `MASKIN_APS_ENVIRONMENT`) | iOS: `Apps/Maskin/Maskin.entitlements`; macOS: `com.apple.developer.aps-environment` in `Apps/Maskin/Maskin-macOS.entitlements` |
 | `UIBackgroundModes: remote-notification` | `project.yml` (Maskin Info) |
 | `maskin://` URL scheme | `CFBundleURLTypes` in `project.yml` |
-| Universal links `applinks:maskin.io`, `applinks:www.maskin.io`, `applinks:app.maskin.io` | both entitlements files |
+| Universal links `applinks:maskin.io`, `applinks:www.maskin.io` | both entitlements files |
 | Cleartext `localhost` ATS exception | Debug only; `scripts/strip-dev-ats.sh` removes it from Release for Maskin, MaskinWatch, MaskinTV |
 | macOS entitlements | Release only by default (restricted entitlements kill unsigned/ad-hoc builds). Debug: set `MASKIN_MACOS_ENTITLEMENTS=Apps/Maskin/Maskin-macOS.entitlements` + `DEVELOPMENT_TEAM` for a signed local build |
 
@@ -45,8 +45,8 @@ Portal: enable **App Groups** with `group.io.maskin.app` on `io.maskin.app` and 
 ## Apple App Site Association
 Serve at `https://maskin.io/.well-known/apple-app-site-association`: HTTPS, **no redirect**,
 `Content-Type: application/json`, no file extension. The web host's SPA catch-all must not shadow it.
-Replace `TEAMID` with the Apple Team ID. Serve the same file on `www.maskin.io` and `app.maskin.io`
-(the app declares all three hosts). The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
+Replace `TEAMID` with the Apple Team ID. Serve the same file on `www.maskin.io`
+(the app declares both hosts; Apple does not follow redirects, so `www` must serve it directly, not 301 to the apex). The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
 the JSON below is what that serves. Paths come from the web routes
 `/{workspaceId}/objects/{objectId}`, `/{workspaceId}/chats/{id}` and the workspace inbox
 `/{workspaceId}/notifications` (see `DeepLink.swift`), plus workspace invitations,
