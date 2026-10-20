@@ -505,8 +505,15 @@ describe('0087 up and down', () => {
 		expect(await columns('workspace_kms_aliases')).toHaveProperty('size', 0)
 		expect((await columns('integrations')).has('dek_ciphertext')).toBe(false)
 		expect(await indexNames('integrations')).not.toContain('integrations_undo_sweeper_idx')
-		const roles = await sql`SELECT 1 FROM pg_roles WHERE rolname = ${CREDENTIAL_LOG_ROLE}`
-		expect(roles).toHaveLength(0)
+		// The role is cluster-wide and the rollback keeps it while another database
+		// still uses it (every test file runs in its own cloned database, so one
+		// always does). What must hold is that nothing in THIS database depends on it.
+		const deps = await sql`
+			SELECT 1 FROM pg_shdepend d JOIN pg_roles r ON r.oid = d.refobjid
+			WHERE r.rolname = ${CREDENTIAL_LOG_ROLE}
+				AND d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+		`
+		expect(deps).toHaveLength(0)
 
 		// A row that exists before the migration is applied.
 		const { row } = await newIntegration()
