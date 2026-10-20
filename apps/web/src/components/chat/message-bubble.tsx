@@ -330,7 +330,12 @@ export function MessageBubble({
 				    the other cards it adds the affordance, not the information: the
 				    message's markdown already quotes the draft. */}
 				{message.metadata?.draft ? (
-					<DraftCard workspaceId={workspaceId} draft={message.metadata.draft} />
+					<DraftCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						agentId={message.actorId}
+						draft={message.metadata.draft}
+					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip
 				    (bet/444b-handed-off-strip). Renders inside the agent branch under

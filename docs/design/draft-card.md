@@ -46,8 +46,13 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
    actual text. The two channels must say the same thing.
 3. **Degrade to the markdown.** If the task is missing, or has no draft state, the
    card renders nothing and the quoted text in the message still reads.
-4. **Approve records a yes; it does not send.** It sets `draft_state` to
-   `approved`. Sending is the agent's job, triggered by that update.
+4. **Approve records a yes, then says so in the chat.** It saves the approved text
+   and `draft_state: approved` on the task, and only once that is saved posts a
+   message in the conversation mentioning the drafting agent ("Approved the email to
+   Mette. Send it exactly as saved in task ..."). The agent receives that as its next
+   turn, reads the task and sends. No trigger configuration is needed, and the
+   approval is visible in the thread. Undo flips the task back and posts nothing, so
+   the agent is told to send only if the state is still `approved`.
 5. **Edits save on blur**, to the task, never in the message. Approved text is
    locked until Undo.
 6. **Hard limits block approval.** Over `char_limit` the counter turns
@@ -66,6 +71,9 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
   `message-bubble.tsx`. Plain `Textarea`; swap in the rich-markdown-editor's
   notification variant once that bet lands.
 
+**Slice 3: approval wakes the agent**
+- `DraftCard` posts the approval message after the task update succeeds.
+
 **Slice 2: the writer**
 - `POST /api/sessions/:id/draft` (`apps/dev/src/routes/sessions.ts`) creates the task
   and posts the card message in one transaction, so a chat never shows a card for
@@ -82,9 +90,11 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 
 ## Not built yet
 
-- **Approval trigger.** Approving only sets `draft_state: approved` on the task. How
-  that wakes the owning agent to send is undecided: an event trigger on the update,
-  or a task status move (the task is `in_review` until then).
+- **Closing the loop after sending.** Nothing marks the task done once the agent has
+  sent; the agent should move it out of `in_review` itself. A `sent` draft state would
+  stop a late Undo from implying the text can still be changed.
+- Approving from For you (no conversation on screen) reuses the message's
+  conversation, which the placement will need to pass in.
 - For you "Drafts to review" section and the full-density variant.
 - Superseded state, Apple (`apps/apple` has its own `MarkdownEditor.swift`), and the
   Playwright spec at 375/768/1024px (needs a seeded draft message).

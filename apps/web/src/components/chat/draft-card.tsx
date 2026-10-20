@@ -2,10 +2,16 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { useSendMessage } from '@/hooks/use-conversation'
 import { useObject, useUpdateObject } from '@/hooks/use-objects'
 import type { DraftKind, MessageDraft } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { type DraftTaskState, draftTaskStateToMetadata, readDraftTaskState } from '@maskin/shared'
+import {
+	DRAFT_KIND_LABELS,
+	type DraftTaskState,
+	draftTaskStateToMetadata,
+	readDraftTaskState,
+} from '@maskin/shared'
 import { Check, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 
@@ -25,6 +31,9 @@ const FOLD_AFTER = 260
 
 interface DraftCardProps {
 	workspaceId: string
+	conversationId: string
+	/** The agent that posted the draft; approving addresses it, so it knows to send. */
+	agentId: string
 	draft: MessageDraft
 }
 
@@ -38,12 +47,15 @@ interface DraftCardProps {
  * is gone or carries no draft state the card renders nothing: the message's own
  * markdown already contains the text, so the thread still reads fine.
  *
- * Approving only records the person's yes on the task. What happens next (the
- * agent sending) is the agent's job, triggered by that update.
+ * Approving records the person's yes on the task and then says so in the chat,
+ * addressed to the agent that wrote the draft. The agent receives that as its next
+ * turn, reads the task and sends what is saved there. Undo only flips the task
+ * back; the agent is told to check the state before it sends.
  */
-export function DraftCard({ workspaceId, draft }: DraftCardProps) {
+export function DraftCard({ workspaceId, conversationId, agentId, draft }: DraftCardProps) {
 	const { data: task } = useObject(draft.object_id)
 	const update = useUpdateObject(workspaceId)
+	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// Unsaved typing. `null` means "show what the task says", so a change made
 	// elsewhere (another tab, the agent revising) shows through until the person
 	// starts typing here.
@@ -67,7 +79,10 @@ export function DraftCard({ workspaceId, draft }: DraftCardProps) {
 	const folded = !expanded && !approved && shownBody.length > FOLD_AFTER
 	const status = approved ? 'Approved' : edited ? 'Edited' : 'Draft'
 
-	const save = (next: { body: string; subject: string; state?: DraftTaskState['state'] }) => {
+	const save = (
+		next: { body: string; subject: string; state?: DraftTaskState['state'] },
+		onSaved?: () => void,
+	) => {
 		const nextState: DraftTaskState = {
 			...state,
 			state: next.state ?? state.state,
@@ -75,15 +90,30 @@ export function DraftCard({ workspaceId, draft }: DraftCardProps) {
 			approved_at: undefined,
 		}
 		if (nextState.state === 'approved') nextState.approved_at = new Date().toISOString()
-		update.mutate({
-			id: task.id,
-			data: {
-				content: next.body,
-				metadata: { ...task.metadata, ...draftTaskStateToMetadata(nextState) },
+		update.mutate(
+			{
+				id: task.id,
+				data: {
+					content: next.body,
+					metadata: { ...task.metadata, ...draftTaskStateToMetadata(nextState) },
+				},
 			},
-		})
+			{ onSuccess: onSaved },
+		)
 		setBody(null)
 		setSubject(null)
+	}
+
+	// Tell the agent in the chat, after the task holds the approved text, so the
+	// agent never reads a task that has not caught up with the card.
+	const approve = () => {
+		const what = `${DRAFT_KIND_LABELS[draft.kind]}${draft.to ? ` to ${draft.to}` : ''}`
+		save({ body: shownBody, subject: shownSubject, state: 'approved' }, () =>
+			sendMessage.mutate({
+				content: `Approved the ${what}. Send it exactly as saved in task ${task.id}.`,
+				metadata: { mentions: [agentId] },
+			}),
+		)
 	}
 
 	const commit = () => {
@@ -193,7 +223,7 @@ export function DraftCard({ workspaceId, draft }: DraftCardProps) {
 						type="button"
 						className="flex-1"
 						disabled={overLimit || shownBody.trim() === '' || update.isPending}
-						onClick={() => save({ body: shownBody, subject: shownSubject, state: 'approved' })}
+						onClick={approve}
 					>
 						{kind.approve}
 					</Button>

@@ -28,6 +28,7 @@ const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
 	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
 	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
+	useSendMessage: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-actors', async () => {

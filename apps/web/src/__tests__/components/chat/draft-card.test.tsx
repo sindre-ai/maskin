@@ -5,11 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const updateMutate = vi.fn()
+const sendMutate = vi.fn()
 let task: Record<string, unknown> | undefined
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({ data: task }),
 	useUpdateObject: () => ({ mutate: updateMutate, isPending: false }),
+}))
+
+vi.mock('@/hooks/use-conversation', () => ({
+	useSendMessage: () => ({ mutate: sendMutate, isPending: false }),
 }))
 
 import { DraftCard } from '@/components/chat/draft-card'
@@ -39,12 +44,16 @@ function buildTask(overrides: { content?: string; draft?: Record<string, unknown
 }
 
 function renderCard(draft: MessageDraft = EMAIL) {
-	return render(<DraftCard workspaceId="ws-1" draft={draft} />, { wrapper: TestWrapper })
+	return render(
+		<DraftCard workspaceId="ws-1" conversationId="conv-1" agentId="agent-1" draft={draft} />,
+		{ wrapper: TestWrapper },
+	)
 }
 
 describe('DraftCard', () => {
 	beforeEach(() => {
 		updateMutate.mockReset()
+		sendMutate.mockReset()
 		task = buildTask()
 	})
 
@@ -105,6 +114,29 @@ describe('DraftCard', () => {
 		expect(data.metadata.draft_state).toBe('approved')
 		expect(data.metadata.draft_approved_at).toEqual(expect.any(String))
 		expect(data.content).toBe('Hi Mette,\n\nBest,\nSeb')
+	})
+
+	it('tells the agent in the chat only after the approval is saved', async () => {
+		renderCard()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Approve and send' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		updateMutate.mock.calls[0][1].onSuccess()
+		const message = sendMutate.mock.calls[0][0]
+		expect(message.content).toBe(
+			'Approved the email to Mette Holm, Northwind. Send it exactly as saved in task task-1.',
+		)
+		expect(message.metadata).toEqual({ mentions: ['agent-1'] })
+	})
+
+	it('does not message the agent when an approval is undone', async () => {
+		task = buildTask({ draft: { draft_state: 'approved' } })
+
+		renderCard()
+		await userEvent.click(screen.getByRole('button', { name: 'Undo' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
 	})
 
 	it('locks an approved draft and lets the person undo the approval', async () => {
