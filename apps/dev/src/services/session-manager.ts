@@ -569,8 +569,6 @@ export class SessionManager extends EventEmitter {
 		string,
 		{
 			tempDir: string
-			browserContainerId?: string
-			networkName?: string
 			/**
 			 * Rolling tail of stdout (capped at STDOUT_TAIL_BYTES). Lets
 			 * `handleCompletion` parse the final stream-json `result` event from
@@ -605,18 +603,8 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
-	/**
-	 * AC-T5: cap how long `cleanupBrowserSidecar` waits for Docker to actually
-	 * surface a 404 on the sidecar container after `remove({ force: true })`.
-	 * `remove -f` is normally synchronous, but a slow daemon can briefly keep
-	 * the container row visible — the SLA bounds how long we tolerate that.
-	 */
-	private static readonly SIDECAR_TEARDOWN_SLA_MS = 60_000
-	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
-	private browserSidecarBuildContext: string | null = null
 	private agentBaseImageReady: Promise<void> | null = null
-	private browserSidecarImageReady: Promise<void> | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
 	/**
@@ -708,14 +696,6 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
-	}
-
-	setBrowserSidecarBuildContext(buildContext: string) {
-		this.browserSidecarBuildContext = buildContext
-	}
-
-	warmBrowserSidecarImage(): Promise<void> {
-		return this.prepareBrowserSidecarImage()
 	}
 
 	warmAgentBaseImage(): Promise<void> {
@@ -1340,7 +1320,6 @@ export class SessionManager extends EventEmitter {
 
 			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
-			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
@@ -1831,7 +1810,6 @@ export class SessionManager extends EventEmitter {
 				await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
 			}
 
-			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 
 			logger.info(`Session paused: ${sessionId}`)
@@ -1938,7 +1916,6 @@ export class SessionManager extends EventEmitter {
 		await this.clearActiveSession(sessionId).catch(() => {})
 
 		this.containers.detachStdin(sessionId)
-		await this.cleanupBrowserSidecar(sessionId).catch(() => {})
 		await this.cleanupSession(sessionId).catch(() => {})
 
 		logger.warn('Session marked failed after container loss', { sessionId })
@@ -2080,7 +2057,6 @@ export class SessionManager extends EventEmitter {
 
 			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
-			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
@@ -2248,8 +2224,6 @@ export class SessionManager extends EventEmitter {
 		memoryMib: number
 		cpus: number
 		cpuShares: number
-		browserRequired: boolean
-		previewGuestPorts: number[]
 		/**
 		 * Workspace-skill manifest for the agent's attached skills. Passed
 		 * through to `StartSessionRequest.skills` for the remote-dispatch path;
@@ -2983,7 +2957,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			'CLAUDE_OAUTH_EXPIRES_AT',
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
-			'BROWSER_CDP_URL',
 		])
 		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a
 		// user-supplied PAT (no GitHub integration configured) must pass through.
@@ -3187,20 +3160,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: stampedSessionMcpServers })
 		}
 
-		const previewGuestPorts = Array.isArray(sessionConfig.previewGuestPorts)
-			? sessionConfig.previewGuestPorts.filter(
-					(p): p is number => typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535,
-				)
-			: []
-
-		// previewGuestPorts requires browserRequired on the agent-server's request
-		// schema (the browser sidecar is what the relayed ports actually serve) —
-		// requesting preview ports always implies a browser is required.
-		const browserRequired =
-			sessionConfig.browserRequired === true ||
-			this.needsBrowserSidecar(envVars) ||
-			previewGuestPorts.length > 0
-
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
 		// memory_mb / cpu_shares are the Docker-native units used historically;
@@ -3240,8 +3199,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			memoryMib,
 			cpus,
 			cpuShares,
-			browserRequired,
-			previewGuestPorts,
 			skillsManifest,
 			skillsAttached,
 		}
@@ -3495,17 +3452,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			await this.prepareAgentBaseImage()
 		}
 
-		// Provision browser sidecar when the browserRequired flag is set
-		let networkMode: string | undefined
-		if (spec.browserRequired) {
-			const prefix = session.id.slice(0, 16)
-			const result = await this.provisionBrowserSidecar(session.id, prefix)
-			if (result) {
-				envVars.BROWSER_CDP_URL = `http://${result.browserIp}:9222`
-				networkMode = result.networkName
-			}
-		}
-
 		// entrypoint.sh waits for this file before running agent-run.sh (two-phase
 		// startup for microsandbox). The local Docker path must write it here so
 		// the container doesn't sleep forever.
@@ -3518,7 +3464,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			memoryMb: spec.memoryMib,
 			cpuShares: spec.cpuShares,
 			binds: [`${tempDir}:/agent:rw`],
-			networkMode,
 			interactive: session.interactive,
 		})
 
@@ -3558,17 +3503,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 
 		return containerId
-	}
-
-	/**
-	 * Existing seeded/template agents opt into browser access by referencing
-	 * ${BROWSER_CDP_URL} in their MCP config. Keep that contract while newer
-	 * callers can use config.browserRequired directly.
-	 */
-	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
-		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
-		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
-		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
 	}
 
 	/**
@@ -4252,7 +4186,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 		// Cleanup
 		this.containers.detachStdin(sessionId)
-		await this.cleanupBrowserSidecar(sessionId)
 		await this.containers
 			.remove(containerId)
 			.catch((err) =>
@@ -4701,7 +4634,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		)
 
 		await this.clearActiveSession(session.id)
-		await this.cleanupBrowserSidecar(session.id)
 		await this.cleanupSession(session.id)
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
@@ -4797,7 +4729,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		)
 
 		await this.clearActiveSession(session.id)
-		await this.cleanupBrowserSidecar(session.id)
 		await this.cleanupSession(session.id)
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
@@ -5025,7 +4956,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				)
 
 				await this.clearActiveSession(session.id)
-				await this.cleanupBrowserSidecar(session.id)
 				await this.cleanupSession(session.id)
 
 				// Start next queued session if capacity is available
@@ -5442,7 +5372,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					})
 				}
 
-				await this.cleanupBrowserSidecar(session.id).catch(() => {})
 				await this.clearActiveSession(session.id)
 				await this.cleanupSession(session.id)
 
@@ -5657,89 +5586,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 	}
 
-	/**
-	 * Provision a headless Chrome sidecar container on a per-session Docker network.
-	 * Returns the network name and browser container ID, or null if provisioning fails.
-	 * On failure, the agent session continues without browser capability.
-	 */
-	private async provisionBrowserSidecar(
-		sessionId: string,
-		prefix: string,
-	): Promise<{ networkName: string; browserIp: string } | null> {
-		const networkName = `anko-net-${prefix}`
-		const browserName = `anko-browser-${prefix}`
-		let browserContainerId: string | undefined
-		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
-
-		try {
-			await this.prepareBrowserSidecarImage()
-			await this.containers.createNetwork(networkName)
-
-			browserContainerId = await this.containers.create({
-				image,
-				name: browserName,
-				env: {},
-				memoryMb: 512,
-				cpuShares: 512,
-				binds: [],
-				networkMode: networkName,
-			})
-
-			await this.containers.start(browserContainerId)
-
-			// Brief wait for Chrome to initialize CDP listener
-			await new Promise((resolve) => setTimeout(resolve, 2000))
-
-			// Use the container's IP address on the session network so Chrome
-			// accepts the WebSocket connection — Chrome's CDP rejects Host headers
-			// that are hostnames, but accepts IP addresses and localhost.
-			const browserIp = await this.containers.getIpOnNetwork(browserContainerId, networkName)
-			if (!browserIp) {
-				throw new Error('Could not determine browser sidecar IP on session network')
-			}
-
-			// Track sidecar resources for cleanup
-			const sessionData = this.activeSessions.get(sessionId)
-			if (sessionData) {
-				sessionData.browserContainerId = browserContainerId
-				sessionData.networkName = networkName
-			}
-
-			logger.info('Browser sidecar started', { sessionId, browserName, networkName, browserIp })
-			await this.insertSystemLog(
-				sessionId,
-				'Browser sidecar started — Playwright MCP can connect via CDP',
-			)
-
-			return { networkName, browserIp }
-		} catch (err) {
-			logger.error('Browser sidecar failed — agent will run without browser', {
-				sessionId,
-				error: String(err),
-			})
-			await this.insertSystemLog(
-				sessionId,
-				`Browser sidecar failed to start: ${err instanceof Error ? err.message : String(err)}. Agent will continue without browser capability.`,
-			)
-
-			// Clean up partial resources
-			if (browserContainerId) {
-				await this.containers.stop(browserContainerId).catch(() => {})
-				await this.containers.remove(browserContainerId).catch(() => {})
-			}
-			await this.containers.removeNetwork(networkName).catch(() => {})
-
-			// Clear sidecar tracking
-			const sessionData = this.activeSessions.get(sessionId)
-			if (sessionData) {
-				sessionData.browserContainerId = undefined
-				sessionData.networkName = undefined
-			}
-
-			return null
-		}
-	}
-
 	private prepareAgentBaseImage(): Promise<void> {
 		if (!this.agentBaseBuildContext) return Promise.resolve()
 		if (!this.agentBaseImageReady) {
@@ -5751,121 +5597,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				})
 		}
 		return this.agentBaseImageReady
-	}
-
-	private prepareBrowserSidecarImage(): Promise<void> {
-		if (!this.browserSidecarImageReady) {
-			this.browserSidecarImageReady = this.buildOrPullBrowserSidecarImage().catch((err) => {
-				this.browserSidecarImageReady = null
-				throw err
-			})
-		}
-		return this.browserSidecarImageReady
-	}
-
-	private async buildOrPullBrowserSidecarImage(): Promise<void> {
-		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
-		if (image === 'browser-sidecar:latest' && this.browserSidecarBuildContext) {
-			await this.containers.ensureImage(image, this.browserSidecarBuildContext)
-			return
-		}
-		await this.containers.pullImage(image)
-	}
-
-	/**
-	 * Clean up browser sidecar container and its Docker network.
-	 * Called before cleanupSession() in all exit paths. After invoking
-	 * stop+remove this polls Docker until the container is actually gone so
-	 * the caller has a real teardown guarantee — `remove({ force: true })` is
-	 * normally synchronous but the Docker daemon can briefly keep the row
-	 * around, and an unrecoverable sidecar would otherwise leak a Chromium
-	 * process tree on the host (AC-T5: 60s SLA, container-count delta 0).
-	 */
-	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
-		const sessionData = this.activeSessions.get(sessionId)
-		if (!sessionData) return
-		if (!sessionData.browserContainerId && !sessionData.networkName) return
-
-		const start = Date.now()
-		const browserContainerId = sessionData.browserContainerId
-		const networkName = sessionData.networkName
-		let slaViolation = false
-
-		if (browserContainerId) {
-			await this.containers
-				.stop(browserContainerId)
-				.catch((err) =>
-					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
-				)
-			await this.containers
-				.remove(browserContainerId)
-				.catch((err) =>
-					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
-				)
-
-			const gone = await this.waitForContainerGone(
-				browserContainerId,
-				SessionManager.SIDECAR_TEARDOWN_SLA_MS,
-			)
-			if (!gone) {
-				slaViolation = true
-				logger.error('Browser sidecar still present after teardown SLA', {
-					sessionId,
-					browserContainerId,
-					slaMs: SessionManager.SIDECAR_TEARDOWN_SLA_MS,
-				})
-			}
-		}
-
-		if (networkName) {
-			await this.containers
-				.removeNetwork(networkName)
-				.catch((err) =>
-					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
-				)
-		}
-
-		// Idempotency: clear bookkeeping so a duplicate cleanup call is a no-op
-		// (the 7 session-end paths can fire close together — watchdog + handler).
-		sessionData.browserContainerId = undefined
-		sessionData.networkName = undefined
-
-		if (!slaViolation) {
-			logger.info('Browser sidecar teardown complete', {
-				sessionId,
-				elapsedMs: Date.now() - start,
-			})
-		}
-	}
-
-	/**
-	 * Poll `containers.inspect` until the container returns 404 (gone) or the
-	 * deadline elapses. Returns true if the container was confirmed gone.
-	 * Treats only 404 / "No such container" as gone — a stopped-but-present
-	 * container still counts as a leak for the AC-T5 delta check.
-	 */
-	private async waitForContainerGone(containerId: string, deadlineMs: number): Promise<boolean> {
-		const deadline = Date.now() + deadlineMs
-		while (Date.now() < deadline) {
-			if (await this.isContainerGone(containerId)) return true
-			await new Promise((r) => setTimeout(r, SessionManager.SIDECAR_TEARDOWN_POLL_INTERVAL_MS))
-		}
-		return this.isContainerGone(containerId)
-	}
-
-	private async isContainerGone(containerId: string): Promise<boolean> {
-		try {
-			await this.containers.inspect(containerId)
-			return false
-		} catch (err) {
-			const statusCode = (err as { statusCode?: unknown }).statusCode
-			if (statusCode === 404) return true
-			const message = (err as { message?: unknown }).message
-			if (typeof message === 'string' && /No such container|HTTP code 404/.test(message)) {
-				return true
-			}
-			return false
-		}
 	}
 
 	private async cleanupSession(sessionId: string): Promise<void> {

@@ -48,7 +48,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const chatUnread = useChatUnreadCount(workspaceId)
 
 	const navItems = useMemo(
-		() => (hasObjectTypes ? [...CORE_NAV_ITEMS, OBJECTS_NAV_ITEM] : CORE_NAV_ITEMS),
+		() => [...CORE_NAV_ITEMS, ...(hasObjectTypes ? [OBJECTS_NAV_ITEM] : [])],
 		[hasObjectTypes],
 	)
 

@@ -16,6 +16,7 @@ import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
@@ -355,6 +356,17 @@ export function MessageBubble({
 						conversationId={message.conversationId}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_access_request}
+					/>
+				) : null}
+				{/* An agent's show_computer call: a card that opens the agent's own computer so
+				    the person can act on it, then hands control back with Done. */}
+				{message.metadata?.computer_request ? (
+					<ComputerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						agentId={message.actorId}
+						agentName={message.actorName}
+						request={message.metadata.computer_request}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip

@@ -104,6 +104,8 @@ export default defineConfig(async () => ({
 			'/api': {
 				target: 'http://localhost:3000',
 				changeOrigin: true,
+				// The workspace desktop streams over a WebSocket on /api/desktop/stream.
+				ws: true,
 			},
 			'/mcp': {
 				target: 'http://localhost:3000',
@@ -123,6 +125,8 @@ export default defineConfig(async () => ({
 			'/api': {
 				target: 'http://localhost:3000',
 				changeOrigin: true,
+				// The workspace desktop streams over a WebSocket on /api/desktop/stream.
+				ws: true,
 			},
 			'/mcp': {
 				target: 'http://localhost:3000',

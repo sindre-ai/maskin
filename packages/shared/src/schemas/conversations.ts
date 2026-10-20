@@ -218,6 +218,21 @@ export const messageKeychainAccessRequestSchema = z.object({
 	hint: z.string().min(1).max(300).optional(),
 })
 
+/**
+ * An agent's request for the person to act on the agent's own computer, shown as a card
+ * in the chat. Never accepted from a client. Holds nothing sensitive: it only says what
+ * the person should do. The card opens the live view of the asking agent's computer
+ * (whose computer is the message's author, so it is not stored here and cannot be
+ * pointed at another agent's), and its Done button hands control back by posting a
+ * message.
+ */
+export const messageComputerRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** What the person should do on the computer, in the agent's words. */
+	task: z.string().min(1).max(500),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -246,6 +261,8 @@ export const messageMetadataSchema = z.object({
 	keychain_request: messageKeychainRequestSchema.optional(),
 	/** Backend-owned: an agent's request to use an existing credential, shown as a card. */
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
+	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
+	computer_request: messageComputerRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
@@ -269,6 +286,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		integration_connect: _integrationConnect,
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
+		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
 		...rest
 	} = metadata
@@ -457,6 +475,17 @@ export function formatKeychainAccessRequestAsMarkdown(
 ): string {
 	const why = hint ? ` ${hint}` : ''
 	return `I'd like to use **${credentialName}** from your Keychain.${why} Allow it with the card below, or in Settings → Keychain. I never see the secret itself.`
+}
+
+/** The `computer-card` request body: the tool input, minus the session the server knows. */
+export const sessionComputerCardSchema = z.object({
+	/** What the person should do, e.g. "Log in to e-conomic and approve the 2FA prompt." */
+	task: z.string().trim().min(1).max(500),
+})
+
+/** The plain-markdown rendering of a computer card, for every reader that isn't the chat UI. */
+export function formatComputerRequestAsMarkdown(task: string): string {
+	return `I need you to do something on my computer: ${task}\n\nOpen it with the card below. Press Done there when you have finished, and I will carry on.`
 }
 
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */

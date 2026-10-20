@@ -53,6 +53,16 @@ const notificationMetadataInput = z
 	})
 	.passthrough()
 
+// Only people need this: an agent always gets its own computer, and naming another
+// agent's is refused (403).
+const optionalDesktopAgentId = z
+	.string()
+	.uuid()
+	.optional()
+	.describe(
+		'Whose computer. Leave out if you are an agent (you always get your own). A person must pass the agent ID.',
+	)
+
 const optionalWorkspaceId = z
 	.string()
 	.uuid()
@@ -1858,6 +1868,20 @@ export const tools = {
 				),
 		}),
 	},
+	show_computer: {
+		description:
+			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, solving a CAPTCHA, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			task: z
+				.string()
+				.min(1)
+				.max(500)
+				.describe(
+					'What the user should do on the computer, in one or two sentences, e.g. "Approve the 2FA prompt on e-conomic, then press Done."',
+				),
+		}),
+	},
 	update_integration_access: {
 		description:
 			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "ask_first" (the agent may use the integration, but an action that cannot be undone, such as sending an email through Gmail, waits for a person to approve it; only Gmail offers it), "read_write" (read & write, no questions asked), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
@@ -2014,6 +2038,125 @@ export const tools = {
 			id: z
 				.string()
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
+		}),
+	},
+	// Agent computer: every agent has its own long-lived Linux desktop (1280x720,
+	// Chromium + xterm) that it drives and humans can watch and take over from the
+	// Desktop page. An agent always gets ITS OWN; only a person calling these
+	// tools has to say whose (agent_id). Behind the `workspace-desktop` flag.
+	desktop_screenshot: {
+		description:
+			'Take a screenshot of your computer (a 1280x720 Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_click: {
+		description:
+			'Click at a pixel position on your computer. Take a screenshot first to find the target, and another afterwards to confirm the result. Humans watching see the pointer move and click.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			x: z.number().int().min(0).max(1279),
+			y: z.number().int().min(0).max(719),
+			button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
+			double: z.boolean().optional().describe('Double-click. Defaults to false.'),
+		}),
+	},
+	desktop_move: {
+		description: 'Move the pointer to a pixel position on your computer without clicking (hover).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			x: z.number().int().min(0).max(1279),
+			y: z.number().int().min(0).max(719),
+		}),
+	},
+	desktop_drag: {
+		description:
+			'Press at one pixel position on your computer, drag, and release at another (select text, move a window, drag a slider).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			from_x: z.number().int().min(0).max(1279),
+			from_y: z.number().int().min(0).max(719),
+			to_x: z.number().int().min(0).max(1279),
+			to_y: z.number().int().min(0).max(719),
+		}),
+	},
+	desktop_scroll: {
+		description:
+			'Scroll the mouse wheel on your computer. Optionally move the pointer to (x, y) first so the right window receives it.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			direction: z.enum(['up', 'down']),
+			amount: z.number().int().min(1).max(20).optional().describe('Wheel clicks. Defaults to 3.'),
+			x: z.number().int().min(0).max(1279).optional(),
+			y: z.number().int().min(0).max(719).optional(),
+		}),
+	},
+	desktop_type: {
+		description:
+			'Type text into whatever has keyboard focus on your computer (click a field first). Up to 2000 characters. Use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching the desktop — never type secrets you would not show them.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			text: z.string().min(1).max(2000),
+		}),
+	},
+	desktop_key: {
+		description:
+			'Press key combinations on your computer, in order. Each entry is an xdotool key name or "+"-joined combo, e.g. ["ctrl+l"], ["Tab", "Return"], ["alt+Tab"], ["ctrl+shift+t"].',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			keys: z
+				.array(z.string().regex(/^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/))
+				.min(1)
+				.max(20),
+		}),
+	},
+	desktop_run: {
+		description:
+			'Run a shell command inside your computer (the desktop VM) (not on the host and not in your own sandbox). DISPLAY is already set, so GUI programs launched here appear on your screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each truncated to 20,000 characters). Default timeout 30s, max 120s. Anything meant to keep running after the command returns must be backgrounded with `&`.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			command: z.string().min(1).max(10000),
+			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
+		}),
+	},
+	desktop_expose_port: {
+		description:
+			'Make a dev server running in YOUR session sandbox (for example Vite on 5173) openable in your computer\'s browser. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003 to open in Chromium on your computer (desktop_key ["ctrl+l"], desktop_type the URL, desktop_key ["Return"]). Your computer is a separate machine, so localhost there is NOT your sandbox: always use the returned URL. Idempotent: asking again for the same port returns the same URL. You have a small fixed number of ports at once; close one with desktop_close_port to free a slot. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			guest_port: z
+				.number()
+				.int()
+				.min(1)
+				.max(65535)
+				.describe('The port your server listens on inside your sandbox, e.g. 5173.'),
+		}),
+	},
+	desktop_list_ports: {
+		description:
+			'List the dev-server ports currently open from your computer: your sandbox port, the URL to open on your computer, and the session it belongs to. Does not start your computer.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_close_port: {
+		description:
+			'Close one open dev-server port to free a slot. Pass the number after the colon in the URL desktop_expose_port or desktop_list_ports gave you (relay_port).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			relay_port: z.number().int().min(1).max(65535),
 		}),
 	},
 } as const

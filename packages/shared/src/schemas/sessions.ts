@@ -39,18 +39,6 @@ export const mcpServerHttpSchema = z.object({
 	headers: z.record(z.string()).default({}),
 })
 
-// The placeholder session-manager.ts replaces with the browser sidecar's
-// Chrome DevTools Protocol address. A CDP endpoint speaks CDP, NOT the MCP
-// protocol — pointing an `http` MCP server at it is a silent, total failure:
-// the MCP client opens the connection, never completes a handshake, and the
-// server sits at status "pending" forever. The agent gets no browser tools and
-// no error, so it reports that browser automation "isn't wired in this run"
-// while its sidecar is running perfectly. The browser is reached by running
-// @playwright/mcp as a stdio server and handing it the address via
-// --cdp-endpoint; that is what BROWSER_MCP_PRESET (apps/web's "Add Browser")
-// and expandBrowserCapability (marketplace installs) both write.
-const BROWSER_CDP_PLACEHOLDER = '${BROWSER_CDP_URL}'
-
 /**
  * Infer a missing `type` from the shape of the entry.
  *
@@ -88,17 +76,10 @@ const inferMcpServerType = (value: unknown): unknown => {
 	return server
 }
 
-export const mcpServerSchema = z
-	.preprocess(inferMcpServerType, z.union([mcpServerStdioSchema, mcpServerHttpSchema]))
-	.superRefine((server, ctx) => {
-		if (!('url' in server) || !server.url.includes(BROWSER_CDP_PLACEHOLDER)) return
-		ctx.addIssue({
-			code: z.ZodIssueCode.custom,
-			path: ['url'],
-			message:
-				'A browser CDP endpoint is not an MCP server — an http server pointed at ${BROWSER_CDP_URL} never connects and exposes no browser tools. Use a stdio server instead: { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest", "--cdp-endpoint", "${BROWSER_CDP_URL}"] }',
-		})
-	})
+export const mcpServerSchema = z.preprocess(
+	inferMcpServerType,
+	z.union([mcpServerStdioSchema, mcpServerHttpSchema]),
+)
 
 export const runtimeConfigSchema = z.object({
 	max_turns: z.number().int().positive().optional(),
@@ -140,10 +121,6 @@ export const sessionConversationContextSchema = z.object({
 })
 export type SessionConversationContext = z.infer<typeof sessionConversationContextSchema>
 
-// Mirrors MAX_PREVIEW_GUEST_PORTS in apps/agent-server/src/index.ts — a
-// session only ever needs to forward a handful of local dev servers.
-const MAX_PREVIEW_GUEST_PORTS = 8
-
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -157,19 +134,6 @@ export const sessionConfigSchema = z.object({
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
 	conversation: sessionConversationContextSchema.optional(),
-	// When true, provision a browser sidecar and inject BROWSER_CDP_URL so
-	// @playwright/mcp can attach. See needsBrowserSidecar() in session-manager.ts
-	// for the legacy auto-detection path (MCP config referencing ${BROWSER_CDP_URL}).
-	browserRequired: z.boolean().default(false),
-	// Guest port(s) inside the session to publish on the msb bridge gateway
-	// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
-	// reach them. Only takes effect when browserRequired is also true —
-	// session-manager.ts's buildLaunchSpec() forces browserRequired on whenever
-	// this is non-empty, so passing one without the other is still safe.
-	previewGuestPorts: z
-		.array(z.number().int().positive().max(65535))
-		.max(MAX_PREVIEW_GUEST_PORTS)
-		.optional(),
 })
 
 export const createSessionSchema = z.object({
