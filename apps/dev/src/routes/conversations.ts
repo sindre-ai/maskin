@@ -5,27 +5,33 @@ import {
 	conversationParticipants,
 	conversations,
 	installedLoops,
+	messageDecisions,
 	messageReactions,
 	messageThreadReads,
 	messages,
 	objects,
 	sessions,
+	subscriptions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
 	addConversationParticipantsSchema,
 	addReactionSchema,
+	answerDecisionSchema,
 	conversationListQuerySchema,
 	createConversationSchema,
+	decisionListQuerySchema,
 	editMessageSchema,
 	markThreadReadSchema,
 	messageQuerySchema,
+	postDecisionSchema,
 	postMessageSchema,
 	removeReactionQuerySchema,
 	stripServerOwnedMetadata,
 	threadListQuerySchema,
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
+	validateDecisionProse,
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
@@ -36,6 +42,7 @@ import {
 	conversationDetailResponseSchema,
 	conversationListItemResponseSchema,
 	conversationParticipantStateResponseSchema,
+	decisionFeedItemSchema,
 	errorSchema,
 	idParamSchema,
 	messageResponseSchema,
@@ -50,9 +57,10 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { loadDecisionsByMessage } from '../services/message-decisions'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
-import { importObjectComments } from '../services/object-chat-sync'
+import { ensureObjectChat, importObjectComments } from '../services/object-chat-sync'
 import type { SessionManager } from '../services/session-manager'
 import {
 	anchorSpawnedSessionsToMessage,
@@ -787,6 +795,453 @@ app.openapi(markThreadReadRoute, (async (c) => {
 	return c.json({ last_read_message_id: cursor?.lastReadMessageId ?? lastRead }, 200)
 }) as RouteHandler<typeof markThreadReadRoute, Env>)
 
+// ── Decisions ────────────────────────────────────────────────────────────────
+//
+// A decision is a card an agent (the Chief of Staff) posts into the group chat about an object.
+// The card is the message's metadata.decision; message_decisions says who it is for and where it
+// stands. Talking about it happens in the card's thread; answering it is one tap, once.
+
+const postDecisionRoute = createRoute({
+	method: 'post',
+	path: '/decisions',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: "Post a decision card into an object's group chat",
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: postDecisionSchema } } },
+	},
+	responses: {
+		201: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						conversation_id: z.string().uuid(),
+						message_id: z.number(),
+						status: z.literal('open'),
+						for_actor_ids: z.array(z.string().uuid()),
+					}),
+				},
+			},
+			description: 'Decision posted',
+		},
+		400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid' },
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'No such object',
+		},
+	},
+})
+
+app.openapi(postDecisionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	const violations = validateDecisionProse(body.decision)
+	if (violations.length > 0) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`The decision block breaks ${violations.length} of the house style rules. Fix all of them and post again.`,
+				violations.map((v) => ({ field: `decision.${v.path}`, message: v.message })),
+			),
+			400,
+		)
+	}
+
+	const [object] = await db
+		.select({ id: objects.id, title: objects.title })
+		.from(objects)
+		.where(and(eq(objects.id, body.object_id), eq(objects.workspaceId, workspaceId)))
+		.limit(1)
+	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+
+	// Who can answer: the people named, or else the humans following the object.
+	let recipients = body.for_actor_ids ?? []
+	if (recipients.length === 0) {
+		const followers = await db
+			.select({ id: actors.id })
+			.from(subscriptions)
+			.innerJoin(actors, eq(actors.id, subscriptions.actorId))
+			.where(
+				and(
+					eq(subscriptions.workspaceId, workspaceId),
+					eq(subscriptions.entityType, 'object'),
+					eq(subscriptions.entityId, object.id),
+					eq(actors.type, 'human'),
+				),
+			)
+		recipients = followers.map((f) => f.id)
+	}
+	recipients = Array.from(new Set(recipients))
+	if (recipients.length === 0) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Nobody follows this object yet', [
+				{ field: 'for_actor_ids', message: 'Name the people who should answer' },
+			]),
+			400,
+		)
+	}
+	const memberIds = await loadWorkspaceMemberIds(db, workspaceId, recipients)
+	const notMembers = recipients.filter((id) => !memberIds.has(id))
+	if (notMembers.length > 0) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'One or more recipients are not members of this workspace',
+				notMembers.map((id) => ({ field: 'for_actor_ids', message: `Not a member: ${id}` })),
+			),
+			400,
+		)
+	}
+
+	const { conversationId } = await ensureObjectChat(db, {
+		workspaceId,
+		objectId: object.id,
+		title: object.title ?? 'Untitled',
+		createdBy: callerId,
+		participantIds: recipients,
+	})
+
+	// No evaluateAndRespond: this card is for people, and other agents in the chat must not
+	// answer it for them.
+	const message = await insertConversationMessage(db, {
+		conversationId,
+		workspaceId,
+		actorId: callerId,
+		content: body.content ?? `${body.decision.title}\n\n${body.decision.ask}`,
+		metadata: { decision: body.decision, mentions: recipients },
+		sessionId: null,
+	})
+	if (!message) throw new Error('Failed to post the decision')
+
+	await db.insert(messageDecisions).values({
+		messageId: message.id,
+		forActorIds: recipients,
+		attention: body.attention ?? null,
+	})
+	await recordEvent(db, {
+		workspaceId,
+		actorId: callerId,
+		action: 'decision_posted',
+		entityType: 'conversation',
+		entityId: conversationId,
+		data: { message_id: message.id, object_id: object.id, for_actor_ids: recipients },
+	})
+
+	return c.json(
+		{
+			conversation_id: conversationId,
+			message_id: message.id,
+			status: 'open' as const,
+			for_actor_ids: recipients,
+		},
+		201,
+	)
+}) as RouteHandler<typeof postDecisionRoute, Env>)
+
+const listDecisionsRoute = createRoute({
+	method: 'get',
+	path: '/decisions',
+	tags: ['Conversations'],
+	summary: 'Decisions addressed to the caller, most urgent first',
+	request: { headers: workspaceIdHeader, query: decisionListQuerySchema },
+	responses: {
+		200: {
+			content: {
+				'application/json': { schema: z.object({ decisions: z.array(decisionFeedItemSchema) }) },
+			},
+			description: 'Decisions',
+		},
+	},
+})
+
+app.openapi(listDecisionsRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { state, limit } = c.req.valid('query')
+
+	const rows = await db
+		.select({
+			messageId: messages.id,
+			conversationId: conversations.id,
+			conversationTitle: conversations.title,
+			subjectType: conversations.subjectType,
+			subjectId: conversations.subjectId,
+			content: messages.content,
+			metadata: messages.metadata,
+			createdAt: messages.createdAt,
+			authorId: actors.id,
+			authorName: actors.name,
+			authorType: actors.type,
+			status: messageDecisions.status,
+			attention: messageDecisions.attention,
+			answerOptionIndex: messageDecisions.answerOptionIndex,
+			answeredBy: messageDecisions.answeredBy,
+			answeredAt: messageDecisions.answeredAt,
+			// Table-qualified literal SQL: a Drizzle column here renders unqualified and binds to the
+			// inner alias (known-pitfalls.md, correlated subquery).
+			replyCount: sql<number>`(SELECT count(*)::int FROM messages r WHERE r.thread_root_id = messages.id)`,
+		})
+		.from(messageDecisions)
+		.innerJoin(messages, eq(messages.id, messageDecisions.messageId))
+		.innerJoin(conversations, eq(conversations.id, messages.conversationId))
+		.innerJoin(actors, eq(actors.id, messages.actorId))
+		.innerJoin(
+			conversationParticipants,
+			and(
+				eq(conversationParticipants.conversationId, conversations.id),
+				eq(conversationParticipants.actorId, callerId),
+				isNull(conversationParticipants.leftAt),
+			),
+		)
+		.where(
+			and(
+				eq(conversations.workspaceId, workspaceId),
+				eq(messageDecisions.status, state),
+				sql`${callerId}::uuid = ANY(${messageDecisions.forActorIds})`,
+			),
+		)
+		.orderBy(sql`${messageDecisions.attention} DESC NULLS LAST`, desc(messages.id))
+		.limit(limit)
+
+	return c.json({
+		decisions: rows.flatMap((r) => {
+			const decision = (r.metadata as { decision?: unknown } | null)?.decision
+			if (!decision) return []
+			return [
+				{
+					message_id: r.messageId,
+					conversation_id: r.conversationId,
+					conversation_title: r.conversationTitle,
+					object_id: r.subjectType === 'object' ? r.subjectId : null,
+					content: r.content,
+					decision,
+					attention: r.attention,
+					status: r.status as 'open' | 'answered' | 'withdrawn',
+					created_at: r.createdAt?.toISOString() ?? null,
+					posted_by: { id: r.authorId, name: r.authorName, type: r.authorType },
+					reply_count: r.replyCount,
+					answer:
+						r.answerOptionIndex === null
+							? null
+							: {
+									option_index: r.answerOptionIndex,
+									answered_by: r.answeredBy,
+									answered_at: r.answeredAt?.toISOString() ?? null,
+								},
+				},
+			]
+		}) as z.infer<typeof decisionFeedItemSchema>[],
+	})
+}) as RouteHandler<typeof listDecisionsRoute, Env>)
+
+const answerDecisionRoute = createRoute({
+	method: 'put',
+	path: '/{id}/messages/{messageId}/decision',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Answer a decision card by picking one of its options',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: answerDecisionSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						status: z.literal('answered'),
+						option_index: z.number(),
+						label: z.string(),
+					}),
+				},
+			},
+			description: 'Answered; the poster has been told in the card thread',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'No such option',
+		},
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not for you' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Already answered or withdrawn',
+		},
+	},
+})
+
+/** The decision row, its card and its poster, for a conversation the caller is in. */
+async function loadDecisionCard(
+	db: Database,
+	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
+) {
+	const auth = await loadConversationWithAuth(db, args.conversationId, args.callerId)
+	if (!auth || auth.conversation.workspaceId !== args.workspaceId) return null
+	const [row] = await db
+		.select({
+			decision: messageDecisions,
+			metadata: messages.metadata,
+			authorId: messages.actorId,
+		})
+		.from(messageDecisions)
+		.innerJoin(messages, eq(messages.id, messageDecisions.messageId))
+		.where(
+			and(
+				eq(messageDecisions.messageId, args.messageId),
+				eq(messages.conversationId, args.conversationId),
+			),
+		)
+		.limit(1)
+	return row ?? null
+}
+
+app.openapi(answerDecisionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { option_index: optionIndex } = c.req.valid('json')
+
+	const card = await loadDecisionCard(db, { conversationId: id, messageId, callerId, workspaceId })
+	if (!card) return c.json(createApiError('NOT_FOUND', 'Decision not found'), 404)
+	if (!card.decision.forActorIds.includes(callerId)) {
+		return c.json(createApiError('FORBIDDEN', 'This decision is not addressed to you'), 403)
+	}
+	const options = (card.metadata as { decision?: { options?: { label: string }[] } } | null)
+		?.decision?.options
+	const option = options?.[optionIndex]
+	if (!option) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'No such option', [
+				{ field: 'option_index', message: `This decision has ${options?.length ?? 0} options` },
+			]),
+			400,
+		)
+	}
+
+	// The status condition is what makes the first answer win when two people tap at once.
+	const [won] = await db
+		.update(messageDecisions)
+		.set({
+			status: 'answered',
+			answerOptionIndex: optionIndex,
+			answeredBy: callerId,
+			answeredAt: new Date(),
+		})
+		.where(and(eq(messageDecisions.messageId, messageId), eq(messageDecisions.status, 'open')))
+		.returning({ messageId: messageDecisions.messageId })
+	if (!won) {
+		return c.json(
+			createApiError('CONFLICT', `This decision is already ${card.decision.status}`),
+			409,
+		)
+	}
+
+	// Tell the poster in the card's thread. It is a normal reply that @mentions them, so the chat's
+	// own rules wake them, and it reads as "Chose X" in the object's activity.
+	const reply = await insertConversationMessage(db, {
+		conversationId: id,
+		workspaceId,
+		actorId: callerId,
+		content: `Chose “${option.label}”`,
+		metadata: { mentions: [card.authorId] },
+		sessionId: null,
+		threadRootId: messageId,
+		threadAlsoInChannel: true,
+	})
+	await recordEvent(db, {
+		workspaceId,
+		actorId: callerId,
+		action: 'decision_answered',
+		entityType: 'conversation',
+		entityId: id,
+		data: { message_id: messageId, option_index: optionIndex, label: option.label },
+	})
+	if (reply) {
+		evaluateAndRespond({
+			db,
+			sessionManager,
+			workspaceId,
+			conversationId: id,
+			messageId: reply.id,
+		}).catch((err: unknown) =>
+			logger.error('Conversation responder failed', {
+				conversationId: id,
+				messageId: reply.id,
+				error: String(err),
+			}),
+		)
+	}
+	return c.json(
+		{ status: 'answered' as const, option_index: optionIndex, label: option.label },
+		200,
+	)
+}) as RouteHandler<typeof answerDecisionRoute, Env>)
+
+const withdrawDecisionRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/messages/{messageId}/decision',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Take back a decision you posted that nobody has answered yet',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		204: { description: 'Withdrawn' },
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not yours' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Already answered or withdrawn',
+		},
+	},
+})
+
+app.openapi(withdrawDecisionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+
+	const card = await loadDecisionCard(db, { conversationId: id, messageId, callerId, workspaceId })
+	if (!card) return c.json(createApiError('NOT_FOUND', 'Decision not found'), 404)
+	if (card.authorId !== callerId) {
+		return c.json(createApiError('FORBIDDEN', 'Only the poster can withdraw a decision'), 403)
+	}
+	const [done] = await db
+		.update(messageDecisions)
+		.set({ status: 'withdrawn' })
+		.where(and(eq(messageDecisions.messageId, messageId), eq(messageDecisions.status, 'open')))
+		.returning({ messageId: messageDecisions.messageId })
+	if (!done) {
+		return c.json(
+			createApiError('CONFLICT', `This decision is already ${card.decision.status}`),
+			409,
+		)
+	}
+	await recordEvent(db, {
+		workspaceId,
+		actorId: callerId,
+		action: 'decision_withdrawn',
+		entityType: 'conversation',
+		entityId: id,
+		data: { message_id: messageId },
+	})
+	return c.body(null, 204)
+}) as RouteHandler<typeof withdrawDecisionRoute, Env>)
+
 // GET /:id - Conversation detail
 const getConversationRoute = createRoute({
 	method: 'get',
@@ -1101,6 +1556,11 @@ app.openapi(listMessagesRoute, (async (c) => {
 		page.filter((m) => m.threadRootId === null),
 	)
 
+	const decisions = await loadDecisionsByMessage(
+		db,
+		page.map((m) => m.id),
+	)
+
 	// Handoffs no message carries yet ride on the newest page only.
 	const pendingHandoffs = query.before_id
 		? undefined
@@ -1118,6 +1578,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 					spawned_sessions: spawned.get(m.id) ?? [],
 					reactions: reactions.get(m.id) ?? [],
 					thread: summaries.get(m.id) ?? null,
+					decision: decisions.get(m.id) ?? null,
 				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
 		),
 		has_more: hasMore,

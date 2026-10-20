@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { commentDecisionSchema } from './comment-decision'
 import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
@@ -248,6 +249,8 @@ export const messageMetadataSchema = z.object({
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/** Backend-owned: the decision card an agent posted for people to answer. */
+	decision: commentDecisionSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })
@@ -270,6 +273,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
 		comment_event_id: _commentEventId,
+		decision: _decision,
 		...rest
 	} = metadata
 	return rest as T
@@ -478,3 +482,34 @@ export const reactionEmojiSchema = z
 export const addReactionSchema = z.object({ emoji: reactionEmojiSchema })
 
 export const removeReactionQuerySchema = z.object({ emoji: reactionEmojiSchema })
+
+/** An agent (the Chief of Staff) puts a decision for people into the chat about an object. */
+export const postDecisionSchema = z.object({
+	object_id: z
+		.string()
+		.uuid()
+		.describe('The object the decision is about. Its group chat is used, or made.'),
+	decision: commentDecisionSchema,
+	attention: z.number().int().min(1).max(5).optional(),
+	for_actor_ids: z
+		.array(z.string().uuid())
+		.min(1)
+		.max(20)
+		.optional()
+		.describe('The people who can answer. Defaults to the humans following the object.'),
+	content: z
+		.string()
+		.min(1)
+		.max(MESSAGE_MAX_LENGTH)
+		.optional()
+		.describe('Text shown where cards are not drawn. Defaults to the decision title and ask.'),
+})
+
+export const answerDecisionSchema = z.object({
+	option_index: z.number().int().min(0).max(9).describe('Which option, counting from 0.'),
+})
+
+export const decisionListQuerySchema = z.object({
+	state: z.enum(['open', 'answered', 'withdrawn']).default('open'),
+	limit: z.coerce.number().int().min(1).max(100).default(30),
+})
