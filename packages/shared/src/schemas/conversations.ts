@@ -507,6 +507,11 @@ export const postDecisionSchema = z.object({
 
 export const answerDecisionSchema = z.object({
 	option_index: z.number().int().min(0).max(9).describe('Which option, counting from 0.'),
+	note: z
+		.string()
+		.max(500)
+		.optional()
+		.describe("Why, in the person's words (for example a reason for holding)."),
 })
 
 export const decisionListQuerySchema = z.object({

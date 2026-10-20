@@ -107,12 +107,12 @@ describe('Chat decisions', () => {
 		)
 		return ((await res.json()) as { decisions: FeedItem[] }).decisions
 	}
-	const answer = (as: string, c: string, m: number, optionIndex: number) =>
+	const answer = (as: string, c: string, m: number, optionIndex: number, note?: string) =>
 		appFor(as).request(
 			jsonRequest(
 				'PUT',
 				`/api/conversations/${c}/messages/${m}/decision`,
-				{ option_index: optionIndex },
+				{ option_index: optionIndex, ...(note ? { note } : {}) },
 				ws(),
 			),
 		)
@@ -263,6 +263,20 @@ describe('Chat decisions', () => {
 			.from(events)
 			.where(and(eq(events.entityId, conversation_id), eq(events.action, 'decision_answered')))
 		expect(recorded).toHaveLength(1)
+	})
+
+	it('carries the reason typed with an answer into the card thread', async () => {
+		const { conversation_id, message_id } = await posted()
+		expect(
+			(await answer(humanId, conversation_id, message_id, 1, 'Need the legal check first')).status,
+		).toBe(200)
+		const reply = await db
+			.select()
+			.from(messages)
+			.where(
+				and(eq(messages.conversationId, conversation_id), eq(messages.threadRootId, message_id)),
+			)
+		expect(reply.map((m) => m.content)).toEqual(['Chose “Hold” · Need the legal check first'])
 	})
 
 	it('keeps answers to the people it is for, and to real options', async () => {

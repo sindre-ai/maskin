@@ -1144,7 +1144,7 @@ app.openapi(answerDecisionRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id, messageId } = c.req.valid('param')
-	const { option_index: optionIndex } = c.req.valid('json')
+	const { option_index: optionIndex, note } = c.req.valid('json')
 
 	const card = await loadDecisionCard(db, { conversationId: id, messageId, callerId, workspaceId })
 	if (!card) return c.json(createApiError('NOT_FOUND', 'Decision not found'), 404)
@@ -1187,7 +1187,7 @@ app.openapi(answerDecisionRoute, (async (c) => {
 		conversationId: id,
 		workspaceId,
 		actorId: callerId,
-		content: `Chose “${option.label}”`,
+		content: note?.trim() ? `Chose “${option.label}” · ${note.trim()}` : `Chose “${option.label}”`,
 		metadata: { mentions: [card.authorId] },
 		sessionId: null,
 		threadRootId: messageId,
