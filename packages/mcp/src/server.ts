@@ -1104,7 +1104,7 @@ async function createSessionAndWait(
 
 	let sessionId = session.id
 	const deadline = Date.now() + WAIT_LIMIT_MS
-	const terminalStatuses = ['completed', 'failed', 'timeout']
+	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
 	// §17.6: when a session hits a subscription limit its terminal report
 	// carries retried_session_id — the id of the retry the scheduler
 	// enqueued. Follow the redirect so a caller waiting here sees the retry's

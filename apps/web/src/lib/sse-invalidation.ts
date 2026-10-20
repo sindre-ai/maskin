@@ -13,7 +13,11 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 // Session events that can move the credit balance or end a run. Billing usage
 // only needs a refetch on these; routine session_updated / session_started
 // traffic does not change it.
-const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
+const BILLING_INVALIDATING_ACTIONS = new Set([
+	'session_credit_debited',
+	'session_budget_stopped',
+	'session_stopped',
+])
 
 // Trailing windows for the refetches a burst of session events would otherwise
 // multiply. Agents PATCH current_activity on every step and a scheduled trigger
