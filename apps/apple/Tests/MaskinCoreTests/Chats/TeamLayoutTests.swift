@@ -374,6 +374,18 @@ struct TeamLayoutPriorityTests {
 		#expect(result.conversationIDs.filter { $0 == "ask" }.count == 1)
 	}
 
+	@Test("the Pinned chip lists pinned chats as rows and hides the tiles")
+	func pinnedChip() {
+		var pinned = chatConvo("pin", last: ago(hours: 1), participants: [chatMe, forge])
+		pinned.pinned = true
+		let other = chatConvo("other", last: ago(hours: 2), participants: [chatMe, ida])
+		let result = TeamLayout.build(
+			TeamLayout.Input(
+				conversations: [pinned, other], chip: .pinned, currentActorID: "me", now: now, calendar: cal))
+		#expect(result.tiles.isEmpty)
+		#expect(result.sections.first?.rows.map(\.id) == ["pin"])
+	}
+
 	@Test("a conversation with a running agent lists under Working, after Needs you")
 	func working() {
 		let result = layout(

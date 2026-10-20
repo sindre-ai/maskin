@@ -75,12 +75,13 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 }
 
 public enum TeamFilterChip: String, CaseIterable, Sendable, Codable {
-	case all, unread, people, agents, groups, flows
+	case all, unread, pinned, people, agents, groups, flows
 
 	public var label: String {
 		switch self {
 		case .all: "All"
 		case .unread: "Unread"
+		case .pinned: "Pinned"
 		case .people: "People"
 		case .agents: "Agents"
 		case .groups: "Groups"
@@ -318,7 +319,8 @@ public struct TeamLayout: Equatable, Sendable {
 			switch input.chip {
 			case .all: return true
 			case .unread: return tile.unreadCount > 0
-			case .groups: return false
+			// The Pinned chip lists the pinned chats as rows (below), not as tiles above them.
+			case .groups, .pinned: return false
 			case .flows: if case .flow = tile.kind { return true } else { return false }
 			case .people, .agents:
 				guard case .conversation(let c) = tile.kind else { return false }
@@ -345,6 +347,11 @@ public struct TeamLayout: Equatable, Sendable {
 					id: "unread", kind: .unread, label: "Unread", count: rows.count, rows: byRecency(rows),
 					showsMarkAllRead: !rows.isEmpty)
 			]
+		case .pinned:
+			let rows = byRecency(
+				active.filter(\.pinned).map(conversationRow)
+					+ input.flowRooms.filter { pinnedFlowKeys.contains($0.pinKey) }.map(flowRow))
+			sections = [Section(id: "pinned", kind: .filtered, label: "Pinned", count: rows.count, rows: rows)]
 		case .people, .agents:
 			let wanted: ParticipantKind = input.chip == .people ? .person : .agent
 			let rows = personRows(unpinned.filter { kind(of: $0, me: me) == wanted }, me: me)

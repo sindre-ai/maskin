@@ -86,9 +86,18 @@ final class StoriesProvider {
 				client: environment.client, workspaceID: workspace,
 				objects: APIObjectsRemote(client: environment.client, credentials: credentials),
 				files: files),
-			files: files, briefing: nil)
+			files: files, briefing: nil, cache: environment.snapshotCache)
 		current = (workspace, store)
 		return store
+	}
+}
+
+/// Reloads the briefing row without a screen: the background refresh calls it so the saved row is
+/// current when For you opens. Best effort, like the rest of the story load.
+public enum BackgroundStories {
+	@MainActor
+	public static func refresh(environment: AppEnvironment) async {
+		await StoriesProvider().store(for: environment)?.loadCompletely(attempts: 1)
 	}
 }
 
