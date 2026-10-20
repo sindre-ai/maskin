@@ -1,3 +1,5 @@
+import { POSTHOG_NEVER_READ, POSTHOG_READ_TOOLS } from './posthog-read-tools'
+
 /**
  * Whether an integration tool only reads or can change something. The gate in
  * tool-gate.ts uses this to decide which tools a read-only agent may call.
@@ -99,4 +101,128 @@ export function classifyTool(
 	const verb = verbOf(toolName).toLowerCase()
 	if (WRITE_WORDS.test(verb)) return 'write'
 	return READ_PREFIXES.some((p) => verb.startsWith(p)) ? 'read' : 'write'
+}
+
+// ── PostHog: one tool ("exec"), many commands ────────────────────────────
+
+/** Added to the tool's description for an agent that can read but not write. */
+export const POSTHOG_EXEC_READ_NOTE =
+	'Read access: query and lookup commands run; create, update and delete commands are refused.'
+
+/**
+ * PostHog's hosted MCP serves one tool, "exec", that takes a command string. Strict equality
+ * on both parts: "EXEC", "exec " or a tool of another provider named exec keep the name rules.
+ */
+export function isPosthogExec(provider: string, toolName: string): boolean {
+	return provider === 'posthog' && toolName === 'exec'
+}
+
+export interface CallVerdict {
+	kind: ToolKind
+	/** PostHog exec: the inner tool name, when the command named a well-formed one. Never its input. */
+	commandTool?: string
+}
+
+const POSTHOG_COMMAND_MAX_CHARS = 100_000
+// Tab is allowed between tokens; newlines and every other control character are not.
+const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f]/
+const COMMAND_SHAPE = /^([a-z]+)((?:[ \t].*)?)$/
+const DISCOVERY_COMMANDS: ReadonlySet<string> = new Set([
+	'help',
+	'tools',
+	'search',
+	'info',
+	'schema',
+	'learn',
+])
+const DISCOVERY_TAIL = /^[A-Za-z0-9 \t-]*$/
+const INNER_TOOL_NAME = /^[a-z0-9][a-z0-9-]*$/
+
+// PostHog's own tool names, on top of WRITE_WORDS, for a name that is not in the curated set.
+const POSTHOG_WRITE_WORDS =
+	/(^|-)(reset|enable|disable|toggle|duplicate|copy|clone|import|export|regenerate|rotate|restart|pause|resume|launch|ship|end|stop|start|schedule|bulk|sync|backfill|mark|dismiss|snooze|save|feedback|activate|deactivate|rename)(-|$)/
+const POSTHOG_READ_WORDS = new Set([
+	'get',
+	'list',
+	'retrieve',
+	'query',
+	'search',
+	'read',
+	'describe',
+	'count',
+	'schema',
+	'info',
+	'results',
+	'stats',
+])
+
+function posthogInnerToolKind(name: string): ToolKind {
+	if (POSTHOG_NEVER_READ.has(name)) return 'write'
+	// The curated set first: execute-sql and data-catalog-metric-run are reads that the
+	// write words ("execute", "run") would refuse.
+	if (POSTHOG_READ_TOOLS.has(name)) return 'read'
+	if (WRITE_WORDS.test(name) || POSTHOG_WRITE_WORDS.test(name)) return 'write'
+	return name.split('-').some((token) => POSTHOG_READ_WORDS.has(token)) ? 'read' : 'write'
+}
+
+/**
+ * Judges one exec command. Fail-closed: anything that is not exactly a known shape is a
+ * write. The command's JSON input is only parsed to prove it is one value (so nothing can be
+ * chained after it); its contents are never inspected.
+ */
+function classifyPosthogCommand(command: unknown): CallVerdict {
+	const refused: CallVerdict = { kind: 'write' }
+	if (typeof command !== 'string') return refused
+	if (command.length > POSTHOG_COMMAND_MAX_CHARS || CONTROL_CHARS.test(command)) return refused
+	const shape = COMMAND_SHAPE.exec(command)
+	if (!shape) return refused
+	const word = shape[1] ?? ''
+	const tail = shape[2] ?? ''
+
+	if (DISCOVERY_COMMANDS.has(word)) {
+		return DISCOVERY_TAIL.test(tail) ? { kind: 'read' } : refused
+	}
+	if (word !== 'call') return refused
+
+	let rest = tail
+	for (;;) {
+		const token = /^[ \t]+(\S+)/.exec(rest)
+		if (!token) return refused
+		const text = token[1] ?? ''
+		rest = rest.slice(token[0].length)
+		if (text === '--json') continue
+		// --confirm is PostHog's own mark for a destructive tool; any other flag is unknown.
+		if (text.startsWith('--')) return refused
+		if (!INNER_TOOL_NAME.test(text)) return refused
+		const input = rest.trim()
+		if (input !== '') {
+			try {
+				JSON.parse(input)
+			} catch {
+				return { kind: 'write', commandTool: text }
+			}
+		}
+		return { kind: posthogInnerToolKind(text), commandTool: text }
+	}
+}
+
+/**
+ * Like classifyTool, but sees the call's arguments. Only PostHog exec has a verdict that
+ * depends on them; everything else is classifyTool unchanged. The exec rule runs before the
+ * annotation check, so a hint from upstream cannot make exec a read.
+ */
+export function classifyCall(
+	provider: string,
+	toolName: string,
+	args: unknown,
+	annotations?: ToolAnnotationsLike | null,
+): CallVerdict {
+	if (isPosthogExec(provider, toolName)) {
+		const command =
+			args && typeof args === 'object' && !Array.isArray(args)
+				? (args as { command?: unknown }).command
+				: undefined
+		return classifyPosthogCommand(command)
+	}
+	return { kind: classifyTool(provider, toolName, annotations) }
 }

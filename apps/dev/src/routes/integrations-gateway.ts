@@ -15,6 +15,7 @@ import {
 	parseJsonRpc,
 	parseSseData,
 	toSse,
+	toolsCallArguments,
 	toolsCallName,
 } from '../lib/integrations/mcp-gateway'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -219,6 +220,7 @@ export async function proxyMcp(
 			provider,
 			providerLabel: label,
 			toolName,
+			args: rpc ? toolsCallArguments(rpc) : undefined,
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
 		})
@@ -230,7 +232,14 @@ export async function proxyMcp(
 					action: 'agent_access_denied',
 					entityType: 'integration',
 					entityId: integration.id,
-					data: { provider, tool: toolName, kind: decision.kind, access },
+					// The inner tool name only, never the command's input: that can hold personal data.
+					data: {
+						provider,
+						tool: toolName,
+						kind: decision.kind,
+						access,
+						...(decision.commandTool ? { command_tool: decision.commandTool } : {}),
+					},
 				})
 			} catch (err) {
 				logger.warn('Could not record a denied gateway tool call', {
@@ -267,12 +276,17 @@ export async function proxyMcp(
 		headers.set(name, value)
 	}
 
+	// PostHog's verdict comes from our parse of the body (the last of a repeated key wins), so
+	// send what we judged: a parser that resolves a repeated key the other way could otherwise
+	// run a different command than the one we allowed. Every other provider gets the original text.
+	const upstreamBody = provider === 'posthog' && rpc ? JSON.stringify(rpc) : bodyText
+
 	let upstream: Response
 	try {
 		upstream = await fetch(server.url, {
 			method,
 			headers,
-			body: bodyText,
+			body: upstreamBody,
 			redirect: 'manual',
 			// A long-lived GET stream ends with the agent; a POST is bounded.
 			signal: method === 'GET' ? c.req.raw.signal : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),

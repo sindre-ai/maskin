@@ -1,6 +1,13 @@
 import { type AgentAccess, canRead, canWrite } from './agent-access'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
-import { type ToolAnnotationsLike, type ToolKind, classifyTool } from './tool-kinds'
+import {
+	POSTHOG_EXEC_READ_NOTE,
+	type ToolAnnotationsLike,
+	type ToolKind,
+	classifyCall,
+	classifyTool,
+	isPosthogExec,
+} from './tool-kinds'
 
 /**
  * Pure parts of the MCP gateway (routes/integrations-gateway.ts): which providers go
@@ -115,6 +122,10 @@ export function toolsCallName(message: JsonRpcMessage): string | null {
 	return typeof name === 'string' && name.length > 0 ? name : null
 }
 
+export function toolsCallArguments(message: JsonRpcMessage): unknown {
+	return message.method === 'tools/call' ? message.params?.arguments : undefined
+}
+
 /** A refusal shaped like a failed tool result, so the agent reads it as the tool's own answer. */
 export function denialResult(id: JsonRpcId | undefined, text: string) {
 	return {
@@ -128,23 +139,33 @@ export interface GatewayDecision {
 	allowed: boolean
 	kind: ToolKind
 	message?: string
+	/** PostHog exec only: the inner tool the command named, for the denial and its event. */
+	commandTool?: string
 }
 
 export function decideToolCall(input: {
 	provider: string
 	providerLabel: string
 	toolName: string
+	/** The call's arguments; only PostHog exec is judged by them. */
+	args?: unknown
 	access: AgentAccess
 	annotations?: ToolAnnotationsLike | null
 }): GatewayDecision {
-	const kind = classifyTool(input.provider, input.toolName, input.annotations)
-	if (allows(input.access, kind)) return { allowed: true, kind }
+	const { kind, commandTool } = classifyCall(
+		input.provider,
+		input.toolName,
+		input.args,
+		input.annotations,
+	)
+	if (allows(input.access, kind)) return { allowed: true, kind, commandTool }
 	return {
 		allowed: false,
 		kind,
+		commandTool,
 		message: accessDeniedMessage({
 			providerLabel: input.providerLabel,
-			toolName: input.toolName,
+			toolName: commandTool ? `${input.toolName} (${commandTool})` : input.toolName,
 			kind,
 			access: input.access,
 		}),
@@ -172,15 +193,25 @@ export function annotateToolsList(
 	const upstreamAnnotations = new Map<string, ToolAnnotationsLike>()
 	const tools = (result.tools ?? []).map((tool) => {
 		if (tool.annotations) upstreamAnnotations.set(tool.name, tool.annotations)
-		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)
-		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
+		// PostHog exec reads or writes depending on the command, so it is listed as a write
+		// (honest: it can change things) but usable by anyone who can read.
+		const mixed = isPosthogExec(ctx.provider, tool.name)
+		const kind = mixed ? 'write' : classifyTool(ctx.provider, tool.name, tool.annotations)
+		const usable = mixed
+			? canRead(ctx.access)
+			: kind === 'read'
+				? canRead(ctx.access)
+				: canWrite(ctx.access)
 		const description = tool.description ?? ''
+		const readOnlyAgent = mixed && !canWrite(ctx.access)
 		return {
 			...tool,
 			annotations: { ...tool.annotations, readOnlyHint: kind === 'read' },
-			description: usable
-				? description
-				: `${unavailableNote(ctx.providerLabel, kind, ctx.access)} ${description}`.trim(),
+			description: !usable
+				? `${unavailableNote(ctx.providerLabel, kind, ctx.access)} ${description}`.trim()
+				: readOnlyAgent
+					? `${description} ${POSTHOG_EXEC_READ_NOTE}`.trim()
+					: description,
 		}
 	})
 	return { result: { ...result, tools }, upstreamAnnotations }
