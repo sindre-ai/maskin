@@ -7,8 +7,8 @@ import {
 	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
-import { createInvokeTool } from '@maskin/mcp'
-import type { InvokeTool } from '@maskin/mcp'
+import { createVoiceToolkit } from '@maskin/mcp'
+import type { VoiceToolkit } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
@@ -22,6 +22,7 @@ import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
@@ -79,20 +80,46 @@ const rateLimitedResponse = z
 	})
 	.openapi('VoiceSessionRateLimited')
 
-/** Builds the tool dispatcher a call's tools run through. Overridable in tests. */
-export type VoiceInvokeToolFactory = (args: { apiKey: string; workspaceId: string }) => InvokeTool
+/**
+ * Builds the tools a call runs: every MCP tool chat has, plus the dispatcher
+ * that runs them. Overridable in tests.
+ */
+export type VoiceInvokeToolFactory = (args: {
+	db: Database
+	apiKey: string
+	workspaceId: string
+	agentTools: unknown
+}) => Promise<VoiceToolkit>
 
-const defaultInvokeToolFactory: VoiceInvokeToolFactory = ({ apiKey, workspaceId }) =>
-	createInvokeTool({
-		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
-		// The agent's own key, so every write is attributed to the agent's actor
-		// (voice_sessions.agent_actor_id) rather than the human speaking. It is
-		// read server-side here and never sent to the browser.
-		apiKey,
-		defaultWorkspaceId: workspaceId,
-		transport: 'http',
-		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+const defaultInvokeToolFactory: VoiceInvokeToolFactory = async ({
+	db,
+	apiKey,
+	workspaceId,
+	agentTools,
+}) => {
+	const apiBaseUrl = `http://localhost:${Number(process.env.PORT) || 3000}`
+	// Only the servers the user added to this agent, exactly as in chat.
+	const agentMcpServers = await resolveVoiceAgentMcpServers({
+		db,
+		agentTools,
+		agentApiKey: apiKey,
+		workspaceId,
+		apiBaseUrl,
 	})
+	return createVoiceToolkit(
+		{
+			apiBaseUrl,
+			// The agent's own key, so every write is attributed to the agent's actor
+			// (voice_sessions.agent_actor_id) rather than the human speaking. It is
+			// read server-side here and never sent to the browser.
+			apiKey,
+			defaultWorkspaceId: workspaceId,
+			transport: 'http',
+			webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		},
+		agentMcpServers,
+	)
+}
 
 let invokeToolFactory: VoiceInvokeToolFactory = defaultInvokeToolFactory
 
@@ -421,6 +448,7 @@ app.openapi(postOfferRoute, async (c) => {
 			name: actors.name,
 			systemPrompt: actors.systemPrompt,
 			apiKey: actors.apiKey,
+			tools: actors.tools,
 		})
 		.from(actors)
 		.where(eq(actors.id, session.agentActorId))
@@ -464,6 +492,7 @@ app.openapi(postOfferRoute, async (c) => {
 
 	const instructions = [
 		agent.systemPrompt ?? '',
+		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
 		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
 	]
 		.join('')
@@ -472,7 +501,20 @@ app.openapi(postOfferRoute, async (c) => {
 	// Boot guard (voice-boot-guard.ts) ensures the env exists at boot when
 	// the flag is on; a live handler read is safe.
 	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY ?? ''
+	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
+	try {
+		toolkit = await invokeToolFactory({
+			db,
+			apiKey: agent.apiKey,
+			workspaceId: session.workspaceId,
+			agentTools: agent.tools,
+		})
+	} catch (err) {
+		await releasePendingSession(db, session.id)
+		throw err
+	}
 	const outcome = await createRealtimeCall({
+		tools: toolkit.tools,
 		apiKey,
 		callsUrl: realtimeCallsUrl(),
 		offerSdp: sdp,
@@ -480,6 +522,8 @@ app.openapi(postOfferRoute, async (c) => {
 		voice: VOICE_REALTIME_VOICE,
 		model: VOICE_REALTIME_MODEL,
 	})
+
+	if (outcome.kind !== 'ok') void toolkit.close().catch(() => {})
 
 	if (outcome.kind === 'rate_limited') {
 		await releasePendingSession(db, session.id)
@@ -527,6 +571,7 @@ app.openapi(postOfferRoute, async (c) => {
 			.set({ vendorSessionId: outcome.callId, model: VOICE_REALTIME_MODEL })
 			.where(eq(voiceSessions.id, session.id))
 	} catch (err) {
+		void toolkit.close().catch(() => {})
 		// The call exists at the vendor but we cannot track it: hang it up so it
 		// does not run unmetered.
 		await closeVoiceCall({ voiceSessionId: session.id, vendorSessionId: outcome.callId })
@@ -539,10 +584,8 @@ app.openapi(postOfferRoute, async (c) => {
 			db,
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
-			invokeTool: invokeToolFactory({
-				apiKey: agent.apiKey,
-				workspaceId: session.workspaceId,
-			}),
+			invokeTool: toolkit.invokeTool,
+			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,
 		}),
