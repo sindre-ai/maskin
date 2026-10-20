@@ -280,16 +280,19 @@ struct LiveCallPanel: View {
 				MaskinHaptics.play(.light)
 			}
 			if session.hasPendingWords {
-				CallControl(title: "Send now", symbol: "arrow.up", emphasis: .quiet) { session.voice.sendNow() }
+				CallControl(title: "Send now", symbol: "arrow.up", emphasis: .quiet) { session.sendNow() }
 			}
 			Menu {
 				Button(action: onInvite) { Label("Invite an agent", systemImage: "person.badge.plus") }
 				// How the agent's replies are delivered: with breaks to react, or straight through.
-				Picker(
-					"Pace",
-					selection: Binding(get: { session.voice.pace }, set: { session.voice.pace = $0 })
-				) {
-					ForEach(LiveCallPace.allCases) { Text($0.title).tag($0) }
+				// Only the dictation call paces replies; the Realtime call is already a live conversation.
+				if session.isDictating {
+					Picker(
+						"Pace",
+						selection: Binding(get: { session.dictation.pace }, set: { session.dictation.pace = $0 })
+					) {
+						ForEach(LiveCallPace.allCases) { Text($0.title).tag($0) }
+					}
 				}
 				if !mentioned.isEmpty {
 					Section("Mentioned in this call") {
