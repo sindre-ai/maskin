@@ -14881,6 +14881,467 @@
 				}
 			}
 		},
+		"/api/invites/{token}/accept": {
+			"post": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"operationId": "acceptInvite",
+				"summary": "Accept an invite by token (public path; reads Authorization itself)",
+				"description": "Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1
+						},
+						"required": true,
+						"name": "token",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"format": "email"
+									},
+									"password": {
+										"type": "string",
+										"minLength": 8
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Authenticated accept: joined (or already a member)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"workspaceId",
+										"actorId"
+									]
+								}
+							}
+						}
+					},
+					"201": {
+						"description": "Signup accept: actor created and joined",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"actor": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"type": {
+													"type": "string"
+												},
+												"name": {
+													"type": "string"
+												},
+												"email": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"description": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"system_prompt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"tools": {},
+												"memory": {},
+												"llm_provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"llm_config": {},
+												"isSystem": {
+													"type": "boolean"
+												},
+												"agentState": {
+													"type": "string"
+												},
+												"agentStateUpdatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"createdAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"updatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"api_key": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"id",
+												"type",
+												"name",
+												"email",
+												"description",
+												"system_prompt",
+												"llm_provider",
+												"isSystem",
+												"agentState",
+												"agentStateUpdatedAt",
+												"createdAt",
+												"updatedAt",
+												"api_key"
+											]
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"actor",
+										"workspaceId"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing or invalid API key (authenticated branch)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Workspace seat cap reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Unknown token",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"410": {
+						"description": "Invite expired, revoked or already used",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/invites/preview": {
 			"get": {
 				"tags": [
@@ -14923,6 +15384,9 @@
 										"inviterName": {
 											"type": "string"
 										},
+										"role": {
+											"type": "string"
+										},
 										"inviteEmail": {
 											"type": "string"
 										},
@@ -14935,6 +15399,7 @@
 										"workspaceId",
 										"workspaceName",
 										"inviterName",
+										"role",
 										"inviteEmail",
 										"expiresAt"
 									]
@@ -17988,6 +18453,12 @@
 															"null"
 														]
 													},
+													"tags": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"inProgressCount": {
 														"type": "integer",
 														"minimum": 0
@@ -18102,6 +18573,7 @@
 													"pill",
 													"entryCondition",
 													"closeCondition",
+													"tags",
 													"inProgressCount",
 													"closedCount",
 													"medianTimeToCloseMs",
