@@ -522,13 +522,14 @@ export const credentialAccessLog = pgTable(
 )
 /**
  * The audit-chain head, once per workspace per UTC day. Append-only: a trigger
- * rejects UPDATE and DELETE (see migration 0092).
+ * rejects UPDATE and DELETE (see migration 0092), except the DELETE that cascades from
+ * deleting the workspace itself (migration 0097).
  */
 export const credentialChainSnapshots = pgTable(
 	'credential_chain_snapshots',
 	{
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		snapshotDate: date('snapshot_date').notNull(),
 		maxId: bigint('max_id', { mode: 'bigint' }).notNull(),

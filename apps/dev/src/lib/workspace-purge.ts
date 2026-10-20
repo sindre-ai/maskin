@@ -10,6 +10,8 @@ import {
 	agentSkills,
 	awaitingVies,
 	conversations,
+	credentialAccessLog,
+	credentialChainSnapshots,
 	files,
 	imports,
 	installedLoops,
@@ -32,7 +34,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, inArray, notInArray, or } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, notInArray, or } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { evictBillingUsage } from './billing-usage-cache'
 import { logger } from './logger'
@@ -67,7 +69,11 @@ import { logger } from './logger'
 //   - idempotency_records / linkedin_tool_calls: keyed by actor, with a 24h TTL cleaner.
 //
 // The audit trail dies with the workspace (the events table is purged), so the deletion itself is
-// recorded through the logger by the caller, not as an events row.
+// recorded through the logger by the caller, not as an events row. That includes the Keychain
+// trail: credential_access_log is deleted by hand (it has no delete trigger) and
+// credential_chain_snapshots cascades (its append-only trigger lets a DELETE through only once the
+// workspace row is gone, migration 0097). The final chain head and the row counts come back in
+// the result, so the caller's log line says what was erased without keeping the data.
 
 /** Tables the purge deletes by hand. The guard test requires every NO ACTION/RESTRICT child. */
 export const WORKSPACE_PURGE_EXPLICIT = [
@@ -86,6 +92,7 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'agent_grants',
 	'agent_chat_grants',
 	'agent_files',
+	'credential_access_log',
 	'imports',
 	'integrations',
 	'events',
@@ -101,6 +108,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
 	'conversation_participants',
 	'conversation_pending_turns',
+	'credential_chain_snapshots',
 	'file_comments',
 	'files',
 	'google_meet_space_idempotency',
@@ -131,6 +139,19 @@ export interface WorkspacePurgeResult {
 	scrubbedAgentApiKeys: string[]
 	/** Unfinished sessions that own a sandbox, to stop after commit. */
 	liveSessions: LivePurgedSession[]
+	/** What was erased of the Keychain audit trail, for the caller's deletion log line. */
+	keychainAudit: PurgedKeychainAudit
+}
+
+export interface PurgedKeychainAudit {
+	/** credential_access_log rows deleted. */
+	logRows: number
+	/** credential_chain_snapshots rows removed by the cascade. */
+	snapshotRows: number
+	/** Id of the last log row (the chain head), or null if the workspace had none. */
+	chainHeadId: string | null
+	/** row_hash of that last row, or null if the workspace had none. */
+	chainHeadHash: string | null
 }
 
 export interface LivePurgedSession {
@@ -251,6 +272,26 @@ export async function purgeWorkspace(
 	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
 	await tx.delete(imports).where(eq(imports.workspaceId, workspaceId))
 	await tx.delete(integrations).where(eq(integrations.workspaceId, workspaceId))
+
+	// Keychain audit trail. The chain head and the counts are read first: they are the only record
+	// of the delete that outlives it. The log is deleted by hand because its workspace FK is NO
+	// ACTION; the snapshots cascade from the workspace row below.
+	const [lastLogRow] = await tx
+		.select({ id: credentialAccessLog.id, rowHash: credentialAccessLog.rowHash })
+		.from(credentialAccessLog)
+		.where(eq(credentialAccessLog.workspaceId, workspaceId))
+		.orderBy(desc(credentialAccessLog.id))
+		.limit(1)
+	const [logCount] = await tx
+		.select({ n: count() })
+		.from(credentialAccessLog)
+		.where(eq(credentialAccessLog.workspaceId, workspaceId))
+	const [snapshotCount] = await tx
+		.select({ n: count() })
+		.from(credentialChainSnapshots)
+		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
+	await tx.delete(credentialAccessLog).where(eq(credentialAccessLog.workspaceId, workspaceId))
+
 	await tx.delete(events).where(eq(events.workspaceId, workspaceId))
 
 	// One statement per table: sessions reference each other (retry_of), and NO ACTION is checked
@@ -303,6 +344,12 @@ export async function purgeWorkspace(
 		memberActorIds: members.map((m) => m.actorId),
 		scrubbedAgentApiKeys,
 		liveSessions: liveSessions.filter((x) => x.containerId || x.agentServerId),
+		keychainAudit: {
+			logRows: logCount?.n ?? 0,
+			snapshotRows: snapshotCount?.n ?? 0,
+			chainHeadId: lastLogRow ? String(lastLogRow.id) : null,
+			chainHeadHash: lastLogRow?.rowHash ?? null,
+		},
 	}
 }
 
