@@ -1747,24 +1747,27 @@ export const tools = {
 	},
 	post_draft: {
 		description:
-			'Show the user a draft of an email, LinkedIn post or LinkedIn message as an editable card in the chat, so they can edit it and approve it without leaving the conversation. Use this for every text you want approved before it is sent: never paste the draft into your reply as plain text or save it in a knowledge object. The draft is saved on an object: a new object is created for it (a task assigned to you unless you pass `object_type`), waiting in review; the user edits the text on the card and presses Approve. Nothing is sent by this tool. When the user approves, they say so in the chat and mention you. Then read the task: send only if its metadata `draft_state` is still "approved" (they can undo an approval), and send its `content` exactly, because it holds the text they approved, which may differ from what you wrote. Needs a chat with a person on the other end; an autonomous session has no chat, so it fails with a conflict. Email needs `to` and `subject`. Set `char_limit` when the channel has a hard limit (a LinkedIn connection note is 300 characters). Post one card per draft and end your turn once they are posted.',
+			'Show the user a draft of an email or of a post or message on any channel (LinkedIn, Instagram, TikTok, Slack, ...) as an editable card in the chat, so they can edit it and approve it without leaving the conversation. Use this for every text you want approved before it is sent: never paste the draft into your reply as plain text or save it in a knowledge object. The draft is saved on an object: a new object is created for it (a task assigned to you unless you pass `object_type`), waiting in review; the user edits the text on the card and presses Approve. Nothing is sent by this tool. When the user approves, they say so in the chat and mention you. Then read the task: send only if its metadata `draft_state` is still "approved" (they can undo an approval), and send its `content` exactly, because it holds the text they approved, which may differ from what you wrote. Needs a chat with a person on the other end; an autonomous session has no chat, so it fails with a conflict. Email needs `to` and `subject`. Set `char_limit` whenever the channel has a hard limit (for example a LinkedIn connection note is 300 characters); the card blocks approval above it. Post one card per draft and end your turn once they are posted.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
-				.enum(['email', 'linkedin_post', 'linkedin_message', 'text'])
+				.string()
+				.regex(/^[a-z][a-z0-9_]*$/)
 				.describe(
-					'What is being drafted. Picks the card layout and the approve button: email shows To and Subject. For anything else use "text" with your own `label`.',
+					'What is being drafted, as a short lowercase identifier: "email", "linkedin_post", "instagram_caption", "tiktok_caption", "slack_message". Only "email" has its own layout (To and Subject); anything else is plain text. Use any identifier that names the channel and the kind of text, and set `label` and `approve_label` so the card reads well.',
 				),
 			label: z
 				.string()
 				.optional()
 				.describe(
-					'Chip text on the card, e.g. "Slack message". For a "text" draft, or to rename a preset.',
+					'Chip text on the card, e.g. "Slack message". Defaults to the kind, e.g. LINKEDIN POST.',
 				),
 			approve_label: z
 				.string()
 				.optional()
-				.describe('Text of the approve button, e.g. "Approve and send". Defaults per kind.'),
+				.describe(
+					'Text of the approve button, e.g. "Approve and send". Defaults to "Approve and send" for email and "Approve" for anything else.',
+				),
 			object_type: z
 				.string()
 				.optional()

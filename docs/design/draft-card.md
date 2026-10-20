@@ -1,7 +1,7 @@
 # Draft card
 
-How an agent's draft of an outbound text (email, LinkedIn post, LinkedIn message)
-is shown, edited and approved. Source: the Maskin iOS v6 mockup ("Draft card" in
+How an agent's draft of an outbound text (an email, or a post or message on any
+channel) is shown, edited and approved. Source: the Maskin iOS v6 mockup ("Draft card" in
 For you, "Draft in chat" in chats and flows).
 
 ## Problem
@@ -49,9 +49,11 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
      waiting status, or a 400 asking for an explicit one. The row is written directly,
      so `POST /api/objects`' rule against creating a task already in review does not
      apply; nobody is meant to start this one.
-   - Draft kinds are open too: `email`, `linkedin_post`, `linkedin_message` are presets
-     for layout and button text; anything else is `kind: text` with its own `label`
-     (chip) and `approve_label`.
+   - Draft kinds are open identifiers (`email`, `linkedin_post`, `instagram_caption`,
+     `tiktok_caption`, `slack_message`). Only `email` has its own layout (To and
+     Subject). Everything else is plain text whose chip and button come from `label` and
+     `approve_label`, or from the identifier. A new channel is a new string, not a code
+     change.
 
    Either way the object holds the text: `content` is the body, flat `draft_*` keys in
    `metadata` hold the rest (merged into whatever metadata the object already has;
@@ -79,6 +81,29 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
    300 characters).
 7. **A revision supersedes.** When the agent redrafts, it posts a new card; the old
    card should read Superseded and lock. (Not built yet.)
+
+## Scaling to other channels
+
+The aim is that adding Instagram, TikTok or any other platform is configuration and
+data, not new code in every package.
+
+Already true:
+- The draft kind is an open identifier, and the card, route and `post_draft` tool have
+  no per-platform code. A test drives an `instagram_caption` draft through all three.
+- The object type and its statuses come from the workspace, not from constants.
+- Limits are passed per draft (`char_limit`), never hard-coded.
+
+Not yet true, and needed before a media post reads well on any channel:
+- **Media.** The card shows text only. A post needs its media shown (image, several
+  images, a video poster) with a role and an order per file, and attached files carry
+  neither today.
+- **Account, schedule, extras and "why".** These are read from typed lines inside a
+  LinkedIn body today. They need to be fields (the format bet, "A post is only its
+  text"), designed once for any channel.
+- **Per-channel limits and wording** should live in one workspace-level place the
+  agents read, so a limit is not repeated in every prompt.
+- Anything that parses the LinkedIn marker format (splice helper, publish trigger) is
+  LinkedIn-only by construction and is the part that does not scale.
 
 ## Related bets
 

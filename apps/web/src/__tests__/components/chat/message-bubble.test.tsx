@@ -1,6 +1,6 @@
 import type { MessageResponse } from '@/lib/api'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -84,6 +84,10 @@ const CHART_MESSAGE = [
 ].join('\n')
 
 describe('MessageBubble draft card', () => {
+	afterEach(() => {
+		mockObject = DEFAULT_OBJECT
+	})
+
 	it('shows an editable draft card for a message carrying metadata.draft', () => {
 		mockObject = {
 			id: 'task-1',
@@ -104,8 +108,7 @@ describe('MessageBubble draft card', () => {
 		expect(screen.getByRole('textbox', { name: 'Draft text' })).toHaveValue(
 			'Hi Tom, congrats on the new role.',
 		)
-		expect(screen.getByRole('button', { name: 'Approve and send' })).toBeInTheDocument()
-		mockObject = DEFAULT_OBJECT
+		expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
 	})
 })
 

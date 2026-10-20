@@ -11,10 +11,10 @@ import {
 } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
-	DRAFT_KIND_LABELS,
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
+	draftKindName,
 	draftTaskStateToMetadata,
 	formatDraftAsMarkdown,
 	formatIntegrationConnectAsMarkdown,
@@ -1357,7 +1357,7 @@ app.openapi(draftRoute, (async (c) => {
 	}
 	const conversationId = session.conversationId
 
-	const label = DRAFT_KIND_LABELS[draft.kind]
+	const label = draft.label ?? draftKindName(draft.kind)
 	const title = draft.title ?? `Approve ${label}${draft.to ? ` to ${draft.to}` : ''}`
 
 	// A new draft lives on an object of a type the workspace defines, so the type

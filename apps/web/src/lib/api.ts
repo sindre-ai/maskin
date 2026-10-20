@@ -2033,7 +2033,8 @@ export interface MessageIntegrationConnect {
 	provider: string
 }
 
-export type DraftKind = 'email' | 'linkedin_post' | 'linkedin_message' | 'text'
+/** An open identifier (`email`, `linkedin_post`, `instagram_caption`, ...); see draftKindSchema. */
+export type DraftKind = string
 
 /**
  * An agent's draft of an outbound text, surfaced into chat as an editable card.

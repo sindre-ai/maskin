@@ -156,7 +156,7 @@ describe('DraftCard', () => {
 		renderCard({ object_id: 'task-1', kind: 'linkedin_message', char_limit: 300 })
 
 		expect(screen.getByText('301 / 300')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
 	})
 
 	it('uses the label and approve text of a draft kind the app has no preset for', () => {
@@ -171,11 +171,20 @@ describe('DraftCard', () => {
 		expect(screen.getByRole('button', { name: 'Approve and post' })).toBeInTheDocument()
 	})
 
-	it('uses the post verb and no email fields for a LinkedIn post', () => {
-		renderCard({ object_id: 'task-1', kind: 'linkedin_post' })
+	it('shows no email fields for a post, and takes its button text from approve_label', () => {
+		renderCard({ object_id: 'task-1', kind: 'linkedin_post', approve_label: 'Approve and post' })
 
 		expect(screen.getByText('LINKEDIN POST')).toBeInTheDocument()
 		expect(screen.queryByRole('textbox', { name: 'Subject' })).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Approve and post' })).toBeInTheDocument()
+	})
+
+	it('handles a channel the app has never heard of with no code change', () => {
+		renderCard({ object_id: 'task-1', kind: 'instagram_caption', char_limit: 2200 })
+
+		expect(screen.getByText('INSTAGRAM CAPTION')).toBeInTheDocument()
+		expect(screen.queryByRole('textbox', { name: 'Subject' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+		expect(screen.getByText(/\/ 2200/)).toBeInTheDocument()
 	})
 })

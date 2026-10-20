@@ -349,6 +349,23 @@ describe('POST /sessions/:id/draft', () => {
 		expect(metadata.draft).toMatchObject({ kind: 'linkedin_message', char_limit: 300 })
 	})
 
+	it('accepts a channel it has never heard of and names the task after it', async () => {
+		const session = await chatSession()
+		const app = createSessionsApp(agentId)
+
+		const res = await app.request(
+			postDraft(session.id, workspaceId, {
+				kind: 'instagram_caption',
+				body: 'New drop tomorrow.',
+				char_limit: 2200,
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const [task] = await tasksIn(workspaceId)
+		expect(task?.title).toBe('Approve instagram caption')
+	})
+
 	it('rejects an email without a subject and creates nothing', async () => {
 		const session = await chatSession()
 		const app = createSessionsApp(agentId)

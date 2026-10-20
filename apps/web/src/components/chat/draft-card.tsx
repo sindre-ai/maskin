@@ -4,27 +4,31 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useSendMessage } from '@/hooks/use-conversation'
 import { useObject, useUpdateObject } from '@/hooks/use-objects'
-import type { DraftKind, MessageDraft } from '@/lib/api'
+import type { MessageDraft } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
-	DRAFT_KIND_LABELS,
 	type DraftTaskState,
+	draftKindName,
 	draftTaskStateToMetadata,
 	readDraftTaskState,
 } from '@maskin/shared'
 import { Check, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 
-/** Chip text and button verb per kind. A new `DraftKind` is a new row here. */
-const KINDS: Record<DraftKind, { chip: string; approve: string; done: string }> = {
-	email: { chip: 'EMAIL DRAFT', approve: 'Approve and send', done: 'Approved to send' },
-	linkedin_post: { chip: 'LINKEDIN POST', approve: 'Approve and post', done: 'Approved to post' },
-	linkedin_message: {
-		chip: 'LINKEDIN MESSAGE',
-		approve: 'Approve and send',
-		done: 'Approved to send',
-	},
-	text: { chip: 'DRAFT', approve: 'Approve', done: 'Approved' },
+/**
+ * `email` is the only kind with its own layout and wording. Every other kind is
+ * plain text, labelled by `label` / `approve_label` or by its own identifier, so a
+ * new channel (instagram_caption, tiktok_caption, ...) needs no change here.
+ */
+function wording(draft: MessageDraft) {
+	const isEmail = draft.kind === 'email'
+	return {
+		chip:
+			(draft.label ?? draftKindName(draft.kind)).toUpperCase() +
+			(isEmail && !draft.label ? ' DRAFT' : ''),
+		approve: draft.approve_label ?? (isEmail ? 'Approve and send' : 'Approve'),
+		done: isEmail ? 'Approved to send' : 'Approved',
+	}
 }
 
 /** Past this many characters a draft folds to a few lines until opened. */
@@ -67,12 +71,7 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 	const state = readDraftTaskState(task?.metadata)
 	if (!task || !state) return null
 
-	const preset = KINDS[draft.kind]
-	const kind = {
-		chip: draft.label?.toUpperCase() ?? preset.chip,
-		approve: draft.approve_label ?? preset.approve,
-		done: preset.done,
-	}
+	const kind = wording(draft)
 	const savedBody = task.content ?? ''
 	const savedSubject = state.subject ?? ''
 	const shownBody = body ?? savedBody
@@ -113,7 +112,7 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 	// Tell the agent in the chat, after the task holds the approved text, so the
 	// agent never reads a task that has not caught up with the card.
 	const approve = () => {
-		const what = `${DRAFT_KIND_LABELS[draft.kind]}${draft.to ? ` to ${draft.to}` : ''}`
+		const what = `${draft.label ?? draftKindName(draft.kind)}${draft.to ? ` to ${draft.to}` : ''}`
 		save({ body: shownBody, subject: shownSubject, state: 'approved' }, () =>
 			sendMessage.mutate({
 				content: `Approved the ${what}. Send it exactly as saved in task ${task.id}.`,

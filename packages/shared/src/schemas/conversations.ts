@@ -182,10 +182,18 @@ export const messageIntegrationConnectSchema = z.object({
 })
 
 /**
- * What a draft is, so the card can pick its chip, its fields and its button
- * verb. A new kind is a new member here and a row in the web card's KIND table.
+ * What kind of text a draft is, as an open identifier: `email`, `linkedin_post`,
+ * `instagram_caption`, `tiktok_caption`, `slack_message`. Only `email` changes the
+ * card's layout (a To line and a Subject); every other kind is plain text whose chip
+ * and button come from `label` and `approve_label`, or from the identifier itself.
+ * A new channel is therefore a new string, not a code change. Per-channel limits are
+ * passed as `char_limit` by whoever knows them, never hard-coded here.
  */
-export const draftKindSchema = z.enum(['email', 'linkedin_post', 'linkedin_message', 'text'])
+export const draftKindSchema = z
+	.string()
+	.min(1)
+	.max(50)
+	.regex(/^[a-z][a-z0-9_]*$/)
 
 /**
  * An agent's draft of an outbound text, surfaced into chat as an editable card.
@@ -446,12 +454,9 @@ export const sessionDraftSchema = z
 		}
 	})
 
-/** Label for a draft kind in task titles and agent-facing text. */
-export const DRAFT_KIND_LABELS: Record<DraftKind, string> = {
-	email: 'email',
-	linkedin_post: 'LinkedIn post',
-	linkedin_message: 'LinkedIn message',
-	text: 'draft',
+/** A readable name for a draft kind, e.g. `linkedin_post` becomes "linkedin post". */
+export function draftKindName(kind: string): string {
+	return kind.replace(/_/g, ' ')
 }
 
 /**

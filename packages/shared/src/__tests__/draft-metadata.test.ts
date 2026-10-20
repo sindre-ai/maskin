@@ -30,12 +30,19 @@ describe('messageMetadataSchema draft', () => {
 		expect(parsed.success).toBe(true)
 	})
 
-	it('rejects an unknown kind', () => {
+	it('accepts a channel it has never heard of, so a new platform needs no code change', () => {
 		const parsed = messageMetadataSchema.safeParse({
-			draft: { object_id: TASK_ID, kind: 'carrier_pigeon' },
+			draft: { object_id: TASK_ID, kind: 'tiktok_caption', char_limit: 2200 },
 		})
 
-		expect(parsed.success).toBe(false)
+		expect(parsed.success).toBe(true)
+	})
+
+	it('rejects a kind that is not a lowercase identifier', () => {
+		for (const kind of ['', 'Carrier Pigeon', '1post', 'a-b']) {
+			const parsed = messageMetadataSchema.safeParse({ draft: { object_id: TASK_ID, kind } })
+			expect(parsed.success).toBe(false)
+		}
 	})
 })
 
