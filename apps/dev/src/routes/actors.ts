@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword } from '@maskin/auth'
-import type { Database } from '@maskin/db'
+import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
+import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
 	actors,
@@ -32,9 +32,15 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { toActorWithKeyResponse } from '../lib/actor-response'
+import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { resolveBearerCaller } from '../lib/bearer-caller'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -45,8 +51,17 @@ import {
 	idParamSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { resolveClientSourceTag } from '../lib/sentry'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	actorsShareWorkspace,
+	assertActorWriterAccess,
+	assertWorkspaceWriterRole,
+	getWorkspaceRole,
+	isAdminOfSharedWorkspace,
+	isWorkspaceHumanAdminOrOwner,
+	isWorkspaceMember,
+} from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
@@ -61,6 +76,7 @@ type Env = {
 		actorType: string
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		workspaceRole?: string
 	}
 }
 
@@ -69,6 +85,16 @@ const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
 
+/**
+ * Event data for an actor mutation. Events are readable by every workspace
+ * member (history and SSE return the row unfiltered), so this carries identity
+ * only. Never pass an actor row here: it holds tools, llm_config and
+ * credentials.
+ */
+function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
+	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
+}
+
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST / - Create actor (signup)
@@ -76,7 +102,7 @@ const createActorRoute = createRoute({
 	method: 'post',
 	path: '/',
 	tags: ['Actors'],
-	summary: 'Create actor (signup)',
+	summary: 'Create actor (human signup, or an agent created by an authenticated caller)',
 	request: {
 		body: {
 			content: {
@@ -94,6 +120,19 @@ const createActorRoute = createRoute({
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
+		},
+		401: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Agent creation without a valid API key',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description:
+				'Only a human workspace admin or owner can set tools or llm_config on a new agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Workspace not found, or the caller is not a member of it',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -149,6 +188,109 @@ app.openapi(createActorRoute, async (c) => {
 		}
 	}
 
+	if (body.type === 'human' && body.workspace_id) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'workspace_id is only accepted when creating an agent', [
+				{ field: 'workspace_id', message: 'Not accepted for human accounts' },
+			]),
+			400,
+		)
+	}
+
+	// Human signup stays open. Creating an agent is done by an authenticated
+	// caller, and the new agent is born as a member of a workspace that caller
+	// belongs to. This route is on the auth allowlist, so it authenticates the
+	// agent branch itself and takes the workspace from the body only (never from
+	// X-Workspace-Id): the id is trusted only after it is checked against the key.
+	const clientSource = resolveClientSourceTag(c.req.header(CLIENT_SOURCE_HEADER))
+	let creatorId: string | undefined
+	let creatorType: string | undefined
+	let memberWorkspaceId: string | undefined
+	if (body.type === 'agent') {
+		const refuse = (reason: string, distinctId = 'anonymous', actorType?: string) =>
+			void capturePosthogEvent('agent_create_refused', distinctId, {
+				reason,
+				client_source: clientSource,
+				creator_actor_type: actorType,
+			})
+
+		const resolved = await resolveBearerCaller(db, c.req.header('Authorization'))
+		if (!resolved.ok) {
+			refuse('no_key')
+			return c.json(
+				createApiError(
+					'UNAUTHORIZED',
+					resolved.reason === 'no_key'
+						? 'Creating an agent requires an API key'
+						: 'Invalid API key',
+					undefined,
+					"Send 'Authorization: Bearer ank_…' and the workspace_id the agent should join.",
+				),
+				401,
+			)
+		}
+		const { actorId: callerId, actorType: callerType } = resolved.caller
+		creatorId = callerId
+		creatorType = callerType
+
+		const ownWorkspace = body.auto_create_workspace === true
+		if (body.workspace_id && ownWorkspace) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Send either workspace_id or auto_create_workspace, not both',
+					[{ field: 'workspace_id', message: 'Conflicts with auto_create_workspace' }],
+				),
+				400,
+			)
+		}
+		if (!body.workspace_id && !ownWorkspace) {
+			refuse('missing_workspace', callerId, callerType)
+			return c.json(
+				createApiError('BAD_REQUEST', 'workspace_id is required to create an agent', [
+					{ field: 'workspace_id', message: 'Required unless auto_create_workspace is true' },
+				]),
+				400,
+			)
+		}
+
+		if (body.workspace_id) {
+			// Same answer as add-member gives a non-member, so existence does not leak.
+			const callerRole = await getWorkspaceRole(db, callerId, body.workspace_id)
+			if (callerRole === null) {
+				refuse('not_member', callerId, callerType)
+				return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+			}
+			// A viewer is read-only, and a new agent comes with its own key and the
+			// member role, so a viewer must not mint one. The gate sits after the
+			// membership check: a viewer already knows the workspace exists.
+			if (callerRole === 'viewer') {
+				refuse('viewer', callerId, callerType)
+				return c.json(
+					createApiError('FORBIDDEN', 'Viewers have read-only access to this workspace'),
+					403,
+				)
+			}
+			// tools and llm_config decide what runs in the agent's sessions and with
+			// which credentials, so they are held to the same floor as PATCH: a human
+			// admin or owner. Checked before any insert so a refusal writes nothing.
+			if (
+				(body.tools !== undefined || body.llm_config !== undefined) &&
+				!(await isWorkspaceHumanAdminOrOwner(db, callerId, body.workspace_id))
+			) {
+				refuse('tools_not_admin', callerId, callerType)
+				return c.json(
+					createApiError(
+						'FORBIDDEN',
+						'Only workspace admins can set tools or llm_config on a new agent',
+					),
+					403,
+				)
+			}
+			memberWorkspaceId = body.workspace_id
+		}
+	}
+
 	// Generate API key
 	const { key } = generateApiKey()
 
@@ -166,9 +308,8 @@ app.openapi(createActorRoute, async (c) => {
 				}
 			: body.tools
 
-	let actor: typeof actors.$inferSelect | undefined
-	try {
-		;[actor] = await db
+	const insertActor = (writer: Database | Transaction) =>
+		writer
 			.insert(actors)
 			.values({
 				...(body.id && { id: body.id }),
@@ -182,9 +323,37 @@ app.openapi(createActorRoute, async (c) => {
 				tools,
 				llmProvider: body.llm_provider,
 				llmConfig: body.llm_config,
+				createdBy: creatorId,
 			})
 			.onConflictDoNothing({ target: actors.id })
 			.returning()
+
+	let actor: typeof actors.$inferSelect | undefined
+	try {
+		if (memberWorkspaceId && creatorId) {
+			const workspaceId = memberWorkspaceId
+			const callerId = creatorId
+			// Actor row, membership row and the audit event commit together or not
+			// at all, so a failure never leaves an agent outside the workspace.
+			actor = await db.transaction(async (tx) => {
+				const [inserted] = await insertActor(tx)
+				if (!inserted) return undefined
+				await tx
+					.insert(workspaceMembers)
+					.values({ workspaceId, actorId: inserted.id, role: 'member' })
+				await recordEvent(tx, {
+					workspaceId,
+					actorId: callerId,
+					action: 'created',
+					entityType: 'workspace_member',
+					entityId: inserted.id,
+					data: { role: 'member', added_actor_id: inserted.id },
+				})
+				return inserted
+			})
+		} else {
+			;[actor] = await insertActor(db)
+		}
 	} catch (err) {
 		if (isEmailUniqueViolation(err)) {
 			return c.json(
@@ -204,9 +373,27 @@ app.openapi(createActorRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
 
+	if (creatorId) {
+		void capturePosthogEvent('agent_created', creatorId, {
+			agent_id: actor.id,
+			workspace_id: memberWorkspaceId,
+			creator_actor_type: creatorType,
+			client_source: clientSource,
+			membership_added: !!memberWorkspaceId,
+		})
+		if (memberWorkspaceId) {
+			void capturePosthogEvent('agent_membership_added', creatorId, {
+				agent_id: actor.id,
+				workspace_id: memberWorkspaceId,
+				role: 'member',
+				creator_actor_type: creatorType,
+			})
+		}
+	}
+
 	// Auto-create personal workspace (default true for humans, false for agents)
 	const shouldCreateWorkspace = body.auto_create_workspace ?? body.type === 'human'
-	let workspaceId: string | undefined
+	let workspaceId: string | undefined = memberWorkspaceId
 	let workspaceProvisioningFailed = false
 
 	if (shouldCreateWorkspace) {
@@ -266,20 +453,22 @@ app.openapi(createActorRoute, async (c) => {
 		else if (!atOwnershipCap) workspaceProvisioningFailed = true
 	}
 
-	// Return actor WITHOUT api_key, but WITH it in the expected response field.
-	// Field names must be snake_case to match actorResponseSchema so MCP read→update
-	// round trips don't get keys stripped.
-	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
+	// Baseline for the invite conversion metric: a human who signs up and lands
+	// in their own workspace is a workspace_member_joined with from_invite:false.
+	if (workspaceId && actor.type === 'human') {
+		void capturePosthogEvent('workspace_member_joined', actor.id, {
+			from_invite: false,
+			workspace_id: workspaceId,
+		})
+	}
+
+	// Allowlisted via actorWithKeySchema (see toActorWithKeyResponse) — never
+	// spread the raw row here: it carries password_hash.
 	return c.json(
-		{
-			...serialize(actorWithoutKey),
-			system_prompt: systemPrompt,
-			llm_provider: llmProvider,
-			llm_config: llmConfig,
-			api_key: key,
+		toActorWithKeyResponse(actor, key, {
 			...(workspaceId && { workspace_id: workspaceId }),
-			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true }),
-		} as z.infer<typeof actorWithKeySchema>,
+			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true as const }),
+		}),
 		201,
 	)
 })
@@ -404,6 +593,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					agentState: actors.agentState,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
+					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -452,6 +642,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					agentState: actors.agentState,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
+					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -498,6 +689,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
 				role: workspaceMembers.role,
+				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			})
 			.from(workspaceMembers)
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -566,6 +758,7 @@ interface ActorMembershipRow {
 	workspaceId: string
 	workspaceName: string
 	role: string
+	voice_enabled: boolean
 }
 
 function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
@@ -577,6 +770,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	isSystem: boolean
 	agentState: AgentState
 	createdAt: Date | null
+	voice_enabled: boolean
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -590,6 +784,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			isSystem: boolean
 			agentState: AgentState
 			createdAt: Date | null
+			voice_enabled: boolean
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -608,6 +803,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				isSystem: r.isSystem,
 				agentState: r.agentState,
 				createdAt: r.createdAt,
+				voice_enabled: r.voice_enabled,
 				workspaces: [membership],
 			})
 		}
@@ -645,8 +841,13 @@ const getActorRoute = createRoute({
 
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
 
 	const [[actor], skills, [membership]] = await Promise.all([
 		db
@@ -667,6 +868,7 @@ app.openapi(getActorRoute, (async (c) => {
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
+				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -692,13 +894,79 @@ app.openapi(getActorRoute, (async (c) => {
 	}
 
 	const role = workspaceId ? (membership?.role ?? null) : undefined
-	return c.json(serialize({ ...actor, skills, role }) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
+	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
+
+// GET /:id/access - What this actor can use: integrations and saved credentials
+//
+// The same description the launch prompt is built from, so the agent page, get_actor and a
+// running session never disagree. Read-only; changes go through the integration grants routes.
+const actorAccessRoute = createRoute({
+	method: 'get',
+	path: '/{id}/access',
+	tags: ['Actors'],
+	summary: 'What an actor can use: integrations (level, server attached) and saved credentials',
+	request: {
+		params: idParamSchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						integrations: z.array(
+							z.object({
+								integration_id: z.string().uuid(),
+								provider: z.string(),
+								name: z.string(),
+								access: z.enum(['none', 'read', 'read_write']),
+								source: z.enum(['grant', 'default']),
+								default_access: z.enum(['read', 'none']),
+								server_attached: z.boolean(),
+								created_by: z.string().uuid(),
+							}),
+						),
+						credentials: z.array(
+							z.object({
+								integration_id: z.string().uuid(),
+								name: z.string(),
+								kind: z.enum(['api_key', 'login']),
+								has_access: z.boolean(),
+								scope: z.enum(['always', 'this_chat']).nullable(),
+								chat_count: z.number().int(),
+								created_by: z.string().uuid(),
+							}),
+						),
+					}),
+				},
+			},
+			description: 'Access by integration and credential',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(actorAccessRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	return c.json(await describeAgentAccess(db, workspaceId, id), 200)
+}) as RouteHandler<typeof actorAccessRoute, Env>)
 
 // PATCH /:id - Update actor
 const updateActorRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Update actor',
 	request: {
@@ -719,6 +987,14 @@ const updateActorRoute = createRoute({
 			content: { 'application/json': { schema: actorResponseSchema } },
 			description: 'Actor updated',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Masked tool config value with no stored value to keep',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller may not update this actor',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -734,12 +1010,16 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type })
+		.select({ type: actors.type, tools: actors.tools })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
 
 	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type === 'agent' && !(await actorsShareWorkspace(db, actorId, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -765,6 +1045,71 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	// tools and llm_config decide what runs in the agent's sessions and with
+	// which credentials, so changing another actor's needs owner/admin.
+	// Prompt, description, name and memory stay open to workspace members.
+	if (
+		(body.tools !== undefined || body.llm_config !== undefined) &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				"Only workspace admins can change another actor's tools or llm_config",
+			),
+			403,
+		)
+	}
+
+	// A default workspace is a personal preference: only the actor itself may set
+	// it, and only to a workspace it belongs to (null clears it).
+	if (body.default_workspace_id !== undefined) {
+		if (id !== actorId) {
+			return c.json(
+				createApiError('FORBIDDEN', 'Only an actor can change its own default workspace'),
+				403,
+			)
+		}
+		if (
+			body.default_workspace_id !== null &&
+			!(await isWorkspaceMember(db, id, body.default_workspace_id))
+		) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'You are not a member of that workspace', [
+					{ field: 'default_workspace_id', message: 'Not a member of this workspace' },
+				]),
+				400,
+			)
+		}
+	}
+
+	// A viewer is read-only, but the default workspace is the caller's own preference
+	// (the settings toggle), not workspace data, so a body of only that key stays open.
+	if (Object.keys(body).some((key) => key !== 'default_workspace_id')) {
+		await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
+	}
+
+	// A config read back masked must not overwrite the stored secrets with the mask.
+	let tools = body.tools
+	if (tools !== undefined) {
+		const restored = restoreMaskedToolValues(tools, existing.tools)
+		if (restored.unresolved.length > 0) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Masked tool config values have no stored value to keep; send the real value or leave the entry unchanged',
+					restored.unresolved.map((field) => ({
+						field: `tools.mcpServers.${field}`,
+						message: 'Masked value cannot be saved',
+					})),
+				),
+				400,
+			)
+		}
+		tools = restored.tools as typeof tools
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -772,10 +1117,13 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.email && { email: body.email }),
 			...(body.description !== undefined && { description: body.description }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
-			...(body.tools !== undefined && { tools: body.tools }),
+			...(tools !== undefined && { tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
 			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
+			...(body.default_workspace_id !== undefined && {
+				defaultWorkspaceId: body.default_workspace_id,
+			}),
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -793,13 +1141,17 @@ app.openapi(updateActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
+			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
@@ -807,15 +1159,23 @@ app.openapi(updateActorRoute, (async (c) => {
 const regenerateApiKeyRoute = createRoute({
 	method: 'post',
 	path: '/{id}/api-keys',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Regenerate API key',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z.string().uuid().optional(),
+		}),
 	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: z.object({ api_key: z.string() }) } },
 			description: 'API key regenerated',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not this actor',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -826,7 +1186,15 @@ const regenerateApiKeyRoute = createRoute({
 
 app.openapi(regenerateApiKeyRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (id !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Not allowed'), 403)
+	}
+
+	await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
 
 	const { key } = generateApiKey()
 
@@ -840,6 +1208,9 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	// The old key must stop authenticating now, not when its cached lookup expires.
+	evictActor(id)
+
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
@@ -847,6 +1218,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 const resetActorRoute = createRoute({
 	method: 'post',
 	path: '/{id}/reset',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Reset system actor to factory defaults',
 	request: {
@@ -870,6 +1242,7 @@ const resetActorRoute = createRoute({
 })
 
 app.openapi(resetActorRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -921,6 +1294,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
+			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 		})
 
 	if (!updated) {
@@ -933,7 +1307,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		action: 'reset',
 		entityType: 'actor',
 		entityId: id,
-		data: updated,
+		data: actorEventData(updated),
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -943,6 +1317,7 @@ app.openapi(resetActorRoute, (async (c) => {
 const deleteActorRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Delete actor (agents only)',
 	request: {
@@ -962,10 +1337,15 @@ const deleteActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Agent files could not be removed from storage; the agent was not deleted',
+		},
 	},
 })
 
 app.openapi(deleteActorRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
@@ -993,8 +1373,6 @@ app.openapi(deleteActorRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
 
-	const existingData = { ...existing }
-
 	// Stop before delete. The cascade below removes this actor's session rows,
 	// but a sandbox already running on an agent-server keeps executing as an
 	// agent the user believes they just deleted, keeps holding its capacity
@@ -1002,6 +1380,28 @@ app.openapi(deleteActorRoute, (async (c) => {
 	// that no longer exists. Best-effort and outside the transaction — see
 	// stopSessionsForActors.
 	await stopSessionsForActors(db, c.get('sessionManager'), [id], c.get('actorId'))
+
+	// Remove the agent's S3 folder before the DB rows. POST /actors accepts a
+	// caller-supplied id, so objects left behind would be pulled into a later
+	// agent created with the same id. Doing it first means a storage failure
+	// returns an error while the actor still exists and the delete can be retried;
+	// after the actor row is gone a retry would 404 and strand the objects.
+	try {
+		await c.get('agentStorage').deleteAllAgentFiles(id, workspaceId)
+	} catch (err) {
+		logger.error('Agent delete aborted: could not remove agent files from storage', {
+			actorId: id,
+			workspaceId,
+			error: String(err),
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'Could not delete agent files from storage; agent not deleted',
+			),
+			500,
+		)
+	}
 
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
@@ -1077,6 +1477,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
+	evictActor(id)
 
 	await recordEvent(db, {
 		workspaceId,
@@ -1084,13 +1485,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 		action: 'deleted',
 		entityType: 'agent',
 		entityId: id,
-		data: existingData,
+		data: actorEventData(existing),
 	})
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
 
-// Returning shape used by /pause and /run handlers — full actor row.
+// Returning shape used by /pause, /run, and /voice-mode handlers — full actor
+// row. voice_enabled is projected off the metadata JSONB so the wire shape
+// stays flat and callers never reach into raw metadata.
 const actorReturningCols = {
 	id: actors.id,
 	type: actors.type,
@@ -1107,12 +1510,14 @@ const actorReturningCols = {
 	agentStateUpdatedAt: actors.agentStateUpdatedAt,
 	createdAt: actors.createdAt,
 	updatedAt: actors.updatedAt,
+	voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 } as const
 
 // POST /:id/pause - Pause an agent (and any in-flight session for it)
 const pauseAgentRoute = createRoute({
 	method: 'post',
 	path: '/{id}/pause',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Pause an agent and any in-flight session',
 	description:
@@ -1138,6 +1543,7 @@ const pauseAgentRoute = createRoute({
 })
 
 app.openapi(pauseAgentRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
@@ -1221,7 +1627,8 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		},
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof pauseAgentRoute, Env>)
 
 // POST /:id/run - Resume a paused agent OR start a fresh session
@@ -1234,6 +1641,7 @@ const runAgentBodySchema = z
 const runAgentRoute = createRoute({
 	method: 'post',
 	path: '/{id}/run',
+	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Run an agent — resume paused session or start a fresh one',
 	description:
@@ -1263,6 +1671,7 @@ const runAgentRoute = createRoute({
 })
 
 app.openapi(runAgentRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
@@ -1332,7 +1741,6 @@ app.openapi(runAgentRoute, (async (c) => {
 					createdBy: actorId,
 					// Ad-hoc actor run: no originating object.
 					initiatedFromObjectId: null,
-					initiatedFromObjectType: null,
 					await: 'none',
 				})
 			}
@@ -1371,7 +1779,8 @@ app.openapi(runAgentRoute, (async (c) => {
 		data: {},
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app

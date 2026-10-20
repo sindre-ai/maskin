@@ -33,6 +33,7 @@ const baseUsage = {
 	stripe_customer_id: null,
 	stripe_subscription_id: null,
 	credit_balance_cents: 0,
+	credit_topup_available: true,
 	linkedin_identity_addon: null,
 }
 
@@ -327,6 +328,75 @@ describe('BillingSection', () => {
 		expect(bar.className).not.toContain('bg-error')
 	})
 
+	it('hides the Buy usage credits button when top-up is unavailable but still shows a remaining balance', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 4_900,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			credit_balance_cents: 4_000,
+			credit_topup_available: false,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
+	})
+
+	it('hides the whole credits row when top-up is unavailable and the balance is zero', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 4_900,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			credit_balance_cents: 0,
+			credit_topup_available: false,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		expect(screen.queryByText(/^\$[\d.,]+ usage credits$/)).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
+	})
+
+	it('does not advertise buying usage credits on the plan cards', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 4_900,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		expect(screen.getAllByText(/of usage included each month/).length).toBeGreaterThan(0)
+		expect(screen.queryByText(/Buy usage credits any time/)).not.toBeInTheDocument()
+	})
+
 	it('shows the hard-blocked (error) bar when over cap with a zero credit balance', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
@@ -471,5 +541,36 @@ describe('BillingSection', () => {
 		await screen.findByText('LinkedIn Identity')
 		expect(screen.getByText('$49/mo × 2 = $98.00')).toBeInTheDocument()
 		expect(screen.getByText(/\$49\/month covers connectivity to LinkedIn/)).toBeInTheDocument()
+	})
+
+	describe('returning from Stripe Checkout', () => {
+		afterEach(() => {
+			vi.useRealTimers()
+			window.history.replaceState(null, '', '/')
+		})
+
+		// The server caches GET /api/billing/usage for 2s
+		// (BILLING_USAGE_CACHE_TTL_MS in apps/dev/src/lib/billing-usage-cache.ts).
+		// A retry at or under that can be answered by the read the first refetch
+		// just made, before the webhook landed. Pin the retry clearly past it.
+		it('retries the usage refetch only after the server cache has expired', async () => {
+			vi.useFakeTimers()
+			window.history.replaceState(null, '', '/settings?billing=success')
+			vi.mocked(api.billing.usage).mockResolvedValue(baseUsage)
+
+			render(
+				<TestWrapper>
+					<BillingSection workspaceId="ws-1" enterprise />
+				</TestWrapper>,
+			)
+			await vi.advanceTimersByTimeAsync(100)
+			const settled = vi.mocked(api.billing.usage).mock.calls.length
+
+			await vi.advanceTimersByTimeAsync(2_500)
+			expect(vi.mocked(api.billing.usage).mock.calls.length).toBe(settled)
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			expect(vi.mocked(api.billing.usage).mock.calls.length).toBe(settled + 1)
+		})
 	})
 })

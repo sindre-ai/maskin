@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import type { StreamJsonSetModelRequest } from '@maskin/shared'
 import Docker from 'dockerode'
 import tar from 'tar-stream'
 import { logger } from '../lib/logger'
@@ -97,7 +98,14 @@ export class ContainerManager {
 				} else {
 					const content = readFileSync(fullPath)
 					const stat = statSync(fullPath)
-					pack.entry({ name: relPath, size: content.length, mode: stat.mode }, content)
+					// Capture the per-entry Sink and attach 'error' BEFORE writing: the two-arg
+					// pack.entry(header, content) writes synchronously, so a listener added
+					// afterwards lands too late. With no Docker socket the Sink emits an
+					// unhandled 'error' that kills the process; the failure still reaches the
+					// caller through buildImage's rejection.
+					const sink = pack.entry({ name: relPath, size: content.length, mode: stat.mode })
+					sink.on('error', () => {})
+					sink.end(content)
 				}
 			}
 		}
@@ -174,11 +182,23 @@ export class ContainerManager {
 
 	private async openStdinStream(containerId: string): Promise<NodeJS.ReadWriteStream> {
 		const container = this.docker.getContainer(containerId)
-		return (await container.attach({
+		const stream = (await container.attach({
 			stream: true,
 			stdin: true,
 			hijack: true,
 		})) as NodeJS.ReadWriteStream
+		// dockerode also sends the attach options as a JSON request body
+		// (`{"stream":true,"stdin":true,"hijack":true}`), and the daemon sometimes
+		// reads that body as container stdin: about 1 attach in 10. Left alone it
+		// lands in front of the first line we write, the CLI fails with "Error
+		// parsing streaming input line ... SyntaxError" and exits, and a session
+		// whose only input was that line (a helper started with create_session)
+		// dies. One newline right after attaching ends any leaked bytes as a line of
+		// their own, which the CLI skips, and is a blank line it ignores otherwise.
+		// (Attaching without the body was tried: against a real daemon it never
+		// completes.)
+		stream.write('\n', () => {})
+		return stream
 	}
 
 	private trackStreamLifecycle(sessionId: string, handle: StdinHandle): void {
@@ -211,7 +231,10 @@ export class ContainerManager {
 	 * once before propagating the error. Throws if no stream was ever attached
 	 * (i.e. `attachStdin()` was not called) or was explicitly detached.
 	 */
-	async write(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+	async write(
+		sessionId: string,
+		payload: StreamJsonUserMessage | StreamJsonSetModelRequest,
+	): Promise<void> {
 		const handle = this.stdinStreams.get(sessionId)
 		if (!handle) {
 			throw new Error(`No stdin stream attached for session ${sessionId}`)

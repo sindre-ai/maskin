@@ -3,6 +3,7 @@ import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
@@ -79,6 +80,7 @@ interface Recipient {
  * flag ids in `apps/dev/src/lib/feature-flags.ts`.
  */
 function NewChatRoute() {
+	useDocumentTitle('New chat')
 	const search = Route.useSearch()
 	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
 	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
@@ -162,7 +164,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 			.filter((a) => a.type === 'agent')
 			.map((a) => ({ id: a.id, name: a.name, type: a.type, description: a.description }))
 		const people: Recipient[] = (members ?? [])
-			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent')
+			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent' && m.type !== 'system')
 			.map((m) => ({ id: m.actorId, name: m.name, type: m.type, description: m.role }))
 		const byId = new Map<string, Recipient>()
 		for (const r of [...agents, ...people]) if (!byId.has(r.id)) byId.set(r.id, r)
@@ -204,6 +206,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 				const t = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
 				for (const p of conv.participants) {
 					if (p.actorId === currentActor?.id) continue
+					if (p.actorType === 'system') continue
 					const existing = seen.get(p.actorId)
 					if (!existing || t > existing.ts) {
 						const enriched = candidates.find((c) => c.id === p.actorId)
@@ -387,6 +390,19 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 		],
 	)
 
+	// Call is offered only when exactly one agent is addressed, counting both the
+	// To-row chips and @-mentioned agents (a multi-agent call is v2). People
+	// don't count: a call targets the agent.
+	const callAgent = useMemo<Recipient | null>(() => {
+		const agents = new Map<string, Recipient>()
+		for (const r of recipients) if (r.type === 'agent') agents.set(r.id, r)
+		for (const id of selection.agents) {
+			const c = candidates.find((cand) => cand.id === id)
+			if (c?.type === 'agent') agents.set(c.id, c)
+		}
+		return agents.size === 1 ? (agents.values().next().value ?? null) : null
+	}, [recipients, selection.agents, candidates])
+
 	const composerPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
@@ -556,6 +572,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 					textareaLabel="Message this conversation"
 					value={draft}
 					onValueChange={setDraft}
+					callAgent={callAgent}
 				/>
 			</div>
 		</div>

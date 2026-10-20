@@ -99,7 +99,7 @@ export function collectSignals(input: ClassifierInput): CollectedSignals {
 				floors_applied.push({
 					kind: 'regex_floor_hit',
 					weight: 0,
-					evidence: 'squawk hot-table DDL → floor 60 (per .maskin/hot-tables.yml)',
+					evidence: 'squawk hot-table DDL → floor 80 (per .maskin/hot-tables.yml)',
 				})
 			}
 		}

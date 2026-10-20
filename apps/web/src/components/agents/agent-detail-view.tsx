@@ -1,3 +1,4 @@
+import { AgentAccessSection } from '@/components/agents/agent-access-section'
 import { AgentComposer } from '@/components/agents/agent-composer'
 import { AgentComputerSection } from '@/components/agents/agent-computer-section'
 import { AgentDetailHeader } from '@/components/agents/agent-detail-header'
@@ -138,6 +139,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentLoopsSection agent={agent} />
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
+				<AgentAccessSection agent={agent} />
 				<AgentToolsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>

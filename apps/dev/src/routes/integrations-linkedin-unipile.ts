@@ -3,12 +3,20 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
+import {
+	NATIVE_OAUTH_RETURN_URLS,
+	type NativeOAuthOutcome,
+	buildNativeOAuthReturnUrl,
+	parseNativeOAuthReturnUrl,
+} from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
+import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
@@ -38,6 +46,7 @@ import {
 } from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 /**
  * LinkedIn (LinkedIn-backed) integration routes — the whole provider surface,
  * rebuilt against LinkedIn Hosted Auth v2.
@@ -92,6 +101,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 	}
 }
 
@@ -143,6 +154,10 @@ type StoredAuthBlob = {
 	account_id?: string
 	auth_nonce?: string
 	nonce_expires_at?: string
+	/** Workspace-relative path to land on after connecting (already sanitised). */
+	return_to?: string
+	/** Native-app return target (allowlisted exact match when minted, sealed here). */
+	native_return?: string
 }
 
 /**
@@ -151,7 +166,7 @@ type StoredAuthBlob = {
  * encryption-key rotation) — in both cases the caller has no valid nonce to
  * compare against and must reject, which is the safe direction.
  */
-function readStoredAuthBlob(raw: string): StoredAuthBlob {
+function readStoredAuthBlob(raw: string | null): StoredAuthBlob {
 	if (!raw) return {}
 	try {
 		const parsed: unknown = JSON.parse(decrypt(raw))
@@ -209,6 +224,7 @@ async function resolveCallbackState(
 const connectRoute = createRoute({
 	method: 'post',
 	path: '/connect',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Start LinkedIn Hosted Auth Wizard connect flow',
 	request: {
@@ -226,6 +242,10 @@ const connectRoute = createRoute({
 				},
 			},
 		},
+		400: {
+			description: 'native_return_url is not an allowed return target',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Error',
 			content: { 'application/json': { schema: errorSchema } },
@@ -237,6 +257,35 @@ app.openapi(connectRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	// Where to land after the wizard: the chat that showed the Connect card, when
+	// there was one. Kept in the sealed pending blob alongside the nonce, so it is
+	// as tamper-proof as the nonce itself, and dropped when the credential lands.
+	const connectBody = (await c.req.json().catch(() => ({}))) as {
+		return_to?: unknown
+		native_return_url?: unknown
+	}
+	const returnTo = sanitizeReturnPath(connectBody.return_to, workspaceId)
+
+	// Native app return target: exact-match allowlist, refused (not ignored) when
+	// supplied but not allowed. Stored in the same sealed blob as the nonce, so it
+	// is as tamper-proof as the nonce and dies when the credential lands.
+	let nativeReturn: string | undefined
+	if (connectBody.native_return_url !== undefined && connectBody.native_return_url !== null) {
+		nativeReturn = parseNativeOAuthReturnUrl(connectBody.native_return_url)
+		if (!nativeReturn) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'native_return_url is not an allowed return target',
+					undefined,
+					`Allowed: ${NATIVE_OAUTH_RETURN_URLS.join(', ')}`,
+				),
+				400,
+			)
+		}
+	}
 
 	// Look up or insert a pending row keyed by (workspace, actor, provider).
 	// credentials starts as an empty string because the column is NOT NULL
@@ -276,6 +325,8 @@ app.openapi(connectRoute, (async (c) => {
 						...(prior.account_id ? { account_id: prior.account_id } : {}),
 						auth_nonce: authNonce,
 						nonce_expires_at: nonceExpiresAt,
+						...(returnTo ? { return_to: returnTo } : {}),
+						...(nativeReturn ? { native_return: nativeReturn } : {}),
 					}),
 				),
 				...(existing[0].status === CONNECTED_STATUS ? {} : { status: 'pending' as const }),
@@ -291,7 +342,12 @@ app.openapi(connectRoute, (async (c) => {
 				provider: PROVIDER,
 				status: 'pending',
 				credentials: encrypt(
-					JSON.stringify({ auth_nonce: authNonce, nonce_expires_at: nonceExpiresAt }),
+					JSON.stringify({
+						auth_nonce: authNonce,
+						nonce_expires_at: nonceExpiresAt,
+						...(returnTo ? { return_to: returnTo } : {}),
+						...(nativeReturn ? { native_return: nativeReturn } : {}),
+					}),
 				),
 				createdBy: actorId,
 			})
@@ -352,6 +408,7 @@ app.openapi(connectRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start LinkedIn connect flow'), 500)
 	}
 }) as RouteHandler<typeof connectRoute, Env>)
+declareNativeConnectBody(connectRoute)
 
 // ── GET /callback ──────────────────────────────────────────────────────────
 // v2 replaces the v1 HMAC-signed POST body with a browser redirect carrying
@@ -398,12 +455,12 @@ app.openapi(callbackRoute, (async (c) => {
 		logger.warn('linkedin-unipile callback: malformed success query', {
 			present: Object.keys(query),
 		})
-		return redirectToSettings(c, 'error', 'invalid_callback')
+		return redirectError(c, db, query.state, 'invalid_callback', 'unknown')
 	}
 	const { account_id, provider, state } = parsed.data
 	if (provider !== 'linkedin') {
-		logger.warn('linkedin-unipile callback: unexpected provider', { provider, state })
-		return redirectToSettings(c, 'error', 'wrong_provider')
+		logger.warn('linkedin-unipile callback: unexpected provider', { provider })
+		return redirectError(c, db, state, 'wrong_provider', 'unsupported')
 	}
 
 	const resolved = await resolveCallbackState(db, state)
@@ -454,7 +511,7 @@ app.openapi(callbackRoute, (async (c) => {
 			error: err instanceof Error ? err.message : String(err),
 			code: isLinkedInIntegrationError(err) ? err.code : undefined,
 		})
-		return redirectToSettings(c, 'error', 'enumeration_failed', pending.workspaceId)
+		return redirectError(c, db, state, 'enumeration_failed', 'enumeration_failed', pending)
 	}
 
 	// Single-transaction credential landing (spec §Telemetry ordering rule):
@@ -530,6 +587,13 @@ app.openapi(callbackRoute, (async (c) => {
 	// a paid line with no connection. `syncLinkedInAddonQuantity` swallows its
 	// own Stripe errors for the same reason.
 	const sync = await syncLinkedInAddonQuantity(db, pending.workspaceId)
+	const nativeTarget = nativeReturnOf(pending)
+	if (sync.status === 'checkout_required' && nativeTarget) {
+		// Stripe Checkout needs an https success URL and a browser session of its own, which
+		// a custom-scheme return cannot give it. The connection is live; the app is told the
+		// add-on is unbilled and billing is completed on the web (the next sync retries).
+		return redirectNative(c, nativeTarget, pending, { status: 'connected', billing: 'required' })
+	}
 	if (sync.status === 'checkout_required') {
 		// Trial workspace: no plan subscription to attach the $49 item to, so
 		// the add-on gets its own single-line subscription via its own Checkout.
@@ -548,7 +612,7 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	return redirectToSettings(c, 'connected', account_id, pending.workspaceId)
+	return redirectAfterConnect(c, pending, account_id)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 /**
@@ -578,6 +642,70 @@ function redirectToSettings(
 	return c.redirect(url.toString(), 302)
 }
 
+/**
+ * Success redirect: back to the chat that started the connect when one did,
+ * otherwise Settings → Integrations with the status pair the page renders.
+ * Reads the return path from the row as it was BEFORE the credential landed —
+ * landing replaces the blob, which is also what makes the state single-use.
+ */
+function redirectAfterConnect(c: Context, pending: Integration, detail: string): Response {
+	const nativeTarget = nativeReturnOf(pending)
+	if (nativeTarget) return redirectNative(c, nativeTarget, pending, { status: 'connected' })
+	const returnTo = sanitizeReturnPath(
+		readStoredAuthBlob(pending.credentials).return_to,
+		pending.workspaceId,
+	)
+	if (returnTo) return c.redirect(frontendUrlForReturn(pending.workspaceId, returnTo), 302)
+	return redirectToSettings(c, 'connected', detail, pending.workspaceId)
+}
+
+/** The allowlisted native return target stored on a pending row, if any. */
+function nativeReturnOf(row: Integration): string | undefined {
+	return parseNativeOAuthReturnUrl(readStoredAuthBlob(row.credentials).native_return)
+}
+
+function redirectNative(
+	c: Context,
+	target: string,
+	row: Integration,
+	outcome: Omit<NativeOAuthOutcome, 'provider' | 'workspaceId' | 'integrationId'>,
+): Response {
+	return c.redirect(
+		buildNativeOAuthReturnUrl(target, {
+			provider: PROVIDER,
+			workspaceId: row.workspaceId,
+			integrationId: row.id,
+			...outcome,
+		}),
+		302,
+	)
+}
+
+/**
+ * Error exit. A native flow is told through its return target; every other flow
+ * gets the existing settings redirect. The native target is only found when
+ * `state` authenticates (nonce + expiry) — a callback with a bad state has no
+ * proven origin, so it falls through to the web redirect, never to an
+ * attacker-chosen target.
+ */
+async function redirectError(
+	c: Context,
+	db: Database,
+	state: string | undefined,
+	detail: string,
+	reason: NativeOAuthOutcome['reason'],
+	knownRow?: Integration,
+): Promise<Response> {
+	let row = knownRow
+	if (!row && state) {
+		const resolved = await resolveCallbackState(db, state)
+		if (resolved.ok) row = resolved.row
+	}
+	const target = row ? nativeReturnOf(row) : undefined
+	if (row && target) return redirectNative(c, target, row, { status: 'error', reason })
+	return redirectToSettings(c, 'error', detail, knownRow?.workspaceId)
+}
+
 async function handleCallbackError(
 	c: Context,
 	db: Database,
@@ -585,7 +713,7 @@ async function handleCallbackError(
 ): Promise<Response> {
 	const parsed = CallbackErrorQuerySchema.safeParse(q)
 	if (!parsed.success) {
-		return redirectToSettings(c, 'error', 'malformed_error')
+		return redirectError(c, db, q.state, 'malformed_error', 'unknown')
 	}
 	const { error_type, error_detail, state } = parsed.data
 
@@ -630,7 +758,7 @@ async function handleCallbackError(
 					integrationId: pending.id,
 				})
 			}
-			return redirectToSettings(c, 'connected', error_detail, pending.workspaceId)
+			return redirectAfterConnect(c, pending, error_detail)
 		}
 		logger.warn('linkedin-unipile callback already_exists: state rejected', {
 			reason: resolved.reason,
@@ -639,6 +767,14 @@ async function handleCallbackError(
 	}
 
 	if (error_type === 'api/restricted_account') {
+		// Existing web behaviour addressed no workspace here; kept as is (redirectError
+		// only adds the workspace for the native case via the resolved row).
+		const native = state ? await nativeTargetFromState(db, state) : undefined
+		if (native)
+			return redirectNative(c, native.target, native.row, {
+				status: 'error',
+				reason: 'account_restricted',
+			})
 		return redirectToSettings(c, 'error', 'account_restricted')
 	}
 	// Log the integration id only — `state` carries the auth nonce, and a
@@ -647,7 +783,22 @@ async function handleCallbackError(
 		error_type,
 		integrationId: state ? parseCallbackState(state)?.integrationId : undefined,
 	})
+	{
+		const native = state ? await nativeTargetFromState(db, state) : undefined
+		if (native)
+			return redirectNative(c, native.target, native.row, { status: 'error', reason: 'unknown' })
+	}
 	return redirectToSettings(c, 'error', error_type)
+}
+
+async function nativeTargetFromState(
+	db: Database,
+	state: string,
+): Promise<{ target: string; row: Integration } | undefined> {
+	const resolved = await resolveCallbackState(db, state)
+	if (!resolved.ok) return undefined
+	const target = nativeReturnOf(resolved.row)
+	return target ? { target, row: resolved.row } : undefined
 }
 // ── Message verbs (send-message / reply / list-conversations) ─────────────
 //
@@ -762,6 +913,7 @@ app.get('/identities', async (c) => {
 // ── POST /api/integrations/linkedin-unipile/send-message ─────────────
 
 app.post('/send-message', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -783,6 +935,7 @@ app.post('/send-message', async (c) => {
 // ── POST /api/integrations/linkedin-unipile/reply ────────────────────
 
 app.post('/reply', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -848,6 +1001,7 @@ async function readJsonBody<T = Record<string, unknown>>(
 }
 
 app.post('/publish-post', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -863,6 +1017,7 @@ app.post('/publish-post', async (c) => {
 })
 
 app.post('/comment-on-post', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -880,6 +1035,7 @@ app.post('/comment-on-post', async (c) => {
 })
 
 app.post('/reply-to-comment', async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)

@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
@@ -62,6 +62,16 @@ export const SELF_HEAL_GRACE_MS = 60_000
  * back-fill sweep.
  */
 export const SELF_HEAL_DEFAULT_LIMIT = 500
+
+/**
+ * How far back the self-heal pass looks for terminal sessions missing their
+ * events row. The pass runs every tick, so a healthy backlog only ever holds
+ * rows from the last few minutes; the window just has to outlast any realistic
+ * outage. It is what lets the scan be a range scan on sessions_settled_at_idx
+ * instead of a walk over every terminal session ever created (and an events
+ * probe for each).
+ */
+export const SELF_HEAL_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000
 
 const FAILURE_REASON: SessionResultFailureReason = {
 	provider: 'agent-server',
@@ -217,6 +227,7 @@ export class SessionReconciler {
 		limit: number = SELF_HEAL_DEFAULT_LIMIT,
 	): Promise<SelfHealResult> {
 		const cutoff = new Date(nowMs - graceMs)
+		const floor = new Date(nowMs - SELF_HEAL_LOOKBACK_MS)
 		// Paused rows deliberately leave completedAt null (§5.2 col 2), so their
 		// terminal-transition time is updatedAt, which settleSession stamps on every
 		// write. Every other terminal kind has completedAt set.
@@ -233,6 +244,7 @@ export class SessionReconciler {
 		const missingEventsRow = sql`not exists (
 			select 1 from ${events}
 			where ${events.entityType} = 'session'
+				and ${events.workspaceId} = ${sessions.workspaceId}
 				and ${events.entityId} = ${sessions.id}
 				and ${events.action} = case ${sessions.status} ${expectedActionSql} end
 		)`
@@ -250,6 +262,7 @@ export class SessionReconciler {
 				and(
 					inArray(sessions.status, [...TERMINAL_STATUSES]),
 					lt(settledAt, sql`${cutoff.toISOString()}::timestamptz`),
+					gte(settledAt, sql`${floor.toISOString()}::timestamptz`),
 					missingEventsRow,
 				),
 			)

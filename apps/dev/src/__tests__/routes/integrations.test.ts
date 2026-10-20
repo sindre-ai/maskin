@@ -154,6 +154,7 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'posthog',
+				'resend',
 				'slack',
 				'ubersuggest',
 			])
@@ -245,6 +246,60 @@ describe('Integrations Routes', () => {
 			} finally {
 				process.env.GITHUB_CLIENT_ID = previousClientId
 			}
+		})
+
+		// "Install on another organization": the authorize URL only lists orgs that
+		// already have the App, so this mode must return the App's install page
+		// instead — with a signed state, and the binding cookie, like a normal connect.
+		it('returns the App install URL with a signed state when github is asked to install on another org', async () => {
+			const previousSlug = process.env.GITHUB_APP_SLUG
+			process.env.GITHUB_APP_SLUG = 'sindre-maskin'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/github/connect',
+						{ install_new_org: true },
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				const url = new URL(body.install_url)
+				expect(`${url.origin}${url.pathname}`).toBe(
+					'https://github.com/apps/sindre-maskin/installations/new',
+				)
+				const state = url.searchParams.get('state')
+				expect(state).toBeTruthy()
+				expect(res.headers.get('set-cookie')).toContain('oauth_nonce')
+			} finally {
+				process.env.GITHUB_APP_SLUG = previousSlug
+			}
+		})
+
+		it('ignores install_new_org for providers other than github', async () => {
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: (_state: string) => 'https://custom.example/authorize',
+				},
+			} as unknown as ReturnType<typeof getProvider>)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/custom-provider/connect',
+					{ install_new_org: true },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).install_url).toBe('https://custom.example/authorize')
 		})
 
 		it('returns 500 when the GitHub App OAuth client id is not configured', async () => {
@@ -386,6 +441,50 @@ describe('Integrations Routes', () => {
 			expect(body.error.message).not.toContain('INTEGRATION_ENCRYPTION_KEY')
 		})
 
+		it('stores expose_to_agent_sessions on the row when a manual provider (resend) connects with it', async () => {
+			const systemActor = { id: 'resend-system-actor-id', type: 'system', name: 'Resend' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[systemActor], // system actor lookup
+				[{ id: 'member-id' }], // existing workspace member
+			]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/resend/connect',
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const integrationInsert = calls.inserts[0] as { provider: string; config: unknown }
+			expect(integrationInsert.provider).toBe('resend')
+			expect(integrationInsert.config).toEqual({
+				system_actor_id: systemActor.id,
+				expose_to_agent_sessions: false,
+			})
+		})
+
+		it('leaves expose_to_agent_sessions absent on a manual connect that does not send it', async () => {
+			const systemActor = { id: 'resend-system-actor-id', type: 'system', name: 'Resend' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[systemActor], [{ id: 'member-id' }]]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/resend/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const integrationInsert = calls.inserts[0] as { config: unknown }
+			expect(integrationInsert.config).toEqual({ system_actor_id: systemActor.id })
+		})
+
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
 			const originalFrontendUrl = process.env.FRONTEND_URL
 			process.env.FRONTEND_URL = 'http://localhost:5173'
@@ -422,6 +521,37 @@ describe('Integrations Routes', () => {
 				expect(eventInsert.action).toBe('created')
 				expect((eventInsert.data as Record<string, unknown>).provider).toBe('posthog')
 				expect((eventInsert.data as Record<string, unknown>).auth_type).toBe('api_key')
+			} finally {
+				if (originalFrontendUrl === undefined) {
+					Reflect.deleteProperty(process.env, 'FRONTEND_URL')
+				} else {
+					process.env.FRONTEND_URL = originalFrontendUrl
+				}
+			}
+		})
+
+		it('does not opt a new api_key connection into exposure to every agent session', async () => {
+			// Exposure is decided per agent at session launch (the agent's own tools
+			// config has to reference the token), so a new connection must not write
+			// an expose_to_agent_sessions value of its own.
+			const originalFrontendUrl = process.env.FRONTEND_URL
+			process.env.FRONTEND_URL = 'http://localhost:5173'
+			try {
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/posthog/connect',
+						{ api_key: 'phx_test_personal_key' },
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(200)
+				const integrationInsert = calls.inserts[0] as { config?: Record<string, unknown> }
+				expect(integrationInsert.config?.expose_to_agent_sessions).toBeUndefined()
 			} finally {
 				if (originalFrontendUrl === undefined) {
 					Reflect.deleteProperty(process.env, 'FRONTEND_URL')
@@ -788,6 +918,42 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(302)
 			const location = res.headers.get('Location')
 			expect(location).toContain('/settings/integrations')
+		})
+
+		it('does not opt a newly activated oauth connection into exposure to every agent session', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'no-expose-nonce'
+			const state = encrypt(
+				JSON.stringify({ workspaceId: wsId, actorId: 'test-actor-id', ts: Date.now(), nonce }),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+			]
+
+			const res = await app.request(
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=42`,
+					nonce,
+				),
+			)
+
+			expect(res.status).toBe(302)
+			const activation = calls.updates.find(
+				(u) => (u as { status?: string }).status === 'active',
+			) as { config: Record<string, unknown> }
+			expect(activation.config.system_actor_id).toBe(systemActor.id)
+			expect(activation.config.expose_to_agent_sessions).toBeUndefined()
 		})
 
 		it('creates system actor when none exists and adds as workspace member', async () => {
@@ -1253,6 +1419,105 @@ describe('Integrations Routes', () => {
 		})
 	})
 
+	describe('PATCH /api/integrations/:id', () => {
+		it('merges expose_to_agent_sessions into the stored config and strips credentials', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'resend',
+				config: { system_actor_id: 'sys-actor', resend: { receive_subdomain: 'inbound' } },
+			})
+			const updated = {
+				...integration,
+				config: { ...integration.config, expose_to_agent_sessions: false },
+			}
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/integrations/${integration.id}`,
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).not.toHaveProperty('credentials')
+			expect(body.config.expose_to_agent_sessions).toBe(false)
+
+			const setCall = calls.updates[0] as { config: Record<string, unknown> }
+			expect(setCall.config).toEqual({
+				system_actor_id: 'sys-actor',
+				resend: { receive_subdomain: 'inbound' },
+				expose_to_agent_sessions: false,
+			})
+			const eventInsert = calls.inserts[0] as Record<string, unknown>
+			expect(eventInsert.entityType).toBe('integration')
+			expect(eventInsert.action).toBe('updated')
+			expect(eventInsert.data).toEqual({ expose_to_agent_sessions: false })
+		})
+
+		it('does not return the wrapped data key of a vaulted credential', async () => {
+			const integration = buildIntegration({ workspaceId: wsId, provider: 'resend' })
+			const updated = {
+				...integration,
+				dekCiphertext: 'wrapped-data-key',
+				config: { expose_to_agent_sessions: false },
+			}
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/integrations/${integration.id}`,
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).not.toHaveProperty('dekCiphertext')
+			expect(JSON.stringify(body)).not.toContain('wrapped-data-key')
+		})
+
+		it('returns 400 when expose_to_agent_sessions is not a boolean', async () => {
+			const integration = buildIntegration({ workspaceId: wsId })
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/integrations/${integration.id}`,
+					{ expose_to_agent_sessions: 'no' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when the integration is not in the caller workspace', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/integrations/00000000-0000-0000-0000-000000000099',
+					{ expose_to_agent_sessions: false },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
 	describe('POST /api/integrations/:id/complete', () => {
 		it('returns 400 when secret is missing from the request body', async () => {
 			const integration = buildIntegration({
@@ -1568,6 +1833,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				// Route lookup + guarded re-read inside the recovery transaction.
@@ -1576,7 +1842,11 @@ describe('Integrations Routes', () => {
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
-					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
 					.mockResolvedValueOnce(
 						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
 					)
@@ -1640,6 +1910,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				mockResults.select = [integration]
@@ -1768,6 +2039,91 @@ describe('Integrations Routes', () => {
 				fetchSpy.mockRestore()
 			})
 
+			it('returns 401 AUTH_REVOKED and writes nothing when the discovered install belongs to another account', async () => {
+				// The ?repo= hint is caller-supplied, so discovery can land on an
+				// install owned by someone else. Same outcome as an unknown repo:
+				// no token, no credentials rewrite, no audit event, no sibling writes.
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[integration], [integration]]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'other-org' } }), {
+							status: 200,
+						}),
+					)
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ token: 'ghs_foreign' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=other-org%2Fwidget`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(401)
+				const body = (await res.json()) as { error: { code: string } }
+				expect(body.error.code).toBe('AUTH_REVOKED')
+				expect(JSON.stringify(body)).not.toContain('ghs_foreign')
+				// Cached-id mint + discovery only; nothing minted against the foreign install.
+				expect(fetchSpy).toHaveBeenCalledTimes(2)
+				expect(fetchSpy).not.toHaveBeenCalledWith(
+					'https://api.github.com/app/installations/9999/access_tokens',
+					expect.anything(),
+				)
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+				fetchSpy.mockRestore()
+			})
+
+			it('returns 401 AUTH_REVOKED when the row has no owner_login to compare against', async () => {
+				const { encrypt } = await import('../../lib/crypto')
+				process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED = 'true'
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[integration], [integration]]
+
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token?repo=sindre-ai%2Fmaskin`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(401)
+				expect(fetchSpy).toHaveBeenCalledTimes(2)
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+				fetchSpy.mockRestore()
+			})
+
 			it('short-circuits the write when a concurrent recovery already rotated the installation id', async () => {
 				// Two parallel callers can both hit this route on the same
 				// cached id. The second one's guarded re-read must observe the
@@ -1781,6 +2137,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const alreadyRotatedIntegration = {
 					...staleIntegration,
@@ -1794,7 +2151,11 @@ describe('Integrations Routes', () => {
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
-					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
 					.mockResolvedValueOnce(
 						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
 					)
@@ -1823,6 +2184,7 @@ describe('Integrations Routes', () => {
 					provider: 'github',
 					status: 'active',
 					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+					config: { owner_login: 'sindre-ai' },
 				})
 				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				mockResults.selectQueue = [[integration], [integration]]
@@ -1831,7 +2193,11 @@ describe('Integrations Routes', () => {
 				const fetchSpy = vi
 					.spyOn(globalThis, 'fetch')
 					.mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
-					.mockResolvedValueOnce(new Response(JSON.stringify({ id: 9999 }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(JSON.stringify({ id: 9999, account: { login: 'sindre-ai' } }), {
+							status: 200,
+						}),
+					)
 					.mockResolvedValueOnce(
 						new Response(JSON.stringify({ token: 'ghs_recovered' }), { status: 200 }),
 					)

@@ -4,7 +4,10 @@ import { ApiError } from './api'
 
 export const queryClient = new QueryClient({
 	mutationCache: new MutationCache({
-		onError: (error) => {
+		onError: (error, _variables, _context, mutation) => {
+			// A mutation that sets `meta: { handlesOwnErrors: true }` shows its own
+			// message; a second generic toast here would stack on top of it.
+			if (mutation.meta?.handlesOwnErrors) return
 			if (error instanceof ApiError && error.hasFieldErrors()) return
 			// PLAN_CAP_EXCEEDED is always rendered by the call site via
 			// `toastSessionCreateError`, which shows an actionable "upgrade / buy
@@ -13,7 +16,8 @@ export const queryClient = new QueryClient({
 			// next to it. Same reasoning as the field-error case above: if a call
 			// site owns the presentation, the global fallback must stay quiet.
 			if (error instanceof ApiError && error.code === 'PLAN_CAP_EXCEEDED') return
-			const message = error instanceof ApiError ? error.message : 'Something went wrong'
+			const message =
+				error instanceof ApiError && error.message.trim() ? error.message : 'Something went wrong'
 			toast.error(message)
 		},
 	}),

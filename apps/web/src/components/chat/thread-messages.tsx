@@ -1,3 +1,6 @@
+import { HandoffCard } from '@/components/chat/handoff-card'
+import { HelperQuestionCard } from '@/components/chat/helper-question-card'
+import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -7,15 +10,18 @@ import {
 	useConversationMessages,
 } from '@/hooks/use-conversation'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -58,7 +64,25 @@ export function ThreadMessages({
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const threadsPane = useThreadsPane()
 	const messages = flattenMessagesOldestFirst(data)
+	const handoffs = useConversationThreads(workspaceId, conversationId)
+	// Each handoff is its own row in the timeline, at the moment its session was
+	// created: before the first message written after it, or at the foot of the
+	// thread when nothing has been written since.
+	const showHandoffCards = Boolean(threadsPane)
+	const handoffsByNextMessage = useMemo(() => {
+		if (!showHandoffCards) return new Map<number | 'end', typeof handoffs>()
+		return groupHandoffsByNextMessage(handoffs, messages)
+	}, [handoffs, messages, showHandoffCards])
+	const renderHandoffCards = (items: typeof handoffs | undefined) =>
+		items && items.length > 0 && threadsPane ? (
+			<div className="ml-[39px] flex max-w-[660px] flex-col gap-2">
+				{items.map((session) => (
+					<HandoffCard key={session.id} session={session} onViewThread={threadsPane.openThread} />
+				))}
+			</div>
+		) : null
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
@@ -79,6 +103,11 @@ export function ThreadMessages({
 		[sessionList, producedEnabled],
 	)
 
+	// Head/tail dividers for each run of voice-call messages. Derived from the
+	// messages themselves (metadata.source === 'voice'), so it needs no flag read
+	// of its own: no voice messages exist until a flagged call has written some.
+	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
+
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
 	const answeredQuestionIds = new Set(
@@ -87,9 +116,30 @@ export function ThreadMessages({
 			.filter((id): id is number => typeof id === 'number'),
 	)
 
+	// A helper's question and the person's answer are a conversation with that
+	// helper, which lives in its thread. Until it is answered the question stays
+	// here with its buttons; once answered, both messages leave the main chat.
+	const helperQuestionIds = new Set(
+		messages.filter((m) => m.metadata?.question?.reply_to_session).map((m) => m.id),
+	)
+	const visibleMessages = messages.filter((m) => {
+		// A helper's result handed to the agent that started it: the agent gets it, the
+		// person reads it in the helper's thread as its final output.
+		if (m.metadata?.helper_return) return false
+		if (helperQuestionIds.has(m.id)) return !answeredQuestionIds.has(m.id)
+		const answered = m.metadata?.question_answer?.question_message_id
+		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
+	})
+
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
+	const topSentinelRef = useRef<HTMLDivElement | null>(null)
 	const lastMessageCountRef = useRef(0)
+	// Snapshot of scrollHeight/scrollTop taken right before an older-page fetch,
+	// used to keep the reader's visual anchor stable when the prepended messages
+	// grow the scroller upward. Cleared once applied.
+	const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+	const pageCount = data?.pages.length ?? 0
 	const [isNearBottom, setIsNearBottom] = useState(true)
 
 	// Auto-scroll to the newest message on first load and whenever a new
@@ -104,6 +154,45 @@ export function ThreadMessages({
 		if (!isNearBottom) return
 		bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
 	}, [messages.length, isNearBottom])
+
+	// Auto-load older messages when the user scrolls to the top of the thread.
+	// The button below stays as an accessible fallback for keyboard users and
+	// for the case where the observer misses (jsdom, disabled JS, etc.), but
+	// the observer is what most readers actually hit — mirrors the pattern
+	// every modern chat surface uses.
+	useEffect(() => {
+		const sentinel = topSentinelRef.current
+		const scroller = scrollerRef.current
+		if (!sentinel || !scroller) return
+		if (!hasNextPage || isFetchingNextPage) return
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((e) => e.isIntersecting)) return
+				scrollAnchorRef.current = {
+					scrollHeight: scroller.scrollHeight,
+					scrollTop: scroller.scrollTop,
+				}
+				fetchNextPage()
+			},
+			{ root: scroller, rootMargin: '200px 0px 0px 0px' },
+		)
+		observer.observe(sentinel)
+		return () => observer.disconnect()
+	}, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+	// After an older page is prepended, restore the reader's visual anchor —
+	// otherwise the freshly-added messages push what they were reading down
+	// and out of view. Runs on pageCount change so an SSE-delivered new
+	// message at the bottom doesn't trip it.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pageCount is the trigger — a new page just landed — and its value is not read inside the effect.
+	useEffect(() => {
+		const scroller = scrollerRef.current
+		const anchor = scrollAnchorRef.current
+		if (!scroller || !anchor) return
+		const delta = scroller.scrollHeight - anchor.scrollHeight
+		scrollAnchorRef.current = null
+		if (delta > 0) scroller.scrollTop = anchor.scrollTop + delta
+	}, [pageCount])
 
 	const handleScroll = () => {
 		const el = scrollerRef.current
@@ -183,11 +272,26 @@ export function ThreadMessages({
 			/>
 			{hasNextPage ? (
 				<div className="flex flex-col items-center gap-1">
+					{/* Sentinel above the button. When it scrolls into the scroller's
+					    viewport (with a 200px rootMargin) the IntersectionObserver
+					    fires fetchNextPage — the reader never has to spot the button
+					    to load older messages. The button stays as the fallback path
+					    for keyboard users and jsdom-shaped test environments. */}
+					<div ref={topSentinelRef} data-testid="thread-messages-top-sentinel" aria-hidden />
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
-						onClick={() => fetchNextPage()}
+						onClick={() => {
+							const scroller = scrollerRef.current
+							if (scroller) {
+								scrollAnchorRef.current = {
+									scrollHeight: scroller.scrollHeight,
+									scrollTop: scroller.scrollTop,
+								}
+							}
+							fetchNextPage()
+						}}
 						disabled={isFetchingNextPage}
 					>
 						{isFetchingNextPage ? <Spinner /> : 'Load older messages'}
@@ -203,9 +307,9 @@ export function ThreadMessages({
 				</div>
 			) : null}
 			<div className="flex flex-col gap-4">
-				{messages.map((message, index) => {
-					const prev = messages[index - 1]
-					const isLast = index === messages.length - 1
+				{visibleMessages.map((message, index) => {
+					const prev = visibleMessages[index - 1]
+					const isLast = index === visibleMessages.length - 1
 					// Turns this message's own reply resulted from render above
 					// it; turns this message triggered (still in progress, no
 					// reply yet) render below it, in the gap before that reply
@@ -213,53 +317,81 @@ export function ThreadMessages({
 					const turnsAbove = byReplyMessageId.get(message.id) ?? []
 					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
+					// A helper's question is put to the person from outside this chat, so it
+					// is drawn as a card rather than as a message from the helper.
+					const helperQuestion = message.metadata?.question?.reply_to_session
+						? message.metadata.question
+						: null
+					if (helperQuestion) {
+						return (
+							<Fragment key={message.id}>
+								{renderHandoffCards(handoffsByNextMessage.get(message.id))}
+								<HelperQuestionCard
+									workspaceId={workspaceId}
+									conversationId={conversationId}
+									questionMessageId={message.id}
+									actorId={message.actorId}
+									actorName={message.actorName}
+									question={helperQuestion}
+									answered={answeredQuestionIds.has(message.id)}
+									onViewThread={threadsPane?.openThread}
+								/>
+							</Fragment>
+						)
+					}
 					return (
-						<div
-							key={message.id}
-							data-message-id={message.id}
-							className="flex flex-col gap-1 scroll-mt-[60px]"
-						>
-							{/* A divider separates two days; there is nothing above the
+						<Fragment key={message.id}>
+							{renderHandoffCards(handoffsByNextMessage.get(message.id))}
+							<div data-message-id={message.id} className="flex flex-col gap-1 scroll-mt-[60px]">
+								{/* A divider separates two days; there is nothing above the
 							    first message to separate it from, so the thread doesn't
 							    open with a "Today" rule floating over its own first line. */}
-							{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
-								<MessageDivider date={message.createdAt} />
-							) : null}
-							{/* A finished turn belongs to the reply it produced, so it
+								{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
+									<MessageDivider date={message.createdAt} />
+								) : null}
+								{voiceBoundaries.get(message.id)?.start ? (
+									<VoiceCallBoundary variant="start" {...voiceBoundaries.get(message.id)?.start} />
+								) : null}
+								{/* A finished turn belongs to the reply it produced, so it
 							    renders *inside* that message under the agent's name
 							    rather than as a separate row above it — which read as
 							    a stray line belonging to nothing. Live turns stay
 							    standalone below their trigger, where they carry their
 							    own avatar. */}
-							<MessageBubble
-								workspaceId={workspaceId}
-								message={message}
-								questionAnswered={answeredQuestionIds.has(message.id)}
-								v4Polish={v4PolishBubbles}
-								spawnInfo={spawnByMessageId.get(message.id)}
-								// Keyed by index as well as session: one session can put two
-								// turns under the same message (a result segment plus the
-								// live turn that follows it), so `sessionId` alone is not
-								// unique and React would reconcile the two as one row.
-								activity={turnsAbove.map((turn, turnIndex) => (
+								<MessageBubble
+									workspaceId={workspaceId}
+									message={message}
+									questionAnswered={answeredQuestionIds.has(message.id)}
+									v4Polish={v4PolishBubbles}
+									spawnInfo={spawnByMessageId.get(message.id)}
+									// Keyed by index as well as session: one session can put two
+									// turns under the same message (a result segment plus the
+									// live turn that follows it), so `sessionId` alone is not
+									// unique and React would reconcile the two as one row.
+									activity={turnsAbove.map((turn, turnIndex) => (
+										<MessageActivity
+											key={`${turn.sessionId}-above-${turnIndex}`}
+											workspaceId={workspaceId}
+											turn={turn}
+											layout="inline"
+										/>
+									))}
+								/>
+								{turnsBelowHere.map((turn, turnIndex) => (
 									<MessageActivity
-										key={`${turn.sessionId}-above-${turnIndex}`}
+										key={`${turn.sessionId}-below-${turnIndex}`}
 										workspaceId={workspaceId}
 										turn={turn}
-										layout="inline"
 									/>
 								))}
-							/>
-							{turnsBelowHere.map((turn, turnIndex) => (
-								<MessageActivity
-									key={`${turn.sessionId}-below-${turnIndex}`}
-									workspaceId={workspaceId}
-									turn={turn}
-								/>
-							))}
-						</div>
+								{voiceBoundaries.get(message.id)?.end ? <VoiceCallBoundary variant="end" /> : null}
+							</div>
+						</Fragment>
 					)
 				})}
+				{/* Handoffs created after the newest message: the person sees the work
+				    begin instead of waiting for the agent's next message. */}
+				{renderHandoffCards(handoffsByNextMessage.get('end'))}
 			</div>
 			<div ref={bottomAnchorRef} />
 		</div>

@@ -1,7 +1,8 @@
 import { z } from 'zod'
+import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
-// Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
+// Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
 export const MESSAGE_MAX_LENGTH = 8000
 export const MAX_CONVERSATION_PARTICIPANTS = 50
 export const MESSAGE_MAX_ATTACHMENTS = 10
@@ -79,6 +80,21 @@ export const messageFinalOutputSchema = z.object({
 			nudges: z.number().int().min(0).max(10),
 		})
 		.optional(),
+	/**
+	 * Set when the turn ended because the model returned an empty completion
+	 * (no reply, no tool call) and retrying did not produce one. A separate axis
+	 * from `error_kind` and `pseudo_tool_calls`: nothing was wrong with the API
+	 * call and nothing was written as text, the model simply said nothing.
+	 * `attempts` counts the extra asks after the CLI's own nudge; `model` is the
+	 * one the session runs on and `fallback_model` the one tried last, if any.
+	 */
+	empty_completion: z
+		.object({
+			attempts: z.number().int().min(0).max(10),
+			model: z.string().max(128).nullable(),
+			fallback_model: z.string().max(128).optional(),
+		})
+		.optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),
@@ -123,6 +139,11 @@ export const messageQuestionSchema = z.object({
 	/** The session whose turn asked. Ties the answer back to the right agent. */
 	session_id: z.string().uuid(),
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
+	/**
+	 * The asking session is a helper another agent started, not a participant of
+	 * this chat: the answer goes to that session's input, not to the chat's agents.
+	 */
+	reply_to_session: z.boolean().optional(),
 })
 
 /**
@@ -144,6 +165,59 @@ export const messageQuestionAnswerSchema = z.object({
 		.max(MESSAGE_MAX_QUESTIONS),
 })
 
+/**
+ * Set by the backend when an agent in a chat calls `connect_integration`: the
+ * chat renders a Connect card (button for OAuth providers, key input for
+ * API-key providers) instead of the agent pasting a URL. Never accepted from a
+ * client — the POST /messages route strips it, same as `question`.
+ *
+ * Only the provider name is stored. The card reads live integration status, so
+ * it flips to "Connected" by itself and never shows a stale state on scrollback.
+ */
+export const messageIntegrationConnectSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** Provider name as listed by `GET /api/integrations/providers`, e.g. 'linear'. */
+	provider: z.string().min(1).max(100),
+})
+
+/** What an agent can ask the human to put into the Keychain from a chat card. */
+export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
+export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
+
+/**
+ * An agent's request for a credential, shown as a Keychain card in the chat instead of
+ * the agent asking for it in plain text. Never accepted from a client. Holds no secret
+ * and never can: the human types the value into the card, which sends it straight to
+ * the vault, so it never passes through the agent or this message.
+ */
+export const messageKeychainRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** A name for the credential the card pre-fills, e.g. "e-conomic". */
+	suggested_name: z.string().min(1).max(80).optional(),
+	/** One line on what the credential is for, shown on the card. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
+/**
+ * An agent's request to use a credential that already exists in the Keychain, shown as a
+ * card with Allow / Not now. Never accepted from a client. Holds no secret: the card only
+ * names the credential, and allowing it grants the agent access on the server.
+ */
+export const messageKeychainAccessRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** The credential being asked for. */
+	integration_id: z.string().uuid(),
+	/** Its name as the person knows it, e.g. "Stripe". */
+	credential_name: z.string().min(1).max(80),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** One line on what the agent needs it for. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -155,14 +229,25 @@ export const messageMetadataSchema = z.object({
 	/**
 	 * Marks how the message came to exist. Absent for anything a human typed
 	 * or an agent posted via the post_conversation_message MCP tool;
-	 * 'final_output' for an agent's automatically-posted end-of-turn reply.
+	 * 'final_output' for an agent's automatically-posted end-of-turn reply;
+	 * 'voice' for a transcript line written by the voice tool-proxy.
 	 */
-	source: z.enum(['final_output']).optional(),
+	source: z.enum(['final_output', 'voice']).optional(),
+	/** Backend-owned: the voice_sessions row a 'voice' message was transcribed from. */
+	voice_session_id: z.string().uuid().optional(),
 	final_output: messageFinalOutputSchema.optional(),
 	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
 	question: messageQuestionSchema.optional(),
 	/** Client-supplied: which options the human picked for a `question`. */
 	question_answer: messageQuestionAnswerSchema.optional(),
+	/** Backend-owned: an agent's request to connect an integration, shown as a card. */
+	integration_connect: messageIntegrationConnectSchema.optional(),
+	/** Backend-owned: an agent's request for a credential, shown as a Keychain card. */
+	keychain_request: messageKeychainRequestSchema.optional(),
+	/** Backend-owned: an agent's request to use an existing credential, shown as a card. */
+	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
+	/** Backend-owned: the helper session whose result this message hands to its sender. */
+	helper_return: z.string().uuid().optional(),
 })
 
 /**
@@ -174,7 +259,16 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 	metadata: T,
 ): T {
 	if (!metadata) return metadata
-	const { source: _source, final_output: _finalOutput, question: _question, ...rest } = metadata
+	const {
+		source: _source,
+		final_output: _finalOutput,
+		question: _question,
+		voice_session_id: _voiceSessionId,
+		integration_connect: _integrationConnect,
+		keychain_request: _keychainRequest,
+		keychain_access_request: _keychainAccessRequest,
+		...rest
+	} = metadata
 	return rest as T
 }
 
@@ -197,11 +291,11 @@ export const addConversationParticipantsSchema = z.object({
 })
 
 export const conversationListQuerySchema = z.object({
-	pinned: z.coerce.boolean().optional(),
+	pinned: booleanQueryParam.optional(),
 	// Excludes archived conversations by default — matches the mockup's
 	// default "Chats" list, archived ones need an explicit filter to surface.
-	archived: z.coerce.boolean().default(false),
-	unread_only: z.coerce.boolean().optional(),
+	archived: booleanQueryParam.default(false),
+	unread_only: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -217,6 +311,11 @@ export const postMessageSchema = z.object({
 	// config.conversation — see conversations route for the ownership check.
 	// Ignored (silently) otherwise, e.g. for human-authored messages.
 	session_id: z.string().uuid().optional(),
+	// Post as a reply in the thread rooted at this message. The root must be a
+	// top-level message of the same conversation (threads do not nest).
+	thread_root_id: z.number().int().positive().optional(),
+	// With thread_root_id: also show the reply in the main timeline.
+	also_in_channel: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({
@@ -230,6 +329,16 @@ export const messageQuerySchema = z.object({
 	before_id: z.coerce.number().int().positive().optional(),
 	after_id: z.coerce.number().int().positive().optional(),
 	limit: z.coerce.number().int().min(1).max(200).default(50),
+	// Return only the replies of this thread (newest-first like the main list).
+	thread_root_id: z.coerce.number().int().positive().optional(),
+})
+
+export const threadListQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).default(30),
+})
+
+export const markThreadReadSchema = z.object({
+	last_read_message_id: z.number().int().positive(),
 })
 
 export const updateConversationParticipantStateSchema = z
@@ -266,6 +375,7 @@ export const updateConversationParticipantStateSchema = z
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
+export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>
 export type MessageQuestionItem = z.infer<typeof messageQuestionItemSchema>
 export type MessageQuestionAnswer = z.infer<typeof messageQuestionAnswerSchema>
 
@@ -282,6 +392,57 @@ export function formatQuestionsAsMarkdown(questions: MessageQuestionItem[]): str
 			return [q.question, ...options].join('\n')
 		})
 		.join('\n\n')
+}
+
+/** The `connect-card` request body: the provider `connect_integration` was called with. */
+export const sessionConnectCardSchema = z.object({
+	provider: z.string().min(1).max(100),
+})
+
+/**
+ * The plain-markdown rendering of a connect card, used as the message's
+ * `content` so every reader that isn't the chat UI still says what is needed.
+ */
+export function formatIntegrationConnectAsMarkdown(displayName: string): string {
+	return `Connect **${displayName}** to continue — use the Connect card below, or go to Settings → Integrations.`
+}
+
+/** The `keychain-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainCardSchema = z.object({
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	suggested_name: z.string().trim().min(1).max(80).optional(),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/**
+ * The plain-markdown rendering of a keychain card, used as the message's `content` so
+ * every reader that isn't the chat UI still says what is needed.
+ */
+export function formatKeychainRequestAsMarkdown(
+	kind: KeychainRequestKind,
+	suggestedName?: string,
+	hint?: string,
+): string {
+	const what = kind === 'login' ? 'a login (username and password)' : 'an API key'
+	const named = suggestedName ? ` for **${suggestedName}**` : ''
+	const why = hint ? ` ${hint}` : ''
+	return `I need ${what}${named}.${why} Add it with the Keychain card below, or in Settings → Keychain. It goes straight to your vault, so I never see it.`
+}
+
+/** The `keychain-access-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainAccessCardSchema = z.object({
+	/** The credential's name, as listed by `list_keychain_credentials`. */
+	credential_name: z.string().trim().min(1).max(80),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/** The plain-markdown rendering of an access card, for every reader that isn't the chat UI. */
+export function formatKeychainAccessRequestAsMarkdown(
+	credentialName: string,
+	hint?: string,
+): string {
+	const why = hint ? ` ${hint}` : ''
+	return `I'd like to use **${credentialName}** from your Keychain.${why} Allow it with the card below, or in Settings → Keychain. I never see the secret itself.`
 }
 
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */

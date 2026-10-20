@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,6 +8,8 @@ vi.mock('@/lib/api', () => ({
 			list: vi.fn(),
 			providers: vi.fn(),
 			disconnect: vi.fn(),
+			connect: vi.fn(),
+			replaceGrants: vi.fn(),
 		},
 	},
 }))
@@ -15,7 +18,13 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-import { useDisconnectIntegration, useIntegrations, useProviders } from '@/hooks/use-integrations'
+import {
+	useConnectIntegration,
+	useDisconnectIntegration,
+	useIntegrations,
+	useProviders,
+	useUpdateKeyScope,
+} from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
@@ -99,6 +108,36 @@ describe('useIntegrations', () => {
 		})
 	})
 
+	describe('useConnectIntegration', () => {
+		it('sends install_new_org when asked to install on another org', async () => {
+			vi.mocked(api.integrations.connect).mockResolvedValue({ webhook_url: 'https://stub' })
+
+			const { result } = renderHook(() => useConnectIntegration('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({ provider: 'github', installNewOrg: true })
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.integrations.connect).toHaveBeenCalledWith('ws-1', 'github', {
+				install_new_org: true,
+			})
+		})
+
+		it('sends no body for a plain connect', async () => {
+			vi.mocked(api.integrations.connect).mockResolvedValue({ webhook_url: 'https://stub' })
+
+			const { result } = renderHook(() => useConnectIntegration('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({ provider: 'github' })
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.integrations.connect).toHaveBeenCalledWith('ws-1', 'github', undefined)
+		})
+	})
+
 	describe('useDisconnectIntegration', () => {
 		it('disconnects an integration and shows toast', async () => {
 			vi.mocked(api.integrations.disconnect).mockResolvedValue({ deleted: true })
@@ -126,5 +165,22 @@ describe('useIntegrations', () => {
 			await waitFor(() => expect(result.current.isError).toBe(true))
 			expect(result.current.error?.message).toBe('Disconnect failed')
 		})
+	})
+})
+
+describe('useUpdateKeyScope', () => {
+	it('shows a failed save inside the sheet, not as a second global toast', async () => {
+		vi.mocked(api.integrations.replaceGrants).mockRejectedValue(new Error('nope'))
+
+		const { result } = renderHook(
+			() => ({ save: useUpdateKeyScope('ws-1', 'int-1'), queryClient: useQueryClient() }),
+			{ wrapper: TestWrapper },
+		)
+
+		result.current.save.mutate([])
+
+		await waitFor(() => expect(result.current.save.isError).toBe(true))
+		const [mutation] = result.current.queryClient.getMutationCache().getAll()
+		expect(mutation.meta).toEqual({ handlesOwnErrors: true })
 	})
 })

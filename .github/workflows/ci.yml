@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # bet/** so task PRs into a bet branch get the same checks as a PR into main.
+  # Without it they report nothing until the aggregate bet -> main PR.
   pull_request:
-    branches: [main]
+    branches: [main, 'bet/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -112,6 +114,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -180,6 +183,94 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+
+  # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
+  # Nothing else runs that script, so a change that breaks a fresh bootstrap is
+  # otherwise first noticed by the next agent whose session needs a database.
+  # Each check lives in scripts/checks/ and bootstraps into a throwaway dir.
+  dev-bootstrap-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The cache is what keeps this job off snapshot.debian.org, which is the
+      # flake risk here rather than the check itself. Keyed on the two pinned
+      # versions the script downloads; only the downloads are cached, never a
+      # data dir.
+      - name: Read devstack versions
+        id: devstack
+        run: |
+          echo "pg=$(sed -n 's/^MASKIN_PG_VERSION="${MASKIN_PG_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+          echo "weed=$(sed -n 's/^MASKIN_WEED_VERSION="${MASKIN_WEED_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache devstack downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/maskin-devstack/postgres-*
+            ~/.cache/maskin-devstack/vendor-lib-*
+            ~/.cache/maskin-devstack/weed-*
+          key: devstack-${{ runner.os }}-${{ runner.arch }}-pg${{ steps.devstack.outputs.pg }}-weed${{ steps.devstack.outputs.weed }}
+
+      - name: Fresh bootstrap is UTF8 and migrates
+        run: bash scripts/checks/fresh-db-utf8.sh
+
+      - name: A busy SeaweedFS master port is routed around
+        run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
+
+  # Boots the real agent-base image through its entrypoint and agent-run.sh with
+  # a stub `claude` (scripts/checks/agent-image-smoke.sh). Merging a change under
+  # docker/agent-base/ publishes the image and restarts the shared agent-server
+  # (agent-base-docker.yml), and nothing else runs agent-run.sh before that, so a
+  # script that aborts under `set -e` otherwise takes down every session at once.
+  # The image build is skipped on PRs that don't touch its inputs; the job still
+  # reports success so it can be a required check.
+  agent-image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Did the agent image inputs change?
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
+              docker/agent-base scripts/checks/agent-image-smoke.sh scripts/checks/fixtures; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.changed.outputs.run == 'true'
+
+      # Reads the layer cache agent-base-docker.yml writes on main; never writes.
+      - name: Build agent-base image
+        if: steps.changed.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          load: true
+          tags: maskin-agent-base:smoke
+          cache-from: type=gha
+
+      - name: Sessions reach the agent launch
+        if: steps.changed.outputs.run == 'true'
+        run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
 
   verify-e2e:
     runs-on: ubuntu-latest

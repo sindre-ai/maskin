@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { events, conversations, messages, sessionLogs, sessions } from '@maskin/db/schema'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, sql } from 'drizzle-orm'
 import {
 	InteractiveTurnFinalizer,
 	type RetryTurnFn,
@@ -44,6 +46,34 @@ function thinkingLine(thinking: string) {
 		type: 'assistant',
 		message: { id: 'gen-1', role: 'assistant', content: [{ type: 'thinking', thinking }] },
 	})
+}
+
+/** An `assistant` line whose only block is a call to the named tool. */
+function toolUseLine(name: string) {
+	return JSON.stringify({
+		type: 'assistant',
+		message: {
+			id: 'gen-1',
+			role: 'assistant',
+			content: [{ type: 'tool_use', id: 'toolu_1', name, input: {} }],
+		},
+	})
+}
+
+/** The untagged `user` envelope the CLI writes to feed a tool's output back to the model. */
+function toolResultLine() {
+	return JSON.stringify({
+		type: 'user',
+		message: {
+			role: 'user',
+			content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }],
+		},
+	})
+}
+
+/** The `system` init line the CLI prints first, carrying the model the session runs on. */
+function initLine(model: string) {
+	return JSON.stringify({ type: 'system', subtype: 'init', model })
 }
 
 /** The user-turn envelope SessionManager.writeInput persists — the turn boundary. */
@@ -126,6 +156,34 @@ describe('Interactive turn finalizer', () => {
 		finalizer = new InteractiveTurnFinalizer(db)
 	})
 
+	// Posting a message is three sequential writes (insert the row, bump
+	// lastMessageAt, record message_posted). Tests that poll only for the row
+	// can return while the other two are still in flight, and the file's
+	// teardown then runs TRUNCATE actors CASCADE against that events insert and
+	// deadlocks (40P01). Hold every test open until each final_output message
+	// has its event.
+	afterEach(async () => {
+		const deadline = Date.now() + 5_000
+		while (true) {
+			const [posted] = await db
+				.select({ n: count() })
+				.from(messages)
+				.where(
+					and(
+						eq(messages.conversationId, conversationId),
+						sql`${messages.metadata}->>'source' = 'final_output'`,
+					),
+				)
+			const [recorded] = await db
+				.select({ n: count() })
+				.from(events)
+				.where(and(eq(events.entityId, conversationId), eq(events.action, 'message_posted')))
+			if ((recorded?.n ?? 0) >= (posted?.n ?? 0)) return
+			if (Date.now() > deadline) throw new Error('message_posted events never caught up')
+			await new Promise((resolve) => setTimeout(resolve, 10))
+		}
+	})
+
 	it('posts the end-of-turn output as a message from the agent', async () => {
 		const session = await seedSession()
 		if (!session) throw new Error('no session')
@@ -202,14 +260,19 @@ describe('Interactive turn finalizer', () => {
 		expect(rows[0]?.content).toBe('Here is the answer.')
 	})
 
-	it('posts nothing when the turn produced no text', async () => {
+	it('tells the human when a turn produced nothing and nothing can ask the model again', async () => {
+		// This used to post nothing: a blank result with no reply anywhere in the
+		// turn is the model saying nothing at all, which the human reads as being
+		// ignored. With no way to ask again, say so.
 		const session = await seedSession()
 		if (!session) throw new Error('no session')
 
 		await feed(session.id, `${resultLine({ result: '' })}\n`)
 		await feed(session.id, `${resultLine({ result: '   ', duration_ms: 9 })}\n`)
 
-		expect(await messagesFor(conversationId)).toHaveLength(0)
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(2)
+		for (const row of rows) expect(row.content).toContain("I couldn't complete that turn")
 	})
 
 	it('recovers the reply from the turn when the result envelope is blank', async () => {
@@ -279,6 +342,8 @@ describe('Interactive turn finalizer', () => {
 			`${userTurnLine(2)}
 `,
 		)
+		await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+		await feed(session.id, `${toolResultLine()}\n`)
 		await feed(
 			session.id,
 			`${resultLine({ result: '', duration_ms: 7 })}
@@ -310,7 +375,12 @@ describe('Interactive turn finalizer', () => {
 `,
 		)
 
-		expect(await messagesFor(conversationId)).toHaveLength(0)
+		// The sub-agent's text is not the turn's reply. The turn itself said
+		// nothing, so the human is told that instead of being shown the finding.
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toContain("I couldn't complete that turn")
+		expect(rows[0]?.content).not.toContain('internal sub-agent finding')
 	})
 
 	// The tests above feed one envelope per log row, which is what the
@@ -357,6 +427,7 @@ ${resultLine({ result: ' ' })}
 			session.id,
 			`${resultLine({ result: 'First turn reply.' })}
 ${userTurnLine(2)}
+${toolUseLine('mcp__maskin__post_conversation_message')}
 `,
 		)
 		await feed(
@@ -543,6 +614,72 @@ ${surviving}
 		).toBe(trigger.id)
 	})
 
+	it('posts the reply in the thread when the turn was triggered by a thread reply', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'dry run finished' })
+			.returning()
+		if (!root) throw new Error('no root message')
+		const [reply] = await db
+			.insert(messages)
+			.values({
+				conversationId,
+				actorId: humanId,
+				content: 'keep Qualifier',
+				threadRootId: root.id,
+			})
+			.returning()
+		if (!reply) throw new Error('no reply message')
+
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'keep Qualifier' },
+				maskin_message_id: reply.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBe(root.id)
+		expect(posted?.threadAlsoInChannel).toBe(false)
+	})
+
+	it('keeps a reply to a top-level message in the main timeline', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+		const [trigger] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'top level question' })
+			.returning()
+		if (!trigger) throw new Error('no trigger message')
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'top level question' },
+				maskin_message_id: trigger.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBeNull()
+	})
+
 	// The transport that fills session_logs must preserve the trailing newline
 	// on every row. onStdout re-splits what it is given with splitLines(), which
 	// pops the final segment as an incomplete "remainder" — so a row that does
@@ -596,6 +733,97 @@ ${surviving}
 		// The finalizer never calls evaluateAndRespond, so exactly one message
 		// appears and no responder chain can start from it.
 		expect(after).toHaveLength(before.length + 1)
+	})
+
+	describe('turn-finished signal (drives the Live Activity)', () => {
+		function withSignal() {
+			const finished: Array<{ sessionId: string; outcome: string }> = []
+			const calls: unknown[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: (sessionId, outcome) => finished.push({ sessionId, outcome }),
+				retryTurn: async (_s, payload) => {
+					calls.push(payload)
+				},
+				delay: async () => {},
+			})
+			return { instance, finished, calls }
+		}
+
+		it('signals done once when the reply is posted, and not again for a redelivered line', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(31)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('signals done for a turn that replied through the chat tool and ended silently', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(32)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('does not signal while a blank turn is being retried', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			// A blank result with no reply is not silence by choice: it is replayed, so the turn
+			// is still going and the Live Activity must stay up.
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([])
+		})
+
+		it('signals failed when the human is told the turn failed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(33)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}\n`,
+			)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'failed' }])
+		})
+
+		it('does not signal while a transient failure is being replayed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished, calls } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'API Error: {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_x"}' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+			expect(finished).toEqual([])
+		})
+
+		it('survives a throwing listener', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			finalizer = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: () => {
+					throw new Error('boom')
+				},
+			})
+			await feed(session.id, `${userTurnLine(35)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
 	})
 
 	describe('a turn that failed against the model API', () => {
@@ -1442,6 +1670,390 @@ ${surviving}
 			expect(rows[0]?.content).toContain('instead of running them')
 			expect(rows[0]?.content).not.toContain('tried again')
 			expect(rows[0]?.content).not.toContain('skill_called')
+		})
+	})
+
+	describe('turns whose last model call came back empty', () => {
+		const PRIMARY = 'deepseek/deepseek-v4-flash-0731'
+		const FALLBACK = 'deepseek/deepseek-v4-flash'
+
+		function withEmptyTurnHandling(
+			options: { fallbackModel?: string | null; replyTimeoutMs?: number } = {},
+		) {
+			const retries: Array<{ sessionId: string; content: string }> = []
+			const models: string[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				retryTurn: async (sessionId, payload) => {
+					retries.push({ sessionId, content: payload.message.content })
+				},
+				setModel: async (_sessionId, model) => {
+					models.push(model)
+				},
+				delay: async () => {},
+				...options,
+			})
+			return { instance, retries, models }
+		}
+
+		/**
+		 * A turn the way the live failure laid it out: the model narrates, calls a
+		 * tool, gets the result back, and its next call returns nothing. The CLI
+		 * then closes with a blank success `result`.
+		 */
+		async function feedEmptyTurn(sessionId: string, messageId: number, seed = 'a') {
+			await feed(sessionId, `${userTurnLine(messageId)}\n`)
+			await feed(sessionId, `${assistantLine('Almost there...')}\n`)
+			await feed(sessionId, `${toolUseLine('Read')}\n`)
+			await feed(sessionId, `${toolResultLine()}\n`)
+			return feed(sessionId, `${resultLine({ result: '', duration_ms: seed.charCodeAt(0) })}\n`)
+		}
+
+		/** The blank result the CLI emits after our correction is also answered with nothing. */
+		async function feedEmptyRetry(sessionId: string, seed: string) {
+			return feed(sessionId, `${resultLine({ result: '', duration_ms: seed.charCodeAt(0) })}\n`)
+		}
+
+		async function waitFor(instance: InteractiveTurnFinalizer) {
+			await instance.settlePendingRetries()
+		}
+
+		it('recognises the turn the real CLI wrote when the model went empty after a tool result', async () => {
+			// Captured from claude-code 2.1.285 against a model that answers a tool
+			// result with nothing: narration and tool call on separate lines, the
+			// tool_result, the CLI's own synthetic "no visible output" nudge, and a
+			// success result with an empty string. No assistant row for the empty
+			// call, which is why this was invisible in session_logs.
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries } = withEmptyTurnHandling()
+			finalizer = instance
+			const captured = readFileSync(
+				join(__dirname, '..', 'fixtures', 'claude-empty-completion-turn.jsonl'),
+				'utf8',
+			)
+				.split('\n')
+				.filter(Boolean)
+			expect(captured.at(-1)).toContain('"type":"result"')
+
+			await feed(session.id, `${userTurnLine(1)}\n`)
+			for (const line of captured) await feed(session.id, `${line}\n`)
+			await waitFor(instance)
+
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+			expect(retries).toHaveLength(1)
+		})
+
+		it('asks the model again instead of staying silent, and does not post the narration', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries, models } = withEmptyTurnHandling()
+			finalizer = instance
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+
+			// "Almost there..." was said ahead of a tool call, so it is not the reply.
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+			expect(retries).toHaveLength(1)
+			expect(retries[0]?.sessionId).toBe(session.id)
+			// A correction, not a replay of the human's message: the tools already ran.
+			expect(retries[0]?.content).toContain('Continue from where you left off')
+			expect(retries[0]?.content).not.toBe('hello')
+			expect(models).toEqual([])
+		})
+
+		it('posts the reply once a retry produces one, after two empty results', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries, models } = withEmptyTurnHandling({ fallbackModel: FALLBACK })
+			finalizer = instance
+			await feed(session.id, `${initLine(PRIMARY)}\n`)
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			expect(retries).toHaveLength(2)
+
+			await feed(session.id, `${resultLine({ result: 'Here is what I found.' })}\n`)
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Here is what I found.')
+			// Two same-model retries were enough, so the fallback never came into it.
+			expect(models).toEqual([])
+		})
+
+		it('switches to the fallback model after the same-model retries, then puts the primary back', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries, models } = withEmptyTurnHandling({ fallbackModel: FALLBACK })
+			finalizer = instance
+			await feed(session.id, `${initLine(PRIMARY)}\n`)
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			expect(models).toEqual([])
+
+			// Third empty result: same-model retries are spent, so this one goes out on the fallback.
+			await feedEmptyRetry(session.id, 'c')
+			await waitFor(instance)
+			expect(models).toEqual([FALLBACK])
+			expect(retries).toHaveLength(3)
+
+			// The fallback answers; the session goes straight back to its own model.
+			await feed(session.id, `${resultLine({ result: 'Answered on the fallback.' })}\n`)
+			expect(models).toEqual([FALLBACK, PRIMARY])
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Answered on the fallback.')
+		})
+
+		it('tells the human when the fallback is empty too, and records the turn as an empty completion', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries, models } = withEmptyTurnHandling({ fallbackModel: FALLBACK })
+			finalizer = instance
+			await feed(session.id, `${initLine(PRIMARY)}\n`)
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'c')
+			await waitFor(instance)
+			// After a switch the CLI prints a fresh init line naming the NEW model.
+			await feed(session.id, `${initLine(FALLBACK)}\n`)
+			await feedEmptyRetry(session.id, 'd')
+			await waitFor(instance)
+
+			// Three attempts were made (two on the model, one on the fallback): no fourth.
+			expect(retries).toHaveLength(3)
+			expect(models).toEqual([FALLBACK, PRIMARY])
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain("I couldn't complete that turn")
+			expect(rows[0]?.content).toContain('Send your message again')
+			const output = (
+				rows[0]?.metadata as {
+					final_output?: {
+						is_error?: boolean
+						error_kind?: string
+						empty_completion?: { attempts: number; model: string | null; fallback_model?: string }
+					}
+				}
+			)?.final_output
+			// Never recorded as a clean turn, and not mistaken for an API failure.
+			expect(output?.is_error).toBe(true)
+			expect(output?.error_kind).toBeUndefined()
+			expect(output?.empty_completion).toEqual({
+				attempts: 3,
+				model: PRIMARY,
+				fallback_model: FALLBACK,
+			})
+		})
+
+		it('gives up after the same-model retries when no fallback is configured', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries, models } = withEmptyTurnHandling({ fallbackModel: null })
+			finalizer = instance
+			await feed(session.id, `${initLine(PRIMARY)}\n`)
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'c')
+			await waitFor(instance)
+
+			expect(retries).toHaveLength(2)
+			expect(models).toEqual([])
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain("I couldn't complete that turn")
+			const output = (
+				rows[0]?.metadata as {
+					final_output?: { empty_completion?: { attempts: number; fallback_model?: string } }
+				}
+			)?.final_output
+			expect(output?.empty_completion?.attempts).toBe(2)
+			expect(output?.empty_completion?.fallback_model).toBeUndefined()
+		})
+
+		it('does not send an OpenRouter model name to a session on another model family', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, models } = withEmptyTurnHandling({ fallbackModel: FALLBACK })
+			finalizer = instance
+			await feed(session.id, `${initLine('claude-sonnet-4-5')}\n`)
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'c')
+			await waitFor(instance)
+
+			expect(models).toEqual([])
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
+
+		it('does not treat a turn that replied through the chat tool as empty', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries } = withEmptyTurnHandling()
+			finalizer = instance
+
+			await feed(session.id, `${userTurnLine(1)}\n`)
+			await feed(session.id, `${toolUseLine('Read')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			await waitFor(instance)
+
+			expect(retries).toHaveLength(0)
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+		})
+
+		it('does treat it as empty when the agent kept working after the chat tool and then went blank', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries } = withEmptyTurnHandling()
+			finalizer = instance
+
+			await feed(session.id, `${userTurnLine(1)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${toolUseLine('Read')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			await waitFor(instance)
+
+			expect(retries).toHaveLength(1)
+		})
+
+		it('does not retry a turn that is no longer the latest, as when history is replayed after a restart', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			// Turn 1 ended empty, the human moved on, turn 2 was answered.
+			const insert = async (content: string) => {
+				const [log] = await db
+					.insert(sessionLogs)
+					.values({ sessionId: session.id, stream: 'stdout', content })
+					.returning()
+				if (!log) throw new Error('failed to insert log')
+				return log
+			}
+			await insert(`${userTurnLine(1)}\n`)
+			const staleResult = await insert(`${resultLine({ result: '' })}\n`)
+			await insert(`${userTurnLine(2)}\n`)
+			await insert(`${resultLine({ result: 'Second turn reply.' })}\n`)
+
+			// A fresh process re-reads the whole log and meets the old blank result again.
+			const { instance, retries } = withEmptyTurnHandling()
+			finalizer = instance
+			await instance.onStdout(session.id, `${resultLine({ result: '' })}\n`, staleResult.id)
+			await waitFor(instance)
+
+			expect(retries).toHaveLength(0)
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+		})
+
+		it('does not spend another attempt on a replayed log line', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries } = withEmptyTurnHandling()
+			finalizer = instance
+
+			const log = await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await instance.onStdout(
+				session.id,
+				`${resultLine({ result: '', duration_ms: 97 })}\n`,
+				log.id,
+			)
+			await waitFor(instance)
+
+			expect(retries).toHaveLength(1)
+		})
+
+		it('gives the next chat message a fresh budget', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, retries } = withEmptyTurnHandling({ fallbackModel: null })
+			finalizer = instance
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			expect(retries).toHaveLength(2)
+
+			// The human sends another message and that one is empty too. Had the
+			// first message's two attempts carried over, this would be a give-up.
+			await feedEmptyTurn(session.id, 2, 'e')
+			await waitFor(instance)
+			expect(retries).toHaveLength(3)
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+		})
+
+		it('tells the human when the correction cannot be delivered, and puts the model back', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const models: string[] = []
+			let writes = 0
+			const instance = new InteractiveTurnFinalizer(db, {
+				retryTurn: async () => {
+					writes += 1
+					// The fallback attempt is the third write; the first two go through.
+					if (writes === 3) throw new Error('stdin closed')
+				},
+				setModel: async (_sessionId, model) => {
+					models.push(model)
+				},
+				fallbackModel: FALLBACK,
+				delay: async () => {},
+			})
+			finalizer = instance
+			await feed(session.id, `${initLine(PRIMARY)}\n`)
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'b')
+			await waitFor(instance)
+			await feedEmptyRetry(session.id, 'c')
+			await waitFor(instance)
+
+			// The switch had landed before the write failed, so it is undone at once.
+			expect(models).toEqual([FALLBACK, PRIMARY])
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain("couldn't ask it again")
+		})
+
+		it('tells the human when the nudge never comes back', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withEmptyTurnHandling({ replyTimeoutMs: 20 })
+			finalizer = instance
+
+			await feedEmptyTurn(session.id, 1)
+			await waitFor(instance)
+
+			const deadline = Date.now() + 2_000
+			while (Date.now() < deadline && (await messagesFor(conversationId)).length === 0) {
+				await new Promise((resolve) => setTimeout(resolve, 10))
+			}
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('the run never came back')
 		})
 	})
 })

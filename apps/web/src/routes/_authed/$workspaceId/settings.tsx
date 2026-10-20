@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -13,6 +14,8 @@ const settingsNav = [
 	{ label: 'Members', to: '/$workspaceId/settings/members' as const },
 	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' as const },
 	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' as const },
+	{ label: 'Skills', to: '/$workspaceId/settings/skills' as const },
+	{ label: 'MCP', to: '/$workspaceId/settings/mcp' as const },
 	{ label: 'Billing', to: '/$workspaceId/settings/billing' as const },
 ]
 
@@ -25,10 +28,26 @@ const keysNavItem = {
 	exact: false,
 }
 
+// Keychain is listed only while its flag is on. The Keychain routes read the flag
+// themselves, so a typed-in URL answers not found when it is off.
+const keychainNavItem = {
+	label: 'Keychain',
+	to: '/$workspaceId/settings/keychain' as const,
+	exact: false,
+}
+
 function SettingsLayout() {
+	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
-	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav
+	// Keychain sits right under Integrations: the two are where access is managed.
+	const at = settingsNav.findIndex((item) => item.label === 'Integrations') + 1
+	const navItems = [
+		...settingsNav.slice(0, at),
+		keychainNavItem,
+		...settingsNav.slice(at),
+		...(workspace?.enterprise ? [keysNavItem] : []),
+	]
 
 	return (
 		<div className="mx-auto w-full max-w-6xl">

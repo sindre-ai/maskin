@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { ProfileView } from '@/components/profile/profile-view'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -12,6 +13,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 })
 
 function ProfilePage() {
+	useDocumentTitle('Profile')
 	const { workspace, workspaceId } = useWorkspace()
 	const actor = getStoredActor()
 

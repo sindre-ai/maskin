@@ -29,6 +29,12 @@ describe('actorToolsSchema', () => {
 		expect(result.mcpServers).toEqual({})
 	})
 
+	it('leaves envFrom absent when not provided and accepts a list of names', () => {
+		expect(actorToolsSchema.parse({})).not.toHaveProperty('envFrom')
+		const result = actorToolsSchema.parse({ envFrom: ['AGENT_SECRET_COOLIFY'] })
+		expect(result.envFrom).toEqual(['AGENT_SECRET_COOLIFY'])
+	})
+
 	it('accepts mcpServers with stdio config', () => {
 		const result = actorToolsSchema.parse({
 			mcpServers: {

@@ -43,6 +43,9 @@ export const queryKeys = {
 		detail: (id: string) => ['workspaces', 'detail', id] as const,
 		members: (id: string) => ['workspaces', id, 'members'] as const,
 	},
+	invites: {
+		list: (workspaceId: string) => ['invites', workspaceId] as const,
+	},
 	relationships: {
 		all: (workspaceId: string) => ['relationships', workspaceId] as const,
 		byObject: (workspaceId: string, objectId: string) =>
@@ -62,6 +65,12 @@ export const queryKeys = {
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		// Nested under all(), so every invalidation of the integration list (a grant, a connect,
+		// a disconnect, an SSE event) refreshes what each agent can use as well.
+		agentAccess: (workspaceId: string, actorId: string) =>
+			['integrations', workspaceId, 'agent-access', actorId] as const,
+		auditLog: (workspaceId: string, integrationId: string) =>
+			['integrations', workspaceId, integrationId, 'audit-log'] as const,
 		githubLinkable: (workspaceId: string) =>
 			['integrations', workspaceId, 'github', 'linkable'] as const,
 		githubPendingSelection: (workspaceId: string, integrationId: string) =>
@@ -106,6 +115,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'mention-object', objectId] as const,
 		byConversation: (workspaceId: string, conversationId: string) =>
 			['sessions', workspaceId, 'conversation', conversationId] as const,
+		firstOutput: (workspaceId: string, sessionId: string) =>
+			['sessions', workspaceId, 'first-output', sessionId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,
@@ -124,6 +135,13 @@ export const queryKeys = {
 	files: {
 		all: (workspaceId: string) => ['files', workspaceId] as const,
 		detail: (workspaceId: string, id: string) => ['files', workspaceId, 'detail', id] as const,
+	},
+	fileComments: {
+		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
+	},
+	attachingObjects: {
+		byFile: (workspaceId: string, fileId: string) =>
+			['attaching-objects', workspaceId, fileId] as const,
 	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,

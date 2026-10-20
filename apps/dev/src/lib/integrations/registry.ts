@@ -9,7 +9,6 @@ import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/r
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
-import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import { config as googleMeetConfig } from './providers/google-meet/config'
 import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
@@ -20,6 +19,8 @@ import {
 	meetWebhookVerifier,
 	resolveMeetInstallationId,
 } from './providers/google-meet/webhooks'
+import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
+import { startGscBackfill } from './providers/google-search-console/sync'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -28,6 +29,7 @@ import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as resendConfig } from './providers/resend/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
@@ -104,7 +106,6 @@ providers.set('gmail', {
 providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
-	preDisconnect: revokeGoogleCalendarGrant,
 })
 
 // google-meet — provider registration + Task 3 (read-path / async ingest) webhook
@@ -129,8 +130,28 @@ providers.set('google-meet', {
 	preDisconnect: stopMeetWatch,
 })
 
+// google-search-console — `postInstall` starts the detached 16-month backfill; the
+// daily delta sync runs from services/gsc-sync-scheduler.ts.
+providers.set('google-search-console', {
+	config: googleSearchConsoleConfig,
+	postInstall: startGscBackfill,
+})
+
 providers.set('posthog', {
 	config: posthogConfig,
+})
+
+// resend — bring-your-own integration for customer-domain email send+receive
+// (bet cf2bcc85). Deliberately no `extractDeliveryId` / `customWebhookVerifier`
+// / `customNormalizer` / `webhookFanOut` / `postInstall` / `preDisconnect` on
+// this entry — Resend deliveries land on a dedicated `webhookApp.post(
+// '/resend/:token', ...)` route (Task 3) that reads the per-row Svix secret
+// inline and dedupes on `data.email_id` from the payload. If anyone later
+// tries to route Resend through the `/:provider` catch-all, they will silently
+// lose dedup because there's no `extractDeliveryId` here — the config comment
+// spells the same warning out at the source of truth (spec §12.3).
+providers.set('resend', {
+	config: resendConfig,
 })
 
 providers.set('skjald', {

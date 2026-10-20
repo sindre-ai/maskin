@@ -1,10 +1,14 @@
+import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { CreateSessionInput, SessionResponse } from '@/lib/api'
+import type { CreateSessionInput, MessageQuestionAnswer, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
+const ACTIVE_CONVERSATION_POLL_MS = 5_000
+const IDLE_CONVERSATION_POLL_MS = 30_000
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
@@ -97,6 +101,9 @@ export function useStopSession(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 		},
+		onError: () => {
+			toast.error('Failed to stop session')
+		},
 	})
 }
 
@@ -174,8 +181,14 @@ export function useActiveSessionsForConversation(
 		// activity only renders for sessions cached as `running`. Relying on
 		// SSE invalidation alone meant one dropped connection froze the
 		// transcript until the user reloaded. Poll as a floor so the worst
-		// case is a few seconds of lag rather than a dead UI.
-		refetchInterval: 5000,
+		// case is a few seconds of lag rather than a dead UI. Fast only while a
+		// session in this conversation is live (that is when the transcript is
+		// changing); an idle chat falls back to a slow floor. Background tabs do
+		// not poll (refetchIntervalInBackground defaults to false).
+		refetchInterval: (query) =>
+			query.state.data?.some((s) => ACTIVE_STATUSES.has(s.status))
+				? ACTIVE_CONVERSATION_POLL_MS
+				: IDLE_CONVERSATION_POLL_MS,
 	})
 }
 
@@ -225,5 +238,31 @@ export function useSessionLogs(
 		queryFn: () => api.sessions.logs(sessionId as string, workspaceId, { limit: '500' }),
 		enabled: !!sessionId && enabled,
 		refetchInterval: live ? 3000 : false,
+	})
+}
+
+/** Sends a user turn to a running interactive session (`POST /sessions/:id/input`). */
+export function useSendSessionInput(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({
+			id,
+			content,
+			question_answer,
+		}: {
+			id: string
+			content: string
+			question_answer?: MessageQuestionAnswer
+			/** Chat the answer lands in, so its messages refetch. */
+			conversationId?: string
+		}) => api.sessions.input(id, { content, question_answer }, workspaceId),
+		onSuccess: (_data, { id, conversationId }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.logs(id) })
+			if (conversationId) {
+				queryClient.invalidateQueries({
+					queryKey: queryKeys.conversations.messagesPrefix(conversationId),
+				})
+			}
+		},
 	})
 }

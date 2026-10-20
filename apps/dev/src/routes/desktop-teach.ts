@@ -187,7 +187,6 @@ app.openapi(teachRoute, async (c) => {
 			}),
 			createdBy: actorId,
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 		})
 		sessionId = session.id
 	} catch (err) {

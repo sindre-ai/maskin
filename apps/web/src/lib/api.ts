@@ -2,25 +2,35 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
 	SafeMetadata,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 } from '@maskin/shared'
 
 export type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -48,6 +58,12 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Populated on a 429 whose body carries `retry_after_seconds` (voice session mint). */
+	retryAfterSeconds?: number
+	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
+	retryAfterMs?: number
+	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
+	retryAfter?: number
 
 	constructor(
 		public status: number,
@@ -63,6 +79,9 @@ export class ApiError extends Error {
 		return Object.keys(this.fieldErrors).length > 0
 	}
 }
+
+const SERVICE_UNAVAILABLE_MESSAGE = 'Service unavailable. Please try again in a minute.'
+const SERVICE_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
 
 type RequestOptions = {
 	method?: string
@@ -111,6 +130,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
 		// the user still experienced a broken screen, so it belongs in Faro.
 		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
+		if (err instanceof TypeError) {
+			const unavailable = new ApiError(0, SERVICE_UNAVAILABLE_MESSAGE)
+			unavailable.code = 'NETWORK_ERROR'
+			throw unavailable
+		}
 		throw err
 	}
 
@@ -121,8 +145,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let message: string
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
+		let retryAfterMs: number | undefined
 
-		if (typeof data.error === 'object' && data.error?.code) {
+		if (typeof data.code === 'string' && typeof data.message === 'string') {
+			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
+			message = data.message
+			code = data.code
+			if (typeof data.retryAfterMs === 'number') retryAfterMs = data.retryAfterMs
+		} else if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
 			code = data.error.code
@@ -149,9 +179,22 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
+		// A gateway answering for a down backend (502/503/504) usually carries an
+		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
+		// blank toast. Those statuses always get the friendly message.
+		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+			message = SERVICE_UNAVAILABLE_MESSAGE
+		}
+
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		if (res.status === 429 && typeof data.retry_after_seconds === 'number') {
+			err.retryAfterSeconds = data.retry_after_seconds
+		}
+		err.retryAfterMs = retryAfterMs
+		const retryAfter = Number(res.headers.get('Retry-After'))
+		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
@@ -295,6 +338,29 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	// Email invites. `preview` and `accept` are mounted outside the membership
+	// middleware (the invitee isn't a member yet), so neither passes a
+	// workspaceId: sending X-Workspace-Id on accept would trigger a membership
+	// check on an actor who isn't a member.
+	invites: {
+		create: (data: CreateInviteInput) =>
+			request<CreateInviteResponse>('/invites', { method: 'POST', body: data }),
+		list: (workspaceId: string) =>
+			request<PendingInviteListItem[]>(`/invites?workspaceId=${encodeURIComponent(workspaceId)}`),
+		resend: (id: string) =>
+			request<{ status: 'pending'; invite: InviteSummary }>(`/invites/${id}/resend`, {
+				method: 'POST',
+			}),
+		revoke: (id: string) => request<{ revoked: true }>(`/invites/${id}`, { method: 'DELETE' }),
+		preview: (token: string) =>
+			request<InvitePreview>(`/invites/preview?token=${encodeURIComponent(token)}`),
+		accept: (token: string, body?: AcceptInviteSignupInput) =>
+			request<AcceptInviteResponse>(`/invites/${encodeURIComponent(token)}/accept`, {
+				method: 'POST',
+				body: body ?? {},
+			}),
+	},
+
 	landingEvents: {
 		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
 			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
@@ -313,6 +379,9 @@ export const api = {
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
+		/** What the actor can use: integrations (level, server attached) and saved credentials. */
+		access: (id: string, workspaceId: string) =>
+			request<AgentAccessView>(`/actors/${id}/access`, { workspaceId }),
 		create: (data: CreateActorInput) =>
 			request<ActorWithKey>('/actors', { method: 'POST', body: data }),
 		update: (id: string, data: UpdateActorInput, workspaceId?: string) =>
@@ -445,18 +514,126 @@ export const api = {
 
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
+		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
+			request<ChatCaptureResponse>('/integrations/chat-capture', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		createByoApiKey: (workspaceId: string, body: { displayName: string; rawSecret: string }) =>
+			request<{ integrationId: string }>('/integrations/byo-apikey', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		createByoLogin: (
+			workspaceId: string,
+			body: { displayName: string; username: string; password: string },
+		) =>
+			request<{ integrationId: string }>('/integrations/byo-login', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
+			request<CredentialAuditLogPage>(
+				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
+				{ workspaceId },
+			),
+		getGrants: (id: string, workspaceId: string) =>
+			request<IntegrationGrants>(`/integrations/${id}/grants`, { workspaceId }),
+		/** Replaces every explicit grant on an integration in one step. */
+		replaceGrants: (id: string, workspaceId: string, grants: AgentGrant[]) =>
+			request<{ grants: AgentGrant[] }>(`/integrations/${id}/grants`, {
+				method: 'PUT',
+				body: { grants },
+				workspaceId,
+			}),
+		setGrant: (id: string, workspaceId: string, actorId: string, access: AgentGrantAccess) =>
+			request<AgentGrant>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'PUT',
+				body: { access },
+				workspaceId,
+			}),
+		/** Allow the agent whose session asked in a chat to use a saved credential, and restart it. */
+		allowFromChat: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			scope: 'chat' | 'always' = 'always',
+		) =>
+			request<{ actorId: string; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-from-chat`,
+				{ method: 'POST', body: { sessionId, scope }, workspaceId },
+			),
+		removeGrant: (id: string, workspaceId: string, actorId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
+			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+				method: 'PUT',
+				body: { defaultAgentAccess },
+				workspaceId,
+			}),
+		undo: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(`/integrations/${id}/undo`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		remove: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(
+				`/integrations/${id}/remove`,
+				{ method: 'POST', workspaceId },
+			),
+		relaunch: (id: string, workspaceId: string) =>
+			request<{ relaunch: 'stopped' | 'failed' }>(`/integrations/${id}/relaunch`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
-				`/integrations/${provider}/connect`,
-				{
-					method: 'POST',
-					body,
-					workspaceId,
-					// The response carries the Set-Cookie that binds this browser to the
-					// OAuth `state`; without `include` it is dropped and the callback 400s.
-					credentials: 'include',
-				},
+		connect: (
+			workspaceId: string,
+			provider: string,
+			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+		) =>
+			request<{
+				install_url?: string
+				webhook_url?: string
+				integration_id?: string
+				// Populated by Resend's two-call handshake (Task 2) — the domain-status
+				// records the customer must add to their DNS plus the initial pending
+				// verification state.
+				dns_records?: ResendDnsRecord[]
+				verification_status?: 'pending' | 'verified' | 'failed'
+			}>(`/integrations/${provider}/connect`, {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The response carries the Set-Cookie that binds this browser to the
+				// OAuth `state`; without `include` it is dropped and the callback 400s.
+				credentials: 'include',
+			}),
+		/** "Connect with Maskin" from the Skjald app: approve it for this workspace and get the redirect that carries the one-time code back. */
+		skjaldAuthorize: (
+			workspaceId: string,
+			body: {
+				state: string
+				redirect_uri: string
+				code_challenge: string
+				code_challenge_method: 'S256'
+			},
+		) =>
+			request<{ redirect_url: string; workspace_name: string }>('/integrations/skjald/authorize', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		resendDnsPrecheck: (workspaceId: string, domain: string) =>
+			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
+				'/integrations/resend/dns-precheck',
+				{ method: 'POST', body: { domain }, workspaceId },
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
 			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
@@ -579,6 +756,26 @@ export const api = {
 		history: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
+		},
+		/**
+		 * Up to `maxEvents` history rows, fetched in pages of the server's maximum
+		 * page size. The endpoint rejects `limit` above 100 with a 400, so asking for
+		 * 500 in one call (as the chat's Produced pane did) never returned anything.
+		 */
+		historyUpTo: async (workspaceId: string, params: Record<string, string>, maxEvents: number) => {
+			const pageSize = 100
+			const all: EventResponse[] = []
+			for (let offset = 0; all.length < maxEvents; offset += pageSize) {
+				const qs = new URLSearchParams({
+					...params,
+					limit: String(Math.min(pageSize, maxEvents - all.length)),
+					offset: String(offset),
+				})
+				const page = await request<EventResponse[]>(`/events/history?${qs}`, { workspaceId })
+				all.push(...page)
+				if (page.length < pageSize) break
+			}
+			return all
 		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
 			request<EventResponse>('/events', {
@@ -823,6 +1020,48 @@ export const api = {
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
+	voiceSessions: {
+		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
+		// credential comes back: the connection to the vendor is made by the
+		// server when the offer below is posted.
+		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+			request<{ voice_session_id: string }>('/voice-sessions', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		// Hands the browser's WebRTC offer to the server, which connects it to the
+		// vendor and attaches its own tool connection. tools_available is false when
+		// that attach failed; the call still runs, and the agent says tools are down.
+		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
+				`/voice-sessions/${voiceSessionId}/offer`,
+				{ method: 'POST', body: { sdp }, workspaceId },
+			),
+		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
+		// Idempotent, so a double hangup (End button then dialog close) is harmless.
+		// Audio seconds are what this client measured; the server clamps them to
+		// the call length.
+		hangup: (
+			workspaceId: string,
+			voiceSessionId: string,
+			body: {
+				reason: 'user_hangup' | 'network_error'
+				input_audio_seconds?: number
+				output_audio_seconds?: number
+			},
+		) =>
+			request<{
+				voice_session_id: string
+				status: string
+				ended_reason: string | null
+				ended_at: string | null
+				duration_ms: number
+				total_cost_usd: number | null
+				conversation_id: string | null
+			}>(`/voice-sessions/${voiceSessionId}/hangup`, { method: 'POST', body, workspaceId }),
+	},
+
 	userDisplaySettings: {
 		list: (workspaceId: string) =>
 			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
@@ -1021,6 +1260,36 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+
+	fileComments: {
+		list: (workspaceId: string, fileId: string, params?: { roundId?: string }) => {
+			const qs = params?.roundId ? `?roundId=${encodeURIComponent(params.roundId)}` : ''
+			return request<FileCommentDto[]>(`/files/${fileId}/comments${qs}`, { workspaceId })
+		},
+		create: (workspaceId: string, fileId: string, data: CreateFileCommentInput) =>
+			request<FileCommentDto>(`/files/${fileId}/comments`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (
+			workspaceId: string,
+			fileId: string,
+			commentId: string,
+			data: UpdateFileCommentInput,
+		) =>
+			request<FileCommentDto>(`/files/${fileId}/comments/${commentId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		sendRound: (workspaceId: string, fileId: string, data: SendRoundInput) =>
+			request<SendRoundResponse>(`/files/${fileId}/comments/rounds`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+	},
 }
 
 /**
@@ -1118,6 +1387,9 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// False when the credit top-up Price isn't configured on the server; the
+	// "Buy usage credits" entry points are hidden in that case.
+	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
 	// `linkedin-addon-visible` flag is off OR the workspace has no connected
@@ -1343,6 +1615,9 @@ export interface CreateActorInput {
 	tools?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	// Agents only: the workspace the new agent is born into (the caller must be a
+	// member). Humans sign up without it.
+	workspace_id?: string
 }
 
 export interface UpdateActorInput {
@@ -1354,6 +1629,8 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+	/** Your own default workspace; null clears it. */
+	default_workspace_id?: string | null
 }
 
 export interface RunAgentInput {
@@ -1377,12 +1654,58 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	role: string
 	/** People in the workspace, including the caller — the workspace menu's sub-line. */
 	memberCount: number
+	/** True for the workspace the caller chose as their default in Settings. */
+	isDefault: boolean
 }
 
 export interface UpdateWorkspaceInput {
 	name?: string
 	settings?: Record<string, unknown>
 }
+
+export interface InviteSummary {
+	id: string
+	email: string
+	role: string
+	expiresAt: string
+}
+
+export interface PendingInviteListItem extends InviteSummary {
+	invitedByActorId: string
+	invitedByName: string
+	createdAt: string
+}
+
+export interface CreateInviteInput {
+	workspaceId: string
+	email: string
+	role: 'member' | 'viewer'
+}
+
+export type CreateInviteResponse =
+	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
+	| { status: 'pending'; invite: InviteSummary }
+
+export interface InvitePreview {
+	status: 'pending'
+	workspaceId: string
+	workspaceName: string
+	inviterName: string
+	inviteEmail: string
+	expiresAt: string
+}
+
+export interface AcceptInviteSignupInput {
+	email: string
+	password: string
+	name?: string
+}
+
+// New-signup accepts return the new actor (carrying its api_key); authenticated
+// accepts return only the ids.
+export type AcceptInviteResponse =
+	| { actor: ActorWithKey; workspaceId: string }
+	| { workspaceId: string; actorId: string }
 
 export interface MemberResponse {
 	actorId: string
@@ -1465,6 +1788,22 @@ export interface UpdateTriggerInput {
 	enabled?: boolean
 }
 
+/** One DNS record the customer must add to verify the sending / receiving
+ *  half of a Resend domain. Priority is only populated for MX. Status flips
+ *  from `pending` → `verified` (or `failed`) as the domain-verifier job (Task
+ *  5) polls Resend's per-record domain-status API. Mirrored into
+ *  `config.resend.dns_records` on the integration row by the connect handler,
+ *  which is what the resume affordance rehydrates from. */
+export interface ResendDnsRecord {
+	record: 'SPF' | 'DKIM' | 'MX'
+	type: string
+	name: string
+	value: string
+	priority?: number
+	status: 'pending' | 'verified' | 'failed'
+	ttl?: number
+}
+
 export interface IntegrationResponse {
 	id: string
 	workspaceId: string
@@ -1482,6 +1821,84 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Keychain: where the credential came from. Never the value. */
+	source?: string
+	/** Keychain: for source chat_capture, the session the key was pasted into. */
+	originSessionId?: string | null
+	/** Keychain: how the credential is held. Absent from a server that predates it. */
+	providerMode?: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+	/** Keychain: the name the member gave it. Null for the registered providers. */
+	displayName?: string | null
+	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
+	defaultAgentAccess?: 'read' | 'none'
+	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
+	agentGrants?: AgentGrant[]
+	/** Saved credentials shared with an agent for one chat only. */
+	chatGrants?: Array<{ actorId: string; conversationId: string }>
+}
+
+/** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+export interface AgentGrant {
+	actorId: string
+	access: AgentGrantAccess
+}
+
+export interface IntegrationGrants {
+	integrationId: string
+	mode: 'keychain' | 'standard'
+	defaultAgentAccess: 'read' | 'none'
+	grants: AgentGrant[]
+}
+
+export interface CredentialAuditEntry {
+	id: string
+	actorId: string
+	sessionId: string | null
+	outboundTarget: string | null
+	action: 'read' | 'create' | 'undone' | 'rotated' | 'sweeper_activated' | 'scope_changed'
+	source: string
+	readAt: string
+}
+
+export interface CredentialAuditLogPage {
+	integrationId: string
+	source: string
+	originSessionId: string | null
+	entries: CredentialAuditEntry[]
+	nextBeforeId: string | null
+}
+
+export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' | 'openai-style'
+
+interface ChatCaptureBase {
+	sessionId: string
+	displayName: string
+	/** Agents that may use it. Omit for the default (the session's agent). [] means unassigned. */
+	agentIds?: string[]
+	/** The secret was typed into a card an agent asked for, not the composer. */
+	fromCard?: boolean
+}
+
+export type ChatCaptureInput = ChatCaptureBase &
+	(
+		| {
+				providerMode: 'byo_apikey'
+				/** manual: the user typed the ! prefix, so nothing was detected. */
+				detectedProvider: ChatCaptureProvider | 'manual'
+				rawSecret: string
+		  }
+		| { providerMode: 'byo_login'; username: string; password: string }
+	)
+
+export interface ChatCaptureResponse {
+	integrationId: string
+	/** Null for a capture from an agent's card: active straight away, nothing to undo. */
+	undoExpiresAt: string | null
+	undoUrl: string | null
+	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
+	relaunch: 'stopped' | 'failed'
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
@@ -1693,7 +2110,7 @@ export interface UpdateFileInput {
 export interface ConversationParticipantResponse {
 	actorId: string
 	actorName: string
-	actorType: 'human' | 'agent'
+	actorType: 'human' | 'agent' | 'system'
 	joinedAt: string | null
 	addedBy: string | null
 }
@@ -1806,6 +2223,56 @@ export interface MessageQuestionItem {
 export interface MessageQuestion {
 	session_id: string
 	questions: MessageQuestionItem[]
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+}
+
+/** An agent's request to connect an integration, surfaced into chat as a Connect card. */
+export interface MessageIntegrationConnect {
+	session_id: string
+	provider: string
+}
+
+/** An agent's request for a credential, surfaced into chat as a Keychain card. */
+export interface MessageKeychainRequest {
+	session_id: string
+	kind: 'api_key' | 'login'
+	suggested_name?: string
+	hint?: string
+}
+
+/** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
+/** What an agent can use: the one description every screen and the launch prompt share. */
+export interface AgentAccessView {
+	integrations: Array<{
+		integration_id: string
+		provider: string
+		name: string
+		access: 'none' | 'read' | 'read_write'
+		source: 'grant' | 'default'
+		default_access: 'read' | 'none'
+		server_attached: boolean
+		created_by: string
+	}>
+	credentials: Array<{
+		integration_id: string
+		name: string
+		kind: 'api_key' | 'login'
+		has_access: boolean
+		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
+		scope: 'always' | 'this_chat' | null
+		/** In how many chats it is shared with this agent, apart from any grant. */
+		chat_count: number
+		created_by: string
+	}>
+}
+
+export interface MessageKeychainAccessRequest {
+	session_id: string
+	integration_id: string
+	credential_name: string
+	kind: 'api_key' | 'login'
+	hint?: string
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -1823,8 +2290,11 @@ export interface MessageMetadata {
 	 * Backend-owned; stripped from anything a client sends. 'final_output'
 	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
 	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 * 'voice' marks a transcript line written by the voice tool-proxy.
 	 */
-	source?: 'final_output'
+	source?: 'final_output' | 'voice'
+	/** Backend-owned: the voice call a 'voice' message was transcribed from. */
+	voice_session_id?: string
 	final_output?: MessageFinalOutput
 	/**
 	 * Backend-owned; stripped from anything a client sends, so a forged message
@@ -1833,6 +2303,17 @@ export interface MessageMetadata {
 	question?: MessageQuestion
 	/** Client-supplied: pairs a human's reply back to the question it answers. */
 	question_answer?: MessageQuestionAnswer
+	/**
+	 * Backend-owned; stripped from anything a client sends. An agent's request to
+	 * connect an integration, rendered as a Connect card.
+	 */
+	integration_connect?: MessageIntegrationConnect
+	/** Backend-owned: an agent's request for a credential, rendered as a Keychain card. */
+	keychain_request?: MessageKeychainRequest
+	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
+	keychain_access_request?: MessageKeychainAccessRequest
+	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
+	helper_return?: string
 }
 
 export interface MessageResponse {
@@ -1847,6 +2328,49 @@ export interface MessageResponse {
 	sessionId: string | null
 	createdAt: string | null
 	editedAt: string | null
+	/**
+	 * Sub-agent sessions spawned from this assistant message (bet/444b-handed-off-strip).
+	 * Present on list_conversation_messages responses; empty for non-agent messages
+	 * and for callers that are not participants of the conversation.
+	 */
+	spawned_sessions?: SpawnedSession[]
+}
+
+/**
+ * One entry on the message-level `spawned_sessions` embed served by
+ * `GET /conversations/:id/messages`. Casing matches the delegation-strip
+ * contract: camelCase except `depends_on_session_ids`.
+ */
+export interface SpawnedSession {
+	id: string
+	status: string
+	actorId: string
+	actorName: string
+	actionPrompt: string
+	/** When the session was created: where its card sits in the chat's timeline. */
+	createdAt: string | null
+	startedAt: string | null
+	completedAt: string | null
+	durationMs: number | null
+	result: unknown
+	currentActivity: string | null
+	depends_on_session_ids: string[]
+	/** What the session is waiting on the person for; null when it is not waiting. */
+	awaiting: { message_id: number; question: MessageQuestion } | null
+}
+
+/**
+ * Payload of the `session.state_changed` SSE frame. Emitted alongside every
+ * generic session event for a sub-session the caller can see. `snake_case`
+ * matches the backend serialization; camelCase would break the parser.
+ */
+export interface SessionStateChangedPayload {
+	session_id: string
+	status: string
+	duration_ms: number | null
+	depends_on_session_ids: string[]
+	result: unknown
+	current_activity: string | null
 }
 
 export interface EditMessageInput {
@@ -1856,6 +2380,8 @@ export interface EditMessageInput {
 export interface MessagesListResponse {
 	messages: MessageResponse[]
 	has_more: boolean
+	/** Handoffs no message carries yet; present on the newest page only. */
+	pending_handoffs?: SpawnedSession[]
 }
 
 export interface CreateConversationInput {
@@ -1920,6 +2446,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
+	totalCostUsd?: string | number | null
 }
 
 export interface SessionInputAttachment {
@@ -1933,6 +2461,7 @@ export interface SessionInputAttachment {
 export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface SessionLogResponse {

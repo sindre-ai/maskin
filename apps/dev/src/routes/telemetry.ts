@@ -9,7 +9,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
-import { captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
+import { captureMcpToolCall, normalizeActorType } from '../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -137,6 +137,13 @@ app.openapi(recordRoute, (async (c) => {
 				responseBytes: null,
 				transport: 'stdio',
 				agentActorId: actorId,
+				// Behind authMiddleware, which only admits API keys today, so the
+				// caller is authenticated by key and its type is on the context.
+				authMethod: 'api_key',
+				// This request comes from our own stdio package, not the end client,
+				// so its User-Agent says nothing about Claude Code or Cursor.
+				client: 'other',
+				actorType: normalizeActorType(c.get('actorType')),
 			}).catch((err) => logger.warn('mcp trace fan-out failed', { error: String(err) }))
 		}
 	} else if (body.event_type === 'mutation') {

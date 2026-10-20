@@ -125,7 +125,7 @@ const strategistTools = {
 		exa: {
 			url: 'https://mcp.exa.ai/mcp',
 			type: 'http',
-			headers: { 'x-api-key': '${EXA_API_KEY}' },
+			headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 		},
 		playwright: {
 			env: {},
@@ -139,7 +139,7 @@ const strategistTools = {
 const exaTool = {
 	url: 'https://mcp.exa.ai/mcp',
 	type: 'http',
-	headers: { 'x-api-key': '${EXA_API_KEY}' },
+	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
 }
 
 const playwrightTool = {
@@ -671,7 +671,7 @@ When you do capture in-flight Knowledge, the skill mandates the \`provenance:in-
 
 ## Tools
 
-- list_objects, search_objects, get_objects, list_sessions, list_notifications, get_events for observation
+- list_objects, search_objects, get_objects, list_sessions, get_events for observation
 - create_objects with edges for insights and (when warranted) in-flight knowledge articles
 - update_objects for tags and metadata on objects you own (your own insights)
 - get_workspace_skill to read \`writing-standards\`, \`maskin-voice\`, and \`capture-knowledge-in-flight\`
@@ -1248,12 +1248,12 @@ For **EXTEND**:
 
 For **REOPEN**:
 - Link the insight to the failed bet via \`informs\`.
-- **Leave a comment on the failed bet** titled \`⚠ Reopen recommended\` with the new evidence and the question: *should we revert this bet to \`proposed\`?* (Optionally also \`create_notification\` of type \`recommendation\` for queue surfacing, but the comment is the primary channel.)
+- **Leave a comment on the failed bet** titled \`⚠ Reopen recommended\` with the new evidence and the question: *should we revert this bet to \`proposed\`?*
 - Stop. The human flips status; the skill does not.
 
 For **REPLACE**:
 - Link the insight to the conflicting active bet via \`informs\` and create a \`duplicates\` relationship from the new draft → conflicting bet.
-- **Leave a comment on the conflicting active bet** titled \`⚠ Bet collision\` flagging the conflict, naming both bets, and recommending the active bet be marked \`failed\` before a replacement is shaped. (Optionally also \`create_notification\` of type \`alert\` for queue surfacing, but the comment is the primary channel.)
+- **Leave a comment on the conflicting active bet** titled \`⚠ Bet collision\` flagging the conflict, naming both bets, and recommending the active bet be marked \`failed\` before a replacement is shaped.
 - If a new bet is being drafted as the replacement, the Strategist leaves a matching \`⚠ Bet collision\` comment on the new bet as well, naming the active bet it supersedes. Neither flag goes in either description.
 - Stop.
 
@@ -2328,7 +2328,7 @@ Do the work in this order:
    - \`metadata.source: 'signup_research'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
    - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
    - \`metadata.tags\`: include 'context:company' so downstream readers find it
-5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
+5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationship\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
 6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
 7. Post a comment on the bet using \`create_comment\`, @mentioning the user (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
 

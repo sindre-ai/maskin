@@ -3,6 +3,7 @@ import { sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import { evictBillingUsage } from './billing-usage-cache'
 import { isEnterpriseWorkspace } from './enterprise'
 import { recordEvent } from './events/record-event'
 import {
@@ -338,4 +339,9 @@ export async function debitCreditForSession(params: {
 			},
 		})
 	})
+
+	// The eviction inside `recordEvent` runs before this transaction commits, so a
+	// usage read landing in between could re-cache the pre-debit balance. Evict
+	// again now that the debit is visible to every connection.
+	evictBillingUsage(workspaceId)
 }

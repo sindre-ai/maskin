@@ -29,6 +29,7 @@ describe('sessionStatusSchema', () => {
 		'completed',
 		'failed',
 		'timeout',
+		'user_stopped',
 	]
 
 	for (const s of statuses) {
@@ -225,6 +226,14 @@ describe('createSessionSchema', () => {
 			trigger_id: uuid,
 		})
 		expect(result.trigger_id).toBe(uuid)
+	})
+
+	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
+		const base = { actor_id: uuid, action_prompt: 'Test' }
+		const on = createSessionSchema.parse({ ...base, notify_on_complete: true })
+		expect(on.notify_on_complete).toBe(true)
+		expect(createSessionSchema.parse(base).notify_on_complete).toBeUndefined()
+		expect(() => createSessionSchema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
 	})
 
 	it('defaults config to empty partial', () => {

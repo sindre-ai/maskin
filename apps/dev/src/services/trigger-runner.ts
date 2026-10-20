@@ -29,6 +29,8 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { resolveSpawnLink } from './helper-link'
+import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
@@ -41,17 +43,18 @@ import {
 	findDueWorkspaceIds,
 	sweepQueueRetention,
 } from './trigger-event-queue'
+import { loadSenderLine } from './workspace-briefing'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
 
 /**
- * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * Resolve `{ initiatedFromObjectId }` for a
  * `SessionManager.createSession()` call. The two fields on the sessions row
  * are FK-constrained to `objects.id`, so passing an entity id that isn't an
  * object row (a slack.message uuid, a session id, a webhook delivery id)
- * would trip the FK on insert. This helper resolves the id → object type
- * with one PK read, or returns `null / null` when the entity isn't an
+ * would trip the FK on insert. This helper checks the id against the
+ * objects table with one PK read, or returns `null` when the entity isn't an
  * object — matching the same "not a uuid → not an object" posture the
  * `getObjectContext()` hydration path already uses in `handleEvent()`.
  */
@@ -60,18 +63,17 @@ async function loadInitiatedFromObject(
 	entityId: string | null | undefined,
 ): Promise<{
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }> {
 	if (!entityId || !UUID_RE.test(entityId)) {
-		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+		return { initiatedFromObjectId: null }
 	}
 	const [row] = await db
-		.select({ id: objects.id, type: objects.type })
+		.select({ id: objects.id })
 		.from(objects)
 		.where(eq(objects.id, entityId))
 		.limit(1)
-	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
-	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+	if (!row) return { initiatedFromObjectId: null }
+	return { initiatedFromObjectId: row.id }
 }
 
 /**
@@ -242,6 +244,9 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
  */
 const TRIGGER_CRUD_ACTIONS = new Set(['created', 'updated', 'deleted'])
 
+/** Largest delay setTimeout honours (2^31-1 ms, ~24.8 days); above it Node fires after ~1 ms. */
+const MAX_TIMEOUT_MS = 2_147_483_647
+
 /** The trigger fields a human edits; a change in any of them counts as an edit. */
 function triggerFingerprint(trigger: typeof triggers.$inferSelect): string {
 	return JSON.stringify([
@@ -307,6 +312,9 @@ export class TriggerRunner {
 	// terminal event for a given session counts toward its trigger's
 	// failure/backoff accounting — otherwise every explicit stop of a
 	// trigger-spawned session double-counts as two failures instead of one.
+	// (A stop now settles once as session_stopped, which is not handled below,
+	// so it no longer counts as a failure at all; this map still covers any other
+	// double report of one outcome.)
 	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
 	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
@@ -1312,7 +1320,6 @@ export class TriggerRunner {
 			// correct value when no single originating object exists (spec §3.3,
 			// cron/reminder rows).
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'none',
 		}).catch((err) =>
 			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
@@ -1573,7 +1580,12 @@ export class TriggerRunner {
 	private scheduleReminder(trigger: typeof triggers.$inferSelect) {
 		const config = trigger.config as Record<string, unknown>
 		const scheduledAt = new Date(config.scheduled_at as string)
-		const delay = Math.max(0, scheduledAt.getTime() - Date.now())
+		const remaining = Math.max(0, scheduledAt.getTime() - Date.now())
+		// setTimeout treats a delay above 2^31-1 ms (~24.8 days) as 1 ms, which
+		// would fire a far-future reminder at once. Arm at most MAX_TIMEOUT_MS and
+		// re-arm from the timer callback until the real time is in range.
+		const delay = Math.min(remaining, MAX_TIMEOUT_MS)
+		const clamped = remaining > MAX_TIMEOUT_MS
 
 		// Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot,
 		// so skipping it here would consume its timeout and drop it permanently
@@ -1582,6 +1594,11 @@ export class TriggerRunner {
 		// failure through handleSessionCreateFailure so an over-cap reminder is
 		// classified (and can open a pause) rather than paging.
 		const timeout = setTimeout(async () => {
+			if (clamped) {
+				this.scheduleReminder(trigger)
+				return
+			}
+
 			logger.info(`Reminder trigger '${trigger.name}' firing`)
 
 			await recordEvent(this.db, {
@@ -1608,7 +1625,6 @@ export class TriggerRunner {
 				createdBy: trigger.createdBy,
 				// Reminder trigger: one-shot, no originating object.
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				await: 'none',
 			}).catch((err) =>
 				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
@@ -1905,6 +1921,8 @@ export function evaluateCondition(
 //   • noop_suppressed — `data.metadata.suppress_auto_dispatch === true` short-
 //     circuits BEFORE mention / case 2 / case 3, so a bespoke-dispatch caller
 //     (e.g. signup-welcome) can stamp the escape hatch on its own comment.
+//   • noop_suppressed (agent author) — an agent's mention-free comment dispatches
+//     nobody: it returns before case 0 / 2 / 3 (`isAgentMentionFreeComment`).
 //   • case 1a mention — agent-actor mention → needs_input notification + agent
 //     session; human-actor mention → needs_input notification only. Suppressed
 //     when the mentioned actor authored the parent comment (`noop_self_authored`).
@@ -1945,9 +1963,13 @@ interface CommentEventData {
 	content?: unknown
 	mentions?: unknown
 	parentEventId?: unknown
+	/** Session the author was running, from X-Maskin-Session-Id (lib/comments.ts). A claim only. */
+	authorSessionId?: unknown
 	metadata?: {
 		suppress_auto_dispatch?: unknown
 		suppress_dispatch_actor_ids?: unknown
+		/** Set on the comment a finished helper posts back to its sender (services/helper-return.ts). */
+		helper_return?: unknown
 	} | null
 }
 
@@ -1974,6 +1996,21 @@ export function isCommentFallbackDriverEligible(ctx: {
 	if (ctx.driverId === ctx.commenterId) return false
 	if (ctx.driverId === ctx.parentAuthorId) return false
 	return true
+}
+
+/**
+ * The single source of truth for "an agent's mention-free comment dispatches
+ * nobody". The ladder's case 2 / case 3 wake and the thread-reply auto-spawn in
+ * `routes/events.ts` both consult it, so the rule lives in one spot and the two
+ * paths can't drift apart. Pure on purpose: the callers learn the actor type
+ * differently (the subscriber reads it off the event, the POST handler already
+ * has it in context), so only the predicate is shared, not a lookup.
+ */
+export function isAgentMentionFreeComment(ctx: {
+	actorType: string | null | undefined
+	mentionCount: number
+}): boolean {
+	return ctx.actorType === 'agent' && ctx.mentionCount === 0
 }
 
 export class CommentDispatcher {
@@ -2016,8 +2053,9 @@ export class CommentDispatcher {
 		if (!Number.isFinite(eventIdNum)) return
 
 		const [row] = await this.db
-			.select({ actorId: events.actorId, data: events.data })
+			.select({ actorId: events.actorId, data: events.data, actorType: actors.type })
 			.from(events)
+			.leftJoin(actors, eq(actors.id, events.actorId))
 			.where(eq(events.id, eventIdNum))
 			.limit(1)
 		if (!row) return
@@ -2065,7 +2103,18 @@ export class CommentDispatcher {
 				parentEventId,
 				suppressedActorIds,
 				content: typeof data.content === 'string' ? data.content : '',
+				helperReturnSessionId:
+					typeof data.metadata?.helper_return === 'string' ? data.metadata.helper_return : null,
+				authorSessionId: typeof data.authorSessionId === 'string' ? data.authorSessionId : null,
 			})
+			return
+		}
+
+		// An agent's mention-free comment is low-attention: it dispatches nobody,
+		// neither the driver (case 2) nor the Chief of Staff (case 3). Agents
+		// @mention whoever they need. Human comments fall through unchanged.
+		if (isAgentMentionFreeComment({ actorType: row.actorType, mentionCount: mentions.length })) {
+			await this.emitResolved(event, eventIdNum, commenterId, 'noop_suppressed', null)
 			return
 		}
 
@@ -2099,11 +2148,18 @@ export class CommentDispatcher {
 		parentEventId: number | null
 		suppressedActorIds: Set<string>
 		content: string
+		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
+		// The commenter rides along in the same lookup so the loop guards can tell
+		// an agent-authored mention from a human one without an extra query.
 		const mentionedActors = await this.db
 			.select({ id: actors.id, type: actors.type })
 			.from(actors)
-			.where(inArray(actors.id, ctx.mentions))
+			.where(inArray(actors.id, [...ctx.mentions, ctx.commenterId]))
+		const commenterIsAgent = mentionedActors.some(
+			(a) => a.id === ctx.commenterId && a.type === 'agent',
+		)
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
 		// don't resolve to an actor row; both cases quietly drop out here).
@@ -2142,6 +2198,9 @@ export class CommentDispatcher {
 				actor,
 				content: ctx.content,
 				parentEventId: ctx.parentEventId,
+				commenterIsAgent,
+				helperReturnSessionId: ctx.helperReturnSessionId,
+				authorSessionId: ctx.authorSessionId,
 			})
 			anyDispatched = true
 		}
@@ -2432,6 +2491,9 @@ export class CommentDispatcher {
 		actor: { id: string; type: string }
 		content: string
 		parentEventId: number | null
+		commenterIsAgent: boolean
+		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
 		const [notification] = await this.db.transaction((tx) =>
 			insertNotificationsWithEvents(tx, {
@@ -2464,12 +2526,76 @@ export class CommentDispatcher {
 
 		if (ctx.actor.type !== 'agent') return
 
+		// Loop guards. Only agent-authored mentions are limited: a human can always
+		// wake an agent. A blocked mention keeps its notification (written above),
+		// it just does not start a session.
+		let isHelperReturn = false
+		// Depth the woken session carries in config.hop_depth. A session woken by a
+		// return inherits the depth of the helper that returned, so a sender that
+		// keeps re-delegating cannot reset the chain.
+		let hopDepth: number | undefined
+		if (ctx.commenterIsAgent) {
+			// The helper_return marker is plain comment metadata, so it is only
+			// believed when the named session is this author's, has taken its return
+			// claim, and this comment is that session's return: to its sender, on the
+			// return object, not used before. Anything else is an ordinary mention.
+			const verifiedReturn =
+				ctx.helperReturnSessionId !== null
+					? await verifyHelperReturn(this.db, {
+							sessionId: ctx.helperReturnSessionId,
+							commenterId: ctx.commenterId,
+							mentionedActorId: ctx.actor.id,
+							objectId: ctx.objectId,
+							commentEventId: ctx.eventId,
+						})
+					: null
+			isHelperReturn = verifiedReturn !== null
+			if (verifiedReturn) hopDepth = verifiedReturn.hopDepth
+			const decision = await evaluateAgentMentionGuards(this.db, {
+				workspaceId: ctx.workspaceId,
+				commentEventId: ctx.eventId,
+				commenterId: ctx.commenterId,
+				mentionedActorId: ctx.actor.id,
+				objectId: ctx.objectId,
+				content: ctx.content,
+				isHelperReturn,
+			})
+			if (!decision.allowed) {
+				logger.info('Mention blocked by loop guard', {
+					event_id: ctx.event.event_id,
+					reason: decision.reason,
+					resolved_actor_id: ctx.actor.id,
+					object_id: ctx.objectId,
+				})
+				return
+			}
+		}
+
+		// Link the mentioned agent's session to the session the author was running,
+		// so its outcome can be sent back. A return never links: the session it wakes
+		// must have no link of its own, or returns could chain.
+		let spawnedBySessionId: string | undefined
+		if (!isHelperReturn) {
+			const link = await resolveSpawnLink(this.db, {
+				claimedSessionId: ctx.authorSessionId,
+				authenticatedActorId: ctx.commenterId,
+				workspaceId: ctx.workspaceId,
+				objectId: ctx.objectId,
+			})
+			if (link.linked) {
+				spawnedBySessionId = link.spawnedBySessionId
+				hopDepth = link.hopDepth
+			}
+		}
+
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
+		const senderLine = await loadSenderLine(this.db, ctx.commenterId)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: ctx.actor.id,
 			callerKind: 'trigger',
 			actionPrompt: buildMentionPrompt({
+				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
@@ -2482,8 +2608,11 @@ export class CommentDispatcher {
 					commenter_actor_id: ctx.commenterId,
 					notification_id: notification.id,
 					comment_event_id: ctx.eventId,
+					...(isHelperReturn ? { helper_return: true } : {}),
 				},
+				...(hopDepth ? { hop_depth: hopDepth } : {}),
 			},
+			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
 			sourceCommentEventId: ctx.eventId,
 			createdBy: ctx.commenterId,
@@ -2516,6 +2645,7 @@ export class CommentDispatcher {
  * the notification-id it references are edited in one place.
  */
 export function buildMentionPrompt(ctx: {
+	senderLine?: string
 	objectId: string
 	commenterActorId: string
 	content: string
@@ -2523,6 +2653,7 @@ export function buildMentionPrompt(ctx: {
 	parentEventId: number | null
 }): string {
 	return [
+		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
 		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
 		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { KmsConfigError, KmsDecryptError } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
@@ -10,11 +11,18 @@ import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
-import { decrypt } from '../../../crypto'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
-import { getIntegrationCredential } from '../../lookup'
+import {
+	CredentialNotFoundError,
+	CredentialPendingError,
+	CredentialUnavailableError,
+	CredentialUndoneError,
+	ScopeDeniedError,
+} from '../../errors'
+import { findIntegrationRow, getCredential } from '../../lookup'
+import { readContextFor } from '../../read-context'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -115,6 +123,33 @@ export function __setLinkedInClientForTests(builder: ClientOverride['build'] | n
  * actor-scoped fallback so a Sales Rep loop that never received a fan-out MCP
  * row still resolves the workspace's connected identity.
  */
+/**
+ * Failures of the Keychain read that must reach the caller as themselves: a
+ * denied scope, an undone or pending credential, a KMS problem. Anything else
+ * thrown by the read is the stored blob failing to decrypt (a key rotation) and
+ * keeps its CREDENTIAL_REVOKED shape.
+ */
+function isKeychainReadError(err: unknown): boolean {
+	return (
+		err instanceof ScopeDeniedError ||
+		err instanceof CredentialNotFoundError ||
+		err instanceof CredentialUndoneError ||
+		err instanceof CredentialPendingError ||
+		err instanceof CredentialUnavailableError ||
+		err instanceof KmsDecryptError ||
+		err instanceof KmsConfigError
+	)
+}
+
+/** Host the Unipile client calls, for the audit row. Undefined when unconfigured. */
+function unipileHost(): string | undefined {
+	try {
+		return new URL(process.env.UNIPILE_BASE_URL ?? '').host
+	} catch {
+		return undefined
+	}
+}
+
 type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
@@ -134,7 +169,7 @@ async function preamble(
 			),
 		}
 	}
-	let row: Awaited<ReturnType<typeof getIntegrationCredential>> = null
+	let row: Awaited<ReturnType<typeof findIntegrationRow>> = null
 	if (options.identity) {
 		// P3-C · Per-call gate: load the identity's own row UNFILTERED by status
 		// (P3-G filtered on active), so a row present-but-revoked lands here and
@@ -160,7 +195,7 @@ async function preamble(
 		// actor-scoped read makes the credential unreachable from the MCP tools
 		// that exist to use it. A human connects; every agent in the workspace can
 		// send, exactly as they can with Gmail or Slack.
-		row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId, {
+		row = await findIntegrationRow(db, workspaceId, PROVIDER, actorId, {
 			fallbackToAnyActor: true,
 		})
 	}
@@ -199,8 +234,19 @@ async function preamble(
 	}
 	let parsed: StoredLinkedInCredentials
 	try {
-		parsed = JSON.parse(decrypt(row.credentials as string)) as StoredLinkedInCredentials
+		// The only place the value is read. Scope-checked and written to
+		// credential_access_log by getCredential; the caller is the real,
+		// membership-checked actor. These routes carry no session header, so the
+		// session is null.
+		const credential = await getCredential(
+			db,
+			workspaceId,
+			row.id,
+			readContextFor(actorId, unipileHost()),
+		)
+		parsed = JSON.parse(credential.value) as StoredLinkedInCredentials
 	} catch (err) {
+		if (isKeychainReadError(err)) throw err
 		return {
 			ok: false,
 			error: new LinkedInIntegrationError(
@@ -419,8 +465,8 @@ export async function withPageAdminRevokeSafetyNet<T>(
 		const summary = await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
 		// Only delete when EVERY applied row (a) succeeded on the diff (no
 		// `error`), AND (b) reports zero surviving identities (registered +
-		// unchanged both empty). An enumeration failure or an unreadable
-		// credential means we can't confirm the account is orphaned — leaving
+		// unchanged both empty). An enumeration failure or a skipped row
+		// (no unipile_acc_slug) means we can't confirm the account is orphaned — leaving
 		// it in place is the safe direction. This is the "conditional" reading
 		// of the P3-B "R11-C PAGE_ADMIN_REVOKED calls deleteAccount" AC (see
 		// PR body's "R11-C interpretation" risk note).
@@ -871,6 +917,10 @@ const V2PersonSchema = z
 		public_identifier: z.string().nullish(),
 		network_distance: z.string().nullish(),
 		location: z.string().nullish(),
+		// v2 moved the provider-specific fields under `specifics` — the profile
+		// endpoint answers `specifics.network_distance`, while the search
+		// endpoint still answers `network_distance` top-level. Read both.
+		specifics: z.object({ network_distance: z.string().nullish() }).passthrough().nullish(),
 	})
 	.passthrough()
 
@@ -892,9 +942,85 @@ function toPerson(raw: unknown): LinkedInPerson | null {
 		headline: p.headline ?? p.description ?? '',
 		profile_url: p.profile_url ?? '',
 		public_identifier: p.public_identifier ?? '',
-		network_distance: p.network_distance ?? '',
+		// Top-level on a search result; nested under `specifics` on a v2
+		// profile. Prefer top-level so the search path is unchanged.
+		network_distance: p.network_distance ?? p.specifics?.network_distance ?? '',
 		location: p.location ?? '',
 	}
+}
+
+/** One job from a profile's experience section. */
+export type LinkedInPosition = {
+	company: string
+	title: string
+	/** ISO date: YYYY-MM-DD, or YYYY-MM / YYYY when LinkedIn only gave that much. */
+	start: string | null
+	/** Same format as start. Null while the role is current. */
+	end: string | null
+	/** True when LinkedIn gave no end date, i.e. the person still holds the role. */
+	current: boolean
+}
+
+/**
+ * get_profile result. The base fields are always present; `experience` only
+ * when the caller asked for it and LinkedIn answered. `experience_unavailable`
+ * is set instead when the section pull was throttled, rejected or came back
+ * without the section, so an empty `experience` array only ever means "no
+ * jobs listed".
+ */
+export type LinkedInProfile = LinkedInPerson & {
+	experience?: LinkedInPosition[]
+	experience_unavailable?: true
+}
+
+/** Unipile v2 `with_sections` value for the experience section. */
+const EXPERIENCE_SECTION = 'linkedin_experience'
+
+/**
+ * Unipile v2 answers experience dates as MM/DD/YYYY. Convert to ISO, keeping
+ * whatever precision LinkedIn gave (MM/YYYY and YYYY show up on older roles).
+ * Null when the value is not a date we recognise.
+ */
+function toIsoDate(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null
+	const value = raw.trim()
+	const full = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value)
+	if (full) return `${full[3]}-${full[1]}-${full[2]}`
+	const monthYear = /^(\d{2})\/(\d{4})$/.exec(value)
+	if (monthYear) return `${monthYear[2]}-${monthYear[1]}`
+	if (/^\d{4}$/.test(value)) return value
+	return null
+}
+
+/**
+ * Map `specifics.experience` of a v2 profile. Returns null when the section is
+ * not an array at all (the pull did not deliver it), so the caller can flag it
+ * as unavailable instead of reporting a person with no jobs.
+ */
+function toExperience(raw: unknown): LinkedInPosition[] | null {
+	const specifics = (raw as { specifics?: { experience?: unknown } } | null)?.specifics
+	const entries = specifics?.experience
+	if (!Array.isArray(entries)) return null
+	const positions: LinkedInPosition[] = []
+	for (const entry of entries) {
+		if (!entry || typeof entry !== 'object') continue
+		const e = entry as Record<string, unknown>
+		// v2 nests the company as an object with a name; tolerate a bare string.
+		const co = e.company
+		const coName = typeof co === 'object' && co !== null ? (co as { name?: unknown }).name : co
+		const company = typeof coName === 'string' ? coName : ''
+		const title = typeof e.job_title === 'string' ? e.job_title : ''
+		if (!company && !title) continue
+		const hasEnd = typeof e.ended_on === 'string' && e.ended_on.trim() !== ''
+		positions.push({
+			company,
+			title,
+			start: toIsoDate(e.started_on),
+			end: toIsoDate(e.ended_on),
+			current: !hasEnd,
+		})
+	}
+	return positions
 }
 
 function normalizePeople(
@@ -1980,6 +2106,21 @@ export type PostEngagementResult = {
 	is_partial: boolean
 }
 
+/**
+ * The id `retrievePost` returns on the Post object. Unipile's sub-routes
+ * (reactions, comments) require the id from a *Get a Post* response, not the
+ * native activity id the caller supplies — so a read that skips this resolves
+ * the post, then asks for engagement against an id the sub-route rejects.
+ * Same `data`-unwrap as `summarisePost`, since the envelope may or may not
+ * nest the Post under `data`.
+ */
+function resolvedPostId(body: unknown): string {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	return typeof inner.id === 'string' ? inner.id.trim() : ''
+}
+
 function summarisePost(body: unknown): {
 	author_urn?: string
 	published_at?: string
@@ -2176,13 +2317,19 @@ export async function getLinkedInPostEngagement(
 		client.retrievePost({ account_id: acc, post_id: postId }),
 	)
 	const summary = summarisePost(postResp.body)
+	// Sub-routes take the id *retrievePost* returns, never the caller's input —
+	// Unipile's reactions/comments endpoints only accept the Get-a-Post id. Fall
+	// back to the input only when the response carried no usable id, so a
+	// degenerate response degrades to the old behaviour rather than calling with
+	// an empty segment.
+	const subRoutePostId = resolvedPostId(postResp.body) || postId
 	// Reactions + comments run concurrently — each is independent, and both
 	// failing degrades to a base-metadata-only envelope rather than a total
 	// failure. `Promise.all` is fine because both `safeCollectReactions` and
 	// `safeCountComments` swallow their own errors.
 	const [reactions, comments] = await Promise.all([
-		safeCollectReactions(client, acc, postId),
-		safeCountComments(client, acc, postId),
+		safeCollectReactions(client, acc, subRoutePostId),
+		safeCountComments(client, acc, subRoutePostId),
 	])
 	const isPartial = reactions.error !== null || comments.error !== null
 	return {
@@ -2197,18 +2344,44 @@ export async function getLinkedInPostEngagement(
 
 export async function getLinkedInProfile(
 	ctx: LinkedInOperationContext,
-	input: { identifier?: unknown },
-): Promise<LinkedInPerson> {
+	input: { identifier?: unknown; sections?: unknown },
+): Promise<LinkedInProfile> {
 	const identifier = typeof input.identifier === 'string' ? input.identifier.trim() : ''
 	if (!identifier) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', 'identifier is required')
 	}
+	const wantsExperience = parseProfileSections(input.sections)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.getProfile({ account_id: pre.credentials.account_id, identifier }),
-	)
+	const account_id = pre.credentials.account_id
+	const fetchProfile = (withSections: boolean) =>
+		callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.getProfile({
+				account_id,
+				identifier,
+				...(withSections ? { with_sections: [EXPERIENCE_SECTION] } : {}),
+			}),
+		)
+	let upstream: Awaited<ReturnType<typeof fetchProfile>>
+	let experienceFailed = false
+	if (wantsExperience) {
+		try {
+			upstream = await fetchProfile(true)
+		} catch (err) {
+			if (!isLinkedInIntegrationError(err)) throw err
+			// LinkedIn may throttle or reject a section pull. Fall back to the
+			// base profile so the call still answers; if the base fetch fails too
+			// that error is the real one and propagates.
+			logger.warn('linkedin-unipile get_profile: experience pull failed, falling back', {
+				code: err.code,
+			})
+			experienceFailed = true
+			upstream = await fetchProfile(false)
+		}
+	} else {
+		upstream = await fetchProfile(false)
+	}
 	const person = toPerson(upstream.body)
 	if (!person) {
 		throw new LinkedInIntegrationError(
@@ -2216,7 +2389,33 @@ export async function getLinkedInProfile(
 			'LinkedIn profile response had an unrecognised shape',
 		)
 	}
-	return person
+	if (!wantsExperience) return person
+	const experience = experienceFailed ? null : toExperience(upstream.body)
+	return experience ? { ...person, experience } : { ...person, experience_unavailable: true }
+}
+
+/**
+ * Validate the optional `sections` input. Absent or empty means off (the
+ * default, which costs nothing and leaves the response unchanged). Only
+ * "experience" is accepted for now; anything else is a clear input error rather
+ * than a silent no-op.
+ */
+function parseProfileSections(raw: unknown): boolean {
+	if (raw === undefined || raw === null) return false
+	if (!Array.isArray(raw)) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'sections must be an array; the only supported value is "experience"',
+		)
+	}
+	const unsupported = raw.filter((v) => v !== 'experience')
+	if (unsupported.length > 0) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`unsupported sections ${JSON.stringify(unsupported)}; the only supported value is "experience"`,
+		)
+	}
+	return raw.length > 0
 }
 
 /**

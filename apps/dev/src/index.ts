@@ -3,13 +3,18 @@ import './extensions'
 import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
+import type { NodeWebSocket } from '@hono/node-ws'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
+import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { RotateDeksJob } from './jobs/rotate-deks'
+import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -21,18 +26,25 @@ import {
 } from './lib/dev-bootstrap'
 import { FLAGS, isFlagEnabledForWorkspace } from './lib/feature-flags'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
+import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
+import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
+import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { handleDesktopStreamUpgrade } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { NotificationPushFanout } from './services/notification-push'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -41,9 +53,18 @@ import { SessionManager } from './services/session-manager'
 import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
+import {
+	VoiceSessionTimeoutSweeper,
+	endAllLiveVoiceSessions,
+} from './services/voice-session-timeout-sweeper'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
+
+// Voice v1: fail fast when the flag is enabled for testers but the operator
+// OpenAI key is unset. Runs before any HTTP surface binds so a mis-configured
+// deploy is caught at boot rather than 500-ing the first tester click.
+assertVoiceOperatorEnv()
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -51,6 +72,10 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+// A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
+// first credential read.
+assertKeychainKeyConfig()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -152,7 +177,19 @@ configureSessionLifecycle({ db, sessionManager })
 
 const port = Number(process.env.PORT) || 3000
 
-const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
+// Voice v1 needs a WebSocket upgrade path next to the HTTP routes. createApp
+// builds the socket handle (it owns the app instance); we hold it here and
+// attach it to the server once serve() returns it, below.
+let nodeWebSocket: NodeWebSocket | undefined
+const app = createApp(
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider },
+	{
+		port,
+		onNodeWebSocket: (ws) => {
+			nodeWebSocket = ws
+		},
+	},
+)
 
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
@@ -176,13 +213,30 @@ triggerRunner
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
 
+const apnsSender = new ApnsSender(db)
+const notificationPush = new NotificationPushFanout(db, notifyBridge, apnsSender)
+notificationPush.start()
+
+const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
+	turns: sessionManager,
+})
+liveActivityPush.start()
+
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
 
+const gscSyncScheduler = new GscSyncScheduler(db)
+gscSyncScheduler.start()
+logger.info('GSC sync scheduler started')
+
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
+
+const resendDomainVerifier = new ResendDomainVerifier(db)
+resendDomainVerifier.start()
+logger.info('Resend domain verifier started')
 
 const meetTranscriptReconciler = new MeetTranscriptReconciler(db, storageProvider)
 meetTranscriptReconciler.start()
@@ -218,6 +272,29 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Keychain: flips chat-captured keys from pending_undo to active once the undo
+// window has passed. One UPDATE per minute, no key use.
+const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
+keychainUndoSweeperJob.start()
+logger.info('Keychain undo sweeper started')
+
+// Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
+// unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
+const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
+upgradeLegacyCredentialsJob.start()
+logger.info('Legacy credential upgrade job scheduled')
+
+// Keychain: nightly re-wrap of every envelope credential read in the last 24 hours
+// under a fresh DEK and the current master key (the lazy half of master key rotation).
+const rotateDeksJob = new RotateDeksJob(db)
+rotateDeksJob.start()
+logger.info('DEK rotation job scheduled')
+
+// Keychain: daily audit-chain snapshot into credential_chain_snapshots, plus the verifier.
+const chainSnapshotJob = new ChainSnapshotJob(db)
+chainSnapshotJob.start()
+logger.info('Chain snapshot job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -240,6 +317,13 @@ logger.info('Loop escalation reconciler started')
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
+
+// Voice v1: ends calls whose timeout_at has passed (tab closed with no
+// hangup). A no-op until a voice_sessions row exists, so it is safe for every
+// deployment whether or not voice-mode-v1 is enabled.
+const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
+voiceSessionTimeoutSweeper.start()
+logger.info('Voice session timeout sweeper started')
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
@@ -348,6 +432,19 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	keychainUndoSweeperJob.stop()
+	upgradeLegacyCredentialsJob.stop()
+	rotateDeksJob.stop()
+	chainSnapshotJob.stop()
+	notificationPush.stop()
+	liveActivityPush.stop()
+	voiceSessionTimeoutSweeper.stop()
+	// Rows would otherwise stay live until the sweeper finds them after restart.
+	await endAllLiveVoiceSessions(db).catch((err) =>
+		logger.error(
+			`Failed to end live voice sessions on shutdown: ${err instanceof Error ? err.message : String(err)}`,
+		),
+	)
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
@@ -427,6 +524,12 @@ ${mcpSetup}
 	// canonical "install_completed" moment for the open-source launch bet.
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
+	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
+	// no Docker socket exists; the two warm calls below could only fail there.
+	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
+		logger.warn('Docker unavailable; skipping agent-base and browser-sidecar image warm-up')
+		return
+	}
 	sessionManager.warmAgentBaseImage().catch((err) => {
 		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
 			error: err instanceof Error ? err.message : String(err),
@@ -438,6 +541,7 @@ ${mcpSetup}
 		})
 	})
 })
+nodeWebSocket?.injectWebSocket(server)
 
 // Hono has no WebSocket support, so the workspace-desktop stream is handled on
 // the raw http.Server — see services/desktop-relay.ts. Any other upgrade

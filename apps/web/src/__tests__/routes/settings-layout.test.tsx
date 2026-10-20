@@ -53,7 +53,10 @@ describe('SettingsLayout', () => {
 			'Objects',
 			'Members',
 			'Integrations',
+			'Keychain',
 			'Extensions',
+			'Skills',
+			'MCP',
 			'Billing',
 		])
 	})

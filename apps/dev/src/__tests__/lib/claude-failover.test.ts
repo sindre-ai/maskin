@@ -1,6 +1,9 @@
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Capture Sentry events instead of sending them.
+vi.mock('../../lib/sentry', () => ({ Sentry: { captureMessage: vi.fn() } }))
+
 vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
@@ -33,13 +36,23 @@ import {
 	BACKUP_EXHAUSTED_ACTION,
 	FAILOVER_TRIGGERED_ACTION,
 	isClaudeFailoverEnabled,
+	isTransientCredentialError,
 	resolveClaudeCredentialsWithFailover,
 } from '../../lib/claude-failover'
 import type { ClassifierInput } from '../../lib/claude-failure-classifier'
 import { headersFrom } from '../../lib/claude-failure-classifier'
-import type { EncryptedOAuthData } from '../../lib/claude-oauth'
+import {
+	CLAUDE_CREDENTIAL_TIMEOUT_MS,
+	type EncryptedOAuthData,
+	refreshSlotSingleFlight,
+} from '../../lib/claude-oauth'
 import { PRIMARY_RECOVERY_COOLDOWN_MS } from '../../lib/claude-oauth-recovery'
 import type { OAuthSlotStorage } from '../../lib/claude-oauth-slots'
+import { Sentry } from '../../lib/sentry'
+
+type MockDb = {
+	update: () => { set: (patch: Record<string, unknown>) => { where: () => Promise<void> } }
+}
 
 const WORKSPACE_ID = 'workspace-1'
 const ACTOR_ID = 'actor-1'
@@ -135,6 +148,7 @@ beforeEach(() => {
 	trackFailoverTriggeredMock.mockClear()
 	trackBackupExhaustedMock.mockClear()
 	trackRecoveredMock.mockClear()
+	vi.mocked(Sentry.captureMessage).mockClear()
 })
 
 afterEach(() => {
@@ -826,6 +840,175 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 		})
 	})
 
+	// The refresh token is single-use on the token endpoint: whoever spends it
+	// second gets a 4xx that classifies as auth_failed. These tests drive the
+	// real helper (no mock of refreshSlotSingleFlight) against a stubbed token
+	// endpoint that behaves that way.
+	describe('single-flight refresh', () => {
+		/** Token endpoint that rotates the refresh token and rejects a replayed one. */
+		function rotatingTokenEndpoint() {
+			let current = 'refresh-1'
+			return vi.fn(async (_url: string, init: { body: string }) => {
+				const { refresh_token } = JSON.parse(init.body)
+				await new Promise((resolve) => setTimeout(resolve, 5))
+				if (refresh_token !== current) {
+					return { ok: false, status: 400, text: async () => 'invalid_grant' }
+				}
+				current = 'refresh-2'
+				return {
+					ok: true,
+					json: async () => ({
+						access_token: 'access-2',
+						refresh_token: 'refresh-2',
+						expires_in: 3600,
+					}),
+				}
+			})
+		}
+
+		const expiredPrimary = () =>
+			encryptedSlot({
+				encryptedAccessToken: 'access-1',
+				encryptedRefreshToken: 'refresh-1',
+				expiresAt: Date.now() - 60_000,
+			})
+
+		it('sends one POST to the token endpoint for two overlapping session starts', async () => {
+			const { db, eventInserts, getSettings } = createMockDb({
+				settings: { claude_oauth: { primary: expiredPrimary() } satisfies OAuthSlotStorage },
+			})
+			const fetchMock = rotatingTokenEndpoint()
+			vi.stubGlobal('fetch', fetchMock)
+			const probe = vi.fn(async () => null)
+
+			const start = () =>
+				resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					probe,
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				})
+			const [first, second] = await Promise.all([start(), start()])
+
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(first?.tokens.accessToken).toBe('access-2')
+			expect(second?.tokens.accessToken).toBe('access-2')
+			expect(second?.tokens.refreshToken).toBe('refresh-2')
+			expect(eventInserts).toHaveLength(0)
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.primary?.encryptedRefreshToken).toBe('refresh-2')
+		})
+
+		it('does not fail the slot when a 4xx follows another caller writing a fresher refresh token', async () => {
+			const { db, eventInserts } = createMockDb({
+				settings: { claude_oauth: { primary: expiredPrimary() } satisfies OAuthSlotStorage },
+			})
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => {
+					// Another process spends refresh-1 and persists its result while
+					// our POST is in flight, so ours is the replay the endpoint rejects.
+					await (db as unknown as MockDb)
+						.update()
+						.set({
+							settings: {
+								claude_oauth: {
+									primary: encryptedSlot({
+										encryptedAccessToken: 'access-2',
+										encryptedRefreshToken: 'refresh-2',
+									}),
+								},
+							},
+						})
+						.where()
+					return { ok: false, status: 400, text: async () => 'invalid_grant' }
+				}),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe: async () => null,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.tokens.accessToken).toBe('access-2')
+			expect(eventInserts).toHaveLength(0)
+		})
+
+		it('refreshes the chain head once and persists it when recovery overlaps another session start', async () => {
+			const lastFailure = 1_700_000_000_000
+			const { db, getSettings } = createMockDb({
+				settings: {
+					claude_oauth: {
+						primary: expiredPrimary(),
+						backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+						failover: { active_slot: 'backup', last_primary_failure_at: lastFailure },
+					} satisfies OAuthSlotStorage,
+				},
+			})
+			const fetchMock = rotatingTokenEndpoint()
+			vi.stubGlobal('fetch', fetchMock)
+			const now = lastFailure + PRIMARY_RECOVERY_COOLDOWN_MS + 1
+
+			const start = () =>
+				resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					probe: async () => null,
+					now: () => now,
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				})
+			const results = await Promise.all([start(), start()])
+
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(results.every((r) => r !== null)).toBe(true)
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.primary?.encryptedRefreshToken).toBe('refresh-2')
+		})
+
+		it('gives up waiting after CLAUDE_CREDENTIAL_TIMEOUT_MS and reports it as transient', async () => {
+			vi.useFakeTimers()
+			try {
+				const workspaceId = 'workspace-hung-refresh'
+				const { db } = createMockDb({
+					settings: { claude_oauth: { primary: expiredPrimary() } satisfies OAuthSlotStorage },
+				})
+				let releaseHungRefresh: (value: unknown) => void = () => {}
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(
+						() =>
+							new Promise((resolve) => {
+								releaseHungRefresh = resolve
+							}),
+					),
+				)
+
+				const holder = refreshSlotSingleFlight(db, workspaceId, 'primary', expiredPrimary())
+				const waiter = refreshSlotSingleFlight(db, workspaceId, 'primary', expiredPrimary())
+				const waiterError = waiter.catch((err) => err)
+				await vi.advanceTimersByTimeAsync(CLAUDE_CREDENTIAL_TIMEOUT_MS)
+
+				const err = await waiterError
+				expect(err).toBeInstanceOf(Error)
+				expect((err as Error).message).toMatch(/Timed out waiting/)
+				expect(isTransientCredentialError(err)).toBe(true)
+
+				releaseHungRefresh({
+					ok: true,
+					json: async () => ({ access_token: 'access-2', expires_in: 3600 }),
+				})
+				await expect(holder).resolves.toMatchObject({ refreshed: true })
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+	})
+
 	describe('refresh failures', () => {
 		it('classifies a 401 thrown by refresh as auth_failed and fails over', async () => {
 			const claudeOAuth: OAuthSlotStorage = {
@@ -890,6 +1073,42 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(result?.slot).toBe('backup')
 			expect(eventInserts[0]).toMatchObject({
 				data: expect.objectContaining({ reason: 'auth_failed' }),
+			})
+		})
+
+		it('records one failure event per failed refresh without changing the failover', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi
+					.fn()
+					.mockResolvedValueOnce({
+						ok: false,
+						status: 400,
+						text: () => Promise.resolve('{"error":"invalid_grant"}'),
+					})
+					.mockResolvedValueOnce({ ok: true, headers: new Headers() }),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(Sentry.captureMessage).toHaveBeenCalledTimes(1)
+			expect(vi.mocked(Sentry.captureMessage).mock.calls[0]?.[1]?.extra).toMatchObject({
+				workspaceId: WORKSPACE_ID,
+				slot: 'primary',
+				caller: 'session_start',
+				httpStatus: 400,
+				errorType: 'invalid_grant',
 			})
 		})
 

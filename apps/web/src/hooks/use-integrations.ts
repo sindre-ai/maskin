@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api } from '../lib/api'
+import { type AgentGrantAccess, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -19,29 +19,64 @@ export function useProviders() {
 
 export function useConnectIntegration(workspaceId: string) {
 	return useMutation({
-		mutationFn: (input: { provider: string; apiKey?: string }) =>
-			api.integrations.connect(
-				workspaceId,
-				input.provider,
-				input.apiKey ? { api_key: input.apiKey } : undefined,
-			),
+		mutationFn: (input: {
+			provider: string
+			apiKey?: string
+			// Resend two-call handshake: both fields travel with the first POST so
+			// the backend can hit Resend's `POST /domains` in the same round-trip.
+			receiveSubdomain?: string
+			// GitHub only: send the user to the App's install page for an org that
+			// does not have the App yet, instead of the authorize step that only
+			// lists orgs that already do.
+			installNewOrg?: boolean
+			// Workspace-relative path to land on once the connect finishes — the chat
+			// that showed the Connect card. Absent means Settings → Integrations. The
+			// backend only honours a plain path inside this workspace.
+			returnTo?: string
+		}) => {
+			const body =
+				input.apiKey || input.receiveSubdomain || input.installNewOrg || input.returnTo
+					? {
+							...(input.apiKey ? { api_key: input.apiKey } : {}),
+							...(input.receiveSubdomain ? { receive_subdomain: input.receiveSubdomain } : {}),
+							...(input.installNewOrg ? { install_new_org: true } : {}),
+							...(input.returnTo ? { return_to: input.returnTo } : {}),
+						}
+					: undefined
+			return api.integrations.connect(workspaceId, input.provider, body)
+		},
 		onSuccess: (data) => {
-			// Manual-auth providers (e.g. Skjald) return a webhook_url to display
-			// instead of an OAuth install_url to redirect to — the caller handles
-			// showing it via a per-call onSuccess.
+			// Manual-auth providers (e.g. Skjald, Resend) return a webhook_url to
+			// display instead of an OAuth install_url to redirect to — the caller
+			// handles showing it via a per-call onSuccess.
 			if (data.webhook_url) return
 			if (data.install_url) window.location.href = data.install_url
 		},
 	})
 }
 
+/** Server-side DNS pre-check the Resend connect flow fires on leaving Step 2.
+ *  The backend runs `node:dns.resolveMx()` on the entered domain and returns
+ *  the existing MX list plus a `warn` flag — set when the user typed a bare
+ *  domain that already routes human mail somewhere else, which is the root-MX
+ *  gotcha the design spec surfaces as the `s3-root-mx` scene. */
+export function useResendDnsPrecheck(workspaceId: string) {
+	return useMutation({
+		mutationFn: (domain: string) => api.integrations.resendDnsPrecheck(workspaceId, domain),
+	})
+}
+
 /** GitHub App installations the actor already reaches from another workspace.
  *  GitHub won't re-run its install flow for an org that already has the App, so
  *  binding an existing installation is the only way to add it here. */
-export function useLinkableGithubInstallations(workspaceId: string) {
+export function useLinkableGithubInstallations(
+	workspaceId: string,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
 		queryKey: queryKeys.integrations.githubLinkable(workspaceId),
 		queryFn: () => api.integrations.githubLinkable(workspaceId),
+		enabled: options?.enabled ?? true,
 	})
 }
 
@@ -152,4 +187,137 @@ export function useLinkedInIdentities(workspaceId: string) {
 		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
 		staleTime: FIVE_MINUTES,
 	})
+}
+
+/** Keychain: paste an API key. The secret goes up once and is never kept in the cache. */
+export function useCreateByoApiKey(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { displayName: string; rawSecret: string }) =>
+			api.integrations.createByoApiKey(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Keychain: add a username and password. Both go up once and are never kept in the cache. */
+export function useCreateByoLogin(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { displayName: string; username: string; password: string }) =>
+			api.integrations.createByoLogin(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/**
+ * Keychain: replace which agents may use a saved key. The error stays on the mutation so
+ * the access sheet can show it inline; only the success toast lives here. The list and the
+ * audit log are refetched because the Agents block and the SCOPE CHANGED row both read them.
+ */
+export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		// The sheet shows the failure inline, so the global error toast would only cover Save.
+		meta: { handlesOwnErrors: true },
+		mutationFn: (agentIds: string[]) =>
+			api.integrations.replaceGrants(
+				integrationId,
+				workspaceId,
+				agentIds.map((actorId) => ({ actorId, access: 'read_write' as const })),
+			),
+		onSuccess: () => {
+			toast.success('Access updated')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
+			})
+		},
+	})
+}
+
+/**
+ * Keychain: remove a saved key or login at any time. The secret is destroyed on the server,
+ * so the credential drops out of the list. The page shows the failure inline in its dialog,
+ * so the global error toast is switched off.
+ */
+export function useRemoveCredential(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (integrationId: string) => api.integrations.remove(integrationId, workspaceId),
+		onSuccess: () => {
+			toast.success('Credential removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Keychain: one credential's audit log, newest first, paged by the last row's id. */
+export function useCredentialAuditLog(workspaceId: string, integrationId: string) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
+		queryFn: ({ pageParam }) =>
+			api.integrations.auditLog(integrationId, workspaceId, pageParam || undefined),
+		initialPageParam: '',
+		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
+		enabled: !!workspaceId && !!integrationId,
+	})
+}
+
+/**
+ * Agent access: the three changes the Integrations page makes to who may use an
+ * integration. Each refetches the list, which carries `defaultAgentAccess` and
+ * `agentGrants` per integration. The audit trail and SSE event are written server-side.
+ */
+function useGrantMutation<V>(
+	workspaceId: string,
+	mutationFn: (variables: V) => Promise<unknown>,
+	successMessage: string,
+) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn,
+		onSuccess: () => {
+			toast.success(successMessage)
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** What one agent can use. Refreshes with the integration list, so it never lags a change. */
+export function useAgentAccess(workspaceId: string, actorId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.agentAccess(workspaceId, actorId),
+		queryFn: () => api.actors.access(actorId, workspaceId),
+	})
+}
+
+export function useSetAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(v: { actorId: string; access: AgentGrantAccess }) =>
+			api.integrations.setGrant(integrationId, workspaceId, v.actorId, v.access),
+		'Agent access updated',
+	)
+}
+
+export function useRemoveAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(actorId: string) => api.integrations.removeGrant(integrationId, workspaceId, actorId),
+		'Agent access removed',
+	)
+}
+
+export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(defaultAgentAccess: 'read' | 'none') =>
+			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
+		'Default access updated',
+	)
 }

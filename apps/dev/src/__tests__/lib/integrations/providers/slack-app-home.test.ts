@@ -154,8 +154,11 @@ describe('publishAppHomeView', () => {
 		// Header + the connect section.
 		const sections = body.view.blocks.filter((b) => b.type === 'section')
 		expect(sections).toHaveLength(1)
-		const accessory = sections[0]?.accessory as { text: { text: string } } | undefined
+		const accessory = sections[0]?.accessory as { text: { text: string }; url: string } | undefined
 		expect(accessory?.text.text).toBe('Connect Maskin')
+		// Must open the app root; /integrations/slack is not a web route and 404s.
+		const { frontendBaseUrl } = await import('../../../../lib/file-urls')
+		expect(accessory?.url).toBe(frontendBaseUrl())
 	})
 
 	it('renders the linked-state view with a Falu-red agent + workspace subscript per row', async () => {

@@ -91,6 +91,22 @@ export const FLAGS = {
 	 */
 	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
 	/**
+	 * Resend integration visibility on the Settings > Integrations page. When
+	 * off, the provider card + multi-step connect dialog are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * and the awaiting_secret resume affordance for resend never shows. When on,
+	 * the resend card appears with the Slice 2 connect dialog (Task 4). Per-actor
+	 * behaviour gate, never shared state: the backend registers the provider
+	 * unconditionally so `POST /api/integrations/resend/connect`, the dedicated
+	 * `/api/webhooks/resend/:token` route, and MCP env-var injection stay
+	 * reachable for tester actors (add them to `FF_TESTER_ACTOR_IDS` +
+	 * `resend-integration-ui` to `FF_TESTER_FEATURES`). See parent bet [Resend
+	 * integration per workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/cf2bcc85-8a71-460b-975b-1635dd87594e)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * resend ships to every workspace.
+	 */
+	RESEND_INTEGRATION_UI: 'resend-integration-ui',
+	/**
 	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
 	 * object** / **Mention an agent** / **Create an object** dropdown with a
 	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
@@ -153,6 +169,20 @@ export const FLAGS = {
 	 * the edges being present.
 	 */
 	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
+	/**
+	 * Voice v1 — 1:1 in-app click-to-talk to a voice-enabled agent. Gates the
+	 * **POST /api/voice-sessions** session-mint route (404 when off), the
+	 * Call button on `/agents/:id`, and the VoiceCallDialog. Per-actor: a
+	 * workspace tester with this flag on sees the button; every other member
+	 * of the same workspace sees nothing. See parent bet
+	 * [Voice with Maskin agents](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
+	 *
+	 * Boot-time invariant: when this flag id appears in `FF_TESTER_FEATURES`,
+	 * `MASKIN_VOICE_OPENAI_API_KEY` must be set. `apps/dev/src/lib/voice-boot-guard.ts`
+	 * asserts it at startup so a mis-configured deploy fails fast instead of
+	 * 500-ing on the first mint call.
+	 */
+	VOICE_MODE_V1: 'voice-mode-v1',
 	/**
 	 * Gates the trigger-engine v2 rollout (bet
 	 * [Fix the trigger engine](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f46b18f7-1cce-487b-9113-8657a6e30b16)).

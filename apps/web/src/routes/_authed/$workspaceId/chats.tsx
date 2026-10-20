@@ -3,16 +3,16 @@ import { ConversationList } from '@/components/chat/conversation-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
 
 interface ChatsSearch {
 	filter?: ChatsFilter
-	/** Desktop focus mode — hides the list pane and widens the thread gutter. */
+	/** Desktop focus mode — hides the list pane. */
 	wide?: boolean
 	/** S2 · Produced pane state (bet 34706e2f, task 5). Persisted in the URL
 	 *  so a reload keeps the pane open; the toggle in ThreadHeader flips it
@@ -44,6 +44,14 @@ const THREAD_ROUTE_IDS = new Set([
 	'/_authed/$workspaceId/chats/$conversationId',
 	'/_authed/$workspaceId/chats/new',
 ])
+
+// The list-only states never mount the index leaf route, so the list sets its
+// own title. Rendered only while no thread is open: a thread leaf sets the
+// conversation title itself, and this layout's effects would run after it.
+function ChatsListTitle() {
+	useDocumentTitle('Chats')
+	return null
+}
 
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
@@ -112,6 +120,7 @@ function ChatsLayout() {
 		return (
 			<>
 				{header}
+				{hasThread ? null : <ChatsListTitle />}
 				{hasThread ? (
 					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
 						<Outlet />
@@ -134,6 +143,7 @@ function ChatsLayout() {
 		return (
 			<>
 				{header}
+				<ChatsListTitle />
 				<ConversationList
 					workspaceId={workspaceId}
 					filter={filter}
@@ -158,15 +168,10 @@ function ChatsLayout() {
 				)}
 				{/* One gutter variable for the whole thread pane — the header,
 				    transcript and composer all read `--chat-gut` so they can never
-				    drift apart, and focus mode swaps the value for a centring
-				    margin instead of adding padding on top of the base gutter
+				    drift apart, and on desktop the value is a centring margin
+				    (a 900px column) instead of padding on top of the base gutter
 				    (mockup 7763). */}
-				<div
-					className={cn(
-						'flex min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]',
-						wide && 'md:[--chat-gut:max(28px,calc((100%-900px)/2))]',
-					)}
-				>
+				<div className="flex min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(28px,calc((100%-900px)/2))]">
 					<Outlet />
 				</div>
 			</div>

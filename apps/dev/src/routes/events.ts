@@ -16,18 +16,27 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
+import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
-import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
+import {
+	isAgentMentionFreeComment,
+	isCommentFallbackDriverEligible,
+} from '../services/trigger-runner'
+import { loadSenderLine } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
+		maskinSessionId?: string
 	}
 }
 
@@ -63,6 +72,46 @@ app.get('/', async (c) => {
 	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
+		const callerId = c.get('actorId')
+
+		// Every frame goes through this serialized chain. It exists for the
+		// `session.state_changed` frame below: resolving it needs a DB read, but
+		// the live bridge callback is synchronous, so a fire-and-forget await
+		// there would let two events' frames interleave and land out of order.
+		// Chaining also guarantees the generic frame is on the wire before the
+		// delegation-strip frame for the same event.
+		let chain: Promise<void> = Promise.resolve()
+		const writeFrame = (
+			id: string,
+			action: string,
+			payload: unknown,
+			sessionEntityId: string | null,
+		): Promise<void> => {
+			chain = chain
+				.then(async () => {
+					await stream.writeSSE({ id, event: action, data: JSON.stringify(payload) })
+					if (!sessionEntityId) return
+					// Entitlement gate on the emission path: `loadSessionStateChangeFrame`
+					// returns null unless the caller is a participant of the owning
+					// conversation, so a non-participant never receives this frame.
+					const frame = await loadSessionStateChangeFrame(db, {
+						sessionId: sessionEntityId,
+						workspaceId,
+						actorId: callerId,
+					})
+					if (!frame) return
+					await stream.writeSSE({
+						id,
+						event: 'session.state_changed',
+						data: JSON.stringify(frame),
+					})
+				})
+				.catch((err) => {
+					logger.warn('events SSE frame write failed', { error: String(err) })
+				})
+			return chain
+		}
+
 		// Replay missed events if Last-Event-ID is provided
 		const parsedId = Number(lastEventId)
 		if (lastEventId && !Number.isNaN(parsedId)) {
@@ -74,11 +123,12 @@ app.get('/', async (c) => {
 				.limit(100)
 
 			for (const event of missed) {
-				await stream.writeSSE({
-					id: String(event.id),
-					event: event.action,
-					data: JSON.stringify(event),
-				})
+				await writeFrame(
+					String(event.id),
+					event.action,
+					event,
+					event.entityType === 'session' ? event.entityId : null,
+				)
 			}
 		}
 
@@ -86,11 +136,12 @@ app.get('/', async (c) => {
 		const handler = (event: PgEvent) => {
 			if (event.workspace_id !== workspaceId) return
 
-			stream.writeSSE({
-				id: event.event_id,
-				event: event.action,
-				data: JSON.stringify(event),
-			})
+			void writeFrame(
+				event.event_id,
+				event.action,
+				event,
+				event.entity_type === 'session' ? event.entity_id : null,
+			)
 		}
 
 		bridge.on('event', handler)
@@ -176,6 +227,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 const createCommentRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['events'],
 	summary: 'Create a comment on an object',
 	request: {
@@ -205,6 +257,7 @@ app.openapi(createCommentRoute, (async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	// Validate the target object exists and belongs to this workspace
@@ -289,6 +342,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		metadata: body.metadata,
 		decision: body.decision,
 		attention: body.attention,
+		authorSessionId: c.get('maskinSessionId'),
 	})
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
@@ -338,7 +392,16 @@ app.openapi(createCommentRoute, (async (c) => {
 	// the `CommentDispatcher` will handle via the @-mention branch is excluded
 	// here so the thread-reply auto-spawn doesn't double up on the same agent
 	// for the same comment.
-	if (parentEventId !== undefined) {
+	//
+	// An agent's mention-free reply is low-attention and wakes nobody here, the
+	// same rule the dispatcher applies to cases 2 and 3.
+	if (
+		parentEventId !== undefined &&
+		!isAgentMentionFreeComment({
+			actorType: c.get('actorType'),
+			mentionCount: body.mentions?.length ?? 0,
+		})
+	) {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude
@@ -623,12 +686,13 @@ async function spawnThreadReplySessions(ctx: {
 	// `commented` event's entity_type is 'object'), so a single PK read
 	// per commented event is cheap even for a big fanout.
 	const [obj] = await ctx.db
-		.select({ type: objects.type })
+		.select({ id: objects.id })
 		.from(objects)
 		.where(eq(objects.id, ctx.objectId))
 		.limit(1)
 	const initiatedFromObjectId = obj ? ctx.objectId : null
-	const initiatedFromObjectType = obj?.type ?? null
+
+	const senderLine = threadReplyAgentIds.length > 0 ? await loadSenderLine(ctx.db, ctx.actorId) : ''
 
 	for (const agentId of threadReplyAgentIds) {
 		startSession({
@@ -636,6 +700,7 @@ async function spawnThreadReplySessions(ctx: {
 			actorId: agentId,
 			callerKind: 'trigger',
 			actionPrompt: buildThreadReplyPrompt({
+				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.actorId,
 				content: ctx.newCommentContent,
@@ -651,7 +716,6 @@ async function spawnThreadReplySessions(ctx: {
 			},
 			createdBy: ctx.actorId,
 			initiatedFromObjectId,
-			initiatedFromObjectType,
 			await: 'none',
 		}).catch((err) =>
 			logger.error('Failed to create thread-reply session', {
@@ -665,12 +729,14 @@ async function spawnThreadReplySessions(ctx: {
 }
 
 function buildThreadReplyPrompt(ctx: {
+	senderLine: string
 	objectId: string
 	commenterActorId: string
 	content: string
 	threadRootEventId: number
 }): string {
 	return [
+		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
 		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
 		'',
 		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',

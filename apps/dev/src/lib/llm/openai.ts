@@ -1,12 +1,26 @@
-import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
+import { logger } from '../logger'
+import {
+	type LLMAdapter,
+	type LLMMessage,
+	type LLMResponse,
+	type LLMTool,
+	LlmNoEligibleHostError,
+} from './adapter'
+import { assertNoRawSecrets } from './secret-guard'
 
 export class OpenAIAdapter implements LLMAdapter {
 	private apiKey: string
 	private baseUrl: string
+	private extraBody?: Record<string, unknown>
 
-	constructor(apiKey: string, baseUrl = 'https://api.openai.com/v1') {
+	constructor(
+		apiKey: string,
+		baseUrl = 'https://api.openai.com/v1',
+		extraBody?: Record<string, unknown>,
+	) {
 		this.apiKey = apiKey
 		this.baseUrl = baseUrl
+		this.extraBody = extraBody
 	}
 
 	async chat(options: {
@@ -16,7 +30,10 @@ export class OpenAIAdapter implements LLMAdapter {
 		temperature?: number
 		max_tokens?: number
 	}): Promise<LLMResponse> {
+		assertNoRawSecrets(options.messages)
+
 		const body: Record<string, unknown> = {
+			...this.extraBody,
 			model: options.model || 'gpt-4o',
 			messages: options.messages.map((m) => ({
 				role: m.role,
@@ -55,6 +72,23 @@ export class OpenAIAdapter implements LLMAdapter {
 
 		if (!response.ok) {
 			const error = await response.text()
+			// OpenRouter answers a provider-preference miss (no host passes the
+			// zdr filter) with a 404. Only read it that way when we sent
+			// preferences; otherwise a 404 stays an ordinary error.
+			if (
+				this.extraBody?.provider &&
+				response.status === 404 &&
+				/no endpoints found/i.test(error)
+			) {
+				logger.error('chat_zdr_no_eligible_host', {
+					model: body.model,
+					status: response.status,
+					body: error,
+				})
+				throw new LlmNoEligibleHostError(
+					`No OpenRouter host satisfies the provider preferences for ${String(body.model)}. Unset MASKIN_FALLBACK_ZDR and MASKIN_FALLBACK_PROVIDER_IGNORE, and set MASKIN_FALLBACK_PROVIDER_ONLY to none, to stop sending them.`,
+				)
+			}
 			throw new Error(`OpenAI API error: ${response.status} ${error}`)
 		}
 

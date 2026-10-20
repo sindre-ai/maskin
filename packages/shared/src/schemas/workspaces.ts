@@ -137,7 +137,7 @@ export const workspaceSettingsSchema = z.object({
 	// signup in routes/actors.ts). The runtime fallback for rows with no
 	// `enabled_modules` at all stays `['work']` (module-sdk `getEnabledModuleIds`).
 	enabled_modules: z.array(z.string()).default(['work', 'knowledge', 'crm']),
-	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
+	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(10),
 	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
 	// waiting), but still need *some* aggregate ceiling so a workspace with
 	// many conversations can't spawn unbounded concurrent containers. Default
@@ -229,6 +229,11 @@ export const workspaceSettingsSchema = z.object({
 			linkedin_addon_item_id: z.string().nullable().optional(),
 		})
 		.optional(),
+	// Voice v1 (bet 16bd0042). Absent means transcripts persist; only an explicit
+	// `persist_transcripts: false` opts the workspace out (no transcript rows,
+	// no audio blob). Deliberately no default so existing workspaces' stored
+	// settings are unchanged. Read by services/voice-transcript.ts.
+	voice: z.object({ persist_transcripts: z.boolean().optional() }).optional(),
 	// North Star onboarding prompt answer — stored when a user submits the
 	// "What's your product's North Star metric?" card on the For You page.
 	north_star_metric: z.string().optional(),

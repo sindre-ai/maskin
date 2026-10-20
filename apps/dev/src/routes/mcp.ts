@@ -5,6 +5,7 @@ import { createMcpServer } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
+import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
@@ -12,7 +13,12 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
-import { type McpSessionSource, argKeys, captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
+import {
+	type McpSessionSource,
+	argKeys,
+	captureMcpToolCall,
+	normalizeActorType,
+} from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
@@ -46,8 +52,7 @@ interface JsonRpcMessage {
 
 app.post('/', async (c) => {
 	const url = new URL(c.req.url, 'http://localhost')
-	const apiKey =
-		c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? ''
+	const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
 	// Resolved before the server is built so it can be threaded into telemetry:
 	// the in-process MCP server would otherwise stamp its events with the app
@@ -69,6 +74,13 @@ app.post('/', async (c) => {
 	// out of the per-SESSION one, which is the honest reading of "we do not
 	// know who this was".
 	const session = resolveSessionIdentity(c.req.header.bind(c.req))
+	// Triggering-event id: read the same way as X-Maskin-Session-Id — the
+	// container's `MASKIN_TRIGGERING_EVENT_ID` env is substituted into the
+	// header by agent-run.sh's `envsubst` pass. When the session wasn't
+	// dispatched from a comment, session-manager.ts doesn't stamp the header
+	// at all, so we see nothing here and the create_comment default reverts to
+	// "post as a new top-level comment", matching pre-existing behaviour.
+	const triggeringEventId = resolveTriggeringEventId(c.req.header.bind(c.req))
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey,
@@ -83,6 +95,11 @@ app.post('/', async (c) => {
 			session.source === 'maskin-session' || session.source === 'unknown'
 				? session.source
 				: ('process' as const),
+		triggeringEventId,
+		// Forward the caller's session id so create_session can link
+		// the helper to its sender. Only a uuid-shaped header counts, and it is
+		// still just a claim: POST /api/sessions checks it belongs to the caller.
+		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
@@ -167,6 +184,7 @@ app.post('/', async (c) => {
 			apiKey,
 			workspaceId,
 			requestBody: body,
+			userAgent: c.req.header('User-Agent'),
 			responseBytes: captured.consume(),
 			session,
 			elapsedMs,
@@ -307,6 +325,25 @@ export function resolveSessionIdentity(
 	}
 }
 
+// Triggering-event id parsing mirrors `usableSessionId`: reject an unexpanded
+// `${...}` placeholder (a caller who never went through the agent-run.sh
+// envsubst pass) and reject anything that isn't a positive integer, so the
+// MCP tool layer never defaults `parent_event_id` to a bogus value. Any
+// non-integer or non-positive value is treated as absent — the caller falls
+// back to the pre-existing "post as a new top-level comment" behaviour.
+export function resolveTriggeringEventId(
+	header: (name: string) => string | undefined,
+): number | undefined {
+	const raw = header('X-Maskin-Triggering-Event-Id')?.trim()
+	if (!raw) return undefined
+	if (UNEXPANDED_PLACEHOLDER_RE.test(raw)) return undefined
+	const parsed = Number(raw)
+	if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+		return undefined
+	}
+	return parsed
+}
+
 // ── Trace + misfire emission ────────────────────────────────────────────
 
 // TWO counters, partitioned by how much the session id is trusted — not one.
@@ -361,7 +398,13 @@ const ACTOR_CACHE_MAX = 5_000
 // Keyed by a SHA-256 of the API key, never the key itself: this map outlives
 // the 60s TTL of any individual entry, and plaintext credentials sitting in a
 // long-lived process map end up in every heap dump.
-const actorCache = new Map<string, { actorId: string | null; at: number }>()
+const actorCache = new Map<string, { actor: ResolvedActor | null; at: number }>()
+
+/** What validateApiKey told us about the caller; null when the key did not resolve. */
+interface ResolvedActor {
+	actorId: string
+	actorType: 'human' | 'agent' | null
+}
 
 function actorCacheKey(apiKey: string): string {
 	return createHash('sha256').update(apiKey).digest('hex')
@@ -373,7 +416,7 @@ function actorCacheKey(apiKey: string): string {
  * request into a `validateApiKey` query — trading bounded memory for unbounded
  * DB load. The cap below is what keeps the memory side honest.
  */
-function rememberActor(key: string, actorId: string | null, at: number): void {
+function rememberActor(key: string, actor: ResolvedActor | null, at: number): void {
 	if (!actorCache.has(key) && actorCache.size >= ACTOR_CACHE_MAX) {
 		for (const [k, v] of actorCache) {
 			if (at - v.at >= ACTOR_CACHE_TTL_MS) actorCache.delete(k)
@@ -385,7 +428,7 @@ function rememberActor(key: string, actorId: string | null, at: number): void {
 			actorCache.delete(oldest.value)
 		}
 	}
-	actorCache.set(key, { actorId, at })
+	actorCache.set(key, { actor, at })
 }
 
 /**
@@ -441,6 +484,8 @@ interface EmitMcpTraceArgs {
 	apiKey: string
 	workspaceId: string
 	requestBody: unknown
+	/** Reduced to a client family before it is emitted; never stored raw. */
+	userAgent: string | undefined
 	responseBytes: Buffer
 	session: McpSessionIdentity
 	/**
@@ -453,15 +498,18 @@ interface EmitMcpTraceArgs {
 
 async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	let responses: JsonRpcMessage[]
-	let agentActorId: string | null = null
+	let actor: ResolvedActor | null = null
 	try {
 		responses = parseJsonRpcResponses(args.responseBytes)
 		if (args.plannedCalls.length === 0 && responses.length === 0) return
-		agentActorId = args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+		actor = args.apiKey && args.db ? await resolveAgentActor(args.db, args.apiKey) : null
 	} catch (err) {
 		logger.warn('mcp trace response parse failed', { error: String(err) })
 		return
 	}
+
+	const agentActorId = actor?.actorId ?? null
+	const client = classifyMcpClient(args.userAgent)
 
 	const responsesById = new Map<string, JsonRpcMessage>()
 	for (const r of responses) {
@@ -516,6 +564,11 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					responseBytes,
 					transport: 'http',
 					agentActorId,
+					// `api_key` only when the key resolved: an unknown caller or a bad
+					// token is null, never an authenticated-looking value.
+					authMethod: actor ? 'api_key' : null,
+					client,
+					actorType: actor?.actorType ?? null,
 				})
 			}),
 		)
@@ -660,15 +713,15 @@ function extractToolName(
 	return match?.[1] ?? null
 }
 
-async function resolveAgentActorId(db: Database, apiKey: string): Promise<string | null> {
+async function resolveAgentActor(db: Database, apiKey: string): Promise<ResolvedActor | null> {
 	const key = actorCacheKey(apiKey)
 	const cached = actorCache.get(key)
-	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actorId
+	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actor
 	try {
-		const actor = await validateApiKey(db, apiKey)
-		const actorId = actor?.actorId ?? null
-		rememberActor(key, actorId, Date.now())
-		return actorId
+		const row = await validateApiKey(db, apiKey)
+		const actor = row ? { actorId: row.actorId, actorType: normalizeActorType(row.type) } : null
+		rememberActor(key, actor, Date.now())
+		return actor
 	} catch (err) {
 		logger.warn('mcp trace actor lookup failed', { error: String(err) })
 		return null

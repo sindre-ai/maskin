@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer } = vi.hoisted(() => {
 	const mockConnect = vi.fn().mockResolvedValue(undefined)
@@ -128,9 +128,13 @@ describe('MCP Routes', () => {
 			)
 		})
 
-		it('falls back to key query param when no Authorization header', async () => {
+		it('treats a key in the query string exactly like a request with no credentials', async () => {
 			const app = await createApp()
 			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+
+			await app.request(jsonPostRequest('/mcp', body), undefined, env)
+			const noCredentials = mockCreateMcpServer.mock.calls[0][0]
+			mockCreateMcpServer.mockClear()
 
 			await app.request(
 				new Request('http://localhost/mcp?key=query-key', {
@@ -142,8 +146,31 @@ describe('MCP Routes', () => {
 				env,
 			)
 
+			const queryOnly = mockCreateMcpServer.mock.calls[0][0]
+			expect(queryOnly.apiKey).toBe('')
+			// The per-request anonymous telemetry id differs by design; everything else must match.
+			expect({ ...queryOnly, telemetrySessionId: null }).toEqual({
+				...noCredentials,
+				telemetrySessionId: null,
+			})
+		})
+
+		it('uses the Authorization header when a key query param is also present', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+
+			await app.request(
+				new Request('http://localhost/mcp?key=query-key', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', Authorization: 'Bearer header-key' },
+					body: JSON.stringify(body),
+				}),
+				undefined,
+				env,
+			)
+
 			expect(mockCreateMcpServer).toHaveBeenCalledWith(
-				expect.objectContaining({ apiKey: 'query-key' }),
+				expect.objectContaining({ apiKey: 'header-key' }),
 			)
 		})
 
@@ -262,6 +289,74 @@ describe('MCP Routes', () => {
 			expect(mockConnect).toHaveBeenCalledTimes(1)
 			expect(mockHandleRequest).toHaveBeenCalledWith(mockNodeReq, mockNodeRes, body)
 			expect(res.headers.get('x-hono-already-sent')).toBe('1')
+		})
+
+		it('threads triggeringEventId from X-Maskin-Triggering-Event-Id into the MCP config', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			await app.request(
+				jsonPostRequest('/mcp', body, { 'X-Maskin-Triggering-Event-Id': '4242' }),
+				undefined,
+				env,
+			)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ triggeringEventId: 4242 }),
+			)
+		})
+
+		it('threads a uuid X-Maskin-Session-Id into the MCP config as maskinSessionId', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			const sessionId = '2297f7f3-dd73-43cf-afbe-3aabd0711265'
+			await app.request(
+				jsonPostRequest('/mcp', body, { 'X-Maskin-Session-Id': sessionId }),
+				undefined,
+				env,
+			)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ maskinSessionId: sessionId }),
+			)
+		})
+
+		it('leaves maskinSessionId undefined when the header is missing or not a uuid', async () => {
+			for (const headers of [{}, { 'X-Maskin-Session-Id': 'not-a-uuid' }]) {
+				vi.clearAllMocks()
+				const app = await createApp()
+				const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+				await app.request(jsonPostRequest('/mcp', body, headers), undefined, env)
+				expect(mockCreateMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({ maskinSessionId: undefined }),
+				)
+			}
+		})
+
+		it('leaves triggeringEventId undefined when no header is set', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			await app.request(jsonPostRequest('/mcp', body), undefined, env)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ triggeringEventId: undefined }),
+			)
+		})
+
+		// Callers that copy the MCP preset out of the UI can send the raw
+		// `${MASKIN_TRIGGERING_EVENT_ID}` placeholder unexpanded — the same
+		// failure mode X-Maskin-Session-Id already guards against. It must
+		// never resolve to a numeric parent id.
+		it('rejects the unexpanded placeholder and any non-positive-integer value', async () => {
+			for (const raw of ['${MASKIN_TRIGGERING_EVENT_ID}', '0', '-1', 'abc', '3.14', '']) {
+				vi.clearAllMocks()
+				const app = await createApp()
+				const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+				await app.request(
+					jsonPostRequest('/mcp', body, { 'X-Maskin-Triggering-Event-Id': raw }),
+					undefined,
+					env,
+				)
+				expect(mockCreateMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({ triggeringEventId: undefined }),
+				)
+			}
 		})
 	})
 })
