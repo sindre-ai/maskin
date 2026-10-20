@@ -87,8 +87,8 @@ targets:
         # Where web-only settings (integrations, billing) open. Empty = the API origin, right for
         # production; set MASKIN_WEB_BASE_URL in Local.xcconfig when the web app is on another port.
         MaskinWebBaseURL: $(MASKIN_WEB_BASE_URL)
-        # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion, which the backend lacks
-        # for humans. Release hides "Create account" until it exists (docs/app-store-notes.md).
+        # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion. Settings › Delete
+        # account exists, so every configuration shows "Create account" (docs/app-store-notes.md).
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
@@ -175,7 +175,7 @@ targets:
           MASKIN_MACOS_ENTITLEMENTS: ""
         Release:
           MASKIN_APS_ENVIRONMENT: production
-          MASKIN_ENABLE_SIGNUP: "NO"
+          MASKIN_ENABLE_SIGNUP: "YES"
           MASKIN_MACOS_ENTITLEMENTS: Apps/Maskin/Maskin-macOS.entitlements
           # ASSUMPTION: production serves API and web from this origin (maskin.io is what the
           # repo's deep-link/docs URLs use). Confirm before the first TestFlight build.

@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { deviceTokens, liveActivityTokens, sessions } from '@maskin/db/schema'
+import { deviceTokens, liveActivityTokens } from '@maskin/db/schema'
 import { liveActivityTokenResponseSchema, registerLiveActivityTokenSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -8,6 +8,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { flushLiveActivityCard } from '../services/live-activity-push'
 import { resolveAuditWorkspace } from './devices'
 
 type Env = {
@@ -27,7 +28,7 @@ function serialize(row: typeof liveActivityTokens.$inferSelect) {
 		id: row.id,
 		kind: row.kind as z.infer<typeof liveActivityTokenResponseSchema>['kind'],
 		device_id: row.deviceId,
-		session_id: row.sessionId,
+		workspace_id: row.workspaceId,
 		updated_at: row.updatedAt.toISOString(),
 	}
 }
@@ -63,7 +64,7 @@ const registerRoute = createRoute({
 	tags: ['Devices'],
 	summary: 'Register an ActivityKit push token (push-to-start or per-activity update)',
 	description:
-		'`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.',
+		"`push_to_start` is one per device and rotates (upserted on device). `update` belongs to the device's Agents working activity for the workspace in `X-Workspace-Id`; a new activity mints a new token (the old one is deleted by the app). The device must be one of the caller’s registered devices.",
 	request: {
 		body: { content: { 'application/json': { schema: registerLiveActivityTokenSchema } } },
 	},
@@ -77,7 +78,7 @@ const registerRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Device or session not found',
+			description: 'Device or workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -95,18 +96,22 @@ app.openapi(registerRoute, async (c) => {
 		.limit(1)
 	if (!device) return c.json(createApiError('NOT_FOUND', 'Device not found'), 404)
 
-	let sessionWorkspaceId: string | undefined
+	// An update token belongs to the aggregate activity of one workspace, named by the header the
+	// app already sends on every request. The header is also what authMiddleware checks, but this
+	// route must not trust a missing one, so require it and check membership here too.
+	let workspaceId: string | null = null
 	if (body.kind === 'update') {
-		// By-ID resource: the workspace comes from the session row, so check membership here.
-		const [session] = await db
-			.select({ workspaceId: sessions.workspaceId })
-			.from(sessions)
-			.where(eq(sessions.id, body.session_id as string))
-			.limit(1)
-		if (!session || !(await isWorkspaceMember(db, actorId, session.workspaceId))) {
-			return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+		const header = c.req.header('X-Workspace-Id')
+		if (!header || !UUID_RE.test(header)) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'X-Workspace-Id is required for update tokens'),
+				400,
+			)
 		}
-		sessionWorkspaceId = session.workspaceId
+		if (!(await isWorkspaceMember(db, actorId, header))) {
+			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		}
+		workspaceId = header
 	}
 
 	const now = new Date()
@@ -116,7 +121,7 @@ app.openapi(registerRoute, async (c) => {
 		deviceId: body.device_id,
 		kind: body.kind,
 		token,
-		sessionId: body.kind === 'update' ? (body.session_id as string) : null,
+		workspaceId,
 		createdAt: now,
 		updatedAt: now,
 	}
@@ -135,9 +140,9 @@ app.openapi(registerRoute, async (c) => {
 					.insert(liveActivityTokens)
 					.values(values)
 					.onConflictDoUpdate({
-						target: [liveActivityTokens.deviceId, liveActivityTokens.sessionId],
+						target: [liveActivityTokens.deviceId, liveActivityTokens.token],
 						targetWhere: sql`${liveActivityTokens.kind} = 'update'`,
-						set: { token, actorId, updatedAt: now },
+						set: { actorId, workspaceId, updatedAt: now },
 					})
 					.returning()
 	if (!row) return c.json(createApiError('INTERNAL_ERROR', 'Failed to register token'), 400)
@@ -145,11 +150,15 @@ app.openapi(registerRoute, async (c) => {
 	await audit(
 		db,
 		actorId,
-		sessionWorkspaceId,
+		workspaceId ?? undefined,
 		c.req.header('X-Workspace-Id'),
 		row.createdAt.getTime() === now.getTime() ? 'created' : 'updated',
 		row,
 	)
+	// The agents may have finished before this token existed: deliver the end (or latest state) that had nowhere to go.
+	if (row.kind === 'update' && row.workspaceId) {
+		await flushLiveActivityCard(actorId, row.workspaceId)
+	}
 	return c.json(serialize(row), 200)
 })
 
