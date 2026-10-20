@@ -25,6 +25,7 @@ const SETTINGS_SECTIONS = [
 	'Skills',
 	'MCP',
 	'Billing',
+	'Keychain',
 ]
 const RETIRED_LABELS = ['LLM']
 
@@ -37,6 +38,7 @@ const DEEP_LINKS: Array<{ label: string; path: string }> = [
 	{ label: 'Skills', path: '/skills' },
 	{ label: 'MCP', path: '/mcp' },
 	{ label: 'Billing', path: '/billing' },
+	{ label: 'Keychain', path: '/keychain' },
 ]
 
 async function gotoSettings(page: Page, workspaceId: string, subPath = '') {

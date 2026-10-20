@@ -6540,6 +6540,73 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'request_keychain_credential',
+		{
+			description: tools.request_keychain_credential.description,
+			inputSchema: tools.request_keychain_credential.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// The human fills in a card in the chat; the value goes straight to the vault and
+			// never passes through the model. A 409 means the session has no human on the
+			// other end (autonomous run, or not an agent session at all).
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_keychain_credential',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return {
+					_meta: toolMeta,
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'There is no chat to show a card in. Say in your reply what credential you need and where the user can add it (Settings → Keychain). Do not ask for the secret in plain text.',
+						},
+					],
+				}
+			}
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/keychain-card`,
+					{
+						kind: args.kind,
+						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
+						...(args.hint ? { hint: args.hint } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)
+			} catch (err) {
+				if (parseApiErrorStatus(err) !== 409) throw err
+				return {
+					_meta: toolMeta,
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'This session has no person in a chat to ask, so no card could be shown. Say in your reply what credential you need and where it can be added (Settings → Keychain). Do not ask for the secret in plain text.',
+						},
+					],
+				}
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'disconnect_integration',
 		{
 			description: tools.disconnect_integration.description,

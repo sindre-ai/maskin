@@ -1767,6 +1767,34 @@ export const tools = {
 				),
 		}),
 	},
+	request_keychain_credential: {
+		description:
+			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with the credential in your environment: an API key is the env var `KEYCHAIN_BYO_APIKEY_<NAME>`, a login is `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `KEYCHAIN_BYO_LOGIN_<NAME>_PASSWORD`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			kind: z
+				.enum(['api_key', 'login'])
+				.describe(
+					'"api_key" for a single secret (API key, token). "login" for a username and password.',
+				),
+			suggested_name: z
+				.string()
+				.min(1)
+				.max(80)
+				.optional()
+				.describe(
+					'A short name the card pre-fills for the credential, naming the service, e.g. "e-conomic". The user can change it.',
+				),
+			hint: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To log in and read the latest invoices."',
+				),
+		}),
+	},
 	disconnect_integration: {
 		description: 'Disconnect (revoke) an integration by ID',
 		inputSchema: z.object({

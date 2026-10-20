@@ -62,6 +62,8 @@ export const queryKeys = {
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		auditLog: (workspaceId: string, integrationId: string) =>
+			['integrations', workspaceId, integrationId, 'audit-log'] as const,
 		githubLinkable: (workspaceId: string) =>
 			['integrations', workspaceId, 'github', 'linkable'] as const,
 		githubPendingSelection: (workspaceId: string, integrationId: string) =>
@@ -106,6 +108,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'mention-object', objectId] as const,
 		byConversation: (workspaceId: string, conversationId: string) =>
 			['sessions', workspaceId, 'conversation', conversationId] as const,
+		firstOutput: (workspaceId: string, sessionId: string) =>
+			['sessions', workspaceId, 'first-output', sessionId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,

@@ -3,10 +3,11 @@ import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { toolName } from '@maskin/mcp/linkedin'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { credentialMock } = vi.hoisted(() => ({ credentialMock: vi.fn() }))
+const { getCredentialMock } = vi.hoisted(() => ({ getCredentialMock: vi.fn() }))
 vi.mock('../../../../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: credentialMock,
+	findIntegrationRow: vi.fn(),
+	getCredential: getCredentialMock,
 }))
 vi.mock('../../../../../lib/workspace-auth', () => ({ isWorkspaceMember: async () => true }))
 vi.mock('../../../../../lib/crypto', () => ({
@@ -113,11 +114,9 @@ beforeEach(() => {
 	mock.resetInbox()
 	process.env.UNIPILE_BASE_URL = mock.baseUrl
 	process.env.UNIPILE_API_KEY = 'test-api-key'
-	credentialMock.mockResolvedValue({
+	getCredentialMock.mockResolvedValue({
 		id: 'int-1',
-		actorId: 'sebastian',
-		status: 'active',
-		credentials: 'encrypted',
+		value: JSON.stringify({ account_id: 'acc_1' }),
 	})
 })
 

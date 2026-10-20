@@ -6,6 +6,7 @@ import {
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatIntegrationConnectAsMarkdown,
+	formatKeychainRequestAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionActivityQuerySchema,
@@ -13,6 +14,7 @@ import {
 	sessionAskSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
+	sessionKeychainCardSchema,
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
 	sessionLogsDeepQuerySchema,
@@ -25,6 +27,7 @@ import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -945,6 +948,17 @@ app.openapi(inputSessionRoute, (async (c) => {
 		)
 	}
 
+	// Keychain backstop; the turn goes straight to the agent's stdin and into the chat.
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId,
+		actorType: c.get('actorType'),
+		entityType: 'session',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
+
 	try {
 		await sessionManager.writeInput(
 			id,
@@ -1268,6 +1282,118 @@ app.openapi(connectCardRoute, (async (c) => {
 
 	return c.json({ posted: true, message_id: created.id })
 }) as RouteHandler<typeof connectCardRoute, Env>)
+
+// POST /:id/keychain-card - Ask the human for a credential with a card in the chat
+//
+// Called by the `request_keychain_credential` MCP tool when it runs inside a chat
+// session. The human types the credential into the card, which sends it straight to
+// the vault, so a password never passes through the model and the agent never has to
+// ask for one in plain text. Same gates as /connect-card: only the agent that owns an
+// interactive chat session may post, and anything else gets a 409 so the tool can say
+// there is nobody to ask.
+const keychainCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/keychain-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a Keychain credential card into the session chat',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionKeychainCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ posted: z.literal(true), message_id: z.number() }),
+				},
+			},
+			description: 'Card posted',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(keychainCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { kind, suggested_name: suggestedName, hint } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is nobody to show a card to',
+			),
+			409,
+		)
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatKeychainRequestAsMarkdown(kind, suggestedName, hint),
+		metadata: {
+			keychain_request: {
+				session_id: session.id,
+				kind,
+				...(suggestedName ? { suggested_name: suggestedName } : {}),
+				...(hint ? { hint } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+
+	// Null means a unique constraint suppressed the insert, which this caller has
+	// no dedupe key to trigger. Surface it as a 500, never a 409 (see /ask).
+	if (!created) {
+		logger.error('Keychain card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			kind,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Keychain card could not be posted'), 500)
+	}
+
+	// The kind only: the suggested name and hint are the agent's words, not secrets,
+	// but there is no reason for them to be in a log line either.
+	logger.info('Posted keychain card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		kind,
+	})
+
+	return c.json({ posted: true as const, message_id: created.id }, 200)
+}) as RouteHandler<typeof keychainCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({
