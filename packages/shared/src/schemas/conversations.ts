@@ -181,6 +181,21 @@ export const messageIntegrationConnectSchema = z.object({
 	provider: z.string().min(1).max(100),
 })
 
+/**
+ * Backend-owned marker for a message the server put in a chat on its own
+ * (nobody typed it). One object, no closed enum and no discriminated union, so
+ * a new kind never needs a schema change. kind is a plain string; the proactive
+ * capability note uses kind 'proactive' with a reason and a dedupe_key.
+ */
+export const messageDeliverySchema = z.object({
+	kind: z.string().min(1).max(40),
+	version: z.number().int().positive().optional(),
+	reason: z.string().min(1).max(80).optional(),
+	dedupe_key: z.string().min(1).max(200).optional(),
+	object_id: z.string().uuid().optional(),
+	comment_event_id: z.number().int().positive().optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -207,6 +222,8 @@ export const messageMetadataSchema = z.object({
 	integration_connect: messageIntegrationConnectSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/** Backend-owned: how the server itself put this message in the chat. */
+	delivery: messageDeliverySchema.optional(),
 })
 
 /**
@@ -224,6 +241,8 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		question: _question,
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
+		helper_return: _helperReturn,
+		delivery: _delivery,
 		...rest
 	} = metadata
 	return rest as T
@@ -315,6 +334,7 @@ export const updateConversationParticipantStateSchema = z
 	})
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
+export type MessageDelivery = z.infer<typeof messageDeliverySchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
 export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>
