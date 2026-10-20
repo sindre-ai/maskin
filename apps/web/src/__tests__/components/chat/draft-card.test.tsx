@@ -159,6 +159,18 @@ describe('DraftCard', () => {
 		expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
 	})
 
+	it('uses the label and approve text of a draft kind the app has no preset for', () => {
+		renderCard({
+			object_id: 'task-1',
+			kind: 'text',
+			label: 'Slack message',
+			approve_label: 'Approve and post',
+		})
+
+		expect(screen.getByText('SLACK MESSAGE')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Approve and post' })).toBeInTheDocument()
+	})
+
 	it('uses the post verb and no email fields for a LinkedIn post', () => {
 		renderCard({ object_id: 'task-1', kind: 'linkedin_post' })
 

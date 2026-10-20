@@ -1,6 +1,13 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, conversations, messages, objects, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	conversations,
+	messages,
+	objects,
+	workspaceMembers,
+	workspaces,
+} from '@maskin/db/schema'
 import { draftTaskStateToMetadata, updateObjectSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
@@ -129,7 +136,9 @@ describe('POST /sessions/:id/draft', () => {
 		const [task] = await tasksIn(workspaceId)
 		expect(task?.id).toBe(body.object_id)
 		expect(task?.type).toBe('task')
-		expect(task?.status).toBe('in_review')
+		// This workspace's task statuses have no in_review or backlog, and `todo` would
+		// dispatch a driver, so the draft waits in the one status that starts nothing.
+		expect(task?.status).toBe('blocked')
 		expect(task?.driver).toBe(agentId)
 		expect(task?.content).toBe(EMAIL.body)
 		expect(task?.metadata).toMatchObject({
@@ -171,6 +180,214 @@ describe('POST /sessions/:id/draft', () => {
 		})
 
 		expect(parsed.success).toBe(true)
+	})
+
+	describe('a workspace-defined object type', () => {
+		async function defineType(statuses: string[]) {
+			const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+			const settings = (ws?.settings ?? {}) as { statuses?: Record<string, string[]> }
+			await db
+				.update(workspaces)
+				.set({
+					settings: { ...settings, statuses: { ...settings.statuses, outbound_message: statuses } },
+				})
+				.where(eq(workspaces.id, workspaceId))
+		}
+
+		it("creates the draft as the requested type, in the type's own first status when it has no in_review", async () => {
+			await defineType(['drafted', 'approved_to_send', 'sent'])
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(
+				postDraft(session.id, workspaceId, {
+					kind: 'text',
+					label: 'Slack message',
+					approve_label: 'Approve and post',
+					object_type: 'outbound_message',
+					body: 'Heads up: deploy at 14:00.',
+				}),
+			)
+			expect(res.status).toBe(200)
+
+			const [row] = await tasksIn(workspaceId)
+			expect(row).toMatchObject({ type: 'outbound_message', status: 'drafted' })
+			const [message] = await messagesFor(conversationId)
+			expect((message?.metadata as { draft?: Record<string, unknown> }).draft).toMatchObject({
+				kind: 'text',
+				label: 'Slack message',
+				approve_label: 'Approve and post',
+			})
+		})
+
+		it('prefers in_review when the type has it, and accepts an explicit status', async () => {
+			await defineType(['drafted', 'in_review', 'sent'])
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+			const base = { kind: 'text', object_type: 'outbound_message', body: 'Hi' }
+
+			await app.request(postDraft(session.id, workspaceId, base))
+			await app.request(postDraft(session.id, workspaceId, { ...base, status: 'sent' }))
+
+			const rows = await tasksIn(workspaceId)
+			expect(rows.map((r) => r.status).sort()).toEqual(['in_review', 'sent'])
+		})
+
+		it('puts a task in backlog when there is no in_review, never in todo', async () => {
+			await defineType(['x'])
+			const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+			const settings = ws?.settings as { statuses: Record<string, string[]> }
+			await db
+				.update(workspaces)
+				.set({
+					settings: {
+						...settings,
+						statuses: { ...settings.statuses, task: ['todo', 'backlog', 'in_progress', 'done'] },
+					},
+				})
+				.where(eq(workspaces.id, workspaceId))
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			await app.request(postDraft(session.id, workspaceId, { kind: 'text', body: 'Hi' }))
+
+			expect((await tasksIn(workspaceId))[0]?.status).toBe('backlog')
+		})
+
+		it('asks for a status when every task status starts or ends work', async () => {
+			const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+			const settings = ws?.settings as { statuses: Record<string, string[]> }
+			await db
+				.update(workspaces)
+				.set({
+					settings: { ...settings, statuses: { ...settings.statuses, task: ['todo', 'done'] } },
+				})
+				.where(eq(workspaces.id, workspaceId))
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(
+				postDraft(session.id, workspaceId, { kind: 'text', body: 'Hi' }),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await tasksIn(workspaceId)).toHaveLength(0)
+		})
+
+		it('rejects a type the workspace does not define and lists the ones it does', async () => {
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(
+				postDraft(session.id, workspaceId, {
+					kind: 'text',
+					object_type: 'carrier_pigeon',
+					body: 'Hi',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(JSON.stringify(await res.json())).toContain('task')
+			expect(await tasksIn(workspaceId)).toHaveLength(0)
+		})
+
+		it('rejects a status the type does not have', async () => {
+			await defineType(['drafted', 'sent'])
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(
+				postDraft(session.id, workspaceId, {
+					kind: 'text',
+					object_type: 'outbound_message',
+					status: 'in_review',
+					body: 'Hi',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await tasksIn(workspaceId)).toHaveLength(0)
+		})
+	})
+
+	describe('attaching to an existing object', () => {
+		async function insertContent(overrides: { workspaceId?: string } = {}) {
+			const [row] = await db
+				.insert(objects)
+				.values({
+					workspaceId: overrides.workspaceId ?? workspaceId,
+					type: 'content',
+					title: 'LinkedIn: control planes',
+					content: 'Old text',
+					status: 'proposed',
+					metadata: { content_type: 'linkedin_post', primary_keyword: 'agent orchestration' },
+					createdBy: agentId,
+				})
+				.returning()
+			if (!row) throw new Error('failed to seed content object')
+			return row
+		}
+
+		const POST = { kind: 'linkedin_post', body: 'We shipped dedup this week.' }
+
+		it('writes the draft onto the object, keeps its status and metadata, and creates no task', async () => {
+			const content = await insertContent()
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(
+				postDraft(session.id, workspaceId, { ...POST, object_id: content.id }),
+			)
+			expect(res.status).toBe(200)
+			expect(((await res.json()) as { object_id: string }).object_id).toBe(content.id)
+
+			const rows = await tasksIn(workspaceId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]).toMatchObject({
+				id: content.id,
+				type: 'content',
+				status: 'proposed',
+				content: POST.body,
+			})
+			expect(rows[0]?.metadata).toMatchObject({
+				content_type: 'linkedin_post',
+				primary_keyword: 'agent orchestration',
+				draft_state: 'draft',
+				draft_original_body: POST.body,
+			})
+			const [message] = await messagesFor(conversationId)
+			expect((message?.metadata as { draft?: { object_id: string } }).draft?.object_id).toBe(
+				content.id,
+			)
+		})
+
+		it('logs an updated event on the object, typed by the object', async () => {
+			const content = await insertContent()
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			await app.request(postDraft(session.id, workspaceId, { ...POST, object_id: content.id }))
+
+			const rows = await db.select().from(events).where(eq(events.entityId, content.id))
+			expect(rows.map((r) => [r.action, r.entityType])).toContainEqual(['updated', 'content'])
+		})
+
+		it('answers 404 for an object in another workspace and writes nothing', async () => {
+			const otherWs = await insertWorkspace(db, humanId)
+			if (!otherWs) throw new Error('failed to seed workspace')
+			const foreign = await insertContent({ workspaceId: otherWs.id })
+			const session = await chatSession()
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(
+				postDraft(session.id, workspaceId, { ...POST, object_id: foreign.id }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+			const [untouched] = await db.select().from(objects).where(eq(objects.id, foreign.id))
+			expect(untouched?.content).toBe('Old text')
+		})
 	})
 
 	it('logs a created event for the task', async () => {

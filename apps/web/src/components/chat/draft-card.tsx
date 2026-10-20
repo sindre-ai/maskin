@@ -24,6 +24,7 @@ const KINDS: Record<DraftKind, { chip: string; approve: string; done: string }> 
 		approve: 'Approve and send',
 		done: 'Approved to send',
 	},
+	text: { chip: 'DRAFT', approve: 'Approve', done: 'Approved' },
 }
 
 /** Past this many characters a draft folds to a few lines until opened. */
@@ -66,7 +67,12 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 	const state = readDraftTaskState(task?.metadata)
 	if (!task || !state) return null
 
-	const kind = KINDS[draft.kind]
+	const preset = KINDS[draft.kind]
+	const kind = {
+		chip: draft.label?.toUpperCase() ?? preset.chip,
+		approve: draft.approve_label ?? preset.approve,
+		done: preset.done,
+	}
 	const savedBody = task.content ?? ''
 	const savedSubject = state.subject ?? ''
 	const shownBody = body ?? savedBody

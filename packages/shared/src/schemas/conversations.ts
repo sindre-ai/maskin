@@ -185,7 +185,7 @@ export const messageIntegrationConnectSchema = z.object({
  * What a draft is, so the card can pick its chip, its fields and its button
  * verb. A new kind is a new member here and a row in the web card's KIND table.
  */
-export const draftKindSchema = z.enum(['email', 'linkedin_post', 'linkedin_message'])
+export const draftKindSchema = z.enum(['email', 'linkedin_post', 'linkedin_message', 'text'])
 
 /**
  * An agent's draft of an outbound text, surfaced into chat as an editable card.
@@ -203,6 +203,9 @@ export const messageDraftSchema = z.object({
 	kind: draftKindSchema,
 	/** Recipient shown read-only on the card, e.g. "Mette Holm, Northwind". Email only. */
 	to: z.string().min(1).max(300).optional(),
+	/** Chip text and button text for a `text` kind, or to override a preset. */
+	label: z.string().min(1).max(30).optional(),
+	approve_label: z.string().min(1).max(40).optional(),
 	/** The channel's hard limit in characters, e.g. 300 for a LinkedIn connection note. */
 	char_limit: z.number().int().positive().max(100_000).optional(),
 })
@@ -396,7 +399,37 @@ export const sessionConnectCardSchema = z.object({
 export const sessionDraftSchema = z
 	.object({
 		kind: draftKindSchema,
-		/** The task's title; derived from the kind and recipient when absent. */
+		/**
+		 * An existing object that already holds this draft, e.g. the `content` object
+		 * of a LinkedIn post. The card attaches to it and the object's status is left
+		 * alone. Absent: a task is created to hold the draft, which is where emails
+		 * and messages live because they have no object type of their own.
+		 */
+		object_id: z.string().uuid().optional(),
+		/**
+		 * Chip text on the card, e.g. "SLACK MESSAGE". The `kind` presets cover the
+		 * common cases; anything else is `kind: 'text'` plus a label of your own.
+		 */
+		label: z.string().min(1).max(30).optional(),
+		/** Text of the approve button, e.g. "Approve and send". Defaults per kind. */
+		approve_label: z.string().min(1).max(40).optional(),
+		/**
+		 * The object type that holds a new draft. Workspaces define their own types, so
+		 * this is whatever the workspace has (see get_workspace_schema); defaults to
+		 * `task`. Ignored when `object_id` is given.
+		 */
+		object_type: z
+			.string()
+			.min(1)
+			.max(50)
+			.regex(/^[a-z][a-z0-9_]*$/)
+			.optional(),
+		/**
+		 * Status for a new draft object. Defaults to `in_review` when the type has it,
+		 * else the type's first configured status. Ignored when `object_id` is given.
+		 */
+		status: z.string().min(1).max(100).optional(),
+		/** The new object's title; derived from the kind and recipient when absent. */
 		title: z.string().min(1).max(200).optional(),
 		body: z.string().min(1).max(100_000),
 		to: z.string().min(1).max(300).optional(),
@@ -425,6 +458,7 @@ export const DRAFT_KIND_LABELS: Record<DraftKind, string> = {
 	email: 'email',
 	linkedin_post: 'LinkedIn post',
 	linkedin_message: 'LinkedIn message',
+	text: 'draft',
 }
 
 /**

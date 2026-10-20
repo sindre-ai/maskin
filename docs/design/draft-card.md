@@ -32,15 +32,33 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 
 ## Rules
 
-1. **The card is a view of a task, not a copy.** The task holds the text:
-   `content` is the body, flat `draft_*` keys in `metadata` hold the rest
-   (`draft_state`, `draft_subject`, `draft_original_subject`, `draft_original_body`,
-   `draft_approved_at`). The keys are flat because object metadata is flat
-   (`safeMetadataSchema`); a nested object is a 400. An edit in chat, For you or the
-   task page is one edit. Like the Connect card, the card reads live and never
-   stores state on the message.
+1. **The card is a view of an object, not a copy, and the object type is the workspace's
+   choice.** Workspaces define their own object types, so nothing here hard-codes one.
+   - A draft that already has a home (a LinkedIn post's `content` object) is attached by
+     `object_id`: the card points at it, its body becomes the draft text, and its
+     status is left alone, because moving a content object (for example to `approved`)
+     can trigger publishing.
+   - Otherwise a new object is created. The agent picks its type with `object_type`
+     (it reads `get_workspace_schema` to see what exists); the default is `task`, which
+     is where emails and messages land when the workspace has no type of their own.
+     The route checks the type against the workspace (400 listing the valid types).
+   - New objects start in `status` if given, else `in_review` if the type has it, else
+     a status that starts nothing. For a task that means skipping `todo` (dispatches a
+     driver), `in_progress`, `validated`, `done` and `discarded`: backlog, or another
+     waiting status, or a 400 asking for an explicit one. The row is written directly,
+     so `POST /api/objects`' rule against creating a task already in review does not
+     apply; nobody is meant to start this one.
+   - Draft kinds are open too: `email`, `linkedin_post`, `linkedin_message` are presets
+     for layout and button text; anything else is `kind: text` with its own `label`
+     (chip) and `approve_label`.
+
+   Either way the object holds the text: `content` is the body, flat `draft_*` keys in
+   `metadata` hold the rest (merged into whatever metadata the object already has;
+   the keys are flat because object metadata is flat, and a nested object is a 400).
+   An edit in chat, For you or the task page is one edit. Like the Connect card, the
+   card reads live and never stores state on the message.
 2. **The message carries a pointer and the text.** `metadata.draft`
-   (`messageDraftSchema`: task id, kind, `to`, `char_limit`) is backend-owned and
+   (`messageDraftSchema`: object id, kind, `to`, `label`, `char_limit`) is backend-owned and
    stripped from client input. The message `content` is
    `formatDraftAsMarkdown(...)`, so MCP readers, notifications and search see the
    actual text. The two channels must say the same thing.
@@ -97,11 +115,15 @@ A. **Task-backed (this PR stack).** The task holds the text; chat and For you ar
 B. **`draft_final` on the reply (For You spec).** One writer. Needs the card, route
    and tool reworked, and the chat card would read a decision block, not a task.
 
-**Chosen: A.** Chat uses the task-backed draft, and the For You card should point at the
+**Chosen: A, refined to object-backed.** Chat uses the object-backed draft (a content
+object for a LinkedIn post, a task otherwise), and the For You card should point at the
 same task instead of carrying its own `draft_final`. That needs the For You spec
 amended by its Architect and CTO (storage model only; the always-editable box, Revert
 to draft, plain text, the confirm tap and the flag stay as specified). Until they agree
-the PRs stay drafts.
+the PRs stay drafts. For LinkedIn posts the conflict is sharper than for tasks: the
+For You spec says the card never writes to the content object body, and attaching to a
+content object means the human's edit does land in that body. The Copywriter must then
+read the post back from the object, not from its own copy.
 
 ## Built
 
@@ -118,6 +140,7 @@ the PRs stay drafts.
 
 **Slice 2: the writer**
 - `POST /api/sessions/:id/draft` (`apps/dev/src/routes/sessions.ts`) creates the task
+  (or, with `object_id`, writes the draft onto that object and logs an `updated` event)
   and posts the card message in one transaction, so a chat never shows a card for
   a task that does not exist. The task is `in_review`, driven by the agent that
   posted it; a `created` event is logged. Same gate as `/connect-card`: only the

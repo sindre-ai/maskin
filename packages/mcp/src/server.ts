@@ -6143,6 +6143,11 @@ export function createMcpServer(config: McpConfig) {
 					`/api/sessions/${sessionId}/draft`,
 					{
 						kind: args.kind,
+						object_id: args.object_id,
+						object_type: args.object_type,
+						status: args.status,
+						label: args.label,
+						approve_label: args.approve_label,
 						body: args.body,
 						to: args.to,
 						subject: args.subject,
@@ -6152,7 +6157,7 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)) as { message_id: number; object_id: string }
 				return reply(
-					`The draft is now in the chat as an editable card, saved as task ${posted.object_id}. Nothing has been sent. Do not repeat the draft in your own words. End your turn now, without a closing message; when the person approves they will say so and mention you. Then read task ${posted.object_id}, check its draft_state is still approved, and send its content, which may differ from what you wrote.`,
+					`The draft is now in the chat as an editable card, saved on object ${posted.object_id}. Nothing has been sent. Do not repeat the draft in your own words. End your turn now, without a closing message; when the person approves they will say so and mention you. Then read object ${posted.object_id}, check its draft_state is still approved, and send its content, which may differ from what you wrote.`,
 				)
 			} catch (err) {
 				if (parseApiErrorStatus(err) === 409) {

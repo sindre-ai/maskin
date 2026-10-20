@@ -1747,12 +1747,43 @@ export const tools = {
 	},
 	post_draft: {
 		description:
-			'Show the user a draft of an email, LinkedIn post or LinkedIn message as an editable card in the chat, so they can edit it and approve it without leaving the conversation. Use this for every text you want approved before it is sent: never paste the draft into your reply as plain text or save it in a knowledge object. The draft is saved as a task assigned to you, in review; the user edits the text on the card and presses Approve. Nothing is sent by this tool. When the user approves, they say so in the chat and mention you. Then read the task: send only if its metadata `draft_state` is still "approved" (they can undo an approval), and send its `content` exactly, because it holds the text they approved, which may differ from what you wrote. Needs a chat with a person on the other end; an autonomous session has no chat, so it fails with a conflict. Email needs `to` and `subject`. Set `char_limit` when the channel has a hard limit (a LinkedIn connection note is 300 characters). Post one card per draft and end your turn once they are posted.',
+			'Show the user a draft of an email, LinkedIn post or LinkedIn message as an editable card in the chat, so they can edit it and approve it without leaving the conversation. Use this for every text you want approved before it is sent: never paste the draft into your reply as plain text or save it in a knowledge object. The draft is saved on an object: pass `object_id` for one that already holds it (a LinkedIn post\'s content object), otherwise a task assigned to you, in review, is created; the user edits the text on the card and presses Approve. Nothing is sent by this tool. When the user approves, they say so in the chat and mention you. Then read the task: send only if its metadata `draft_state` is still "approved" (they can undo an approval), and send its `content` exactly, because it holds the text they approved, which may differ from what you wrote. Needs a chat with a person on the other end; an autonomous session has no chat, so it fails with a conflict. Email needs `to` and `subject`. Set `char_limit` when the channel has a hard limit (a LinkedIn connection note is 300 characters). Post one card per draft and end your turn once they are posted.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
-				.enum(['email', 'linkedin_post', 'linkedin_message'])
-				.describe('What is being drafted. Picks the card layout and the approve button.'),
+				.enum(['email', 'linkedin_post', 'linkedin_message', 'text'])
+				.describe(
+					'What is being drafted. Picks the card layout and the approve button: email shows To and Subject. For anything else use "text" with your own `label`.',
+				),
+			label: z
+				.string()
+				.optional()
+				.describe(
+					'Chip text on the card, e.g. "Slack message". For a "text" draft, or to rename a preset.',
+				),
+			approve_label: z
+				.string()
+				.optional()
+				.describe('Text of the approve button, e.g. "Approve and send". Defaults per kind.'),
+			object_type: z
+				.string()
+				.optional()
+				.describe(
+					'Object type that holds a new draft. Object types are defined per workspace: call get_workspace_schema and pick the one that fits. Defaults to "task". Ignored when object_id is given.',
+				),
+			status: z
+				.string()
+				.optional()
+				.describe(
+					'Status for the new object. Defaults to "in_review" if the type has it, otherwise the type\'s first status. Ignored when object_id is given.',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					"The object that already holds this draft. For a LinkedIn post pass the content object's id: the card attaches to it, its body becomes the text you give here, and its status is left alone. Leave it out for an email or a message, which have no object type of their own: a task is created to hold the draft.",
+				),
 			body: z.string().min(1).describe('The text to send, in plain text or light markdown.'),
 			to: z
 				.string()

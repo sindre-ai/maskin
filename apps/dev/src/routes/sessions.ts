@@ -1,6 +1,15 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, objects, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	integrations,
+	objects,
+	sessionLogs,
+	sessions,
+	triggers,
+	workspaces,
+} from '@maskin/db/schema'
+import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	DRAFT_KIND_LABELS,
 	MULTI_INSTALL_PROVIDERS,
@@ -27,7 +36,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
-import { createApiError, validationFailureHook } from '../lib/errors'
+import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
@@ -41,6 +50,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
+import type { WorkspaceSettings } from '../lib/types'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
@@ -1307,7 +1317,7 @@ const draftRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Session not found',
+			description: 'Session not found, or object_id is not an object in this workspace',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -1350,35 +1360,116 @@ app.openapi(draftRoute, (async (c) => {
 	const label = DRAFT_KIND_LABELS[draft.kind]
 	const title = draft.title ?? `Approve ${label}${draft.to ? ` to ${draft.to}` : ''}`
 
+	// A new draft lives on an object of a type the workspace defines, so the type
+	// and its status come from the workspace settings, never from a constant here.
+	// `task` is only the default for kinds with no object type of their own.
+	let newType = 'task'
+	let newStatus = 'in_review'
+	if (!draft.object_id) {
+		const [workspace] = await db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, session.workspaceId))
+			.limit(1)
+		const settings = (workspace?.settings ?? {}) as WorkspaceSettings
+		newType = draft.object_type ?? 'task'
+		const validTypes = getAllValidTypes(
+			getEnabledModuleIds(settings as Record<string, unknown>),
+			settings,
+		)
+		if (!validTypes.includes(newType)) {
+			return c.json(createInvalidTypeError(newType, 'object_type', validTypes), 400)
+		}
+		const configured = settings.statuses?.[newType]
+		if (configured?.length) {
+			const picked = draft.status ?? defaultDraftStatus(newType, configured)
+			if (!picked) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						`Pass a status: every status of '${newType}' starts work, and a draft only waits for review`,
+						[{ field: 'status', message: `Valid statuses: ${configured.join(', ')}` }],
+						`Valid statuses for '${newType}': ${configured.join(', ')}`,
+					),
+					400,
+				)
+			}
+			newStatus = picked
+			if (!configured.includes(newStatus)) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						`Invalid status '${newStatus}' for type '${newType}'`,
+						[{ field: 'status', message: `Valid statuses: ${configured.join(', ')}` }],
+						`Valid statuses for '${newType}': ${configured.join(', ')}`,
+					),
+					400,
+				)
+			}
+		} else if (draft.status) {
+			newStatus = draft.status
+		}
+	}
+
+	const draftMetadata = (existing: Record<string, unknown> | null) => ({
+		...existing,
+		...draftTaskStateToMetadata({
+			state: 'draft',
+			subject: draft.subject,
+			original_subject: draft.subject,
+			original_body: draft.body,
+		}),
+	})
+
 	const posted = await db
 		.transaction(async (tx) => {
-			const [task] = await tx
-				.insert(objects)
-				.values({
-					workspaceId: session.workspaceId,
-					type: 'task',
-					title,
-					content: draft.body,
-					// Waiting on the person's review. The agent drives it: once approved,
-					// sending is its job.
-					status: 'in_review',
-					metadata: draftTaskStateToMetadata({
-						state: 'draft',
-						subject: draft.subject,
-						original_subject: draft.subject,
-						original_body: draft.body,
-					}),
-					driver: session.actorId,
-					createdBy: session.actorId,
-				})
-				.returning()
+			let task: typeof objects.$inferSelect | undefined
+			if (draft.object_id) {
+				// Attach to an object that already holds the draft (a LinkedIn post's
+				// `content` object). Its status is not ours to move: for content it can
+				// trigger publishing. Only the body and the draft_* keys change.
+				const [existing] = await tx
+					.select()
+					.from(objects)
+					.where(and(eq(objects.id, draft.object_id), eq(objects.workspaceId, session.workspaceId)))
+					.for('update')
+					.limit(1)
+				if (!existing) throw new DraftObjectNotFound()
+				;[task] = await tx
+					.update(objects)
+					.set({
+						content: draft.body,
+						metadata: draftMetadata(existing.metadata as Record<string, unknown> | null),
+						updatedAt: new Date(),
+					})
+					.where(eq(objects.id, existing.id))
+					.returning()
+			} else {
+				;[task] = await tx
+					.insert(objects)
+					.values({
+						workspaceId: session.workspaceId,
+						type: newType,
+						title,
+						content: draft.body,
+						// Written directly, so POST /api/objects' rule against creating a task
+						// already in review does not apply: nobody is meant to start this one,
+						// it waits for its person. The agent drives it; once approved, sending
+						// is its job.
+						status: newStatus,
+						metadata: draftMetadata(null),
+						driver: session.actorId,
+						createdBy: session.actorId,
+					})
+					.returning()
+			}
 			if (!task) return null
 
 			await recordEvent(tx, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
-				action: 'created',
-				entityType: 'task',
+				action: draft.object_id ? 'updated' : 'created',
+				entityType: task.type,
 				entityId: task.id,
 				data: task,
 				provenance: { sessionId: session.id, entityKind: 'object' },
@@ -1394,6 +1485,8 @@ app.openapi(draftRoute, (async (c) => {
 						object_id: task.id,
 						kind: draft.kind,
 						...(draft.to ? { to: draft.to } : {}),
+						...(draft.label ? { label: draft.label } : {}),
+						...(draft.approve_label ? { approve_label: draft.approve_label } : {}),
 						...(draft.char_limit ? { char_limit: draft.char_limit } : {}),
 					},
 				},
@@ -1406,8 +1499,13 @@ app.openapi(draftRoute, (async (c) => {
 		})
 		.catch((err) => {
 			if (err instanceof DraftMessageNotInserted) return null
+			if (err instanceof DraftObjectNotFound) return 'not_found' as const
 			throw err
 		})
+
+	if (posted === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Object not found in this workspace'), 404)
+	}
 
 	if (!posted) {
 		logger.error('Draft card insert returned no row', {
@@ -1429,7 +1527,31 @@ app.openapi(draftRoute, (async (c) => {
 	return c.json({ message_id: posted.messageId, object_id: posted.objectId })
 }) as RouteHandler<typeof draftRoute, Env>)
 
+/**
+ * Task statuses at which the platform puts a driver to work (`todo` dispatches the
+ * Drive-the-task trigger) or that mean the work is over. A draft waiting for its
+ * person must not start in any of them, so the default skips them for tasks.
+ */
+const TASK_STATUSES_THAT_START_OR_END_WORK = new Set([
+	'todo',
+	'in_progress',
+	'validated',
+	'done',
+	'discarded',
+])
+
+/** Where a new draft waits: in review if the type has it, else a status that starts nothing. */
+function defaultDraftStatus(type: string, configured: string[]): string | undefined {
+	if (configured.includes('in_review')) return 'in_review'
+	const safe =
+		type === 'task'
+			? configured.filter((status) => !TASK_STATUSES_THAT_START_OR_END_WORK.has(status))
+			: configured
+	return safe.includes('backlog') ? 'backlog' : safe[0]
+}
+
 class DraftMessageNotInserted extends Error {}
+class DraftObjectNotFound extends Error {}
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

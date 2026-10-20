@@ -2033,7 +2033,7 @@ export interface MessageIntegrationConnect {
 	provider: string
 }
 
-export type DraftKind = 'email' | 'linkedin_post' | 'linkedin_message'
+export type DraftKind = 'email' | 'linkedin_post' | 'linkedin_message' | 'text'
 
 /**
  * An agent's draft of an outbound text, surfaced into chat as an editable card.
@@ -2044,6 +2044,9 @@ export interface MessageDraft {
 	object_id: string
 	kind: DraftKind
 	to?: string
+	/** Chip text and button text; overrides the kind's preset, and names a `text` draft. */
+	label?: string
+	approve_label?: string
 	char_limit?: number
 }
 
