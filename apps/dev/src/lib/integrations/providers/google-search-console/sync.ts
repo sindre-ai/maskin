@@ -272,6 +272,18 @@ async function findPropertyObject(db: Database, workspaceId: string, siteUrl: st
 	return existing ?? null
 }
 
+/** Outcome of a property's last read: rows came back, a clean read was empty, or the run errored. */
+export type ReadStatus = 'ok' | 'ok_empty' | 'failed'
+
+/** Earliest date that has rows, or undefined when there are none. */
+function firstDataDate(rows: GscRow[]): string | undefined {
+	let earliest: string | undefined
+	for (const row of rows) {
+		if (earliest === undefined || row[0] < earliest) earliest = row[0]
+	}
+	return earliest
+}
+
 interface SavePropertyArgs {
 	workspaceId: string
 	createdBy: string
@@ -280,6 +292,8 @@ interface SavePropertyArgs {
 	rows: GscRow[]
 	/** Unset only when the very first sync of a property failed, so nothing was synced yet. */
 	lastSyncedDate?: string
+	/** ISO time of this run's successful read. Left out on a failed run, so no failure time is kept. */
+	lastReadOkAt?: string
 	windowStart: string
 	/** Set on a failed run; a successful save leaves both out, which clears them. */
 	failure?: { lastError: string; firstFailureAt: string }
@@ -288,6 +302,8 @@ interface SavePropertyArgs {
 /** Insert-or-update the property's knowledge object, matched on metadata external_id (the site URL). */
 async function savePropertyObject(db: Database, args: SavePropertyArgs): Promise<void> {
 	const { workspaceId, siteUrl, rows } = args
+	const readStatus: ReadStatus = args.failure ? 'failed' : rows.length ? 'ok' : 'ok_empty'
+	const firstDate = firstDataDate(rows)
 	// Scalars only: safeMetadataSchema rejects nested objects, and the standard
 	// PATCH route round-trips the whole metadata blob. Rows live in content.
 	const metadata = {
@@ -298,6 +314,9 @@ async function savePropertyObject(db: Database, args: SavePropertyArgs): Promise
 		...(args.lastSyncedDate ? { last_synced_date: args.lastSyncedDate } : {}),
 		window_start: args.windowStart,
 		row_count: rows.length,
+		read_status: readStatus,
+		...(args.lastReadOkAt ? { last_read_ok_at: args.lastReadOkAt } : {}),
+		...(firstDate ? { first_data_date: firstDate } : {}),
 		...(args.failure
 			? { last_error: args.failure.lastError, first_failure_at: args.failure.firstFailureAt }
 			: {}),
@@ -424,6 +443,7 @@ async function syncProperty(
 		siteUrl,
 		rows,
 		lastSyncedDate: range.endDate,
+		lastReadOkAt: now.toISOString(),
 		windowStart,
 	})
 	return written
@@ -431,9 +451,10 @@ async function syncProperty(
 
 /**
  * Log a failed property run on its own knowledge object: last_error, plus
- * first_failure_at the first time (kept while the streak lasts). Rows and the
- * other scalars stay as they were. A property whose first sync failed gets an
- * empty object so the error has somewhere to live.
+ * first_failure_at the first time (kept while the streak lasts) and read_status
+ * failed. Rows and the other scalars, including last_read_ok_at, stay as they
+ * were. A property whose first sync failed gets an empty object so the error
+ * has somewhere to live.
  */
 async function recordPropertyFailure(
 	db: Database,
@@ -459,7 +480,11 @@ async function recordPropertyFailure(
 	const firstFailureAt =
 		(existing.metadata as { first_failure_at?: string } | null)?.first_failure_at ??
 		now.toISOString()
-	const patch = { last_error: lastError, first_failure_at: firstFailureAt }
+	const patch = {
+		last_error: lastError,
+		first_failure_at: firstFailureAt,
+		read_status: 'failed' satisfies ReadStatus,
+	}
 	await db
 		.update(objects)
 		.set({
