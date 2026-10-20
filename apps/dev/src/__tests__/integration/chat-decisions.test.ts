@@ -180,25 +180,31 @@ describe('Chat decisions', () => {
 		expect((await feed(humanId)).map((d) => d.message_id)).toEqual([urgent.message_id, message_id])
 	})
 
-	it('addresses the humans following the object when no one is named', async () => {
+	it('routes to the driver, then the creator, then the followers when no one is named', async () => {
+		const to = async (id: string) => {
+			const res = await post({ object_id: id, decision: DECISION })
+			expect(res.status).toBe(201)
+			return ((await res.json()) as { for_actor_ids: string[] }).for_actor_ids
+		}
+		// A human driver wins over the creator.
+		const driven = await insertObject(db, workspaceId, humanId, { driver: otherHumanId })
+		expect(await to(driven?.id as string)).toEqual([otherHumanId])
+		// No driver: whoever made it.
+		expect(await to(objectId)).toEqual([humanId])
+		// Made by an agent, nobody driving: the humans following it.
+		const byAgent = await insertObject(db, workspaceId, agentId)
 		await db.insert(subscriptions).values({
 			workspaceId,
-			actorId: otherHumanId,
+			actorId: outsiderId,
 			entityType: 'object',
-			entityId: objectId,
+			entityId: byAgent?.id as string,
 			source: 'manual',
 		})
-		const res = await post({ object_id: objectId, decision: DECISION })
-		expect(res.status).toBe(201)
-		expect(((await res.json()) as { for_actor_ids: string[] }).for_actor_ids).toEqual([
-			otherHumanId,
-		])
-
-		const nobody = await post({
-			object_id: (await insertObject(db, workspaceId, humanId)).id,
-			decision: DECISION,
-		})
-		expect(nobody.status).toBe(400)
+		expect(await to(byAgent?.id as string)).toEqual([outsiderId])
+		// Nobody at all: the agent is told to name someone.
+		const orphan = await insertObject(db, workspaceId, agentId)
+		const none = await post({ object_id: orphan?.id, decision: DECISION })
+		expect(none.status).toBe(400)
 	})
 
 	it('refuses a card that breaks the house style, and an object from another workspace', async () => {
@@ -309,5 +315,118 @@ describe('Chat decisions', () => {
 			.from(messageDecisions)
 			.where(eq(messageDecisions.messageId, message_id))
 		expect(rows).toHaveLength(0)
+	})
+
+	describe('curation by the Chief of Staff', () => {
+		let cosId: string
+		const curate = (as: string, c: string, m: number, body: Record<string, unknown>) =>
+			appFor(as).request(
+				jsonRequest('PATCH', `/api/conversations/${c}/messages/${m}/decision`, body, ws()),
+			)
+
+		beforeEach(async () => {
+			cosId = (await insertActor(db, { type: 'agent', name: 'Chief of Staff', isSystem: true })).id
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: cosId, role: 'member' })
+		})
+
+		it('re-ranks and reassigns, telling the new people in the card thread', async () => {
+			const { conversation_id, message_id } = await posted({ for_actor_ids: [humanId] })
+
+			const res = await curate(cosId, conversation_id, message_id, {
+				attention: 5,
+				for_actor_ids: [otherHumanId],
+			})
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({
+				status: 'open',
+				attention: 5,
+				for_actor_ids: [otherHumanId],
+			})
+			expect(await feed(humanId)).toHaveLength(0)
+			const theirs = await feed(otherHumanId)
+			expect(theirs.map((d) => [d.message_id, d.attention])).toEqual([[message_id, 5]])
+
+			const thread = await db
+				.select()
+				.from(messages)
+				.where(
+					and(eq(messages.conversationId, conversation_id), eq(messages.threadRootId, message_id)),
+				)
+			expect(thread).toHaveLength(1)
+			expect(thread[0]?.actorId).toBe(cosId)
+			expect(thread[0]?.content).toMatch(/^Handed to /)
+		})
+
+		it('withdraws a duplicate with a reason, pointing at the one it was folded into', async () => {
+			const keep = await posted()
+			const dupe = await posted()
+
+			const res = await curate(cosId, dupe.conversation_id, dupe.message_id, {
+				withdraw: { reason: 'Same question as the other card', merged_into: keep.message_id },
+			})
+			expect(res.status).toBe(200)
+
+			const [row] = await db
+				.select()
+				.from(messageDecisions)
+				.where(eq(messageDecisions.messageId, dupe.message_id))
+			expect([row?.status, row?.mergedIntoMessageId]).toEqual(['withdrawn', keep.message_id])
+			expect((await feed(humanId)).map((d) => d.message_id)).toEqual([keep.message_id])
+			const gone = await feed(humanId, 'withdrawn')
+			expect(gone[0]?.withdrawn_reason).toBe('Same question as the other card')
+		})
+
+		it('lets the Chief of Staff see every decision, and nobody else', async () => {
+			const a = await posted({ for_actor_ids: [humanId] })
+			const b = await posted({ for_actor_ids: [otherHumanId] })
+			const all = (as: string) =>
+				appFor(as).request(jsonGet('/api/conversations/decisions?scope=all', ws()))
+
+			const seen = (await (await all(cosId)).json()) as { decisions: FeedItem[] }
+			expect(seen.decisions.map((d) => d.message_id).sort()).toEqual(
+				[a.message_id, b.message_id].sort(),
+			)
+			// Its own list is still only what is addressed to it.
+			expect(await feed(cosId)).toHaveLength(0)
+			expect((await all(agentId)).status).toBe(403)
+			expect((await all(humanId)).status).toBe(403)
+		})
+
+		it('is for the Chief of Staff only: other agents and people get a 403', async () => {
+			const { conversation_id, message_id } = await posted()
+			for (const as of [agentId, humanId, otherHumanId]) {
+				const res = await curate(as, conversation_id, message_id, { attention: 1 })
+				expect(res.status).toBe(403)
+			}
+			// A look-alike that is not the built-in system agent does not count.
+			const fake = (await insertActor(db, { type: 'agent', name: 'Chief of Staff' })).id
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: fake, role: 'member' })
+			expect((await curate(fake, conversation_id, message_id, { attention: 1 })).status).toBe(403)
+		})
+
+		it('refuses to touch a card that was answered, to merge into a closed one, or to do nothing', async () => {
+			const { conversation_id, message_id } = await posted()
+			const other = await posted()
+			expect((await curate(cosId, conversation_id, message_id, {})).status).toBe(400)
+			expect(
+				(
+					await curate(cosId, conversation_id, message_id, {
+						withdraw: { reason: 'x', merged_into: 999999 },
+					})
+				).status,
+			).toBe(400)
+
+			await answer(humanId, other.conversation_id, other.message_id, 0)
+			expect(
+				(
+					await curate(cosId, conversation_id, message_id, {
+						withdraw: { reason: 'x', merged_into: other.message_id },
+					})
+				).status,
+			).toBe(400)
+			expect(
+				(await curate(cosId, other.conversation_id, other.message_id, { attention: 2 })).status,
+			).toBe(409)
+		})
 	})
 })

@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
-import { messageDecisions } from '@maskin/db/schema'
-import { inArray } from 'drizzle-orm'
+import { actors, messageDecisions, workspaceMembers } from '@maskin/db/schema'
+import { CHIEF_OF_STAFF_DEFAULT } from '@maskin/shared'
+import { and, eq, inArray } from 'drizzle-orm'
 
 export type MessageDecisionState = {
 	status: 'open' | 'answered' | 'withdrawn'
@@ -9,6 +10,7 @@ export type MessageDecisionState = {
 	answerOptionIndex: number | null
 	answeredBy: string | null
 	answeredAt: string | null
+	withdrawnReason: string | null
 }
 
 /** Where each decision card on a page of messages stands. */
@@ -30,7 +32,37 @@ export async function loadDecisionsByMessage(
 			answerOptionIndex: r.answerOptionIndex,
 			answeredBy: r.answeredBy,
 			answeredAt: r.answeredAt?.toISOString() ?? null,
+			withdrawnReason: r.withdrawnReason,
 		})
 	}
 	return out
+}
+
+/**
+ * Only the Chief of Staff curates other agents' decisions: the built-in system agent of that
+ * name, in this workspace. Anyone else asking gets a 403, so agents cannot withdraw each
+ * other's questions.
+ */
+export async function isChiefOfStaff(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ id: actors.id })
+		.from(actors)
+		.innerJoin(
+			workspaceMembers,
+			and(eq(workspaceMembers.actorId, actors.id), eq(workspaceMembers.workspaceId, workspaceId)),
+		)
+		.where(
+			and(
+				eq(actors.id, actorId),
+				eq(actors.type, 'agent'),
+				eq(actors.isSystem, true),
+				eq(actors.name, CHIEF_OF_STAFF_DEFAULT.name),
+			),
+		)
+		.limit(1)
+	return Boolean(row)
 }

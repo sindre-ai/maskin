@@ -20,6 +20,7 @@ import {
 	answerDecisionSchema,
 	conversationListQuerySchema,
 	createConversationSchema,
+	curateDecisionSchema,
 	decisionListQuerySchema,
 	editMessageSchema,
 	markThreadReadSchema,
@@ -57,7 +58,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
-import { loadDecisionsByMessage } from '../services/message-decisions'
+import { isChiefOfStaff, loadDecisionsByMessage } from '../services/message-decisions'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { ensureObjectChat, importObjectComments } from '../services/object-chat-sync'
@@ -859,22 +860,46 @@ app.openapi(postDecisionRoute, (async (c) => {
 		.limit(1)
 	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 
-	// Who can answer: the people named, or else the humans following the object.
+	// Who can answer: the people named. Otherwise the right person for the object: its driver, then
+	// whoever made it (when they are human), then the humans following it.
 	let recipients = body.for_actor_ids ?? []
 	if (recipients.length === 0) {
-		const followers = await db
+		const [owner] = await db
+			.select({ driver: objects.driver, createdBy: objects.createdBy })
+			.from(objects)
+			.where(eq(objects.id, object.id))
+			.limit(1)
+		const humans = await db
 			.select({ id: actors.id })
-			.from(subscriptions)
-			.innerJoin(actors, eq(actors.id, subscriptions.actorId))
+			.from(actors)
 			.where(
 				and(
-					eq(subscriptions.workspaceId, workspaceId),
-					eq(subscriptions.entityType, 'object'),
-					eq(subscriptions.entityId, object.id),
 					eq(actors.type, 'human'),
+					inArray(
+						actors.id,
+						[owner?.driver, owner?.createdBy].filter((v): v is string => !!v),
+					),
 				),
 			)
-		recipients = followers.map((f) => f.id)
+		const humanIds = new Set(humans.map((h) => h.id))
+		const first = [owner?.driver, owner?.createdBy].find((id) => id && humanIds.has(id))
+		if (first) {
+			recipients = [first]
+		} else {
+			const followers = await db
+				.select({ id: actors.id })
+				.from(subscriptions)
+				.innerJoin(actors, eq(actors.id, subscriptions.actorId))
+				.where(
+					and(
+						eq(subscriptions.workspaceId, workspaceId),
+						eq(subscriptions.entityType, 'object'),
+						eq(subscriptions.entityId, object.id),
+						eq(actors.type, 'human'),
+					),
+				)
+			recipients = followers.map((f) => f.id)
+		}
 	}
 	recipients = Array.from(new Set(recipients))
 	if (recipients.length === 0) {
@@ -956,6 +981,10 @@ const listDecisionsRoute = createRoute({
 			},
 			description: 'Decisions',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'scope=all is for the Chief of Staff only',
+		},
 	},
 })
 
@@ -963,9 +992,12 @@ app.openapi(listDecisionsRoute, (async (c) => {
 	const db = c.get('db')
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { state, limit } = c.req.valid('query')
+	const { state, limit, scope } = c.req.valid('query')
+	if (scope === 'all' && !(await isChiefOfStaff(db, workspaceId, callerId))) {
+		return c.json(createApiError('FORBIDDEN', 'Only the Chief of Staff sees every decision'), 403)
+	}
 
-	const rows = await db
+	const base = db
 		.select({
 			messageId: messages.id,
 			conversationId: conversations.id,
@@ -983,6 +1015,7 @@ app.openapi(listDecisionsRoute, (async (c) => {
 			answerOptionIndex: messageDecisions.answerOptionIndex,
 			answeredBy: messageDecisions.answeredBy,
 			answeredAt: messageDecisions.answeredAt,
+			withdrawnReason: messageDecisions.withdrawnReason,
 			// Table-qualified literal SQL: a Drizzle column here renders unqualified and binds to the
 			// inner alias (known-pitfalls.md, correlated subquery).
 			replyCount: sql<number>`(SELECT count(*)::int FROM messages r WHERE r.thread_root_id = messages.id)`,
@@ -991,21 +1024,22 @@ app.openapi(listDecisionsRoute, (async (c) => {
 		.innerJoin(messages, eq(messages.id, messageDecisions.messageId))
 		.innerJoin(conversations, eq(conversations.id, messages.conversationId))
 		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.innerJoin(
-			conversationParticipants,
-			and(
-				eq(conversationParticipants.conversationId, conversations.id),
-				eq(conversationParticipants.actorId, callerId),
-				isNull(conversationParticipants.leftAt),
-			),
-		)
-		.where(
-			and(
-				eq(conversations.workspaceId, workspaceId),
-				eq(messageDecisions.status, state),
-				sql`${callerId}::uuid = ANY(${messageDecisions.forActorIds})`,
-			),
-		)
+		.$dynamic()
+
+	const where = [eq(conversations.workspaceId, workspaceId), eq(messageDecisions.status, state)]
+	const rows = await (scope === 'all'
+		? base.where(and(...where))
+		: base
+				.innerJoin(
+					conversationParticipants,
+					and(
+						eq(conversationParticipants.conversationId, conversations.id),
+						eq(conversationParticipants.actorId, callerId),
+						isNull(conversationParticipants.leftAt),
+					),
+				)
+				.where(and(...where, sql`${callerId}::uuid = ANY(${messageDecisions.forActorIds})`))
+	)
 		.orderBy(sql`${messageDecisions.attention} DESC NULLS LAST`, desc(messages.id))
 		.limit(limit)
 
@@ -1023,6 +1057,7 @@ app.openapi(listDecisionsRoute, (async (c) => {
 					decision,
 					attention: r.attention,
 					status: r.status as 'open' | 'answered' | 'withdrawn',
+					withdrawn_reason: r.withdrawnReason,
 					created_at: r.createdAt?.toISOString() ?? null,
 					posted_by: { id: r.authorId, name: r.authorName, type: r.authorType },
 					reply_count: r.replyCount,
@@ -1241,6 +1276,191 @@ app.openapi(withdrawDecisionRoute, (async (c) => {
 	})
 	return c.body(null, 204)
 }) as RouteHandler<typeof withdrawDecisionRoute, Env>)
+
+const curateDecisionRoute = createRoute({
+	method: 'patch',
+	path: '/{id}/messages/{messageId}/decision',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: "Chief of Staff only: re-rank, reassign or withdraw another agent's open decision",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: curateDecisionSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						status: z.enum(['open', 'withdrawn']),
+						attention: z.number().nullable(),
+						for_actor_ids: z.array(z.string().uuid()),
+					}),
+				},
+			},
+			description: 'Curated',
+		},
+		400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid' },
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Only the Chief of Staff curates decisions',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Already answered or withdrawn',
+		},
+	},
+})
+
+app.openapi(curateDecisionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	if (!(await isChiefOfStaff(db, workspaceId, callerId))) {
+		return c.json(createApiError('FORBIDDEN', 'Only the Chief of Staff curates decisions'), 403)
+	}
+	// The curator need not be in the chat, so this reads the card by id and workspace instead of
+	// by participation.
+	const [row] = await db
+		.select({ decision: messageDecisions, workspaceId: conversations.workspaceId })
+		.from(messageDecisions)
+		.innerJoin(messages, eq(messages.id, messageDecisions.messageId))
+		.innerJoin(conversations, eq(conversations.id, messages.conversationId))
+		.where(and(eq(messageDecisions.messageId, messageId), eq(conversations.id, id)))
+		.limit(1)
+	if (!row || row.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Decision not found'), 404)
+	}
+	if (row.decision.status !== 'open') {
+		return c.json(
+			createApiError('CONFLICT', `This decision is already ${row.decision.status}`),
+			409,
+		)
+	}
+
+	let mergedInto: number | undefined
+	if (body.withdraw?.merged_into !== undefined) {
+		const target = body.withdraw.merged_into
+		const [other] = await db
+			.select({ status: messageDecisions.status })
+			.from(messageDecisions)
+			.innerJoin(messages, eq(messages.id, messageDecisions.messageId))
+			.innerJoin(conversations, eq(conversations.id, messages.conversationId))
+			.where(
+				and(eq(messageDecisions.messageId, target), eq(conversations.workspaceId, workspaceId)),
+			)
+			.limit(1)
+		if (!other || other.status !== 'open' || target === messageId) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'merged_into must be a different open decision', [
+					{ field: 'withdraw.merged_into', message: `Decision ${target} is not open here` },
+				]),
+				400,
+			)
+		}
+		mergedInto = target
+	}
+
+	let recipients = row.decision.forActorIds
+	if (body.for_actor_ids) {
+		const next = Array.from(new Set(body.for_actor_ids))
+		const memberIds = await loadWorkspaceMemberIds(db, workspaceId, next)
+		const notMembers = next.filter((actorId) => !memberIds.has(actorId))
+		if (notMembers.length > 0) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'One or more recipients are not members of this workspace',
+					notMembers.map((actorId) => ({
+						field: 'for_actor_ids',
+						message: `Not a member: ${actorId}`,
+					})),
+				),
+				400,
+			)
+		}
+		recipients = next
+	}
+
+	// The status condition keeps this from racing an answer: if someone answered in between, the
+	// curation does nothing and the caller is told.
+	const [updated] = await db
+		.update(messageDecisions)
+		.set({
+			forActorIds: recipients,
+			...(body.attention !== undefined ? { attention: body.attention } : {}),
+			...(body.withdraw
+				? {
+						status: 'withdrawn',
+						withdrawnReason: body.withdraw.reason,
+						mergedIntoMessageId: mergedInto ?? null,
+					}
+				: {}),
+		})
+		.where(and(eq(messageDecisions.messageId, messageId), eq(messageDecisions.status, 'open')))
+		.returning()
+	if (!updated) {
+		return c.json(createApiError('CONFLICT', 'This decision was answered just now'), 409)
+	}
+
+	// Reassigned people must be able to see the card.
+	if (body.for_actor_ids) {
+		await addParticipantsToConversation(db, id, recipients, callerId)
+	}
+
+	const notes: string[] = []
+	if (body.for_actor_ids) {
+		const names = await db
+			.select({ name: actors.name })
+			.from(actors)
+			.where(inArray(actors.id, recipients))
+		notes.push(`Handed to ${names.map((n) => n.name).join(', ')}.`)
+	}
+	if (body.withdraw) {
+		notes.push(
+			`Withdrawn: ${body.withdraw.reason}${mergedInto ? ' (folded into a related decision)' : ''}`,
+		)
+	}
+	if (notes.length > 0) {
+		await insertConversationMessage(db, {
+			conversationId: id,
+			workspaceId,
+			actorId: callerId,
+			content: notes.join(' '),
+			metadata: null,
+			sessionId: null,
+			threadRootId: messageId,
+		})
+	}
+	await recordEvent(db, {
+		workspaceId,
+		actorId: callerId,
+		action: 'decision_curated',
+		entityType: 'conversation',
+		entityId: id,
+		data: {
+			message_id: messageId,
+			...(body.attention !== undefined ? { attention: body.attention } : {}),
+			...(body.for_actor_ids ? { for_actor_ids: recipients } : {}),
+			...(body.withdraw ? { withdrawn: true, merged_into: mergedInto } : {}),
+		},
+	})
+
+	return c.json(
+		{
+			status: updated.status as 'open' | 'withdrawn',
+			attention: updated.attention,
+			for_actor_ids: updated.forActorIds,
+		},
+		200,
+	)
+}) as RouteHandler<typeof curateDecisionRoute, Env>)
 
 // GET /:id - Conversation detail
 const getConversationRoute = createRoute({

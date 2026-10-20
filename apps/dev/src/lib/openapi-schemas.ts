@@ -470,6 +470,7 @@ export const messageDecisionStateSchema = z.object({
 	answerOptionIndex: z.number().nullable(),
 	answeredBy: z.string().uuid().nullable(),
 	answeredAt: z.string().nullable(),
+	withdrawnReason: z.string().nullable(),
 })
 
 /** One row of the decisions feed: a card addressed to the caller, with where to discuss it. */
@@ -483,6 +484,8 @@ export const decisionFeedItemSchema = z.object({
 	decision: commentDecisionSchema,
 	attention: z.number().nullable(),
 	status: z.enum(['open', 'answered', 'withdrawn']),
+	/** Why the Chief of Staff or the poster took it back. */
+	withdrawn_reason: z.string().nullable(),
 	created_at: z.string().nullable(),
 	posted_by: z.object({ id: z.string().uuid(), name: z.string(), type: z.string() }),
 	/** Replies in the card's thread: the questions asked about it and the answers. */

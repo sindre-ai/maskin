@@ -994,6 +994,12 @@ export const messageDecisions = pgTable(
 		answerOptionIndex: smallint('answer_option_index'),
 		answeredBy: uuid('answered_by').references(() => actors.id),
 		answeredAt: timestamp('answered_at', { withTimezone: true }),
+		// Why it was taken back, and the decision it was folded into when it was a duplicate.
+		withdrawnReason: text('withdrawn_reason'),
+		mergedIntoMessageId: bigint('merged_into_message_id', { mode: 'number' }).references(
+			() => messages.id,
+			{ onDelete: 'set null' },
+		),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

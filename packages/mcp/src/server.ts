@@ -5083,6 +5083,79 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'post_decision',
+		{
+			description: tools.post_decision.description,
+			inputSchema: tools.post_decision.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/conversations/decisions', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('post_decision', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_decisions',
+		{
+			description: tools.list_decisions.description,
+			inputSchema: tools.list_decisions.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, state, scope, limit } = args
+			const qs = new URLSearchParams()
+			if (state) qs.set('state', state)
+			if (scope) qs.set('scope', scope)
+			if (limit) qs.set('limit', String(limit))
+			const query = qs.toString()
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/conversations/decisions${query ? `?${query}` : ''}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('list_decisions', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'curate_decision',
+		{
+			description: tools.curate_decision.description,
+			inputSchema: tools.curate_decision.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, message_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'PATCH',
+				`/api/conversations/${conversation_id}/messages/${message_id}/decision`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('curate_decision', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Triggers ─────────────────────────────────────────────
 	registerAppTool(
 		server,

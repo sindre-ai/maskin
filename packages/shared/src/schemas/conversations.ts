@@ -511,5 +511,32 @@ export const answerDecisionSchema = z.object({
 
 export const decisionListQuerySchema = z.object({
 	state: z.enum(['open', 'answered', 'withdrawn']).default('open'),
+	/** 'all' is the Chief of Staff's view of every decision in the workspace. */
+	scope: z.enum(['mine', 'all']).default('mine'),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 })
+
+/**
+ * What the Chief of Staff may do to another agent's open decision: change its urgency, hand it to
+ * other people, or take it back (a duplicate, or no longer needed). At least one change per call.
+ */
+export const curateDecisionSchema = z
+	.object({
+		attention: z.number().int().min(1).max(5).optional(),
+		for_actor_ids: z.array(z.string().uuid()).min(1).max(20).optional(),
+		withdraw: z
+			.object({
+				reason: z.string().min(1).max(500),
+				merged_into: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('The message id of the open decision this one duplicates.'),
+			})
+			.optional(),
+	})
+	.refine(
+		(v) => v.attention !== undefined || v.for_actor_ids !== undefined || v.withdraw !== undefined,
+		{ message: 'Say what to change: attention, for_actor_ids or withdraw' },
+	)

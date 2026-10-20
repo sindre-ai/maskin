@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS "message_decisions" (
   "answer_option_index" smallint,
   "answered_by" uuid REFERENCES "actors"("id"),
   "answered_at" timestamp with time zone,
+  "withdrawn_reason" text,
+  "merged_into_message_id" bigint REFERENCES "messages"("id") ON DELETE SET NULL,
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT "message_decisions_status_check" CHECK ("status" IN ('open', 'answered', 'withdrawn')),
   CONSTRAINT "message_decisions_attention_check" CHECK ("attention" IS NULL OR ("attention" BETWEEN 1 AND 5))
