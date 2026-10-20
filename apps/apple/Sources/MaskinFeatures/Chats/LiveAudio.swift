@@ -88,10 +88,22 @@ final class LiveAudioSession {
 		]
 	}
 
+	/// The loudspeaker, or the earpiece. Headphones and Bluetooth routes win over both.
+	private var speakerOn = true
+
+	func setSpeaker(_ on: Bool) {
+		speakerOn = on
+		try? configure()
+		try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
+		routeName = Self.currentRouteName()
+		handlers?.routeChanged(routeName)
+	}
+
 	private func configure() throws {
 		let session = AVAudioSession.sharedInstance()
 		try session.setCategory(
-			.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+			.playAndRecord, mode: .voiceChat,
+			options: speakerOn ? [.defaultToSpeaker, .allowBluetoothHFP] : [.allowBluetoothHFP])
 		try session.setActive(true)
 	}
 

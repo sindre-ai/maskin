@@ -20,6 +20,12 @@ final class LiveMeetingSession {
 	@ObservationIgnored private var participantsAtStart: Set<String> = []
 	/// Where the call's sound goes ("iPhone Speaker", "AirPods"); empty until the call starts.
 	private(set) var routeName = ""
+	/// The dock folded down to a pill in its thread.
+	var isMinimized = false
+	/// Show the agent's latest words under the header.
+	var showsCaptions = true
+	/// Loudspeaker (true) or earpiece.
+	private(set) var usesSpeaker = true
 
 	@ObservationIgnored private let now: () -> Date
 	@ObservationIgnored private let log: LiveCallLog
@@ -95,6 +101,21 @@ final class LiveMeetingSession {
 		#endif
 		voice.begin(existing: chat.messages)
 		watch()
+	}
+
+	func toggleSpeaker() {
+		usesSpeaker.toggle()
+		#if os(iOS)
+		audio.setSpeaker(usesSpeaker)
+		#endif
+	}
+
+	/// The agent's latest line in the thread since the call began, for captions.
+	var latestAgentLine: String? {
+		let since = startedAt ?? .distantPast
+		return chat.messages.last {
+			$0.kind == "message" && $0.actorID != chat.currentActorID && ($0.createdAt ?? .distantFuture) >= since
+		}?.content.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 
 	func toggleMute() {
