@@ -203,7 +203,9 @@ private actor FakeCalls: VoiceCalling {
 		await settle()
 		transport.onConnection?(.failed)
 		#expect(transport.iceRestarts == 1)
-		try? await Task.sleep(for: .milliseconds(120))
+		// Wait for the window to run out rather than guessing how long a busy runner takes.
+		for _ in 0..<200 where call.failure == nil { try? await Task.sleep(for: .milliseconds(10)) }
+		await settle()
 		#expect(call.failure != nil)
 		#expect(await calls.hangups == [.init(id: "vs-1", reason: .networkError)])
 	}
