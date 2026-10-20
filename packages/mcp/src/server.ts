@@ -4659,6 +4659,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					name: args.name,
 					description: args.description,
+					...(args.kind !== undefined ? { kind: args.kind } : {}),
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
@@ -4685,6 +4686,7 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
+			if (args.kind) params.set('kind', args.kind)
 			params.set('limit', String(pagination.limit + 1))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -4777,6 +4779,7 @@ export function createMcpServer(config: McpConfig) {
 			const body: Record<string, unknown> = {}
 			if (args.name !== undefined) body.name = args.name
 			if (args.description !== undefined) body.description = args.description
+			if (args.kind !== undefined) body.kind = args.kind
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
