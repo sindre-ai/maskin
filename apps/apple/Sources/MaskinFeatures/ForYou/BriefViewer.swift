@@ -16,12 +16,10 @@ struct BriefViewer: View {
 
 	@State private var playback: BriefPlayback
 	@State private var fullPage: LoopOutput?
-	/// Cards parsed from each loaded page, by story card id; drives the PRESENTATION block.
-	@State private var presentations: [String: [PresentationSlide]] = [:]
-	@State private var presentationTotals: [String: Int] = [:]
+	/// The loaded page's web view, so a tap forward can turn the deck's own cards.
+	@State private var deck = HTMLProbe()
 	/// Pages fetched ahead of the reader, by file id, so the next slide opens without a spinner.
 	@State private var preloaded: [String: FileDetail] = [:]
-	@State private var playingPresentation: StoryCard?
 	@State private var dragY: CGFloat = 0
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -83,17 +81,15 @@ struct BriefViewer: View {
 			stories.markSeen(card)
 			AccessibilityNotification.Announcement("\(playback.position). \(card.headline)").post()
 		}
+		.onChange(of: playback.step) { _, step in
+			Task { await deck.showCard(step) }
+		}
 		.onChange(of: playback.isFinished) { _, finished in if finished { close() } }
 		.onChange(of: fullPage) { _, page in
 			if page == nil { playback.release() } else { playback.hold() }
 		}
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { playback.release() } else { playback.hold() }
-		}
-		.storyCover(item: $playingPresentation) { story in
-			PresentationPlayer(title: story.headline, slides: presentations[story.id] ?? []) {
-				playingPresentation = nil
-			}
 		}
 		.sheet(item: $fullPage) { output in
 			OutcomePresenter(environment: environment, output: output, sourceName: card?.unit ?? "")
@@ -192,7 +188,7 @@ struct BriefViewer: View {
 						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650))
 						.foregroundStyle(Color.white)
 						.lineLimit(1)
-					Text("\(card.unit) \u{00B7} \(Self.clock(BriefSequence.duration(of: card)))")
+					Text("\(card.unit) \u{00B7} \(Self.clock(playback.currentDuration))")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14))
 						.foregroundStyle(MaskinColor.patina100.opacity(0.7))
 						.lineLimit(1)
@@ -240,30 +236,20 @@ struct BriefViewer: View {
 			EmptyView()
 		case .page(let output):
 			BriefPageSlide(
-				environment: environment, output: output, preload: preloaded[output.id] ?? stories.preloadedFile(for: output.id),
+				environment: environment, output: output, deck: deck,
+				preload: preloaded[output.id] ?? stories.preloadedFile(for: output.id),
 				loading: { loading in playback.setWaiting(loading) },
 				loaded: { html in
-					let slides = PresentationParser.parse(html: html)
-					if slides.count >= 2 {
-						presentations[card.id] = slides
-						presentationTotals[card.id] = PresentationParser.totalCount(html: html)
-					}
+					// A page of several cards is a deck: a tap forward turns its cards before moving on.
+					let cards = PresentationParser.totalCount(html: html)
+					if cards >= 2, self.card?.id == card.id { playback.setSteps(cards) }
 				})
 			.id(card.id)
 		}
 	}
 
-	@ViewBuilder
 	private func actions(_ card: StoryCard) -> some View {
-		VStack(spacing: MaskinSpace.s5) {
-			if let slides = presentations[card.id] {
-				PresentationBlock(title: card.headline, slides: slides, total: presentationTotals[card.id]) {
-					playback.hold()
-					playingPresentation = card
-				}
-			}
-			actionRow(card)
-		}
+		actionRow(card)
 	}
 
 	private func actionRow(_ card: StoryCard) -> some View {
@@ -333,16 +319,18 @@ private struct ProgressSegment: View {
 /// here, so taps belong to the viewer; "Open page" hands it to the full presenter to scroll.
 private struct BriefPageSlide: View {
 	let output: LoopOutput
+	let deck: HTMLProbe
 	let loading: (Bool) -> Void
 	/// Called with the page's HTML once it has loaded, so the viewer can build its presentation.
 	let loaded: (String) -> Void
 	@State private var store: FileStore
 
 	init(
-		environment: AppEnvironment, output: LoopOutput, preload: FileDetail?, loading: @escaping (Bool) -> Void,
-		loaded: @escaping (String) -> Void
+		environment: AppEnvironment, output: LoopOutput, deck: HTMLProbe, preload: FileDetail?,
+		loading: @escaping (Bool) -> Void, loaded: @escaping (String) -> Void
 	) {
 		self.output = output
+		self.deck = deck
 		self.loading = loading
 		self.loaded = loaded
 		_store = State(
@@ -379,7 +367,7 @@ private struct BriefPageSlide: View {
 					} else {
 						// The preview is cut off where the actions begin; fade the edge so a half-drawn
 						// tile reads as "more below" and not as a rendering fault.
-						PresentedHTMLView(html: html, revision: store.contentRevision, isInteractive: false)
+						PresentedHTMLView(html: html, revision: store.contentRevision, isInteractive: false, probe: deck)
 							.mask(
 								LinearGradient(
 									stops: [.init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
