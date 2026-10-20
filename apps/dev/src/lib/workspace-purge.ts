@@ -4,7 +4,9 @@ import type { Transaction } from '@maskin/db'
 import {
 	events,
 	actors,
+	agentChatGrants,
 	agentFiles,
+	agentGrants,
 	agentSkills,
 	awaitingVies,
 	conversations,
@@ -81,6 +83,8 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'workspace_overage_usage',
 	'orphan_thread_detections',
 	'awaiting_vies',
+	'agent_grants',
+	'agent_chat_grants',
 	'agent_files',
 	'imports',
 	'integrations',
@@ -100,8 +104,10 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'file_comments',
 	'files',
 	'google_meet_space_idempotency',
+	'live_activity_tokens',
 	'loop_active_days',
 	'mcp_telemetry',
+	'message_thread_reads',
 	'messages',
 	'session_dispatch_attempts',
 	'slack_user_links',
@@ -109,6 +115,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'trigger_dispatches',
 	'trigger_event_queue',
 	'user_display_settings',
+	'voice_sessions',
 	'workspace_invitations',
 	'workspace_onboarding_prompts',
 	'workspace_skills',
@@ -239,6 +246,8 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
 	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
+	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
+	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
 	await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, workspaceId))
 	await tx.delete(imports).where(eq(imports.workspaceId, workspaceId))
 	await tx.delete(integrations).where(eq(integrations.workspaceId, workspaceId))
