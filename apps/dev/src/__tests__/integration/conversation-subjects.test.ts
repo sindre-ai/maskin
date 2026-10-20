@@ -1,6 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { conversationParticipants, conversations, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	conversationParticipants,
+	conversations,
+	subscriptions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -148,5 +154,77 @@ describe('Conversation subjects', () => {
 		const res = await open(ownerId, { title: 'Plain', participant_actor_ids: [otherId] })
 		const body = (await res.json()) as { subjectType: string | null; subjectId: string | null }
 		expect([body.subjectType, body.subjectId]).toEqual([null, null])
+	})
+
+	describe('object chats and comments', () => {
+		const commentsOn = (entityId: string) =>
+			db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityId, entityId),
+						eq(events.action, 'commented'),
+					),
+				)
+
+		it('turns a message in an object chat into a comment on the object', async () => {
+			const created = await open(ownerId, {
+				title: 'Tom',
+				participant_actor_ids: [otherId],
+				subject: { type: 'object', id: objectId },
+			})
+			const { id } = (await created.json()) as { id: string }
+			const res = await appFor(ownerId).request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${id}/messages`,
+					{ content: 'Ready for review', metadata: { mentions: [otherId] } },
+					ws(),
+				),
+			)
+			expect(res.status).toBe(201)
+
+			const [comment] = await commentsOn(objectId)
+			const data = comment?.data as {
+				content: string
+				mentions: string[]
+				metadata: { suppress_auto_dispatch: boolean; via_chat: { conversation_id: string } }
+			}
+			expect(data.content).toBe('Ready for review')
+			expect(data.mentions).toEqual([otherId])
+			// The chat wakes agents itself; the comment dispatcher must stay out.
+			expect(data.metadata.suppress_auto_dispatch).toBe(true)
+			expect(data.metadata.via_chat.conversation_id).toBe(id)
+
+			const subs = await db
+				.select()
+				.from(subscriptions)
+				.where(and(eq(subscriptions.entityId, objectId), eq(subscriptions.actorId, otherId)))
+			expect(subs.map((r) => r.source)).toEqual(['mentioned'])
+		})
+
+		it('also mirrors the first message of a new object chat', async () => {
+			await open(ownerId, {
+				title: 'Tom',
+				participant_actor_ids: [],
+				initial_message: 'Kicking this off',
+				subject: { type: 'object', id: objectId },
+			})
+			const comments = await commentsOn(objectId)
+			expect(comments.map((c) => (c.data as { content: string }).content)).toEqual([
+				'Kicking this off',
+			])
+		})
+
+		it('does not comment on anything for an ordinary chat', async () => {
+			const created = await open(ownerId, { title: 'Plain', participant_actor_ids: [otherId] })
+			const { id } = (await created.json()) as { id: string }
+			await appFor(ownerId).request(
+				jsonRequest('POST', `/api/conversations/${id}/messages`, { content: 'hello' }, ws()),
+			)
+			expect(await commentsOn(objectId)).toHaveLength(0)
+		})
 	})
 })

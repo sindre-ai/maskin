@@ -47,7 +47,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
-import { insertConversationMessage } from '../services/conversation-messages'
+import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import { loadReactionsByMessage } from '../services/message-reactions'
@@ -471,6 +471,14 @@ app.openapi(createConversationRoute, (async (c) => {
 	}
 
 	if (initialMessage) {
+		await mirrorAsObjectComment(db, {
+			conversationId: conversation.id,
+			workspaceId,
+			actorId: callerId,
+			content: initialMessage.content,
+			mentions: body.initial_message_metadata?.mentions,
+			messageId: initialMessage.id,
+		})
 		evaluateAndRespond({
 			db,
 			sessionManager,
