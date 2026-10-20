@@ -128,7 +128,7 @@ export function ProviderRow({
 	// The intro's quiet row says plainly where the tool stands for this agent, in
 	// place of the event count and the install id.
 	const introSubtitle =
-		introState && !needsReconnect
+		introState !== undefined
 			? connect.isPending
 				? 'Connecting…'
 				: INTRO_SUBTITLES[introState]
@@ -179,7 +179,11 @@ export function ProviderRow({
 							</Button>
 						)}
 						{variant === 'chat' ? (
-							<ConnectedButton />
+							// The intro's row already warns and offers Reconnect; a disabled
+							// "Connected" beside it would say the opposite.
+							introState && needsReconnect ? null : (
+								<ConnectedButton />
+							)
 						) : (
 							<Button
 								variant="ghost"
@@ -514,7 +518,10 @@ export function ProviderConnectRow({
 
 	return (
 		<>
-			{MULTI_INSTALL_PROVIDERS.has(provider.name) && installations.length > 0 ? (
+			{/* The intro's quiet row stays one row per tool, so it never takes the install list. */}
+			{MULTI_INSTALL_PROVIDERS.has(provider.name) &&
+			installations.length > 0 &&
+			introState === undefined ? (
 				<GroupedProviderRow
 					provider={provider}
 					installations={installations}

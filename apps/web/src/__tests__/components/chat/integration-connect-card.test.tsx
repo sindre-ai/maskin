@@ -228,6 +228,35 @@ describe('IntegrationConnectCard', () => {
 			expect(screen.queryByText('Connected, ready to use')).not.toBeInTheDocument()
 		})
 
+		it('draws one quiet row, not the install count card, for a multi-install provider', () => {
+			providers = [provider({ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom' })]
+			integrations = [active('github', 'g-1')]
+			renderCard('github', 'connected_not_on_agent')
+
+			expect(screen.getByText('GitHub')).toBeInTheDocument()
+			expect(screen.getByText('Connected to the workspace')).toBeInTheDocument()
+			expect(screen.queryByText('GitHub · 1')).not.toBeInTheDocument()
+			expect(screen.queryByText('1 active installation')).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Add another' })).not.toBeInTheDocument()
+		})
+
+		it('says "Needs reconnecting" with one Reconnect button when the sign-in lacks permissions', async () => {
+			providers = [provider({ name: 'slack', displayName: 'Slack' })]
+			integrations = [
+				{ ...active('slack'), needsReconnect: true, missingScopes: ['channels:history'] },
+			]
+			renderCard('slack', 'needs_reconnect')
+
+			expect(screen.getByText('Needs reconnecting')).toBeInTheDocument()
+			expect(screen.queryByText(/history access/)).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Connected' })).not.toBeInTheDocument()
+			const reconnect = screen.getAllByRole('button', { name: 'Reconnect' })
+			expect(reconnect).toHaveLength(1)
+			await userEvent.setup().click(reconnect[0])
+
+			expect(connectMutate).toHaveBeenCalledWith({ provider: 'slack', returnTo: RETURN_TO })
+		})
+
 		it('keeps the full card, with its event count subtitle, when no intro state is given', () => {
 			providers = [provider({})]
 			renderCard('linear')
