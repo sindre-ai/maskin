@@ -307,7 +307,12 @@ export function MessageBubble({
 				) : null}
 				{/* What the objects this message links to say, so a draft or a page can be
 				    read without leaving the chat. */}
-				<LinkedObjectPreviews workspaceId={workspaceId} content={message.content} />
+				<LinkedObjectPreviews
+					workspaceId={workspaceId}
+					content={message.content}
+					conversationId={message.conversationId}
+					agentId={message.actorId}
+				/>
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
 				    message's own content already renders the questions as markdown
 				    above, so this adds the affordance rather than the information —
