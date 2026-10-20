@@ -155,13 +155,19 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
 			switch action.kind {
 			case .option:
 				return UNNotificationAction(identifier: action.identifier, title: action.title, options: options)
+			case .later:
+				// Runs in the background and sends nothing: it only hides the card until later.
+				return UNNotificationAction(
+					identifier: action.identifier, title: action.title, options: options,
+					icon: UNNotificationActionIcon(systemImageName: "clock"))
 			case .reply:
 				return UNTextInputNotificationAction(
 					identifier: action.identifier, title: action.title, options: options,
 					icon: UNNotificationActionIcon(systemImageName: "arrowshape.turn.up.left"),
 					textInputButtonTitle: "Send", textInputPlaceholder: "Reply")
 			case .open:
-				// The only action that opens the app; options and Reply run in the background.
+				// Opens the app: Open, and a "Review" button for an option that needs a confirmation.
+				// Plain options, Later and Reply run in the background.
 				options.insert(.foreground)
 				return UNNotificationAction(
 					identifier: action.identifier, title: action.title, options: options,

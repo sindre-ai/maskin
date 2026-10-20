@@ -12,7 +12,12 @@ struct AgentDetailView: View {
 	var onDeleted: () -> Void = {}
 	/// The flows this agent works in, by name. Empty while loading or when it is in none.
 	var flows: [LoopSummary] = []
+	/// The workspace's triggers; the ones that wake this agent show as a card. Nil in previews.
+	var triggers: TriggersStore?
+	/// The objects this agent drives (its Objects tab). Empty while loading.
+	var objects: [WorkObject] = []
 	@State private var showRun = false
+	@State private var showNewTrigger = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmReset = false
 	@State private var confirmDelete = false
@@ -24,17 +29,28 @@ struct AgentDetailView: View {
 		runtime?.buildInChat("I'd like to change the agent \(name). ")
 	}
 
+	/// Start a conversation with this agent, or straight into a live call with it.
+	private func startChat(live: Bool) {
+		guard let profile = store.profile else { return }
+		runtime?.startChat(
+			with: ChatParticipant(id: profile.id, name: profile.name, kind: .agent), live: live)
+	}
+
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				if let profile = store.profile {
 					AgentDetailContent(
 						profile: profile, store: store, flows: flows,
+						triggers: triggers?.triggers.filter { $0.targetActorID == profile.id } ?? [],
+						onToggleTrigger: { id, on in Task { await triggers?.setEnabled(id, on) } },
+						onNewTrigger: triggers == nil ? nil : { showNewTrigger = true },
 						onRun: { runTapped() },
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
 						onStop: { sessionToStop = $0 },
-						onChangeInChat: { changeInChat() })
+						onChangeInChat: { changeInChat() },
+						objects: objects, onOpenObject: { runtime?.openObject($0) })
 				} else {
 					placeholder
 				}
@@ -50,9 +66,12 @@ struct AgentDetailView: View {
 		#endif
 		.toolbar {
 			if store.profile != nil {
-				ToolbarItem(placement: .primaryAction) {
+				ToolbarItemGroup(placement: .primaryAction) {
+					Button { startChat(live: true) } label: { Image(systemName: "waveform") }
+						.accessibilityLabel("Live with \(store.profile?.name ?? "agent")")
+					Button { startChat(live: false) } label: { Image(systemName: "plus") }
+						.accessibilityLabel("New chat with \(store.profile?.name ?? "agent")")
 					Menu {
-						Button { changeInChat() } label: { Label("Change in chat", systemImage: "bubble.left") }
 						if store.canReset {
 							Button { confirmReset = true } label: { Label("Reset to defaults", systemImage: "arrow.counterclockwise") }
 						}
@@ -76,6 +95,11 @@ struct AgentDetailView: View {
 			}
 			.presentationDetents([.medium, .large])
 			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
+		}
+		.sheet(isPresented: $showNewTrigger) {
+			if let triggers {
+				NewTriggerSheet(store: triggers, onCreated: { _ in }, presetAgentID: store.profile?.id)
+			}
 		}
 		.confirmationDialog(
 			"Reset \(store.profile?.name ?? "agent") to factory defaults?", isPresented: $confirmReset,
@@ -139,32 +163,147 @@ struct AgentDetailContent: View {
 	let profile: AgentProfile
 	let store: AgentDetailStore
 	var flows: [LoopSummary] = []
+	/// The triggers that wake this agent, already filtered.
+	var triggers: [Trigger] = []
+	var onToggleTrigger: (String, Bool) -> Void = { _, _ in }
+	/// Nil hides the card's "New trigger" action (previews, or no trigger store).
+	var onNewTrigger: (() -> Void)?
 	var onRun: () -> Void = {}
 	var onPause: () -> Void = {}
 	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
 	var onChangeInChat: () -> Void = {}
+	/// The objects this agent drives, and what tapping one does.
+	var objects: [WorkObject] = []
+	var onOpenObject: (String) -> Void = { _ in }
+
+	/// The agent page's sub pages, listed under the hero: how it is set up, what wakes it, what it
+	/// drives, and what it has done.
+	enum Page: String, CaseIterable, Identifiable {
+		case setup = "Setup"
+		case triggers = "Triggers"
+		case objects = "Objects"
+		case sessions = "Sessions"
+		var id: String { rawValue }
+
+		var symbol: String {
+			switch self {
+			case .setup: "slider.horizontal.3"
+			case .triggers: "bolt"
+			case .objects: "square.stack"
+			case .sessions: "clock.arrow.circlepath"
+			}
+		}
+	}
 
 	var body: some View {
 		hero
 		if let live = store.liveSession {
 			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
 		}
-		if !flows.isEmpty {
-			card("Flows") {
+		VStack(spacing: 0) {
+			ForEach(Page.allCases) { page in
+				NavigationLink {
+					subpage(page)
+				} label: {
+					pageRow(page)
+				}
+				.buttonStyle(.plain)
+				if page != Page.allCases.last { Divider().overlay(MaskinSurface.separator) }
+			}
+		}
+		.padding(.horizontal, MaskinSpace.s10)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.agentSurface()
+	}
+
+	private func summary(_ page: Page) -> String {
+		switch page {
+		case .setup: "Instructions, tools, skills"
+		case .triggers: triggers.isEmpty ? "None" : "\(triggers.count)"
+		case .objects: objects.isEmpty ? "None" : "\(objects.count)"
+		case .sessions: store.sessions.isEmpty ? "No runs yet" : "\(store.sessions.count) recent"
+		}
+	}
+
+	private func pageRow(_ page: Page) -> some View {
+		HStack(spacing: MaskinSpace.s5) {
+			Image(systemName: page.symbol)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(width: MaskinSpace.s10)
+				.accessibilityHidden(true)
+			Text(page.rawValue).maskinText(.body).foregroundStyle(MaskinColor.ink)
+			Spacer(minLength: MaskinSpace.s3)
+			Text(summary(page)).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(1)
+			Image(systemName: "chevron.right")
+				.foregroundStyle(MaskinColor.ink5)
+				.accessibilityHidden(true)
+		}
+		.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s3)
+		.contentShape(Rectangle())
+		.accessibilityElement(children: .combine)
+	}
+
+	private func subpage(_ page: Page) -> some View {
+		ScrollView {
+			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+				switch page {
+				case .setup: setupCards
+				case .triggers: triggerCards
+				case .objects: objectCards
+				case .sessions: sessionCards
+				}
+			}
+			.padding(MaskinSpace.s9)
+			.frame(maxWidth: 720, alignment: .leading)
+			.frame(maxWidth: .infinity)
+		}
+		.ambientBackground()
+		.navigationTitle(page.rawValue)
+		#if os(iOS)
+		.navigationBarTitleDisplayMode(.inline)
+		#endif
+	}
+
+	@ViewBuilder private var triggerCards: some View {
+		card("Triggers", action: onNewTrigger.map { ("New trigger", "plus", $0) }) {
+			if triggers.isEmpty {
+				Text("Nothing wakes this agent yet. Add a schedule or an event.")
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+			} else {
 				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(flows) { flow in
+					ForEach(triggers) { trigger in
 						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: "arrow.triangle.2.circlepath")
-								.foregroundStyle(MaskinColor.ink4)
+							Image(systemName: trigger.kind.symbol)
+								.foregroundStyle(trigger.enabled ? MaskinColor.ink3 : MaskinColor.ink5)
 								.accessibilityHidden(true)
-							Text(flow.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink2).lineLimit(1)
-							Spacer(minLength: 0)
+							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+								Text(trigger.name)
+									.maskinText(.subhead)
+									.foregroundStyle(trigger.enabled ? MaskinColor.ink2 : MaskinColor.ink4)
+									.lineLimit(1)
+								Text(trigger.summary)
+									.maskinText(.caption)
+									.foregroundStyle(MaskinColor.ink5)
+									.lineLimit(2)
+							}
+							Spacer(minLength: MaskinSpace.s3)
+							Toggle(
+								"Enabled",
+								isOn: Binding(get: { trigger.enabled }, set: { onToggleTrigger(trigger.id, $0) })
+							)
+							.labelsHidden()
+							.controlSize(.small)
+							.accessibilityLabel("\(trigger.name) enabled")
 						}
 					}
 				}
 			}
 		}
+	}
+
+	@ViewBuilder private var setupCards: some View {
 		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat)) {
 			if let prompt = profile.systemPrompt, !prompt.isEmpty {
 				Text(prompt)
@@ -196,12 +335,80 @@ struct AgentDetailContent: View {
 				}
 			}
 		}
+		card("Skills") {
+			if profile.skills.isEmpty {
+				Text("No skills.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			} else {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(profile.skills, id: \.self) { skill in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: "sparkles")
+								.foregroundStyle(MaskinColor.ink4)
+								.accessibilityHidden(true)
+							Text(skill).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+							Spacer(minLength: 0)
+						}
+					}
+				}
+			}
+		}
+		if !flows.isEmpty {
+			card("Flows") {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(flows) { flow in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: "arrow.triangle.2.circlepath")
+								.foregroundStyle(MaskinColor.ink4)
+								.accessibilityHidden(true)
+							Text(flow.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink2).lineLimit(1)
+							Spacer(minLength: 0)
+						}
+					}
+				}
+			}
+		}
 		card("Setup") {
 			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				fact("Model", profile.llmProvider ?? "Workspace default")
-				fact("Skills", profile.skills.isEmpty ? "None" : profile.skills.joined(separator: ", "))
 			}
 		}
+	}
+
+	@ViewBuilder private var objectCards: some View {
+		card("Driving") {
+			if objects.isEmpty {
+				Text("Not driving any objects yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			} else {
+				VStack(spacing: 0) {
+					ForEach(objects) { object in
+						Button { onOpenObject(object.id) } label: {
+							HStack(spacing: MaskinSpace.s5) {
+								VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+									Text(object.title ?? "Untitled")
+										.maskinText(.subhead)
+										.foregroundStyle(MaskinColor.ink2)
+										.lineLimit(2)
+									Text("\(object.type.capitalized) · \(object.status.replacingOccurrences(of: "_", with: " ").capitalized)")
+										.maskinText(.caption)
+										.foregroundStyle(MaskinColor.ink5)
+								}
+								Spacer(minLength: 0)
+								Image(systemName: "chevron.right")
+									.foregroundStyle(MaskinColor.ink5)
+									.accessibilityHidden(true)
+							}
+							.frame(minHeight: MaskinSpace.touchMin)
+							.contentShape(Rectangle())
+						}
+						.buttonStyle(.plain)
+						if object.id != objects.last?.id { Divider().overlay(MaskinSurface.separator) }
+					}
+				}
+			}
+		}
+	}
+
+	@ViewBuilder private var sessionCards: some View {
 		card("Recent sessions") {
 			if store.sessions.isEmpty {
 				Text("No runs yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
@@ -227,11 +434,19 @@ struct AgentDetailContent: View {
 					.maskinText(.title)
 					.foregroundStyle(MaskinColor.ink)
 					.multilineTextAlignment(.center)
-				Text(profile.role)
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
-					.multilineTextAlignment(.center)
-					.lineLimit(2)
+				if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+					!description.isEmpty
+				{
+					Text(description)
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink4)
+						.multilineTextAlignment(.center)
+				} else {
+					Text(profile.role)
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink4)
+						.multilineTextAlignment(.center)
+				}
 				AgentStatusLabel(status: store.status).padding(.top, MaskinSpace.s2)
 			}
 			.accessibilityElement(children: .combine)
@@ -251,15 +466,19 @@ struct AgentDetailContent: View {
 
 	@ViewBuilder
 	private var actionButtons: some View {
+		runPauseButton
+	}
+
+	@ViewBuilder
+	private var runPauseButton: some View {
 		if AgentActions.canPause(store.status) {
 			Button(action: onPause) { Label(store.busy == .pause ? "Pausing…" : "Pause", systemImage: "pause.fill") }
 				.buttonStyle(.primaryAction)
 				.disabled(!store.canPause)
-		} else {
+		} else if store.status == .paused {
+			// No "Run now": work starts from Chat, Live or a trigger. Only a paused agent resumes here.
 			Button(action: onRun) {
-				Label(
-					store.busy == .run ? "Starting…" : (store.status == .paused ? "Resume" : "Run now"),
-					systemImage: "play.fill")
+				Label(store.busy == .run ? "Starting…" : "Resume", systemImage: "play.fill")
 			}
 			.buttonStyle(.primaryAction)
 			.disabled(!store.canRun)

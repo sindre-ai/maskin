@@ -307,8 +307,6 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
-	// Keychain chat capture. One read of the flag for the whole guard.
-	const guardEnabled = useFeatureFlag('keychain-chat-capture')
 	const [secretFlow, setSecretFlow] = useState<{
 		content: string
 		matches: SecretMatch[]
@@ -340,7 +338,7 @@ export function Composer({
 		if (vaultFlow?.blocking) return
 		// A pasted secret must never reach sessionStorage: not while the card is open,
 		// and not in the keystrokes before Send either.
-		if (secretFlow?.blocking || (guardEnabled && hasHighConfidenceSecret(value, workspaceId))) {
+		if (secretFlow?.blocking || hasHighConfidenceSecret(value, workspaceId)) {
 			writeDraft(draftKey, '')
 			return
 		}
@@ -352,7 +350,6 @@ export function Composer({
 		setValue,
 		secretFlow?.blocking,
 		vaultFlow?.blocking,
-		guardEnabled,
 		workspaceId,
 	])
 	// Mobile soft keyboards have no Shift key, so the desktop `Shift+Enter`
@@ -499,19 +496,17 @@ export function Composer({
 			e?.preventDefault()
 			if (!canSend) return
 			const content = value.trim()
-			if (guardEnabled) {
-				const matches = scanComposerText(content, {
-					workspaceId,
-					mutedPatternIds: mutedPatternIds.current,
-				})
-				if (matches.length > 0) {
-					// Before any network call. The text leaves the draft and the input and
-					// lives only in the card's state until the user decides.
-					if (draftKey !== undefined) writeDraft(draftKey, '')
-					setSecretFlow({ content, matches, blocking: true })
-					setValue('')
-					return
-				}
+			const matches = scanComposerText(content, {
+				workspaceId,
+				mutedPatternIds: mutedPatternIds.current,
+			})
+			if (matches.length > 0) {
+				// Before any network call. The text leaves the draft and the input and
+				// lives only in the card's state until the user decides.
+				if (draftKey !== undefined) writeDraft(draftKey, '')
+				setSecretFlow({ content, matches, blocking: true })
+				setValue('')
+				return
 			}
 			setSending(true)
 			setSendError(null)
@@ -530,7 +525,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, draftKey, guardEnabled, onDismissExternalError, onSend, setValue, value, workspaceId],
+		[canSend, draftKey, onDismissExternalError, onSend, setValue, value, workspaceId],
 	)
 
 	// Commits the picker's highlighted row into a mention pill: strips the
@@ -665,7 +660,7 @@ export function Composer({
 			const next = e.target.value
 			// The prefix as the first character of an empty composer opens vault mode and
 			// is consumed: setValue never sees it, so neither does the draft mirror.
-			if (guardEnabled && !vaultFlow?.blocking && valueRef.current === '') {
+			if (!vaultFlow?.blocking && valueRef.current === '') {
 				const seed = vaultSeedFrom(next)
 				if (seed !== null) {
 					enterVault(seed)
@@ -752,15 +747,7 @@ export function Composer({
 			slashPosRef.current = pos - 1
 			setTurnIntoOpen(true)
 		},
-		[
-			setValue,
-			unifiedPickerEnabled,
-			slashStart,
-			typeFilterChip,
-			guardEnabled,
-			vaultFlow?.blocking,
-			enterVault,
-		],
+		[setValue, unifiedPickerEnabled, slashStart, typeFilterChip, vaultFlow?.blocking, enterVault],
 	)
 
 	// A paste that starts with the prefix and has no whitespace, into an empty composer,
@@ -768,13 +755,13 @@ export function Composer({
 	// secret is never in the composer's value, not even for a frame.
 	const handlePaste = useCallback(
 		(e: ClipboardEvent<HTMLTextAreaElement>) => {
-			if (!guardEnabled || vaultFlow?.blocking || valueRef.current !== '') return
+			if (vaultFlow?.blocking || valueRef.current !== '') return
 			const seed = vaultSeedFrom(e.clipboardData.getData('text'))
 			if (seed === null) return
 			e.preventDefault()
 			enterVault(seed)
 		},
-		[guardEnabled, vaultFlow?.blocking, enterVault],
+		[vaultFlow?.blocking, enterVault],
 	)
 
 	const openPickerForKind = useCallback((kind: SlashKindId) => {

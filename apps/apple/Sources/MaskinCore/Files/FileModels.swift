@@ -191,6 +191,8 @@ public protocol FilesRemote: Sendable {
 	func file(id: String) async throws -> FileDetail
 	/// `GET /api/files`: newest first, optionally filtered by name.
 	func list(query: String, limit: Int, offset: Int) async throws -> [FileSummary]
+	/// `GET /api/files?kind=briefing`: the pages written to be read in For you, newest first.
+	func briefings(limit: Int) async throws -> [FileSummary]
 	/// `GET /api/files?ids=`: metadata (no bytes) for specific files in one request. Unknown or
 	/// inaccessible ids are simply absent from the result.
 	func summaries(ids: [String]) async throws -> [FileSummary]
@@ -204,6 +206,10 @@ public protocol FilesRemote: Sendable {
 extension FilesRemote {
 	public func list(query: String, limit: Int, offset: Int) async throws -> [FileSummary] {
 		throw FileError("Browsing files isn't available here.")
+	}
+
+	public func briefings(limit: Int) async throws -> [FileSummary] {
+		throw FileError("Briefings aren't available here.")
 	}
 
 	public func summaries(ids: [String]) async throws -> [FileSummary] {

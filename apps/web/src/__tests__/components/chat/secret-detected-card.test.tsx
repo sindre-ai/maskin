@@ -1,12 +1,6 @@
 import { VaultedCard } from '@/components/chat/secret-detected-card'
 import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-const flags = vi.hoisted(() => ({ settingsUi: false }))
-
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'keychain-settings-ui' && flags.settingsUi,
-}))
+import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -34,25 +28,14 @@ function renderCard(overrides: Partial<Parameters<typeof VaultedCard>[0]> = {}) 
 	)
 }
 
-beforeEach(() => {
-	flags.settingsUi = false
-})
-
 describe('VaultedCard', () => {
-	it('offers View credential when the Keychain settings flag is on', () => {
-		flags.settingsUi = true
+	it('offers View credential', () => {
 		renderCard()
 		expect(screen.getByRole('link', { name: 'View credential' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
 	})
 
-	it('hides View credential when the Keychain settings flag is off', () => {
-		renderCard()
-		expect(screen.queryByRole('link', { name: 'View credential' })).not.toBeInTheDocument()
-	})
-
 	it('puts Retry before View credential when the restart failed', () => {
-		flags.settingsUi = true
 		renderCard({ phase: 'failed' })
 		const retry = screen.getByRole('button', { name: 'Retry' })
 		const view = screen.getByRole('link', { name: 'View credential' })

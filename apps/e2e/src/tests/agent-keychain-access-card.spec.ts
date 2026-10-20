@@ -166,7 +166,7 @@ test('Allow in this chat grants for this conversation only', async ({ page, acco
 	await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 	await page.getByRole('button', { name: 'Allow in this chat' }).click()
 
-	await expect(page.getByText(/in this chat only./)).toBeVisible()
+	await expect(page.getByText(/^Allowed .* in this chat only.$/)).toBeVisible()
 	expect(allows).toEqual([{ sessionId: SESSION_ID, scope: 'chat' }])
 })
 

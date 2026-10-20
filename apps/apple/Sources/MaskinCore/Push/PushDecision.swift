@@ -116,6 +116,8 @@ public struct NotificationActionPlan: Sendable, Equatable {
 		public enum Kind: Sendable, Equatable {
 			case option(label: String)
 			case reply
+			/// Defer the ask on this device ("Later"). Needs no network.
+			case later
 			case open
 		}
 		public var identifier: String
@@ -127,6 +129,7 @@ public struct NotificationActionPlan: Sendable, Equatable {
 	}
 
 	public static let replyIdentifier = "maskin.reply"
+	public static let laterIdentifier = "maskin.later"
 	public static let openIdentifier = "maskin.open"
 	public static let optionPrefix = "maskin.option."
 	/// iOS shows at most four actions on a banner.
@@ -135,31 +138,38 @@ public struct NotificationActionPlan: Sendable, Equatable {
 	public var categoryIdentifier: String
 	public var actions: [Action]
 
-	/// Options first (they ARE the decision), then the free-text Reply, then Open if a slot is
-	/// left; the notification body itself already opens the app, so Open is the first to go.
+	/// The suggested option leads (and the agent's Hold follows it), then Later, then the
+	/// free-text Reply: four buttons, the most iOS shows on a banner. An option that needs a
+	/// confirmation (`destructive`) is never one tap on a lock screen: its button says "Review"
+	/// and opens the card, where the confirmation lives. The notification body itself already
+	/// opens the app, so there is no separate Open button.
 	public init(_ payload: PushDecisionPayload) {
 		categoryIdentifier = PushDecisionPayload.categoryPrefix + payload.notificationId
 		var actions: [Action] = []
-		// The recommended option leads and Hold follows it, so the two buttons the design leads with
-		// are the two a banner always shows. The identifier keeps the option's index in the
-		// PAYLOAD, not its place in the plan, so `choice(for:in:)` is independent of ordering.
-		for (index, option) in Self.display(payload.options).prefix(Self.maxActions - 1) {
-			actions.append(
-				Action(
-					identifier: Self.optionPrefix + String(index), title: option.label,
-					kind: .option(label: option.label), requiresAuthentication: option.destructive,
-					isDestructive: option.destructive))
+		// The identifier keeps the option's index in the PAYLOAD, not its place in the plan, so
+		// `choice(for:in:)` is independent of ordering.
+		for (index, option) in Self.display(payload.options).prefix(Self.maxActions - 2) {
+			if option.destructive {
+				actions.append(
+					Action(
+						identifier: Self.optionPrefix + String(index), title: "Review \u{201C}\(option.label)\u{201D}",
+						kind: .open, requiresAuthentication: false, isDestructive: false))
+			} else {
+				actions.append(
+					Action(
+						identifier: Self.optionPrefix + String(index), title: option.label,
+						kind: .option(label: option.label), requiresAuthentication: false,
+						isDestructive: false))
+			}
 		}
+		actions.append(
+			Action(
+				identifier: Self.laterIdentifier, title: "Later", kind: .later,
+				requiresAuthentication: false, isDestructive: false))
 		actions.append(
 			Action(
 				identifier: Self.replyIdentifier, title: "Reply", kind: .reply,
 				requiresAuthentication: false, isDestructive: false))
-		if actions.count < Self.maxActions {
-			actions.append(
-				Action(
-					identifier: Self.openIdentifier, title: "Open", kind: .open,
-					requiresAuthentication: false, isDestructive: false))
-		}
 		self.actions = actions
 	}
 

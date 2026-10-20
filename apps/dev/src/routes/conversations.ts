@@ -4,6 +4,7 @@ import {
 	actors,
 	conversationParticipants,
 	conversations,
+	messageThreadReads,
 	messages,
 	sessions,
 	workspaceMembers,
@@ -13,16 +14,18 @@ import {
 	conversationListQuerySchema,
 	createConversationSchema,
 	editMessageSchema,
-	findHighConfidenceSecret,
+	markThreadReadSchema,
 	messageQuerySchema,
 	postMessageSchema,
 	stripServerOwnedMetadata,
+	threadListQuerySchema,
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -32,7 +35,9 @@ import {
 	idParamSchema,
 	messageResponseSchema,
 	messageWithSpawnedSessionsSchema,
+	postMessageResponseSchema,
 	spawnedSessionResponseSchema,
+	threadListItemSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -40,6 +45,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import type { SessionManager } from '../services/session-manager'
 import {
 	anchorSpawnedSessionsToMessage,
@@ -209,6 +215,23 @@ async function loadConversationWithAuth(db: Database, conversationId: string, ca
 	return row ?? null
 }
 
+/** Column set behind every message response, joined to its author's name and type. */
+const messageColumns = {
+	id: messages.id,
+	conversationId: messages.conversationId,
+	actorId: messages.actorId,
+	actorName: actors.name,
+	actorType: actors.type,
+	kind: messages.kind,
+	content: messages.content,
+	metadata: messages.metadata,
+	sessionId: messages.sessionId,
+	createdAt: messages.createdAt,
+	editedAt: messages.editedAt,
+	threadRootId: messages.threadRootId,
+	threadAlsoInChannel: messages.threadAlsoInChannel,
+}
+
 // POST / - Create conversation
 const createConversationRoute = createRoute({
 	method: 'post',
@@ -239,6 +262,18 @@ app.openapi(createConversationRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	if (body.initial_message) {
+		const secretRefusal = await refuseRawSecret(db, {
+			content: body.initial_message,
+			workspaceId,
+			actorId: callerId,
+			actorType: c.get('actorType'),
+			entityType: 'workspace',
+			entityId: workspaceId,
+		})
+		if (secretRefusal) return c.json(secretRefusal, 400)
+	}
 
 	// Every participant (including the creator, deduped) must already be a
 	// workspace member — conversations don't extend membership, they're
@@ -476,6 +511,130 @@ app.openapi(listConversationsRoute, (async (c) => {
 		has_more: hasMore,
 	})
 }) as RouteHandler<typeof listConversationsRoute, Env>)
+
+// GET /threads - Threads the caller is in, across their conversations
+const listThreadsRoute = createRoute({
+	method: 'get',
+	path: '/threads',
+	tags: ['Conversations'],
+	summary: 'List threads the caller started or replied in, most recently active first',
+	request: { headers: workspaceIdHeader, query: threadListQuerySchema },
+	responses: {
+		200: {
+			content: {
+				'application/json': { schema: z.object({ threads: z.array(threadListItemSchema) }) },
+			},
+			description: 'Threads',
+		},
+	},
+})
+
+app.openapi(listThreadsRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { limit } = c.req.valid('query')
+
+	const rootIds = await listCallerThreadRootIds(db, { callerId, workspaceId, limit })
+	if (rootIds.length === 0) return c.json({ threads: [] })
+
+	const roots = await db
+		.select({ ...messageColumns, conversationTitle: conversations.title })
+		.from(messages)
+		.innerJoin(actors, eq(actors.id, messages.actorId))
+		.innerJoin(conversations, eq(conversations.id, messages.conversationId))
+		.where(inArray(messages.id, rootIds))
+	const summaries = await loadThreadSummaries(db, callerId, roots)
+
+	const lastReplyIds = [...summaries.values()].map((s) => s.lastReplyId)
+	const lastReplies =
+		lastReplyIds.length === 0
+			? []
+			: await db
+					.select(messageColumns)
+					.from(messages)
+					.innerJoin(actors, eq(actors.id, messages.actorId))
+					.where(inArray(messages.id, lastReplyIds))
+	const replyById = new Map(lastReplies.map((m) => [m.id, m]))
+	const rootById = new Map(roots.map((r) => [r.id, r]))
+
+	return c.json({
+		threads: rootIds.flatMap((id) => {
+			const root = rootById.get(id)
+			const thread = summaries.get(id)
+			if (!root || !thread) return []
+			const { conversationTitle, ...rootMessage } = root
+			const reply = replyById.get(thread.lastReplyId)
+			return [
+				{
+					conversationId: root.conversationId,
+					conversationTitle,
+					root: serialize(rootMessage),
+					thread,
+					lastReply: reply ? serialize(reply) : null,
+				},
+			]
+		}),
+	}) as never
+}) as RouteHandler<typeof listThreadsRoute, Env>)
+
+// PUT /:id/messages/:messageId/thread/read - Advance the caller's thread read cursor
+const markThreadReadRoute = createRoute({
+	method: 'put',
+	path: '/{id}/messages/{messageId}/thread/read',
+	tags: ['Conversations'],
+	summary: 'Mark a thread read up to a reply (advance-only)',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: markThreadReadSchema } } },
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.object({ last_read_message_id: z.number() }) } },
+			description: 'Cursor after the update',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(markThreadReadRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { last_read_message_id: lastRead } = c.req.valid('json')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+	const [root] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.where(
+			and(
+				eq(messages.id, messageId),
+				eq(messages.conversationId, id),
+				isNull(messages.threadRootId),
+			),
+		)
+		.limit(1)
+	if (!root) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
+
+	const [cursor] = await db
+		.insert(messageThreadReads)
+		.values({ actorId: callerId, rootMessageId: messageId, lastReadMessageId: lastRead })
+		.onConflictDoUpdate({
+			target: [messageThreadReads.actorId, messageThreadReads.rootMessageId],
+			set: {
+				lastReadMessageId: sql`GREATEST(${messageThreadReads.lastReadMessageId}, ${lastRead})`,
+				updatedAt: new Date(),
+			},
+		})
+		.returning({ lastReadMessageId: messageThreadReads.lastReadMessageId })
+	return c.json({ last_read_message_id: cursor?.lastReadMessageId ?? lastRead }, 200)
+}) as RouteHandler<typeof markThreadReadRoute, Env>)
 
 // GET /:id - Conversation detail
 const getConversationRoute = createRoute({
@@ -756,21 +915,10 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const conditions = [eq(messages.conversationId, id)]
 	if (query.before_id) conditions.push(lt(messages.id, query.before_id))
 	if (query.after_id) conditions.push(gt(messages.id, query.after_id))
+	if (query.thread_root_id) conditions.push(eq(messages.threadRootId, query.thread_root_id))
 
 	const rows = await db
-		.select({
-			id: messages.id,
-			conversationId: messages.conversationId,
-			actorId: messages.actorId,
-			actorName: actors.name,
-			actorType: actors.type,
-			kind: messages.kind,
-			content: messages.content,
-			metadata: messages.metadata,
-			sessionId: messages.sessionId,
-			createdAt: messages.createdAt,
-			editedAt: messages.editedAt,
-		})
+		.select(messageColumns)
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(and(...conditions))
@@ -790,6 +938,12 @@ app.openapi(listMessagesRoute, (async (c) => {
 		actorId: callerId,
 	})
 
+	const summaries = await loadThreadSummaries(
+		db,
+		callerId,
+		page.filter((m) => m.threadRootId === null),
+	)
+
 	// Handoffs no message carries yet ride on the newest page only.
 	const pendingHandoffs = query.before_id
 		? undefined
@@ -805,6 +959,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 				({
 					...serialize(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
+					thread: summaries.get(m.id) ?? null,
 				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
 		),
 		has_more: hasMore,
@@ -826,7 +981,7 @@ const postMessageRoute = createRoute({
 	},
 	responses: {
 		201: {
-			content: { 'application/json': { schema: messageResponseSchema } },
+			content: { 'application/json': { schema: postMessageResponseSchema } },
 			description: 'Message posted',
 		},
 		400: {
@@ -852,27 +1007,16 @@ app.openapi(postMessageRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
-	// Keychain backstop: the composer guard should have caught a pasted secret
-	// before this request existed, so reaching here with one is a bypass. Refuse it
-	// and keep a record. The event names the pattern, never the value.
-	const secretHit = findHighConfidenceSecret(body.content)
-	if (secretHit) {
-		await recordEvent(db, {
-			workspaceId,
-			actorId: callerId,
-			action: 'credential_scanner_bypass_attempt',
-			entityType: 'conversation',
-			entityId: id,
-			data: { attention: 3, pattern_id: secretHit.patternId, caller_type: callerType },
-		})
-		return c.json(
-			createApiError(
-				'RAW_SECRET_DETECTED',
-				'This message looks like it contains a secret, so it was not sent. Vault it in Keychain instead.',
-			),
-			400,
-		)
-	}
+	// Keychain backstop; see refuseRawSecret.
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId: callerId,
+		actorType: callerType,
+		entityType: 'conversation',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
 
 	// Stamp session_id only when the caller is the agent that ran that
 	// session, for this same conversation — otherwise silently drop it
@@ -903,6 +1047,26 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
+	// A thread reply must hang off a top-level message of this same conversation:
+	// threads are one level deep, so a reply to a reply is rejected rather than
+	// silently re-rooted.
+	if (body.thread_root_id !== undefined) {
+		const [root] = await db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.id, body.thread_root_id),
+					eq(messages.conversationId, id),
+					isNull(messages.threadRootId),
+				),
+			)
+			.limit(1)
+		if (!root) {
+			return c.json(createApiError('NOT_FOUND', 'Thread root message not found'), 404)
+		}
+	}
+
 	// `source` / `final_output` are backend-owned markers for auto-posted
 	// end-of-turn output. A client (or an agent via the MCP tool) must not be
 	// able to claim them — the frontend reconciles its optimistic bubble
@@ -916,8 +1080,38 @@ app.openapi(postMessageRoute, (async (c) => {
 		content: body.content,
 		metadata,
 		sessionId,
+		threadRootId: body.thread_root_id ?? null,
+		threadAlsoInChannel: body.thread_root_id !== undefined && body.also_in_channel === true,
 	})
 	if (!created) throw new Error('Failed to create message')
+
+	// Replying means the human has read everything before their message, so their read cursor
+	// moves to it: otherwise the thread keeps a NEW divider (and the list an unread badge) over
+	// messages they just answered, on every surface that replied from somewhere the cursor
+	// was never reported. Advance-only, like PATCH /:id/me. Humans only: an agent posting
+	// mid-turn may not have seen what landed since, and moving its cursor would hide that
+	// from its unread list.
+	if (callerType === 'human') {
+		await db
+			.update(conversationParticipants)
+			.set({
+				lastReadMessageId: sql`GREATEST(COALESCE(${conversationParticipants.lastReadMessageId}, 0), ${created.id})`,
+			})
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, id),
+					eq(conversationParticipants.actorId, callerId),
+				),
+			)
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'conversation_participant_state_updated',
+			entityType: 'conversation',
+			entityId: id,
+			data: { last_read_message_id: created.id, via: 'post_message' },
+		})
+	}
 
 	// An agent narrating a handoff mid-turn: hang the sub-sessions it has started
 	// since its last message under this one, so the card shows while they run.
@@ -955,6 +1149,10 @@ app.openapi(postMessageRoute, (async (c) => {
 	// evaluateAndRespond runs, so the freshly-mentioned agent is already a
 	// candidate for this very message.
 	const mentionedIds = metadata?.mentions ?? []
+	// Ids that are neither already in the conversation nor workspace members:
+	// nothing joins them and nothing wakes them. Reported back so a mistyped
+	// UUID doesn't fail silently (same contract as POST /events comments).
+	let unresolvedMentions: string[] = []
 	if (mentionedIds.length > 0) {
 		const activeParticipants = await loadParticipantsByConversation(db, [id])
 		const activeIds = new Set((activeParticipants.get(id) ?? []).map((p) => p.actorId))
@@ -962,6 +1160,7 @@ app.openapi(postMessageRoute, (async (c) => {
 		if (notYetJoined.length > 0) {
 			const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
 			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
+			unresolvedMentions = Array.from(new Set(notYetJoined.filter((id) => !memberIds.has(id))))
 			if (toAdd.length > 0) {
 				await addParticipantsToConversation(db, id, toAdd, callerId)
 				await recordEvent(db, {
@@ -1002,7 +1201,8 @@ app.openapi(postMessageRoute, (async (c) => {
 			...created,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
-		}) as z.infer<typeof messageResponseSchema>,
+			...(unresolvedMentions.length > 0 ? { unresolved_mentions: unresolvedMentions } : {}),
+		}) as z.infer<typeof postMessageResponseSchema>,
 		201,
 	)
 }) as RouteHandler<typeof postMessageRoute, Env>)
@@ -1023,6 +1223,10 @@ const editMessageRoute = createRoute({
 		200: {
 			content: { 'application/json': { schema: messageResponseSchema } },
 			description: 'Message updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Edit looks like it contains a secret',
 		},
 		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not author' },
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
@@ -1059,6 +1263,16 @@ app.openapi(editMessageRoute, (async (c) => {
 	if ((message.metadata as { source?: string } | null)?.source === 'final_output') {
 		return c.json(createApiError('FORBIDDEN', 'Auto-posted agent output cannot be edited'), 403)
 	}
+
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId: callerId,
+		actorType: c.get('actorType'),
+		entityType: 'conversation',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
 
 	const editedAt = new Date()
 	const [updated] = await db
