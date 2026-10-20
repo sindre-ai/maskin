@@ -13,6 +13,15 @@ describe('stripServerOwnedMetadata', () => {
 		expect(stripped).toEqual({ mentions: [SESSION_ID] })
 	})
 
+	it('removes helper_return so a client cannot forge the marker that hides a message', () => {
+		const stripped = stripServerOwnedMetadata({
+			mentions: [SESSION_ID],
+			helper_return: SESSION_ID,
+		})
+
+		expect(stripped).toEqual({ mentions: [SESSION_ID] })
+	})
+
 	it('still removes the markers it already owned', () => {
 		const stripped = stripServerOwnedMetadata({
 			source: 'final_output',

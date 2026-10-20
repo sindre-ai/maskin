@@ -946,6 +946,40 @@ describe('Conversations Integration', () => {
 			expect(stored?.metadata).toEqual({ mentions: [] })
 		})
 
+		it('strips a client-claimed helper_return marker, so a person cannot hide a message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Helper return', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really a helper result',
+						metadata: { helper_return: '11111111-1111-4111-8111-111111111111', mentions: [] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// The web thread hides any message carrying this key, so a forged one would
+			// let a client post a message the other participants never see.
+			const [stored] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored?.metadata).toEqual({ mentions: [] })
+		})
+
 		it('still posts the message, bumps lastMessageAt and logs the event', async () => {
 			// The insert path moved into a shared helper so the turn finalizer can
 			// reuse it — this pins the route's behaviour as unchanged.

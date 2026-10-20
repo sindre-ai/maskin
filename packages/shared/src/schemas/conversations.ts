@@ -241,6 +241,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		question: _question,
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
+		helper_return: _helperReturn,
 		delivery: _delivery,
 		...rest
 	} = metadata
