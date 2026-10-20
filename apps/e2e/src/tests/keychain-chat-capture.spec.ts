@@ -241,7 +241,7 @@ test.describe('Keychain scope editor: paste, assign, see scope', () => {
 			await sheet.getByRole('checkbox', { name: new RegExp(agent.name) }).click()
 			await expect(sheet).toContainText('Available to 1 agent')
 			const saved = page.waitForResponse(
-				(r) => r.url().includes('/scope') && r.request().method() === 'PUT',
+				(r) => r.url().includes('/grants') && r.request().method() === 'PUT',
 			)
 			await sheet.getByRole('button', { name: 'Save access' }).click()
 			const response = await saved
