@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { type AgentIntroInput, renderAgentIntro } from '../../services/agent-intro-template'
+import {
+	type AgentIntroInput,
+	renderAgentIntro,
+	renderMinimalAgentIntro,
+} from '../../services/agent-intro-template'
 
 const base: AgentIntroInput = {
 	agentName: 'Scout',
@@ -102,6 +106,17 @@ describe('renderAgentIntro', () => {
 
 	it('says so when the agent has no tools beyond the platform one', () => {
 		expect(renderAgentIntro({ ...base, toolNames: [] })).toContain('Tools: none yet. Skills:')
+	})
+
+	it('has a minimal fallback with just the opening line', () => {
+		expect(renderMinimalAgentIntro(base)).toBe(
+			"Hey Sam, I'm Scout. I keep an eye on competitor launches.",
+		)
+		expect(
+			renderMinimalAgentIntro({ ...base, createdByAgent: true, creatorName: 'Chief of Staff' }),
+		).toBe(
+			"Hey Sam, I'm Scout. Chief of Staff set me up for you. I keep an eye on competitor launches.",
+		)
 	})
 
 	it('never emits a backtick or an em dash', () => {
