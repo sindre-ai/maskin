@@ -426,6 +426,9 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Decisions
 	post_decision: 'decision_post',
 	curate_decision: 'decision_curate',
+	// Notifications
+	create_notification: 'notification_create',
+	update_notification: 'notification_update',
 	// Workspace skills
 	create_workspace_skill: 'skill_create',
 	update_workspace_skill: 'skill_update',

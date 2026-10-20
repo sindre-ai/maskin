@@ -5,8 +5,9 @@ import { TestAPI } from '../helpers/api.helper'
  * For You — "Dismiss all" against the real backend, no mocks.
  *
  * Dismissing is marking read: the `···` menu's row has to move every card's
- * high-water mark, not just hide it optimistically. The unread feed is
- * mentions-only, so the agent @-mentions the viewer to put anything in it.
+ * high-water mark, not just hide it optimistically. For You is the Chief of
+ * Staff's curated list, so each card needs a `for_you` notification pointing at
+ * the comment that carries the ask.
  */
 test('the ··· menu\u2019s "Dismiss all" really marks every card read', async ({
 	page,
@@ -31,8 +32,8 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 	// The API rejects tasks created at in_review, so move them after creation.
 	await account.api.updateObject(a.id, account.workspaceId, { status: 'in_review' })
 	await account.api.updateObject(b.id, account.workspaceId, { status: 'in_review' })
-	// The unread feed is mentions-only, so the agent has to @-mention the viewer.
-	const mention = async (entityId: string, content: string) => {
+	// The agent raises the ask, then curates it onto the viewer's list.
+	const curate = async (entityId: string, headline: string, rank: number) => {
 		const res = await fetch('http://localhost:5173/api/events', {
 			method: 'POST',
 			headers: {
@@ -40,12 +41,25 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 				Authorization: `Bearer ${agent.api_key}`,
 				'X-Workspace-Id': account.workspaceId,
 			},
-			body: JSON.stringify({ entity_id: entityId, content, mentions: [account.actorId] }),
+			body: JSON.stringify({
+				entity_id: entityId,
+				content: headline,
+				mentions: [account.actorId],
+			}),
 		})
 		if (!res.ok) throw new Error(`mention failed: ${res.status} ${await res.text()}`)
+		const comment = (await res.json()) as { id: number }
+		await agentApi.createNotification(account.workspaceId, {
+			type: 'needs_input',
+			title: headline,
+			metadata: { kind: 'for_you', rank, headline, source_comment_id: comment.id },
+			source_actor_id: agent.id,
+			target_actor_id: account.actorId,
+			object_id: entityId,
+		})
 	}
-	await mention(a.id, 'Ready for you.')
-	await mention(b.id, 'Ready too.')
+	await curate(a.id, 'Ready for you.', 1)
+	await curate(b.id, 'Ready too.', 2)
 
 	await page.goto(`/${account.workspaceId}`)
 	await expect(page.getByTestId('foryou-feed-card')).toHaveCount(2)

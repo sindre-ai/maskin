@@ -36,11 +36,14 @@ testState.__markReadFails = false
 testState.__createCalls = []
 testState.__markReadCalls = []
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useUnread: () => ({
+vi.mock('@/hooks/use-for-you', () => ({
+	useForYou: () => ({
 		data: { items: (globalThis as unknown as TestState).__items },
 		isLoading: false,
 	}),
+}))
+
+vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => ({
 		// `mutateAsync` returns a promise per call, so each caller keeps its own
 		// success/failure handling. This is the API the route must use.

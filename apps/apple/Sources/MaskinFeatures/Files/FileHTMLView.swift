@@ -29,6 +29,22 @@ final class HTMLProbe {
 			w: r.width / window.innerWidth, h: r.height / window.innerHeight };
 		"""
 
+	/// Moves a deck page to card `index` (0-based) the way its own keys do: Home, then Right that
+	/// many times. Decks listen for these keys, so no deck has to know the app exists. In the page's
+	/// own world, where its listeners live.
+	func showCard(_ index: Int) async {
+		guard let webView else { return }
+		let script = """
+			var press = function (key) {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true }));
+			};
+			press('Home');
+			for (var i = 0; i < n; i++) { press('ArrowRight'); }
+			"""
+		_ = try? await webView.callAsyncJavaScript(
+			script, arguments: ["n": max(index, 0)], in: nil, contentWorld: .page)
+	}
+
 	func element(at point: FilePoint) async -> (selector: String, bounds: FileBounds)? {
 		guard let webView else { return nil }
 		let result = try? await webView.callAsyncJavaScript(
@@ -42,6 +58,7 @@ final class HTMLProbe {
 /// tvOS has no WebKit, so there is no page to probe; the preview is a placeholder (HTMLWebView).
 @MainActor
 final class HTMLProbe {
+	func showCard(_ index: Int) async {}
 	func element(at point: FilePoint) async -> (selector: String, bounds: FileBounds)? { nil }
 }
 #endif
