@@ -93,18 +93,22 @@ function ConversationThreadPage() {
 	// boolean down. Off is today's chat: the intro shows as its plain text.
 	const agentIntroEnabled = useFeatureFlag('agent-intro-1-1')
 	const sendMessage = useSendMessage(conversationId, workspaceId)
-	const sendStep = useCallback(
-		(content: string, metadata: MessageMetadata) => sendMessage.mutate({ content, metadata }),
-		[sendMessage.mutate],
-	)
-	// A fill step asks the composer to take its prompt. The nonce makes the same
-	// prompt tapped twice a new request; the request is dropped with the chat.
-	const [fillRequest, setFillRequest] = useState<{ text: string; nonce: number } | null>(null)
+	// A fill step asks the composer to take its prompt; a send step asks it only to
+	// take focus, so the person can follow up (the tapped button is gone by then).
+	// The nonce makes the same request twice a new one; it is dropped with the chat.
+	const [fillRequest, setFillRequest] = useState<{ text?: string; nonce: number } | null>(null)
 	const fillNonceRef = useRef(0)
-	const pickStep = useCallback((text: string) => {
+	const requestComposer = useCallback((text?: string) => {
 		fillNonceRef.current += 1
 		setFillRequest({ text, nonce: fillNonceRef.current })
 	}, [])
+	const sendStep = useCallback(
+		(content: string, metadata: MessageMetadata) => {
+			sendMessage.mutate({ content, metadata })
+			requestComposer()
+		},
+		[sendMessage.mutate, requestComposer],
+	)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
 	useEffect(() => {
 		setFillRequest(null)
@@ -249,7 +253,7 @@ function ConversationThreadPage() {
 						v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 						producedEnabled={producedEnabled}
 						suggestedStepsEnabled={agentIntroEnabled}
-						onPickStep={pickStep}
+						onPickStep={requestComposer}
 						onSendStep={sendStep}
 						sendingStep={sendMessage.isPending}
 					/>

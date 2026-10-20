@@ -235,6 +235,8 @@ test.describe('Agent intro steps and tools', () => {
 			metadata: { from_suggested_step: { intro_message_id: 9201, index: 0 } },
 		})
 		await expect(box).toHaveValue('Draft a reply to: ')
+		// The tapped button is gone, so focus goes to the box for a follow-up.
+		await expect(box).toBeFocused()
 		// The steps leave once the person has written; the tool row stays.
 		await expect(page.getByRole('group', { name: 'Suggested first steps' })).toHaveCount(0)
 		await expect(page.getByRole('heading', { name: 'Tools for this job' })).toBeVisible()

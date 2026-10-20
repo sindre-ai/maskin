@@ -207,11 +207,12 @@ export interface ComposerProps {
 	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
 	callAgent?: VoiceCallAgent | null
 	/**
-	 * Asks the composer to replace its draft with `text`, then focus with the caret
-	 * at the end. One request per nonce: a request that was already there when the
+	 * Asks the composer to replace its draft with `text` (when given), then focus
+	 * with the caret at the end. Without `text` it only focuses and leaves the draft
+	 * alone. One request per nonce: a request that was already there when the
 	 * composer mounted never fires, so a stale one cannot overwrite a draft.
 	 */
-	fillRequest?: { text: string; nonce: number } | null
+	fillRequest?: { text?: string; nonce: number } | null
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -354,12 +355,12 @@ export function Composer({
 	useEffect(() => {
 		if (!fillRequest || fillRequest.nonce === handledFillNonceRef.current) return
 		handledFillNonceRef.current = fillRequest.nonce
-		setValue(fillRequest.text)
-		const end = fillRequest.text.length
+		if (fillRequest.text !== undefined) setValue(fillRequest.text)
 		requestAnimationFrame(() => {
 			const el = textareaRef.current
 			if (!el) return
 			el.focus()
+			const end = el.value.length
 			el.setSelectionRange(end, end)
 		})
 	}, [fillRequest, setValue])

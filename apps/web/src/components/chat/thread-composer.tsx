@@ -10,8 +10,8 @@ import { useCallback, useMemo, useReducer, useState } from 'react'
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
-	/** A fill step was tapped: replace the draft with this text and focus the box. */
-	fillRequest?: { text: string; nonce: number } | null
+	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
+	fillRequest?: { text?: string; nonce: number } | null
 }
 
 /**

@@ -14,7 +14,7 @@ vi.mock('@/lib/analytics', () => ({
 	trackSpecialistSummonedManually: () => {},
 }))
 
-type FillRequest = { text: string; nonce: number } | null
+type FillRequest = { text?: string; nonce: number } | null
 
 function composer(fillRequest: FillRequest, draftKey = 'conv-1') {
 	return (
@@ -74,6 +74,20 @@ describe('Composer fillRequest', () => {
 		rerender(composer({ text: 'Second', nonce: 3 }))
 
 		expect(screen.getByRole('textbox')).toHaveValue('Second')
+	})
+
+	it('only focuses, with the caret at the end, when the request carries no text', async () => {
+		const wrapper = createWorkspaceWrapper()
+		const { rerender } = render(composer(null), { wrapper })
+		const box = screen.getByRole('textbox')
+		await userEvent.type(box, 'my draft')
+		box.blur()
+
+		rerender(composer({ nonce: 1 }))
+
+		expect(box).toHaveValue('my draft')
+		expect(box).toHaveFocus()
+		expect((box as HTMLTextAreaElement).selectionStart).toBe('my draft'.length)
 	})
 
 	it('ignores a request that was already there when the composer mounted', () => {
