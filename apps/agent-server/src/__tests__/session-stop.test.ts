@@ -53,6 +53,8 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		WARM_POOL_REFRESH_MINUTES: 0,
 		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
 		DESKTOP_IMAGE: 'desktop:latest',
+		DESKTOP_SNAPSHOTS: false,
+		DESKTOP_IDLE_MINUTES: 10,
 		AGENT_SERVER_SSH_KEY_PATH: '/tmp/agent-server-session-stop-test/ssh/relay_key',
 		SESSION_MAX_DURATION: '8h',
 		...overrides,

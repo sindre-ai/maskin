@@ -9,7 +9,7 @@ import type { LocatedDesktop } from './workspace-desktop'
 // Browser <-> apps/dev <-> agent-server <-> desktop VM. This is the first hop:
 // it authenticates a WebSocket upgrade with a one-time ticket (see
 // lib/desktop-ticket.ts), then splices the socket onto the agent-server's
-// /desktops/:workspaceId/stream route. Like the agent-server hop it works at
+// /desktops/:workspaceId/:agentId/stream route. Like the agent-server hop it works at
 // the TCP level — it replays the handshake and pipes bytes, so no WebSocket
 // library is involved and the framing is done by websockify in the VM.
 
@@ -24,7 +24,10 @@ const DROPPED_HEADERS = new Set(['host', 'authorization', 'cookie'])
 export interface DesktopRelayDeps {
 	isMember: (actorId: string, workspaceId: string) => Promise<boolean>
 	isEnabled: (actorId: string, workspaceId: string) => boolean
-	locate: (workspaceId: string) => Promise<LocatedDesktop | null>
+	// May this actor reach THIS agent's desktop right now? (An agent: only its
+	// own. A person: any agent in a workspace they belong to.)
+	canAccess: (actorId: string, workspaceId: string, agentId: string) => Promise<boolean>
+	locate: (workspaceId: string, agentId: string) => Promise<LocatedDesktop | null>
 	// Injectable for tests; defaults to a plain/TLS TCP connection.
 	openUpstream?: (url: URL) => Duplex
 }
@@ -57,22 +60,27 @@ export async function handleDesktopStreamUpgrade(
 
 	const ticket = url.searchParams.get('ticket')
 	const claims = ticket ? consumeDesktopTicket(ticket) : null
-	if (!claims || !WORKSPACE_ID_RE.test(claims.workspaceId)) {
+	if (
+		!claims ||
+		!WORKSPACE_ID_RE.test(claims.workspaceId) ||
+		!WORKSPACE_ID_RE.test(claims.agentId)
+	) {
 		reject(socket, 401, 'Unauthorized')
 		return true
 	}
 
 	try {
-		// Re-check at upgrade time, not just at ticket time: membership or the
-		// flag may have been revoked in the 30s between the two.
+		// Re-check at upgrade time, not just at ticket time: membership, the flag, or
+		// the agent's place in the workspace may have changed in the 30s between the two.
 		if (
 			!deps.isEnabled(claims.actorId, claims.workspaceId) ||
-			!(await deps.isMember(claims.actorId, claims.workspaceId))
+			!(await deps.isMember(claims.actorId, claims.workspaceId)) ||
+			!(await deps.canAccess(claims.actorId, claims.workspaceId, claims.agentId))
 		) {
 			reject(socket, 403, 'Forbidden')
 			return true
 		}
-		const located = await deps.locate(claims.workspaceId)
+		const located = await deps.locate(claims.workspaceId, claims.agentId)
 		if (!located) {
 			reject(socket, 404, 'Not Found')
 			return true
@@ -101,7 +109,7 @@ export async function handleDesktopStreamUpgrade(
 			if (started) return
 			started = true
 			const lines = [
-				`GET /desktops/${claims.workspaceId}/stream HTTP/1.1`,
+				`GET /desktops/${claims.workspaceId}/${claims.agentId}/stream HTTP/1.1`,
 				`Host: ${target.host}`,
 				`Authorization: Bearer ${located.server.secret}`,
 			]

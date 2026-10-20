@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { type DesktopServer, WorkspaceDesktopService } from '../../services/workspace-desktop'
 
 const WS = '11111111-1111-4111-8111-111111111111'
+const AGENT = '44444444-4444-4444-8444-444444444444'
+const OTHER_AGENT = '55555555-5555-4555-8555-555555555555'
 
 const server = (id: string, status: DesktopServer['status'] = 'active'): DesktopServer => ({
 	id,
@@ -24,7 +26,7 @@ describe('WorkspaceDesktopService', () => {
 			fetchImpl,
 		})
 
-		const found = await svc.locate(WS)
+		const found = await svc.locate(WS, AGENT)
 
 		expect(found?.server.id).toBe('b')
 		expect(found?.password).toBe('pw')
@@ -37,11 +39,11 @@ describe('WorkspaceDesktopService', () => {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
 
-		await svc.locate(WS)
+		await svc.locate(WS, AGENT)
 
 		expect(fetchImpl).toHaveBeenCalledTimes(1)
 		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
-		expect(url).toBe(`https://a.example/desktops/${WS}`)
+		expect(url).toBe(`https://a.example/desktops/${WS}/${AGENT}`)
 		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer secret-a')
 	})
 
@@ -54,7 +56,7 @@ describe('WorkspaceDesktopService', () => {
 			listServers: async () => [server('a'), server('b')],
 			fetchImpl,
 		})
-		expect((await svc.locate(WS))?.server.id).toBe('b')
+		expect((await svc.locate(WS, AGENT))?.server.id).toBe('b')
 	})
 
 	it('ensure reuses an existing desktop without provisioning', async () => {
@@ -64,12 +66,92 @@ describe('WorkspaceDesktopService', () => {
 			fetchImpl: fetchImpl as unknown as typeof fetch,
 		})
 
-		const got = await svc.ensure(WS)
+		const got = await svc.ensure(WS, AGENT)
 
 		expect(got?.created).toBeUndefined()
 		for (const call of fetchImpl.mock.calls as unknown as Array<[string, RequestInit]>) {
 			expect(call[1].method).toBe('GET')
 		}
+	})
+
+	it('locate reports a suspended desktop as suspended', async () => {
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a')],
+			fetchImpl: (async () =>
+				res(200, { password: 'pw', status: 'suspended' })) as unknown as typeof fetch,
+		})
+		expect((await svc.locate(WS, AGENT))?.status).toBe('suspended')
+	})
+
+	it('ensure wakes a suspended desktop on the server that holds it, without provisioning anew', async () => {
+		const calls: string[] = []
+		const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push(`${init?.method} ${String(url)}`)
+			if (init?.method === 'PUT') return res(200, { password: 'pw', status: 'running' })
+			return String(url).includes('b.example')
+				? res(200, { password: 'pw', status: 'suspended' })
+				: res(404)
+		}) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({
+			// `a` is the first active server, but `b` is the one holding the sleeping desktop.
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl,
+		})
+
+		const got = await svc.ensure(WS, AGENT)
+
+		expect(got?.server.id).toBe('b')
+		expect(got?.status).toBe('running')
+		expect(got?.created).toBeUndefined()
+		expect(calls).toContain(`PUT https://b.example/desktops/${WS}/${AGENT}`)
+		expect(calls.some((c) => c.startsWith('PUT https://a.example'))).toBe(false)
+	})
+
+	it('keeps two agents in one workspace apart', async () => {
+		const urls: string[] = []
+		const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			urls.push(`${init?.method} ${String(url)}`)
+			return init?.method === 'PUT' ? res(200, { password: 'pw' }) : res(404)
+		}) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({ listServers: async () => [server('a')], fetchImpl })
+
+		await svc.ensure(WS, AGENT)
+		await svc.ensure(WS, OTHER_AGENT)
+
+		expect(urls).toContain(`PUT https://a.example/desktops/${WS}/${AGENT}`)
+		expect(urls).toContain(`PUT https://a.example/desktops/${WS}/${OTHER_AGENT}`)
+	})
+
+	it('list gathers every agent computer across servers, with its status', async () => {
+		const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+			String(url).includes('a.example')
+				? res(200, { desktops: [{ agent_id: AGENT, status: 'running' }] })
+				: res(200, { desktops: [{ agent_id: OTHER_AGENT, status: 'suspended' }] }),
+		) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl,
+		})
+
+		const listed = await svc.list(WS)
+
+		expect(listed).toEqual([
+			{ agentId: AGENT, status: 'running' },
+			{ agentId: OTHER_AGENT, status: 'suspended' },
+		])
+		const [url] = (fetchImpl as unknown as { mock: { calls: Array<[string]> } }).mock.calls[0] ?? []
+		expect(url).toBe(`https://a.example/desktops/${WS}`)
+	})
+
+	it('list tolerates a server that is down', async () => {
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [server('a'), server('b')],
+			fetchImpl: (async (url: string | URL | Request) => {
+				if (String(url).includes('a.example')) throw new Error('down')
+				return res(200, { desktops: [{ agent_id: AGENT, status: 'running' }] })
+			}) as unknown as typeof fetch,
+		})
+		expect(await svc.list(WS)).toEqual([{ agentId: AGENT, status: 'running' }])
 	})
 
 	it('ensure provisions on the first active server when none hosts it', async () => {
@@ -81,7 +163,7 @@ describe('WorkspaceDesktopService', () => {
 			fetchImpl,
 		})
 
-		const got = await svc.ensure(WS)
+		const got = await svc.ensure(WS, AGENT)
 
 		expect(got).toMatchObject({ password: 'new', created: true })
 		expect(got?.server.id).toBe('a')
@@ -92,14 +174,14 @@ describe('WorkspaceDesktopService', () => {
 			listServers: async () => [server('d', 'draining')],
 			fetchImpl: (async () => res(404)) as unknown as typeof fetch,
 		})
-		expect(await none.ensure(WS)).toBeNull()
+		expect(await none.ensure(WS, AGENT)).toBeNull()
 
 		const failing = new WorkspaceDesktopService({
 			listServers: async () => [server('a')],
 			fetchImpl: (async (_u: string | URL | Request, init?: RequestInit) =>
 				init?.method === 'PUT' ? res(502) : res(404)) as unknown as typeof fetch,
 		})
-		expect(await failing.ensure(WS)).toBeNull()
+		expect(await failing.ensure(WS, AGENT)).toBeNull()
 	})
 
 	it('remove deletes on the hosting server and reports whether one existed', async () => {
@@ -111,14 +193,14 @@ describe('WorkspaceDesktopService', () => {
 		}) as unknown as typeof fetch
 		const svc = new WorkspaceDesktopService({ listServers: async () => [server('a')], fetchImpl })
 
-		expect(await svc.remove(WS)).toBe(true)
-		expect(calls).toContain(`DELETE https://a.example/desktops/${WS}`)
+		expect(await svc.remove(WS, AGENT)).toBe(true)
+		expect(calls).toContain(`DELETE https://a.example/desktops/${WS}/${AGENT}`)
 
 		const empty = new WorkspaceDesktopService({
 			listServers: async () => [server('a')],
 			fetchImpl: (async () => res(404)) as unknown as typeof fetch,
 		})
-		expect(await empty.remove(WS)).toBe(false)
+		expect(await empty.remove(WS, AGENT)).toBe(false)
 	})
 })
 
@@ -139,12 +221,12 @@ describe('WorkspaceDesktopService.control', () => {
 		}) as unknown as typeof fetch
 		const svc = new WorkspaceDesktopService({ listServers: async () => [server('a')], fetchImpl })
 
-		const result = await svc.control(WS, 'input', { action: 'move', x: 1, y: 2 })
+		const result = await svc.control(WS, AGENT, 'input', { action: 'move', x: 1, y: 2 })
 
 		expect(result).toEqual({ status: 200, body: { ok: true } })
 		expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT', 'POST'])
 		const post = calls[2]
-		expect(post?.url).toBe(`https://a.example/desktops/${WS}/input`)
+		expect(post?.url).toBe(`https://a.example/desktops/${WS}/${AGENT}/input`)
 		expect(post?.auth).toBe('Bearer secret-a')
 		expect(JSON.parse(post?.body ?? '{}')).toEqual({ action: 'move', x: 1, y: 2 })
 	})
@@ -155,7 +237,7 @@ describe('WorkspaceDesktopService.control', () => {
 			fetchImpl: vi.fn() as unknown as typeof fetch,
 		})
 
-		expect(await svc.control(WS, 'screenshot', {})).toBeNull()
+		expect(await svc.control(WS, AGENT, 'screenshot', {})).toBeNull()
 	})
 
 	it("passes through the desktop's own error status instead of masking it", async () => {
@@ -166,7 +248,7 @@ describe('WorkspaceDesktopService.control', () => {
 		) as unknown as typeof fetch
 		const svc = new WorkspaceDesktopService({ listServers: async () => [server('a')], fetchImpl })
 
-		expect(await svc.control(WS, 'exec', { command: 'x' })).toEqual({
+		expect(await svc.control(WS, AGENT, 'exec', { command: 'x' })).toEqual({
 			status: 400,
 			body: { error: 'invalid_request' },
 		})

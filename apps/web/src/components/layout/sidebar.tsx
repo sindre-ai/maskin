@@ -15,8 +15,6 @@ import { useUnread } from '@/hooks/use-subscriptions'
 import {
 	CHATS_ROUTE,
 	CORE_NAV_ITEMS,
-	DESKTOP_FLAG,
-	DESKTOP_NAV_ITEM,
 	FOR_YOU_ROUTE,
 	type NavItemDef,
 	OBJECTS_NAV_ITEM,
@@ -48,15 +46,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const unreadCount = unread?.items.length ?? 0
 	const chatUnread = useChatUnreadCount(workspaceId)
 
-	const desktopEnabled = useFeatureFlag(DESKTOP_FLAG)
-
 	const navItems = useMemo(
-		() => [
-			...CORE_NAV_ITEMS,
-			...(hasObjectTypes ? [OBJECTS_NAV_ITEM] : []),
-			...(desktopEnabled ? [DESKTOP_NAV_ITEM] : []),
-		],
-		[hasObjectTypes, desktopEnabled],
+		() => [...CORE_NAV_ITEMS, ...(hasObjectTypes ? [OBJECTS_NAV_ITEM] : [])],
+		[hasObjectTypes],
 	)
 
 	return (

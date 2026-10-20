@@ -6,6 +6,7 @@ import {
 } from '../../lib/desktop-ticket'
 
 const CLAIMS = {
+	agentId: '44444444-4444-4444-8444-444444444444',
 	workspaceId: '11111111-1111-4111-8111-111111111111',
 	actorId: '22222222-2222-4222-8222-222222222222',
 }
@@ -24,6 +25,26 @@ describe('desktop ticket', () => {
 	it('round-trips the claims', () => {
 		const now = 1_000_000
 		expect(consumeDesktopTicket(signDesktopTicket(CLAIMS, now), now)).toEqual(CLAIMS)
+	})
+
+	it('is bound to one agent: swapping the agent id invalidates it', () => {
+		const now = 1_500_000
+		const [body, sig] = signDesktopTicket(CLAIMS, now).split('.') as [string, string]
+		const forged = JSON.parse(Buffer.from(body, 'base64url').toString())
+		forged.g = '55555555-5555-4555-8555-555555555555'
+		const forgedBody = Buffer.from(JSON.stringify(forged)).toString('base64url')
+		expect(consumeDesktopTicket(`${forgedBody}.${sig}`, now)).toBeNull()
+	})
+
+	it('rejects a ticket with no agent in it', () => {
+		// e.g. one minted before desktops were per agent
+		const now = 1_600_000
+		const [body] = signDesktopTicket(CLAIMS, now).split('.') as [string, string]
+		const legacy = JSON.parse(Buffer.from(body, 'base64url').toString())
+		legacy.g = undefined
+		expect(
+			consumeDesktopTicket(`${Buffer.from(JSON.stringify(legacy)).toString('base64url')}.x`, now),
+		).toBeNull()
 	})
 
 	it('is single-use', () => {

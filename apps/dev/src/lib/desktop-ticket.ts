@@ -10,9 +10,10 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 export const DESKTOP_TICKET_TTL_MS = 30_000
 
-type TicketPayload = { w: string; a: string; e: number; n: string }
+// w: workspace, a: the actor who asked, g: the AGENT whose desktop it opens.
+type TicketPayload = { w: string; a: string; g: string; e: number; n: string }
 
-export type DesktopTicketClaims = { workspaceId: string; actorId: string }
+export type DesktopTicketClaims = { workspaceId: string; actorId: string; agentId: string }
 
 // Domain-separated from every other use of INTEGRATION_ENCRYPTION_KEY, so a
 // ticket can never be confused with (or forged from) an encrypted credential.
@@ -39,6 +40,7 @@ export function signDesktopTicket(claims: DesktopTicketClaims, now = Date.now())
 	const payload: TicketPayload = {
 		w: claims.workspaceId.toLowerCase(),
 		a: claims.actorId.toLowerCase(),
+		g: claims.agentId.toLowerCase(),
 		e: now + DESKTOP_TICKET_TTL_MS,
 		n: randomBytes(12).toString('base64url'),
 	}
@@ -64,6 +66,7 @@ export function consumeDesktopTicket(ticket: string, now = Date.now()): DesktopT
 	if (
 		typeof payload.w !== 'string' ||
 		typeof payload.a !== 'string' ||
+		typeof payload.g !== 'string' ||
 		typeof payload.e !== 'number' ||
 		typeof payload.n !== 'string'
 	) {
@@ -73,5 +76,5 @@ export function consumeDesktopTicket(ticket: string, now = Date.now()): DesktopT
 	if (payload.e <= now) return null
 	if (usedNonces.has(payload.n)) return null
 	usedNonces.set(payload.n, payload.e)
-	return { workspaceId: payload.w, actorId: payload.a }
+	return { workspaceId: payload.w, actorId: payload.a, agentId: payload.g }
 }

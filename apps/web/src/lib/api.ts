@@ -788,10 +788,23 @@ export const api = {
 	desktop: {
 		// Idempotent: starts the workspace desktop if needed (slow the first time) and
 		// returns a one-time ticket for the stream WebSocket plus the VNC password.
-		connect: (workspaceId: string) =>
-			request<DesktopConnectResponse>('/desktop/connect', { method: 'POST', workspaceId }),
-		remove: (workspaceId: string) =>
-			request<{ removed: boolean }>('/desktop', { method: 'DELETE', workspaceId }),
+		// Every agent has its own computer: say whose.
+		connect: (workspaceId: string, agentId: string) =>
+			request<DesktopConnectResponse>(`/desktop/connect?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		remove: (workspaceId: string, agentId: string) =>
+			request<{ removed: boolean }>(`/desktop?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		// Which agents have a computer and whether it is asleep. Never wakes one.
+		list: (workspaceId: string) =>
+			request<{ desktops: Array<{ agent_id: string; status: 'running' | 'suspended' }> }>(
+				'/desktop',
+				{ workspaceId },
+			),
 		// "Teach a task": hands a recorded demonstration to the chosen agent, which
 		// writes a draft skill from it.
 		teach: (workspaceId: string, body: TeachRequest) =>

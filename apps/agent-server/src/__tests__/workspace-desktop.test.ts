@@ -8,15 +8,17 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { MicrosandboxDeps, ProcessSpawner } from '../services/microsandbox'
 import {
-	DESKTOP_PREFIX,
 	WorkspaceDesktopRegistry,
 	desktopName,
 	handleDesktopUpgrade,
+	isValidAgentId,
 	isValidWorkspaceId,
 } from '../services/workspace-desktop'
 
 const WS_A = '11111111-1111-4111-8111-111111111111'
 const WS_B = '22222222-2222-4222-8222-222222222222'
+const AGENT_A = '33333333-3333-4333-8333-333333333333'
+const AGENT_B = '44444444-4444-4444-8444-444444444444'
 const SECRET = 'test-secret-thirty-two-chars-long'
 
 function fakeSpawn(): { spawnProcess: ProcessSpawner; execs: string[][] } {
@@ -81,17 +83,43 @@ function makeFetch(opts: { failHealthzTimes?: number } = {}) {
 const { fetchImpl } = makeFetch()
 
 describe('desktopName', () => {
-	it('prefixes and lowercases a workspace uuid', () => {
-		expect(desktopName(WS_A.toUpperCase())).toBe(`${DESKTOP_PREFIX}${WS_A}`)
+	it('prefixes and lowercases a workspace and agent uuid', () => {
+		expect(desktopName(WS_A.toUpperCase(), AGENT_A.toUpperCase())).toBe(desktopName(WS_A, AGENT_A))
 	})
 
 	it.each(['', 'not-a-uuid', '../etc/passwd', `${WS_A};rm -rf /`, `${WS_A}\n`])(
-		'rejects %j',
+		'rejects %j as a workspace id',
 		(bad) => {
-			expect(() => desktopName(bad)).toThrow(/Invalid workspace id/)
+			expect(() => desktopName(bad, AGENT_A)).toThrow(/Invalid workspace id/)
 			expect(isValidWorkspaceId(bad)).toBe(false)
 		},
 	)
+
+	it.each(['', 'not-a-uuid', '../etc/passwd', `${AGENT_A};rm -rf /`, `${AGENT_A}\n`])(
+		'rejects %j as an agent id',
+		(bad) => {
+			expect(() => desktopName(WS_A, bad)).toThrow(/Invalid agent id/)
+			expect(isValidAgentId(bad)).toBe(false)
+		},
+	)
+
+	it('fits in a hostname label (63 chars): msb uses the name as the guest hostname', () => {
+		const name = desktopName(WS_A, AGENT_A)
+		expect(name.length).toBeLessThanOrEqual(63)
+		expect(name).toMatch(/^anko-desktop-[0-9a-f]{32}$/)
+	})
+
+	it('is stable, and case-insensitive in its inputs', () => {
+		expect(desktopName(WS_A, AGENT_A)).toBe(desktopName(WS_A.toUpperCase(), AGENT_A.toUpperCase()))
+	})
+
+	it('gives the same agent in two workspaces different names', () => {
+		expect(desktopName(WS_A, AGENT_A)).not.toBe(desktopName(WS_B, AGENT_A))
+	})
+
+	it('gives two agents in one workspace different names', () => {
+		expect(desktopName(WS_A, AGENT_A)).not.toBe(desktopName(WS_A, AGENT_B))
+	})
 })
 
 describe('WorkspaceDesktopRegistry', () => {
@@ -115,9 +143,12 @@ describe('WorkspaceDesktopRegistry', () => {
 			fetchImpl,
 		})
 
-		const desktop = await registry.ensure(WS_A)
+		const desktop = await registry.ensure(WS_A, AGENT_A)
 
-		expect(desktop).toMatchObject({ workspaceId: WS_A, name: `${DESKTOP_PREFIX}${WS_A}` })
+		expect(desktop).toMatchObject({
+			workspaceId: WS_A,
+			name: desktopName(WS_A, AGENT_A),
+		})
 		expect(desktop?.password.length).toBeGreaterThanOrEqual(16)
 		const create = calls.find((c) => c[0] === 'create') as string[]
 		expect(create).toContain('-p')
@@ -130,15 +161,15 @@ describe('WorkspaceDesktopRegistry', () => {
 		expect(create[create.length - 1]).toBe('desktop:test')
 		// Must not be able to reach other VMs on the bridge.
 		expect(create).not.toContain('allow@private')
-		expect(execs).toEqual([['exec', `${DESKTOP_PREFIX}${WS_A}`]])
+		expect(execs).toEqual([['exec', desktopName(WS_A, AGENT_A)]])
 	})
 
 	it('is idempotent: a second ensure reuses the running desktop', async () => {
 		const { msb, calls } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		const first = await registry.ensure(WS_A)
-		const second = await registry.ensure(WS_A)
+		const first = await registry.ensure(WS_A, AGENT_A)
+		const second = await registry.ensure(WS_A, AGENT_A)
 
 		expect(second).toBe(first)
 		expect(calls.filter((c) => c[0] === 'create')).toHaveLength(1)
@@ -148,7 +179,10 @@ describe('WorkspaceDesktopRegistry', () => {
 		const { msb, calls } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		const [a, b] = await Promise.all([registry.ensure(WS_A), registry.ensure(WS_A)])
+		const [a, b] = await Promise.all([
+			registry.ensure(WS_A, AGENT_A),
+			registry.ensure(WS_A, AGENT_A),
+		])
 
 		expect(a).toBe(b)
 		expect(calls.filter((c) => c[0] === 'create')).toHaveLength(1)
@@ -158,8 +192,8 @@ describe('WorkspaceDesktopRegistry', () => {
 		const { msb } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		const a = await registry.ensure(WS_A)
-		const b = await registry.ensure(WS_B)
+		const a = await registry.ensure(WS_A, AGENT_A)
+		const b = await registry.ensure(WS_B, AGENT_A)
 
 		expect(a?.name).not.toBe(b?.name)
 		expect(a?.hostPort).not.toBe(b?.hostPort)
@@ -169,10 +203,10 @@ describe('WorkspaceDesktopRegistry', () => {
 	it('re-provisions when the registered VM is no longer running', async () => {
 		const { msb, calls, sandboxes } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
-		await registry.ensure(WS_A)
+		await registry.ensure(WS_A, AGENT_A)
 		sandboxes.clear() // VM vanished (host reboot, manual removal)
 
-		await registry.ensure(WS_A)
+		await registry.ensure(WS_A, AGENT_A)
 
 		expect(calls.filter((c) => c[0] === 'create')).toHaveLength(2)
 	})
@@ -181,43 +215,43 @@ describe('WorkspaceDesktopRegistry', () => {
 		const { msb, calls } = makeMsb({ failCreate: true })
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		expect(await registry.ensure(WS_A)).toBeNull()
-		expect(registry.get(WS_A)).toBeUndefined()
+		expect(await registry.ensure(WS_A, AGENT_A)).toBeNull()
+		expect(registry.get(WS_A, AGENT_A)).toBeUndefined()
 		expect(calls.some((c) => c[0] === 'remove')).toBe(true)
 	})
 
 	it('persists state 0600-style and adopts it after a restart', async () => {
 		const { msb, sandboxes } = makeMsb()
 		const first = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
-		const created = await first.ensure(WS_A)
+		const created = await first.ensure(WS_A, AGENT_A)
 		expect((await stat(stateFile)).isFile()).toBe(true)
 
 		const restarted = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 		await restarted.reconcile([...sandboxes])
 
-		expect(restarted.get(WS_A)).toEqual(created)
+		expect(restarted.get(WS_A, AGENT_A)).toEqual(created)
 	})
 
 	it('reconcile removes desktop sandboxes it has no state for and ignores other sandboxes', async () => {
 		const { msb, calls } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		await registry.reconcile([`${DESKTOP_PREFIX}${WS_B}`, 'some-session-id'])
+		await registry.reconcile([desktopName(WS_B, AGENT_A), 'some-session-id'])
 
 		const removed = calls.filter((c) => c[0] === 'remove').map((c) => c[c.length - 1])
-		expect(removed).toEqual([`${DESKTOP_PREFIX}${WS_B}`])
-		expect(registry.get(WS_B)).toBeUndefined()
+		expect(removed).toEqual([desktopName(WS_B, AGENT_A)])
+		expect(registry.get(WS_B, AGENT_A)).toBeUndefined()
 	})
 
 	it('reconcile drops state whose VM no longer exists', async () => {
 		const { msb } = makeMsb()
 		const first = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
-		await first.ensure(WS_A)
+		await first.ensure(WS_A, AGENT_A)
 
 		const restarted = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 		await restarted.reconcile([]) // msb list shows nothing
 
-		expect(restarted.get(WS_A)).toBeUndefined()
+		expect(restarted.get(WS_A, AGENT_A)).toBeUndefined()
 		expect(JSON.parse(await readFile(stateFile, 'utf8'))).toEqual({})
 	})
 
@@ -226,7 +260,7 @@ describe('WorkspaceDesktopRegistry', () => {
 		const { fetchImpl: flaky, calls } = makeFetch({ failHealthzTimes: 2 })
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl: flaky })
 
-		const desktop = await registry.ensure(WS_A)
+		const desktop = await registry.ensure(WS_A, AGENT_A)
 
 		expect(desktop).not.toBeNull()
 		expect(calls.filter((c) => c.url.endsWith('/healthz'))).toHaveLength(3)
@@ -236,9 +270,9 @@ describe('WorkspaceDesktopRegistry', () => {
 		const { msb } = makeMsb()
 		const { fetchImpl: spy, calls } = makeFetch()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl: spy })
-		const desktop = await registry.ensure(WS_A)
+		const desktop = await registry.ensure(WS_A, AGENT_A)
 
-		const result = await registry.control(WS_A, '/input', { action: 'move', x: 1, y: 2 })
+		const result = await registry.control(WS_A, AGENT_A, '/input', { action: 'move', x: 1, y: 2 })
 
 		expect(result).toEqual({
 			status: 200,
@@ -255,7 +289,7 @@ describe('WorkspaceDesktopRegistry', () => {
 		const { msb } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		expect(await registry.control(WS_B, '/screenshot', {})).toBeNull()
+		expect(await registry.control(WS_B, AGENT_A, '/screenshot', {})).toBeNull()
 	})
 
 	it('reconcile removes a pre-control-API desktop instead of adopting one agents cannot drive', async () => {
@@ -264,23 +298,23 @@ describe('WorkspaceDesktopRegistry', () => {
 		await writeFile(stateFile, JSON.stringify({ [WS_A]: { hostPort: 41000, password: 'old-pw' } }))
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
 
-		await registry.reconcile([`${DESKTOP_PREFIX}${WS_A}`])
+		await registry.reconcile([desktopName(WS_A, AGENT_A)])
 
-		expect(registry.get(WS_A)).toBeUndefined()
+		expect(registry.get(WS_A, AGENT_A)).toBeUndefined()
 		expect(calls.filter((c) => c[0] === 'remove').map((c) => c[c.length - 1])).toEqual([
-			`${DESKTOP_PREFIX}${WS_A}`,
+			desktopName(WS_A, AGENT_A),
 		])
 	})
 
 	it('remove tears the desktop down and forgets it', async () => {
 		const { msb, sandboxes } = makeMsb()
 		const registry = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
-		await registry.ensure(WS_A)
+		await registry.ensure(WS_A, AGENT_A)
 
-		expect(await registry.remove(WS_A)).toBe(true)
-		expect(registry.get(WS_A)).toBeUndefined()
+		expect(await registry.remove(WS_A, AGENT_A)).toBe(true)
+		expect(registry.get(WS_A, AGENT_A)).toBeUndefined()
 		expect(sandboxes.size).toBe(0)
-		expect(await registry.remove(WS_A)).toBe(false)
+		expect(await registry.remove(WS_A, AGENT_A)).toBe(false)
 	})
 })
 
@@ -312,7 +346,7 @@ describe('handleDesktopUpgrade', () => {
 			bridgeGateway: '127.0.0.1',
 			fetchImpl,
 		})
-		await registry.ensure(WS_A)
+		await registry.ensure(WS_A, AGENT_A)
 	})
 	afterEach(async () => {
 		upstream.close()
@@ -353,20 +387,20 @@ describe('handleDesktopUpgrade', () => {
 	}
 
 	it('rejects a missing or wrong bearer with 401', async () => {
-		expect(await upgrade(`/desktops/${WS_A}/stream`, {})).toMatch(/^HTTP\/1\.1 401/)
-		expect(await upgrade(`/desktops/${WS_A}/stream`, { Authorization: 'Bearer nope' })).toMatch(
-			/^HTTP\/1\.1 401/,
-		)
+		expect(await upgrade(`/desktops/${WS_A}/${AGENT_A}/stream`, {})).toMatch(/^HTTP\/1\.1 401/)
+		expect(
+			await upgrade(`/desktops/${WS_A}/${AGENT_A}/stream`, { Authorization: 'Bearer nope' }),
+		).toMatch(/^HTTP\/1\.1 401/)
 	})
 
 	it('404s an unknown workspace and a bad path', async () => {
 		const auth = { Authorization: `Bearer ${SECRET}` }
-		expect(await upgrade(`/desktops/${WS_B}/stream`, auth)).toMatch(/^HTTP\/1\.1 404/)
+		expect(await upgrade(`/desktops/${WS_B}/${AGENT_A}/stream`, auth)).toMatch(/^HTTP\/1\.1 404/)
 		expect(await upgrade('/sessions/x/stream', auth)).toMatch(/^HTTP\/1\.1 404/)
 	})
 
 	it('replays the handshake to websockify without the bearer and pipes data back', async () => {
-		const out = await upgrade(`/desktops/${WS_A}/stream`, {
+		const out = await upgrade(`/desktops/${WS_A}/${AGENT_A}/stream`, {
 			Authorization: `Bearer ${SECRET}`,
 			Host: 'agent-server.example',
 			Upgrade: 'websocket',

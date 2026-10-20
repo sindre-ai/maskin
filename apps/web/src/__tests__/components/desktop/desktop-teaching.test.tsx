@@ -53,14 +53,15 @@ import { toast } from 'sonner'
 import { createWorkspaceWrapper } from '../../setup'
 
 const WS = '11111111-1111-4111-8111-111111111111'
+const VIEWED = '99999999-9999-4999-8999-999999999999'
 const CHIEF = '22222222-2222-4222-8222-222222222222'
 const COACH = '33333333-3333-4333-8333-333333333333'
 
 const actor = (id: string, name: string, type: 'agent' | 'human' = 'agent') => ({ id, name, type })
 
 function renderViewer() {
-	return render(<DesktopViewer workspaceId={WS} onOpenAgent={vi.fn()} />, {
-		wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+	return render(<DesktopViewer workspaceId={WS} agentId={VIEWED} onOpenAgent={vi.fn()} />, {
+		wrapper: createWorkspaceWrapper(),
 	})
 }
 
@@ -86,7 +87,7 @@ async function startRecording(user: ReturnType<typeof userEvent.setup>) {
 const press = (el: Element, x = 320, y = 180) =>
 	el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: x, clientY: y }))
 
-describe('Teach a task on the desktop page', () => {
+describe('Teach a task on an agent computer', () => {
 	beforeEach(() => {
 		instances.length = 0
 		localStorage.clear()
@@ -116,14 +117,14 @@ describe('Teach a task on the desktop page', () => {
 		}
 	})
 
-	it('offers Teach a task in the header only once the desktop is live', async () => {
+	it('offers Teach a task in the toolbar only once the desktop is live', async () => {
 		renderViewer()
 		await waitFor(() => expect(instances).toHaveLength(1))
 		expect(screen.queryByRole('button', { name: 'Teach a task' })).not.toBeInTheDocument()
 
 		act(() => (instances[0] as InstanceType<typeof FakeRfb>).emit('connect'))
 
-		const header = screen.getByRole('banner')
+		const header = screen.getByRole('toolbar', { name: 'Computer controls' })
 		expect(await within(header).findByRole('button', { name: 'Teach a task' })).toBeInTheDocument()
 	})
 
@@ -142,7 +143,7 @@ describe('Teach a task on the desktop page', () => {
 		const user = userEvent.setup()
 		const rfb = await startRecording(user)
 
-		const header = screen.getByRole('banner')
+		const header = screen.getByRole('toolbar', { name: 'Computer controls' })
 		expect(await within(header).findByText(/^Recording · 0:00 · teaching /)).toBeInTheDocument()
 		expect(within(header).getByRole('button', { name: 'Stop recording' })).toBeInTheDocument()
 		expect(within(header).queryByRole('button', { name: 'Take over' })).not.toBeInTheDocument()

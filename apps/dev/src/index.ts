@@ -13,6 +13,7 @@ import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
+import { canAccessDesktop } from './lib/desktop-access'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
@@ -447,7 +448,9 @@ const desktopService = createWorkspaceDesktopService(db)
 		isMember: (actorId, workspaceId) => isWorkspaceMember(db, actorId, workspaceId),
 		isEnabled: (actorId, workspaceId) =>
 			isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId }),
-		locate: (workspaceId) => desktopService.locate(workspaceId),
+		canAccess: (actorId, workspaceId, agentId) =>
+			canAccessDesktop(db, actorId, workspaceId, agentId),
+		locate: (workspaceId, agentId) => desktopService.locate(workspaceId, agentId),
 	})
 		.then((handled) => {
 			if (!handled) socket.destroy()

@@ -100,6 +100,37 @@ describe('parseEnv', () => {
 		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
 	})
 
+	it('leaves desktop snapshots off by default, with a 10 minute idle timeout', () => {
+		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) })
+		expect(env.DESKTOP_SNAPSHOTS).toBe(false)
+		expect(env.DESKTOP_IDLE_MINUTES).toBe(10)
+	})
+
+	it.each(['1', 'true', 'TRUE'])('turns desktop snapshots on for DESKTOP_SNAPSHOTS=%s', (v) => {
+		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), DESKTOP_SNAPSHOTS: v })
+		expect(env.DESKTOP_SNAPSHOTS).toBe(true)
+	})
+
+	it.each(['0', 'false', '', 'yes'])(
+		'keeps desktop snapshots off for DESKTOP_SNAPSHOTS=%j',
+		(v) => {
+			const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), DESKTOP_SNAPSHOTS: v })
+			expect(env.DESKTOP_SNAPSHOTS).toBe(false)
+		},
+	)
+
+	it('rejects DESKTOP_IDLE_MINUTES outside 0..1440 or non-integer', () => {
+		const secret = 'a'.repeat(32)
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: secret, DESKTOP_IDLE_MINUTES: '0' }).DESKTOP_IDLE_MINUTES,
+		).toBe(0)
+		for (const bad of ['-1', '1441', '1.5', 'abc']) {
+			expect(() => parseEnv({ AGENT_SERVER_SECRET: secret, DESKTOP_IDLE_MINUTES: bad })).toThrow(
+				/Invalid DESKTOP_IDLE_MINUTES/,
+			)
+		}
+	})
+
 	it('defaults SESSION_MAX_DURATION to 8h and accepts msb duration syntax / disable', () => {
 		const secret = 'a'.repeat(32)
 		expect(parseEnv({ AGENT_SERVER_SECRET: secret }).SESSION_MAX_DURATION).toBe('8h')

@@ -35,6 +35,9 @@ export const queryKeys = {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
 	},
+	desktops: {
+		all: (workspaceId: string) => ['desktops', workspaceId] as const,
+	},
 	workspaces: {
 		all: () => ['workspaces'] as const,
 		detail: (id: string) => ['workspaces', 'detail', id] as const,

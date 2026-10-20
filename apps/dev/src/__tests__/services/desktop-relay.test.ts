@@ -5,6 +5,7 @@ import { DESKTOP_STREAM_PATH, handleDesktopStreamUpgrade } from '../../services/
 
 const WS = '11111111-1111-4111-8111-111111111111'
 const ACTOR = '22222222-2222-4222-8222-222222222222'
+const AGENT = '44444444-4444-4444-8444-444444444444'
 
 // A Duplex that records what is written to it and never connects anywhere.
 function fakeSocket() {
@@ -26,6 +27,7 @@ function fakeReq(url: string, rawHeaders: string[] = []) {
 const okDeps = () => ({
 	isMember: vi.fn(async () => true),
 	isEnabled: vi.fn(() => true),
+	canAccess: vi.fn(async () => true),
 	locate: vi.fn(async () => ({
 		server: {
 			id: 's',
@@ -67,11 +69,16 @@ describe('handleDesktopStreamUpgrade', () => {
 		}
 	})
 
-	it('403s when the flag is off or the actor is no longer a member', async () => {
-		const patches = [{ isEnabled: vi.fn(() => false) }, { isMember: vi.fn(async () => false) }]
+	it('403s when the flag is off, the actor left, or may no longer reach that agent', async () => {
+		const patches = [
+			{ isEnabled: vi.fn(() => false) },
+			{ isMember: vi.fn(async () => false) },
+			// e.g. an agent whose ticket names a colleague, or the agent was removed
+			{ canAccess: vi.fn(async () => false) },
+		]
 		for (const patch of patches) {
 			const { sock, written } = fakeSocket()
-			const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR })
+			const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR, agentId: AGENT })
 			await handleDesktopStreamUpgrade(
 				fakeReq(`${DESKTOP_STREAM_PATH}?ticket=${ticket}`),
 				sock,
@@ -84,7 +91,7 @@ describe('handleDesktopStreamUpgrade', () => {
 
 	it('404s when no desktop exists', async () => {
 		const { sock, written } = fakeSocket()
-		const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR })
+		const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR, agentId: AGENT })
 		await handleDesktopStreamUpgrade(
 			fakeReq(`${DESKTOP_STREAM_PATH}?ticket=${ticket}`),
 			sock,
@@ -100,7 +107,7 @@ describe('handleDesktopStreamUpgrade', () => {
 		const sent: string[] = []
 		upstream.on('data', (d) => sent.push(d.toString()))
 		;(upstream as unknown as { connecting: boolean }).connecting = false
-		const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR })
+		const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR, agentId: AGENT })
 
 		await handleDesktopStreamUpgrade(
 			fakeReq(`${DESKTOP_STREAM_PATH}?ticket=${ticket}`, [
@@ -122,7 +129,7 @@ describe('handleDesktopStreamUpgrade', () => {
 		await new Promise((r) => setImmediate(r))
 
 		const out = sent.join('')
-		expect(out).toContain(`GET /desktops/${WS}/stream HTTP/1.1`)
+		expect(out).toContain(`GET /desktops/${WS}/${AGENT}/stream HTTP/1.1`)
 		expect(out).toContain('Authorization: Bearer srv-secret')
 		expect(out).toContain('Host: agent.example:3001')
 		expect(out).toContain('Upgrade: websocket')
@@ -134,7 +141,7 @@ describe('handleDesktopStreamUpgrade', () => {
 	})
 
 	it('does not accept a ticket twice', async () => {
-		const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR })
+		const ticket = signDesktopTicket({ workspaceId: WS, actorId: ACTOR, agentId: AGENT })
 		const url = `${DESKTOP_STREAM_PATH}?ticket=${ticket}`
 		const first = fakeSocket()
 		await handleDesktopStreamUpgrade(fakeReq(url), first.sock, Buffer.alloc(0), {

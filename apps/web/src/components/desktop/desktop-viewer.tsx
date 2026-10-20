@@ -1,5 +1,4 @@
 import { TeachDialog } from '@/components/desktop/teach-dialog'
-import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -20,15 +19,13 @@ interface RfbHandle {
 }
 
 const STATUS_TEXT: Record<Phase, string> = {
-	starting: 'Starting your desktop…',
+	starting: 'Starting this computer…',
 	connecting: 'Connecting…',
 	connected: 'Live',
 	disconnected: 'Disconnected',
 	error: 'Not connected',
 }
 
-// Lives in the page header's title cluster, beside the "Desktop" title, so the
-// picture itself can use the whole page.
 function formatElapsed(ms: number): string {
 	const total = Math.floor(ms / 1000)
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
@@ -48,7 +45,7 @@ function DesktopStatus({
 	if (teaching !== 'idle') {
 		return (
 			<p
-				className="flex min-w-0 max-w-[45vw] items-center gap-1.5 text-[11.5px] text-muted-foreground sm:max-w-none"
+				className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground"
 				aria-live="polite"
 			>
 				{teaching === 'recording' ? (
@@ -70,7 +67,7 @@ function DesktopStatus({
 	const busy = phase === 'starting' || phase === 'connecting'
 	return (
 		<p
-			className="flex min-w-0 max-w-[45vw] items-center gap-1.5 text-[11.5px] text-muted-foreground sm:max-w-none"
+			className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground"
 			aria-live="polite"
 		>
 			{busy && <Spinner className="shrink-0" />}
@@ -83,15 +80,23 @@ function DesktopStatus({
 }
 
 /**
- * Live view of the workspace desktop. View-only until the user takes over, so
- * watching an agent work can never nudge it by accident. The ticket from
- * connect is single-use, so every (re)connect asks for a fresh one.
+ * Live view of ONE agent's computer, with its own toolbar (status, Teach a task,
+ * Take over). View-only until the user takes over, so watching an agent work can
+ * never nudge it by accident. The ticket from connect is single-use, so every
+ * (re)connect asks for a fresh one. Used inline on the agent page and again,
+ * larger, in the expanded popup: pass the Expand / Close button as `toolbarEnd`.
  */
 export function DesktopViewer({
 	workspaceId,
+	agentId,
+	toolbarEnd,
 	onOpenAgent,
 }: {
 	workspaceId: string
+	/** Whose computer this is: every agent has its own. */
+	agentId: string
+	/** Rendered at the far end of the toolbar (the Expand / Close button). */
+	toolbarEnd?: React.ReactNode
 	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
 	onOpenAgent?: (agentId: string) => void
 }) {
@@ -101,7 +106,7 @@ export function DesktopViewer({
 	const [error, setError] = useState<string | null>(null)
 	const [controlling, setControlling] = useState(false)
 	const [attempt, setAttempt] = useState(0)
-	const { mutateAsync: connectDesktop } = useConnectDesktop(workspaceId)
+	const { mutateAsync: connectDesktop } = useConnectDesktop(workspaceId, agentId)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is the retry trigger, not a value the effect reads.
 	useEffect(() => {
@@ -159,7 +164,7 @@ export function DesktopViewer({
 			rfbRef.current?.disconnect()
 			rfbRef.current = null
 		}
-	}, [workspaceId, attempt, connectDesktop])
+	}, [workspaceId, agentId, attempt, connectDesktop])
 
 	useEffect(() => {
 		const rfb = rfbRef.current
@@ -180,103 +185,109 @@ export function DesktopViewer({
 	const recording = teaching.status === 'recording'
 	const sending = teaching.status === 'sending'
 
+	const controls =
+		phase === 'connected' ? (
+			recording ? (
+				<Button
+					variant="destructive"
+					size="sm"
+					aria-label="Stop recording"
+					onClick={() => void teaching.stop()}
+				>
+					<Square size={14} />
+					<span className="hidden sm:inline">Stop</span>
+				</Button>
+			) : (
+				<>
+					<Button
+						variant="outline"
+						size="sm"
+						aria-label="Teach a task"
+						disabled={sending}
+						onClick={teaching.openDialog}
+					>
+						<GraduationCap size={15} />
+						<span className="hidden sm:inline">Teach a task</span>
+					</Button>
+					<Button
+						variant={controlling ? 'default' : 'outline'}
+						size="sm"
+						aria-label={controlling ? 'Stop controlling' : 'Take over'}
+						disabled={sending}
+						onClick={() => setControlling((v) => !v)}
+					>
+						{controlling ? <Eye size={15} /> : <MousePointer2 size={15} />}
+						<span className="hidden sm:inline">
+							{controlling ? 'Stop controlling' : 'Take over'}
+						</span>
+					</Button>
+				</>
+			)
+		) : null
+
 	return (
-		<>
-			{/* One writer for the nav row: the route renders its own header only when
-			    the flag is off, so this is the only <PageHeader> on the page. The
-			    page is scroll-locked so the picture can take the full height. */}
-			<PageHeader
-				title="Desktop"
-				scrollLocked
-				titleTabs={
+		<div className="flex min-w-0 flex-col gap-2">
+			<div
+				role="toolbar"
+				aria-label="Computer controls"
+				className="flex min-w-0 items-center justify-between gap-2"
+			>
+				<div className="min-w-0">
 					<DesktopStatus
 						phase={phase}
 						teaching={teaching.status}
 						elapsedMs={teaching.elapsedMs}
 						agentName={teaching.agentName}
 					/>
-				}
-				leadingActions={
-					phase === 'connected' ? (
-						recording ? (
-							<Button
-								variant="destructive"
-								size="sm"
-								aria-label="Stop recording"
-								onClick={() => void teaching.stop()}
-							>
-								<Square size={14} />
-								<span className="hidden sm:inline">Stop</span>
-							</Button>
-						) : (
-							<>
-								<Button
-									variant="outline"
-									size="sm"
-									aria-label="Teach a task"
-									disabled={sending}
-									onClick={teaching.openDialog}
-								>
-									<GraduationCap size={15} />
-									<span className="hidden sm:inline">Teach a task</span>
-								</Button>
-								<Button
-									variant={controlling ? 'default' : 'outline'}
-									size="sm"
-									aria-label={controlling ? 'Stop controlling' : 'Take over'}
-									disabled={sending}
-									onClick={() => setControlling((v) => !v)}
-								>
-									{controlling ? <Eye size={15} /> : <MousePointer2 size={15} />}
-									<span className="hidden sm:inline">
-										{controlling ? 'Stop controlling' : 'Take over'}
-									</span>
-								</Button>
-							</>
-						)
-					) : null
-				}
-			/>
-
-			{/* Reclaims most of the shell's page padding and fills what is left. The
-			    wrapper is a size container so the 16:9 frame can fit whichever of
-			    width or height runs out first, without hard-coding the header height. */}
-			<div className="-m-2 flex min-h-0 flex-1 items-center justify-center [container-type:size] md:-m-5">
-				<div
-					className={cn(
-						'relative aspect-video w-[min(100cqw,calc(100cqh*16/9))] overflow-hidden rounded-lg border bg-muted',
-						recording && 'ring-2 ring-destructive',
-					)}
-				>
-					{/* noVNC mounts its canvas into this element and scales it to fit. */}
-					<div ref={targetRef} className={cn('size-full', phase !== 'connected' && 'invisible')} />
-					{busy && (
-						<EmptyState
-							className="absolute inset-0 py-0"
-							compact
-							title={phase === 'starting' ? 'This can take a moment' : 'Almost there'}
-							description={
-								phase === 'starting' ? 'The first start can take up to a minute.' : undefined
-							}
-						/>
-					)}
-					{failed && (
-						<EmptyState
-							className="absolute inset-0 py-0"
-							compact
-							title={
-								phase === 'disconnected' ? 'The connection was closed' : "Couldn't open the desktop"
-							}
-							description={error ?? undefined}
-							action={
-								<Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
-									<RefreshCw size={15} />
-									Reconnect
-								</Button>
-							}
-						/>
-					)}
 				</div>
+				<div className="flex shrink-0 items-center gap-2">
+					{controls}
+					{toolbarEnd}
+				</div>
+			</div>
+
+			<div
+				className={cn(
+					'relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
+					recording && 'ring-2 ring-destructive',
+				)}
+			>
+				{/* noVNC mounts its canvas into this element and scales it to fit. */}
+				<div
+					ref={targetRef}
+					className={cn(
+						// noVNC's own wrapper scrolls when the picture overflows it, and its
+						// scrollbars then change the room it fits into: never let it scroll.
+						'size-full [&>div]:overflow-hidden!',
+						phase !== 'connected' && 'invisible',
+					)}
+				/>
+				{busy && (
+					<EmptyState
+						className="absolute inset-0 py-0"
+						compact
+						title={phase === 'starting' ? 'This can take a moment' : 'Almost there'}
+						description={
+							phase === 'starting' ? 'The first start can take up to a minute.' : undefined
+						}
+					/>
+				)}
+				{failed && (
+					<EmptyState
+						className="absolute inset-0 py-0"
+						compact
+						title={
+							phase === 'disconnected' ? 'The connection was closed' : "Couldn't open the desktop"
+						}
+						description={error ?? undefined}
+						action={
+							<Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
+								<RefreshCw size={15} />
+								Reconnect
+							</Button>
+						}
+					/>
+				)}
 			</div>
 			<TeachDialog
 				open={teaching.dialogOpen}
@@ -284,6 +295,6 @@ export function DesktopViewer({
 				workspaceId={workspaceId}
 				onStart={teaching.start}
 			/>
-		</>
+		</div>
 	)
 }

@@ -119,6 +119,28 @@ const envSchema = z.object({
 	BROWSER_SIDECAR_IMAGE: z.string().optional().default('browser-sidecar:latest'),
 	// Desktop image for per-workspace noVNC desktops (docker/desktop-test).
 	DESKTOP_IMAGE: z.string().optional().default('desktop:latest'),
+	// Suspend idle desktops to a full memory snapshot and restore them on demand,
+	// so windows, browser tabs and unsaved input come back exactly as left. Needs
+	// msb >= 0.7 (`msb snapshot create --full`); on older msb leave it off and a
+	// desktop is created and started the way it always was.
+	DESKTOP_SNAPSHOTS: z
+		.string()
+		.optional()
+		.default('0')
+		.transform((v) => v === '1' || v.toLowerCase() === 'true'),
+	// Minutes with no viewer and no agent call before a desktop is suspended.
+	// Only read when DESKTOP_SNAPSHOTS is on. 0 never suspends automatically.
+	DESKTOP_IDLE_MINUTES: z
+		.string()
+		.optional()
+		.default('10')
+		.transform((v) => {
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 0 || n > 1440) {
+				throw new Error(`Invalid DESKTOP_IDLE_MINUTES: ${v} (expected integer 0..1440)`)
+			}
+			return n
+		}),
 	// Path to the persistent SSH keypair agent-server uses to open SSH-relay
 	// tunnels (`msb ssh serve` + `ssh -L`) into session/sidecar microVMs — the
 	// replacement for the old allow@private / bridge-gateway networking. The

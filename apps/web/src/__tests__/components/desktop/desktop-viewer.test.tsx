@@ -42,12 +42,11 @@ import { api } from '@/lib/api'
 import { createWorkspaceWrapper } from '../../setup'
 
 const WS = '11111111-1111-4111-8111-111111111111'
+const VIEWED = '99999999-9999-4999-8999-999999999999'
 
-// The viewer publishes its status and Take over button into the page header, so
-// render it under the header stand-in the app shell's nav row is replaced by.
 function renderViewer() {
-	return render(<DesktopViewer workspaceId={WS} />, {
-		wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+	return render(<DesktopViewer workspaceId={WS} agentId={VIEWED} />, {
+		wrapper: createWorkspaceWrapper(),
 	})
 }
 
@@ -66,19 +65,19 @@ describe('DesktopViewer', () => {
 		vi.mocked(api.desktop.connect).mockReturnValue(new Promise(() => {}))
 		renderViewer()
 
-		// The status lives in the header; the frame only carries the hint.
-		const header = screen.getByRole('banner')
-		expect(await within(header).findByText('Starting your desktop…')).toBeInTheDocument()
+		// The status lives in the toolbar; the frame only carries the hint.
+		const header = screen.getByRole('toolbar', { name: 'Computer controls' })
+		expect(await within(header).findByText('Starting this computer…')).toBeInTheDocument()
 		expect(screen.getByText(/first start can take up to a minute/i)).toBeInTheDocument()
-		expect(screen.getAllByText(/starting your desktop/i)).toHaveLength(1)
+		expect(screen.getAllByText(/starting this computer/i)).toHaveLength(1)
 	})
 
-	it('puts the live status and Take over in the header, not the page', async () => {
+	it('puts the live status and Take over in the toolbar', async () => {
 		renderViewer()
 		await waitFor(() => expect(instances).toHaveLength(1))
 		act(() => (instances[0] as InstanceType<typeof FakeRfb>).emit('connect'))
 
-		const header = screen.getByRole('banner')
+		const header = screen.getByRole('toolbar', { name: 'Computer controls' })
 		expect(await within(header).findByText('Live')).toBeInTheDocument()
 		expect(within(header).getByRole('button', { name: /take over/i })).toBeInTheDocument()
 		expect(screen.getAllByText('Live')).toHaveLength(1)
@@ -97,7 +96,7 @@ describe('DesktopViewer', () => {
 		expect(rfb.options.credentials?.password).toBe('vnc-pw')
 		expect(rfb.viewOnly).toBe(true)
 		expect(rfb.scaleViewport).toBe(true)
-		expect(api.desktop.connect).toHaveBeenCalledWith(WS)
+		expect(api.desktop.connect).toHaveBeenCalledWith(WS, VIEWED)
 	})
 
 	it('lets the user take over and hand control back', async () => {

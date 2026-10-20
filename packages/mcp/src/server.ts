@@ -6976,7 +6976,11 @@ ${claudeCredsBlock}`,
 		}
 	}
 
-	// Workspace desktop. Every tool goes through apps/dev's /api/desktop/*, which
+	// The agent a person means rides along as ?agent_id=; agents omit it.
+	const desktopPath = (path: string, agentId?: string) =>
+		agentId ? `${path}?agent_id=${encodeURIComponent(agentId)}` : path
+
+	// Agent computers. Every tool goes through apps/dev's /api/desktop/*, which
 	// applies the `workspace-desktop` flag and workspace membership.
 	registerAppTool(
 		server,
@@ -6990,7 +6994,7 @@ ${claudeCredsBlock}`,
 			const shot = (await apiCall(
 				config,
 				'POST',
-				'/api/desktop/screenshot',
+				desktopPath('/api/desktop/screenshot', args.agent_id),
 				{},
 				{ workspaceId: args.workspace_id },
 			)) as { image_base64: string; mime_type: string; width: number; height: number }
@@ -7026,12 +7030,12 @@ ${claudeCredsBlock}`,
 				inputSchema: tools[toolName].inputSchema.shape,
 				_meta: {},
 			},
-			async (args: { workspace_id?: string } & Record<string, unknown>) => {
-				const { workspace_id, ...input } = args
+			async (args: { workspace_id?: string; agent_id?: string } & Record<string, unknown>) => {
+				const { workspace_id, agent_id, ...input } = args
 				await apiCall(
 					config,
 					'POST',
-					'/api/desktop/input',
+					desktopPath('/api/desktop/input', agent_id),
 					{ action, ...input },
 					{ workspaceId: workspace_id },
 				)
@@ -7057,10 +7061,16 @@ ${claudeCredsBlock}`,
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/desktop/exec', body, {
-				workspaceId: workspace_id,
-			})
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/exec', agent_id),
+				body,
+				{
+					workspaceId: workspace_id,
+				},
+			)
 			return {
 				_meta: meta('desktop_run', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],

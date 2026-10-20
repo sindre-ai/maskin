@@ -55,6 +55,7 @@ import {
 	DESKTOP_PREFIX,
 	WorkspaceDesktopRegistry,
 	handleDesktopUpgrade,
+	isValidAgentId,
 	isValidWorkspaceId,
 } from './services/workspace-desktop'
 
@@ -1181,52 +1182,81 @@ export function buildApp(deps: AppDeps): Hono {
 	app.use('/sessions', requireBearer)
 	app.use('/sessions/*', requireBearer)
 
-	// Workspace desktops — one long-lived noVNC desktop VM per workspace,
-	// independent of any session. The WebSocket stream itself is served from
-	// the raw http.Server (see handleDesktopUpgrade); these are the control routes.
+	// Agent desktops — one long-lived noVNC desktop VM per agent (identified by
+	// workspace + agent), independent of any session. The WebSocket stream itself
+	// is served from the raw http.Server (see handleDesktopUpgrade); these are the
+	// control routes. apps/dev decides WHO may reach WHICH agent's desktop; this
+	// server only trusts the shared bearer.
 	const desktops = deps.desktops
 	if (desktops) {
 		app.use('/desktops/*', requireBearer)
 
-		// PUT is idempotent: returns the running desktop, provisioning if needed.
-		app.put('/desktops/:workspaceId', async (c) => {
+		const invalidIds = (workspaceId: string, agentId: string): string | null =>
+			!isValidWorkspaceId(workspaceId)
+				? 'Invalid workspace id'
+				: !isValidAgentId(agentId)
+					? 'Invalid agent id'
+					: null
+
+		// Which agents in a workspace have a computer, and whether it is asleep.
+		// Never includes the VNC passwords.
+		app.get('/desktops/:workspaceId', (c) => {
 			const { workspaceId } = c.req.param()
 			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+			return c.json({
+				desktops: desktops.listForWorkspace(workspaceId).map((d) => ({
+					agent_id: d.agentId,
+					status: d.status,
+				})),
+			})
+		})
+
+		// PUT is idempotent: returns the running desktop, provisioning (or waking) it if needed.
+		app.put('/desktops/:workspaceId/:agentId', async (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
 			if (deps.drainState?.draining) return c.json({ error: 'draining' }, 503)
-			const desktop = await desktops.ensure(workspaceId)
+			const desktop = await desktops.ensure(workspaceId, agentId)
 			if (!desktop) return c.json({ error: 'desktop_provision_failed' }, 502)
 			return c.json({ status: 'running', password: desktop.password })
 		})
 
-		app.get('/desktops/:workspaceId', (c) => {
-			const { workspaceId } = c.req.param()
-			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
-			const desktop = desktops.get(workspaceId)
+		app.get('/desktops/:workspaceId/:agentId', (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			const desktop = desktops.get(workspaceId, agentId)
 			if (!desktop) return c.json({ error: 'not_found' }, 404)
-			return c.json({ status: 'running', password: desktop.password })
+			// Reports `suspended` rather than waking it: a status poll must not undo
+			// the idle suspend. Opening the stream or PUT-ing the desktop wakes it.
+			return c.json({ status: desktop.status, password: desktop.password })
 		})
 
-		app.delete('/desktops/:workspaceId', async (c) => {
-			const { workspaceId } = c.req.param()
-			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
-			const existed = await desktops.remove(workspaceId)
+		app.delete('/desktops/:workspaceId/:agentId', async (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			const existed = await desktops.remove(workspaceId, agentId)
 			return c.json({ removed: existed })
 		})
 
 		// Agent control (screenshot / input / exec). The body is forwarded to the
 		// desktop's own desktopd, which re-validates it; apps/dev validates first.
 		for (const action of ['screenshot', 'input', 'exec'] as const) {
-			app.post(`/desktops/:workspaceId/${action}`, async (c) => {
-				const { workspaceId } = c.req.param()
-				if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+			app.post(`/desktops/:workspaceId/:agentId/${action}`, async (c) => {
+				const { workspaceId, agentId } = c.req.param()
+				const invalid = invalidIds(workspaceId, agentId)
+				if (invalid) return c.json({ error: invalid }, 400)
 				const body = await c.req.json().catch(() => ({}))
 				try {
-					const result = await desktops.control(workspaceId, `/${action}`, body)
+					const result = await desktops.control(workspaceId, agentId, `/${action}`, body)
 					if (!result) return c.json({ error: 'not_found' }, 404)
 					return c.json(result.body as Record<string, unknown>, result.status as 200)
 				} catch (err) {
 					logger.warn('workspace desktop control failed', {
 						workspaceId,
+						agentId,
 						action,
 						error: String(err),
 					})
@@ -2089,6 +2119,12 @@ async function main(): Promise<void> {
 		msb,
 		image: env.DESKTOP_IMAGE,
 		stateFile: join(env.AGENT_SESSION_ROOT, '.workspace-desktops.json'),
+		snapshots: env.DESKTOP_SNAPSHOTS
+			? {
+					dir: join(env.AGENT_SESSION_ROOT, '.workspace-desktop-snapshots'),
+					idleSuspendMs: env.DESKTOP_IDLE_MINUTES * 60_000,
+				}
+			: undefined,
 	})
 
 	// Adopt desktops that survived a restart BEFORE the listener accepts
@@ -2103,6 +2139,7 @@ async function main(): Promise<void> {
 			error: String(err),
 		})
 	}
+	desktops.startIdleSweep()
 
 	const app = buildApp({
 		env,

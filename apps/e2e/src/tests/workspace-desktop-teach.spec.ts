@@ -4,7 +4,8 @@ import { type FakeVnc, attachFakeVnc } from '../helpers/fake-vnc'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * E2E coverage for "Teach a task" on the workspace desktop page.
+ * E2E coverage for "Teach a task" on an agent's computer (the Computer section of
+ * the agent page).
  *
  * The Teach button only exists once the stream is live, so the VNC server is
  * faked at the WebSocket: it answers the RFB 3.8 handshake (no-auth security, a
@@ -21,8 +22,35 @@ async function setFlag(page: Page) {
 	await page.addInitScript(() => localStorage.setItem('ff:workspace-desktop', 'on'))
 }
 
-async function fakeBackend(page: Page) {
-	await page.route('**/api/desktop/connect', (route) =>
+const LIST_URL = /\/api\/desktop$/
+const CONNECT_URL = /\/api\/desktop\/connect/
+
+type Seeded = { id: string; name: string }
+
+// A real agent in the account's workspace, so its page loads from the backend.
+async function seedAgent(account: {
+	workspaceId: string
+	api: {
+		createAgentActor: (n: string) => Promise<{ id: string }>
+		addWorkspaceMember: (w: string, a: string) => Promise<unknown>
+	}
+}): Promise<Seeded> {
+	const name = `Computer owner ${Date.now()}`
+	const agent = await account.api.createAgentActor(name)
+	await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+	return { id: agent.id, name }
+}
+
+async function fakeBackend(page: Page, viewed: Seeded) {
+	// Already running, so the page connects without a click.
+	await page.route(LIST_URL, (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ desktops: [{ agent_id: viewed.id, status: 'running' }] }),
+		}),
+	)
+	await page.route(CONNECT_URL, (route) =>
 		route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -44,6 +72,7 @@ async function fakeBackend(page: Page) {
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify([
+				agent(viewed.id, viewed.name),
 				agent(AGENT_ID, 'Chief of Staff'),
 				agent(OTHER_AGENT_ID, 'Researcher'),
 			]),
@@ -72,7 +101,8 @@ test.describe('Teach a task on the desktop', () => {
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await setFlag(page)
-			await fakeBackend(page)
+			const viewed = await seedAgent(account)
+			await fakeBackend(page, viewed)
 			vnc = await attachFakeVnc(page)
 			let sent: Record<string, unknown> | null = null
 			await page.route('**/api/desktop/teach', async (route) => {
@@ -90,7 +120,7 @@ test.describe('Teach a task on the desktop', () => {
 				})
 			})
 
-			await page.goto(`/${account.workspaceId}/desktop`)
+			await page.goto(`/${account.workspaceId}/agents/${viewed.id}`)
 			await expect(page.getByText('Live')).toBeVisible()
 			await expectNoHorizontalOverflow(page)
 
@@ -151,7 +181,8 @@ test.describe('Teach a task on the desktop', () => {
 	test('does not send anything when nothing was demonstrated', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await setFlag(page)
-		await fakeBackend(page)
+		const viewed = await seedAgent(account)
+		await fakeBackend(page, viewed)
 		vnc = await attachFakeVnc(page)
 		let teachCalls = 0
 		await page.route('**/api/desktop/teach', async (route) => {
@@ -159,7 +190,7 @@ test.describe('Teach a task on the desktop', () => {
 			await route.abort()
 		})
 
-		await page.goto(`/${account.workspaceId}/desktop`)
+		await page.goto(`/${account.workspaceId}/agents/${viewed.id}`)
 		await expect(page.getByText('Live')).toBeVisible()
 		await page.getByRole('button', { name: 'Teach a task' }).click()
 		await page.getByLabel('What are you about to show?').fill('Nothing really')
@@ -174,10 +205,11 @@ test.describe('Teach a task on the desktop', () => {
 		test(`shows the recording state in ${scheme} mode`, async ({ page, account }) => {
 			await page.emulateMedia({ colorScheme: scheme })
 			await setFlag(page)
-			await fakeBackend(page)
+			const viewed = await seedAgent(account)
+			await fakeBackend(page, viewed)
 			vnc = await attachFakeVnc(page)
 
-			await page.goto(`/${account.workspaceId}/desktop`)
+			await page.goto(`/${account.workspaceId}/agents/${viewed.id}`)
 			await expect(page.getByText('Live')).toBeVisible()
 			await page.getByRole('button', { name: 'Teach a task' }).click()
 			await page.getByLabel('What are you about to show?').fill('Show something')
