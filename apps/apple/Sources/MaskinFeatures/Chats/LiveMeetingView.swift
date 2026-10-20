@@ -51,7 +51,8 @@ struct LiveMeetingScreen: View {
 		case .thread(let chat, let lead):
 			phase = .ready(
 				LiveMeetingSession(
-					kind: .adHoc, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
+					kind: .adHoc, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts,
+					realtime: realtimeCall(with: lead)),
 				ownsChat: false)
 		case .dailyBriefing, .chiefOfStaff:
 			let kind: LiveMeetingKind
@@ -61,12 +62,25 @@ struct LiveMeetingScreen: View {
 					environment: environment, oneToOne: kind == .adHoc)
 				phase = .ready(
 					LiveMeetingSession(
-						kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts),
+						kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts,
+						realtime: realtimeCall(with: lead)),
 					ownsChat: true)
 			} catch {
 				phase = .failed((error as? BriefingChat.Failure)?.message ?? error.localizedDescription)
 			}
 		}
+	}
+
+	/// The OpenAI Realtime call with the lead agent. Nil when the lead isn't an agent; the call
+	/// then runs as a dictated conversation.
+	private func realtimeCall(with lead: ChatParticipant) -> RealtimeVoiceCall? {
+		guard lead.kind == .agent else { return nil }
+		return RealtimeVoiceCall(
+			agentID: lead.id, agentName: lead.name,
+			calls: URLSessionVoiceCalls(
+				baseURL: environment.baseURL, clientSource: environment.clientSource,
+				credentials: environment.auth.credentialsProvider),
+			makeTransport: RealtimeVoiceCall.deviceTransport)
 	}
 }
 
