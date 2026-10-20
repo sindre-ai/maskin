@@ -236,14 +236,15 @@ export function classifyPosthogCommand(command: unknown): CallVerdict {
 	let tail = rest
 	for (;;) {
 		const m = /^[ \t]+(\S+)/.exec(tail)
-		if (!m) return refused
+		const name = m?.[1]
+		if (!m || name === undefined) return refused
 		tail = tail.slice(m[0].length)
-		if (m[1] === '--json') continue
-		if (!EXEC_TOOL_NAME.test(m[1])) return refused
-		const innerTool = m[1].slice(0, 100)
+		if (name === '--json') continue
+		if (!EXEC_TOOL_NAME.test(name)) return refused
+		const innerTool = name.slice(0, 100)
 		const input = tail.replace(/^[ \t]+|[ \t]+$/g, '')
 		if (input !== '' && !isOneJsonValue(input)) return { kind: 'write', innerTool }
-		return { kind: classifyPosthogInnerTool(m[1]), innerTool }
+		return { kind: classifyPosthogInnerTool(name), innerTool }
 	}
 }
 
