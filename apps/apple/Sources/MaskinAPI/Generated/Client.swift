@@ -6391,7 +6391,18 @@ public struct Client: APIProtocol {
                     in: &request.headerFields,
                     contentTypes: input.headers.accept
                 )
-                return (request, nil)
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
             },
             deserializer: { response, responseBody in
                 switch response.status.code {
@@ -6417,6 +6428,28 @@ public struct Client: APIProtocol {
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
                     return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
                 case 500:
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output.InternalServerError.Body
@@ -6814,7 +6847,18 @@ public struct Client: APIProtocol {
                     in: &request.headerFields,
                     contentTypes: input.headers.accept
                 )
-                return (request, nil)
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
             },
             deserializer: { response, responseBody in
                 switch response.status.code {
@@ -12154,6 +12198,13 @@ public struct Client: APIProtocol {
                     explode: true,
                     name: "ids",
                     value: input.query.ids
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "kind",
+                    value: input.query.kind
                 )
                 try converter.setQueryItemAsURI(
                     in: &request,

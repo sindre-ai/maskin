@@ -1314,8 +1314,14 @@ extension APIProtocol {
     ///
     /// - Remark: HTTP `POST /api/integrations/linkedin-unipile/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/linkedin-unipile/connect/post`.
-    public func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(headers: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input.Headers) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output {
-        try await post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input(headers: headers))
+    public func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
+        headers: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output {
+        try await post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input(
+            headers: headers,
+            body: body
+        ))
     }
     /// List integrations for workspace
     ///
@@ -1363,11 +1369,13 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/integrations/{provider}/connect/post`.
     public func post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
         path: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Path,
-        headers: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Headers
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input.Body? = nil
     ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output {
         try await post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Input(
             path: path,
-            headers: headers
+            headers: headers,
+            body: body
         ))
     }
     /// Update integration settings
