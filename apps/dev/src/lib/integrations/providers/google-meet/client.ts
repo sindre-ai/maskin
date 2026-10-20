@@ -55,6 +55,16 @@ export async function callGoogleApi<T>(
 	const res = await fetch(target.toString(), { method, headers, body })
 	if (!res.ok) {
 		const raw = await res.text().catch(() => '')
+		if (res.status === 403) {
+			// classifyGoogleApiError labels every non-scope 403 as "not the host", which hides
+			// the real cause (Pub/Sub topic permission, API not enabled, account type). Keep
+			// Google's own answer in the server log; it never reaches the tool envelope.
+			logger.warn('Google API returned 403', {
+				method,
+				endpoint: `${target.host}${target.pathname}`,
+				body: raw.slice(0, 500),
+			})
+		}
 		throw classifyGoogleApiError(res.status, raw, res.headers.get('retry-after') ?? undefined)
 	}
 	if (res.status === 204) return undefined as unknown as T
