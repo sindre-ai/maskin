@@ -109,8 +109,8 @@ private struct ShellToolbarModifier: ViewModifier {
 				// zero-spacing stack because a ToolbarItemGroup puts system spacing between its
 				// items, which left a wide gap between Live and the avatar; v6 packs 44 pt slots
 				// edge to edge.
-				ToolbarItem(placement: .primaryAction) {
-					HStack(spacing: 0) {
+				ToolbarItemGroup(placement: .primaryAction) {
+					Group {
 					if let display = actions.display {
 						Menu {
 							display.content

@@ -174,7 +174,7 @@ struct LoopDetailContent: View {
 					LoopInMotionSection(store: store)
 				case .activity:
 					if let timeline {
-						FlowTimelineView(model: timeline, showsFilter: true)
+						FlowTimelineView(model: timeline)
 					} else {
 						LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
 						activity

@@ -14,6 +14,8 @@ struct AgentDetailView: View {
 	var flows: [LoopSummary] = []
 	/// The workspace's triggers; the ones that wake this agent show as a card. Nil in previews.
 	var triggers: TriggersStore?
+	/// The objects this agent drives (its Objects tab). Empty while loading.
+	var objects: [WorkObject] = []
 	@State private var showRun = false
 	@State private var showNewTrigger = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -47,7 +49,8 @@ struct AgentDetailView: View {
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
 						onStop: { sessionToStop = $0 },
-						onChangeInChat: { changeInChat() })
+						onChangeInChat: { changeInChat() },
+						objects: objects, onOpenObject: { runtime?.openObject($0) })
 				} else {
 					placeholder
 				}
@@ -170,10 +173,14 @@ struct AgentDetailContent: View {
 	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
 	var onChangeInChat: () -> Void = {}
+	/// The objects this agent drives, and what tapping one does.
+	var objects: [WorkObject] = []
+	var onOpenObject: (String) -> Void = { _ in }
 
-	/// The agent page's two tabs: how it is set up, and what it has done.
+	/// The agent page's tabs: how it is set up, what it drives, and what it has done.
 	enum Tab: String, CaseIterable, Identifiable {
 		case setup = "Setup"
+		case objects = "Objects"
 		case sessions = "Sessions"
 		var id: String { rawValue }
 	}
@@ -191,6 +198,7 @@ struct AgentDetailContent: View {
 		.pickerStyle(.segmented)
 		switch tab {
 		case .setup: setupCards
+		case .objects: objectCards
 		case .sessions: sessionCards
 		}
 	}
@@ -301,6 +309,40 @@ struct AgentDetailContent: View {
 		}
 	}
 
+	@ViewBuilder private var objectCards: some View {
+		card("Driving") {
+			if objects.isEmpty {
+				Text("Not driving any objects yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			} else {
+				VStack(spacing: 0) {
+					ForEach(objects) { object in
+						Button { onOpenObject(object.id) } label: {
+							HStack(spacing: MaskinSpace.s5) {
+								VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+									Text(object.title ?? "Untitled")
+										.maskinText(.subhead)
+										.foregroundStyle(MaskinColor.ink2)
+										.lineLimit(2)
+									Text("\(object.type.capitalized) · \(object.status.replacingOccurrences(of: "_", with: " ").capitalized)")
+										.maskinText(.caption)
+										.foregroundStyle(MaskinColor.ink5)
+								}
+								Spacer(minLength: 0)
+								Image(systemName: "chevron.right")
+									.foregroundStyle(MaskinColor.ink5)
+									.accessibilityHidden(true)
+							}
+							.frame(minHeight: MaskinSpace.touchMin)
+							.contentShape(Rectangle())
+						}
+						.buttonStyle(.plain)
+						if object.id != objects.last?.id { Divider().overlay(MaskinSurface.separator) }
+					}
+				}
+			}
+		}
+	}
+
 	@ViewBuilder private var sessionCards: some View {
 		card("Recent sessions") {
 			if store.sessions.isEmpty {
@@ -327,11 +369,19 @@ struct AgentDetailContent: View {
 					.maskinText(.title)
 					.foregroundStyle(MaskinColor.ink)
 					.multilineTextAlignment(.center)
-				Text(profile.role)
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
-					.multilineTextAlignment(.center)
-					.lineLimit(2)
+				if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+					!description.isEmpty
+				{
+					Text(description)
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink4)
+						.multilineTextAlignment(.center)
+				} else {
+					Text(profile.role)
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink4)
+						.multilineTextAlignment(.center)
+				}
 				AgentStatusLabel(status: store.status).padding(.top, MaskinSpace.s2)
 			}
 			.accessibilityElement(children: .combine)

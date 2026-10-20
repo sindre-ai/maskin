@@ -137,13 +137,18 @@ private struct AgentDetailHost: View {
 	}
 
 	var body: some View {
-		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows, triggers: triggers)
+		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows, triggers: triggers, objects: drivenObjects)
 			.task { await store.start() }
 			.task { await triggers.start() }
 			.task {
 				// Flows the agent works in: a best-effort read, so a failure just hides the card.
 				guard let all = try? await loopsAPI?.loops() else { return }
 				flows = all.filter { $0.agentIDs.contains(agentID) }
+			}
+			.task {
+				// The objects this agent drives: also best-effort, an empty tab on failure.
+				let query = ObjectsQuery(driver: agentID, limit: ServerLimits.maxPageSize, sort: .updated)
+				drivenObjects = (try? await ObjectsServices(environment: environment).remote.list(query)) ?? []
 			}
 			.onDisappear {
 				store.stop()

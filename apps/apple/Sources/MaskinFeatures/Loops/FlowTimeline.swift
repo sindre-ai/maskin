@@ -23,8 +23,6 @@ final class FlowTimelineModel {
 	let composer: ChatComposerModel
 	/// The event a held-down Reply picked; the next comment threads under it.
 	fileprivate(set) var replyingTo: TimelineItem?
-	/// Which part of the timeline the Activity tab shows.
-	var filter: FlowTimelineFilter = .all
 	@ObservationIgnored private let events: EventHub?
 
 	init(environment: AppEnvironment, flowID: String, flowName: String? = nil) {
@@ -73,41 +71,18 @@ final class FlowTimelineModel {
 	}
 }
 
-/// What the timeline shows: everything, only what people and agents wrote, or only system events.
-enum FlowTimelineFilter: String, CaseIterable, Identifiable {
-	case all = "All"
-	case messages = "Messages"
-	case updates = "Updates"
-	var id: String { rawValue }
-
-	func includes(_ item: TimelineItem) -> Bool {
-		switch (self, item.kind) {
-		case (.all, _), (.messages, .comment), (.updates, .activity): true
-		default: false
-		}
-	}
-}
-
 /// The timeline itself, grouped by day with replies under their parents. Hold an event to reply;
-/// tap an object a comment links to to open it. `showsFilter` adds the All / Messages / Updates
-/// picker above it.
+/// tap an object a comment links to to open it.
 struct FlowTimelineView: View {
 	@Bindable var model: FlowTimelineModel
-	var showsFilter = false
 	var now: Date = Date()
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			if showsFilter {
-				Picker("Show", selection: $model.filter) {
-					ForEach(FlowTimelineFilter.allCases) { Text($0.rawValue).tag($0) }
-				}
-				.pickerStyle(.segmented)
-			}
 			ObjectActivityView(
 				store: model.store, onOpenObject: { runtime?.openObject($0) },
-				onReply: { model.startReply(to: $0) }, include: { model.filter.includes($0) }, now: now)
+				onReply: { model.startReply(to: $0) }, now: now)
 		}
 	}
 }

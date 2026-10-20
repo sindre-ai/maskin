@@ -142,7 +142,7 @@ private struct AdaptiveTabs: View {
 				.presentationDetents([.medium, .large])
 				.environment(\.shellShowsAvatar, false)
 		}
-		.minimizeTabBarOnScroll()
+		.keepTabBarExpanded()
 	}
 }
 
@@ -260,11 +260,12 @@ extension ShellTab {
 }
 
 extension View {
-	/// iOS 26: the tab bar collapses while scrolling down. No-op elsewhere.
-	fileprivate func minimizeTabBarOnScroll() -> some View {
+	/// iOS 26: the tab bar stays expanded, every tab visible, however far the content scrolls.
+	/// No-op elsewhere.
+	fileprivate func keepTabBarExpanded() -> some View {
 		#if os(iOS)
 			if #available(iOS 26, *) {
-				return AnyView(tabBarMinimizeBehavior(.onScrollDown))
+				return AnyView(tabBarMinimizeBehavior(.never))
 			}
 		#endif
 		return AnyView(self)

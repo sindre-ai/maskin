@@ -182,17 +182,20 @@ public struct ObjectsSchema: Sendable, Equatable {
 public struct ObjectsQuery: Sendable, Equatable {
 	public var type: String?
 	public var status: String?
+	/// Only objects this actor drives (an agent's page).
+	public var driver: String?
 	public var search: String
 	public var limit: Int
 	public var offset: Int
 	public var sort: ObjectsSort
 
 	public init(
-		type: String? = nil, status: String? = nil, search: String = "", limit: Int = 50, offset: Int = 0,
-		sort: ObjectsSort = .needsYou
+		type: String? = nil, status: String? = nil, driver: String? = nil, search: String = "", limit: Int = 50,
+		offset: Int = 0, sort: ObjectsSort = .needsYou
 	) {
 		self.type = type
 		self.status = status
+		self.driver = driver
 		self.search = search
 		self.limit = limit
 		self.offset = offset
