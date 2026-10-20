@@ -229,7 +229,16 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 	return rest as T
 }
 
+/** What a group chat is about: an object (task, bet, insight) or an installed loop. */
+export const conversationSubjectSchema = z.object({
+	type: z.enum(['object', 'loop']),
+	id: z.string().uuid(),
+})
+
 export const createConversationSchema = z.object({
+	// With a subject, asking again returns the chat that already exists for it
+	// (and adds any new participants) instead of creating a second one.
+	subject: conversationSubjectSchema.optional(),
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
 	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
 	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
@@ -253,6 +262,8 @@ export const conversationListQuerySchema = z.object({
 	// default "Chats" list, archived ones need an explicit filter to surface.
 	archived: booleanQueryParam.default(false),
 	unread_only: booleanQueryParam.optional(),
+	subject_type: z.enum(['object', 'loop']).optional(),
+	subject_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

@@ -322,6 +322,8 @@ export const conversationListItemResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	title: z.string(),
+	subjectType: z.enum(['object', 'loop']).nullable(),
+	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),

@@ -638,11 +638,24 @@ export const conversations = pgTable(
 		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
 		// the same transaction as every message insert.
 		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		// What a group chat is about: an object (task/bet/insight) or an installed
+		// loop. Polymorphic, so no FK; the create route checks the target exists in
+		// the workspace. NULL for ordinary chats.
+		subjectType: text('subject_type'),
+		subjectId: uuid('subject_id'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One group chat per subject: asking for it again finds the existing one.
+		uniqueIndex('conversations_subject_uniq')
+			.on(t.workspaceId, t.subjectType, t.subjectId)
+			.where(sql`${t.subjectId} IS NOT NULL`),
+		check(
+			'conversations_subject_check',
+			sql`(${t.subjectType} IS NULL AND ${t.subjectId} IS NULL) OR (${t.subjectType} IN ('object', 'loop') AND ${t.subjectId} IS NOT NULL)`,
+		),
 		check(
 			'conversations_title_auto_state_check',
 			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
