@@ -92,7 +92,7 @@ targets:
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
-        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages.
+        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages and talk with your agents in a live call.
         NSCameraUsageDescription: Maskin uses the camera so you can take a photo to attach to a message.
         UILaunchScreen:
           UIColorName: LaunchBackground
