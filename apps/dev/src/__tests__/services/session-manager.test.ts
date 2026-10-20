@@ -2656,14 +2656,17 @@ describe('SessionManager', () => {
 				expect(mcpKeysOf(env)).toContain('integration-slack')
 			})
 
-			it('keeps token and server for every agent when the auto-injected server needs the token to sign in (PostHog)', async () => {
+			it('serves an auto-injected hosted server through the gateway and keeps its token out of the container (PostHog)', async () => {
 				const env = await launchEnv({
 					provider: 'posthog',
 					providerConfig: posthogProviderConfig,
 					token: 'phx_token_value',
 				})
-				expect(env.POSTHOG_TOKEN).toBe('phx_token_value')
+				// The agent signs in to Maskin; the provider token stays on the server.
+				expect(env.POSTHOG_TOKEN).toBeUndefined()
+				expect(JSON.stringify(env)).not.toContain('phx_token_value')
 				expect(mcpKeysOf(env)).toContain('integration-posthog')
+				expect(env.MCP_SERVERS_JSON).toContain('/api/integrations/posthog/gateway')
 			})
 
 			it('does not put the token in the container for an unreferencing agent but still uses it for the preflight Slack alert', async () => {

@@ -146,6 +146,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
+	[
+		'POST',
+		'/api/integrations/:provider/gateway',
+		'MCP gateway, forwards tool calls with the provider token',
+	],
+	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
 	['POST', '/api/integrations/linkedin-unipile/mcp', 'MCP endpoint, tools act as the identity'],
 	[
 		'POST',

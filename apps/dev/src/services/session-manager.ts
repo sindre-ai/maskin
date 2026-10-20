@@ -8,6 +8,20 @@ import { promisify } from 'node:util'
 import { createGzip } from 'node:zlib'
 
 const execFileAsync = promisify(execFileCb)
+
+/** provider → the URL of its own hosted MCP server, for each provider served through the gateway. */
+function gatewayUpstreamUrls(): Map<string, string> {
+	const out = new Map<string, string>()
+	for (const provider of GATEWAY_PROVIDERS) {
+		try {
+			const url = (getProvider(provider)?.config.mcp?.server as { url?: unknown } | undefined)?.url
+			if (typeof url === 'string' && !url.startsWith('$')) out.set(provider, url)
+		} catch {
+			// A provider this build does not register has nothing to rewrite.
+		}
+	}
+	return out
+}
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -97,6 +111,7 @@ import {
 	stripSessionLevelMcps,
 } from '../lib/integrations/keychain-mcp-guard'
 import { getCredential } from '../lib/integrations/lookup'
+import { GATEWAY_PROVIDERS, rewriteMcpServersForGateway } from '../lib/integrations/mcp-gateway'
 import {
 	mcpServersReferenceEnvKey,
 	serverSpecReferencesEnvKey,
@@ -2694,7 +2709,15 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				const agentUsesToken =
 					mcpServersReferenceEnvKey(agentToolsMcpServers, envVarName) ||
 					mcpServersReferenceEnvKey(sessionConfig.mcps, envVarName)
-				if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
+				// A gateway provider's token never reaches the container: the agent calls it
+				// through Maskin, which holds the token and enforces the agent's access. With
+				// the token in the environment an agent could skip the gate with a plain curl.
+				if (GATEWAY_PROVIDERS.has(integration.provider)) {
+					logger.debug('Gateway provider token withheld from the container', {
+						sessionId: session.id,
+						provider: integration.provider,
+					})
+				} else if (agentUsesToken || (autoInjectServer && serverNeedsToken)) {
 					envVars[envVarName] = accessToken
 				} else {
 					logger.debug('Integration token not injected; agent config does not reference it', {
@@ -2948,8 +2971,17 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				}
 			}
 		}
-		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
-		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
+		// Entries that point at a gateway provider's own server go through Maskin instead.
+		const gatewayUpstreams = gatewayUpstreamUrls()
+		const gatedAgentToolsMcpServers = rewriteMcpServersForGateway(
+			stripFailedIdentities(agentToolsMcpServers, preflightVerdicts) ?? undefined,
+			gatewayUpstreams,
+		).servers
+		const gatedSessionMcpServers =
+			rewriteMcpServersForGateway(
+				stripFailedIdentities(sessionMcpServers, preflightVerdicts),
+				gatewayUpstreams,
+			).servers ?? {}
 
 		// Stamp the session id onto every Maskin MCP entry so `POST /mcp` can
 		// attribute each tool call to this session (see routes/mcp.ts
