@@ -48,6 +48,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
@@ -1039,7 +1040,13 @@ const askSessionRoute = createRoute({
 		200: {
 			content: {
 				'application/json': {
-					schema: z.object({ message_id: z.number(), posted: z.literal(true) }),
+					schema: z.object({
+						message_id: z.number(),
+						posted: z.literal(true),
+						// 'chief_of_staff' means the answer goes to the Chief of Staff's chat,
+						// not back into this session, so the agent must not wait for it.
+						delivered_to: z.enum(['chat', 'chief_of_staff']),
+					}),
 				},
 			},
 			description: 'Question posted to the conversation',
@@ -1082,9 +1089,20 @@ app.openapi(askSessionRoute, (async (c) => {
 	}
 
 	// A chat session asks in its own conversation; a helper another agent started
-	// asks in the one it was started from.
-	const conversationId = session.conversationId ?? helperAskConversationId(session)
-	if (!session.interactive || !conversationId) {
+	// asks in the one it was started from. Anything else (a trigger-driven run, a
+	// session started from the sessions UI) asks in the person's 1-1 with the
+	// Chief of Staff, so every question lands in one thread.
+	let conversationId = session.conversationId ?? helperAskConversationId(session)
+	let deliveredTo: 'chat' | 'chief_of_staff' = 'chat'
+	if (!conversationId) {
+		const humanId = await resolveAskTargetHuman(db, session.workspaceId, session.createdBy)
+		const cosChat = humanId ? await ensureChiefOfStaffChat(db, session.workspaceId, humanId) : null
+		if (cosChat) {
+			conversationId = cosChat.conversationId
+			deliveredTo = 'chief_of_staff'
+		}
+	}
+	if (!conversationId || (deliveredTo === 'chat' && !session.interactive)) {
 		return c.json(
 			createApiError(
 				'CONFLICT',
@@ -1094,7 +1112,7 @@ app.openapi(askSessionRoute, (async (c) => {
 		)
 	}
 
-	const isHelper = !session.conversationId
+	const isHelper = deliveredTo === 'chat' && !session.conversationId
 	const created = await insertConversationMessage(db, {
 		conversationId,
 		workspaceId: session.workspaceId,
@@ -1146,7 +1164,7 @@ app.openapi(askSessionRoute, (async (c) => {
 		questionCount: questions.length,
 	})
 
-	return c.json({ message_id: created.id, posted: true as const })
+	return c.json({ message_id: created.id, posted: true as const, delivered_to: deliveredTo })
 }) as RouteHandler<typeof askSessionRoute, Env>)
 
 // POST /:id/connect-card - Surface a "connect this integration" card in the chat

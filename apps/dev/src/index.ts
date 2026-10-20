@@ -25,6 +25,7 @@ import {
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
 import { FLAGS, isFlagEnabledForWorkspace } from './lib/feature-flags'
+import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
@@ -299,6 +300,14 @@ logger.info('Chain snapshot job scheduled')
 const viesSchedulerJob = new ViesSchedulerJob(db)
 viesSchedulerJob.start()
 logger.info('VIES scheduler job started')
+
+// Custom MCP servers used to live on each agent. Move them up to the workspace, where grants
+// decide who gets them. Idempotent, and a failure here never blocks startup.
+migrateAgentToolServers(db)
+	.then(({ servers, agents }) => {
+		if (servers > 0) logger.info('Moved agent tool servers to the workspace', { servers, agents })
+	})
+	.catch((err) => logger.error('Agent tool server migration failed', { error: String(err) }))
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()

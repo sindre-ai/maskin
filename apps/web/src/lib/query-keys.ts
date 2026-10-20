@@ -1,4 +1,8 @@
 export const queryKeys = {
+	account: {
+		deletionPreview: (deleteSoleWorkspaces: boolean) =>
+			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
@@ -42,6 +46,7 @@ export const queryKeys = {
 		all: () => ['workspaces'] as const,
 		detail: (id: string) => ['workspaces', 'detail', id] as const,
 		members: (id: string) => ['workspaces', id, 'members'] as const,
+		deletionPreview: (id: string) => ['workspaces', id, 'deletion-preview'] as const,
 	},
 	invites: {
 		list: (workspaceId: string) => ['invites', workspaceId] as const,
@@ -153,6 +158,9 @@ export const queryKeys = {
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+	},
+	forYou: {
+		list: (workspaceId: string) => ['for-you', workspaceId] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

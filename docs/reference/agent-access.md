@@ -7,7 +7,7 @@ last_updated: 2026-10-20
 
 # Agent access (grants)
 
-A person decides what each agent may do with each connected integration and each saved credential. Everything except the Maskin MCP is covered.
+A person decides what each agent may do with each connected integration, each saved credential and each custom tool server. The Maskin MCP is the exception: it is on every agent, read & write, and nobody can change that.
 
 ## One source of truth, shown the same everywhere
 
@@ -17,7 +17,7 @@ Access lives in `agent_grants` plus `integrations.default_agent_access`, resolve
 |---------|-------|-----------------|
 | Integrations page | `GET /api/integrations` (`defaultAgentAccess`, `agentGrants`) | the grants and default-access routes |
 | Keychain page | the same list | `PUT /:id/grants` |
-| Agent page (Access) | `GET /api/actors/:id/access` | the same grants routes |
+| Agent page (Tools and access) | `GET /api/actors/:id/access` | the same grants routes |
 | `get_actor` (`access`) | `GET /api/actors/:id/access` | `update_integration_access` |
 | `list_integrations` | `GET /api/integrations` | `update_integration_access` |
 | `list_keychain_credentials` | `describeAgentAccess` | `request_keychain_access` (a person allows) |
@@ -29,6 +29,23 @@ Rules that keep it that way:
 - Wording comes from `@maskin/shared` (`AGENT_ACCESS_LABELS`, `AGENT_ACCESS_EFFECT`): "Read", "Read & write", "No access". There is no write-only level: an agent that may change something may also look at it.
 - Web: the per-agent access query is nested under `queryKeys.integrations.all(workspaceId)`, and the SSE handler invalidates that key on every `integration` event, so an open page refreshes when access changes elsewhere.
 - `apps/dev/src/__tests__/integration/access-alignment.test.ts` changes access through every entry point and asserts the list, the agent view, the session list and a real launch agree after each. Extend it when you add an entry point.
+
+## The Maskin MCP is not a choice
+
+Without it an agent cannot read or write anything in Maskin, so it is attached to every session whether or not the agent's own config lists it (`session-manager.ts`, via `hasMaskinMcpEntry` / `MASKIN_MCP_SERVER` in `lib/mcp-session-header.ts`). It has no grant row and no control: the Integrations page (under Custom tools) and the agent page (under Tools) show it as a locked "Read & write" row, and `describeAgentAccess` reports it as `maskin_mcp` so every screen says the same thing. An agent that already lists it (the usual case for older agents) does not get a second one.
+
+## Tools: custom MCP servers
+
+An MCP server a person adds by hand (a command to run, or a URL to call) is a workspace-level **tool server**, managed in the **Custom tools** section of Settings → Integrations and shared with agents through the same grants, instead of being set up on each agent. The agent page no longer has a Tools editor; its "Tools and access" section lists what the agent has and switches it on or off.
+
+- One `integrations` row per server: `provider = custom-mcp`, `provider_mode = registered`, `display_name` is its name, `external_id` is the row id (the unique index on workspace, actor and provider would otherwise let a workspace hold one). The definition (command, args, env, URL, headers) is the encrypted `credentials` blob; `config.custom_mcp` is a non-secret summary (`transport`, `target`) that every member can see.
+- `default_agent_access` starts `none`: a new server reaches no agent until a person picks them, or turns on **All agents** (`read`).
+- **Levels depend on whether Maskin can sit in front of the server.** An HTTP server at a public address (`isGatewayable`; recorded as `config.custom_mcp.gated`) has the same Read / Read & write / No access as a built-in integration, enforced by `/api/custom-mcp-servers/:id/gateway` (the same proxy as the provider gateway: Maskin keeps the server's headers, the agent signs in with its own key, a refused write never reaches the server). Tools are classified read or write by the server's own hints, then by name, failing closed (`tool-kinds.ts`). A stdio server runs inside the agent's container and a URL that is a `${PLACEHOLDER}` or a private, loopback or link-local address cannot be reached from the API, so those are on (`read_write`) or off (`none`) only, and the grants routes refuse `read` for them. The gateway also refuses a name that resolves to a private address. An edit that makes a gated server ungateable turns its Read grants into No access.
+- At launch an agent with access gets the server under `custom-<name>-<id>` (`customServerKey`), pointed at the gateway when it is gated so the agent never holds its headers; one the agent already carries is not attached twice. The launch prompt's access block leaves custom servers out: they are simply there or not.
+- API: `POST /api/custom-mcp-servers`, `GET|PUT /api/custom-mcp-servers/:id`; removal is `DELETE /api/integrations/:id`. Humans only; editing is for whoever added it or a workspace admin. A read returns env and header values (and secret-looking args) masked; sending the mask back keeps the stored value, but only while the command or URL is unchanged, so a mask cannot be used to send a stored secret somewhere new.
+- **Saved credentials instead of pasted secrets.** An env or header value can name a Keychain credential, written `${KEYCHAIN_BYO_APIKEY_STRIPE}` (a login is `..._USERNAME` / `..._PASSWORD`), which the form's "Saved credential" picker inserts. The server stores the reference, never the secret, so rotating the key in the Keychain updates every server that uses it. A reference is accepted only in env and header values (not the command, args, URL or a name), only for a credential that exists, and only from whoever saved that credential or a workspace admin, so nobody can aim a server at someone else's key; it is re-checked when the command or URL changes. It is filled in per credential access: for a gated HTTP server Maskin reads it as the calling agent at call time (grants apply, the read is audited, the agent never sees it); for a server that runs in the container, envsubst fills it from the `KEYCHAIN_` env the Keychain injects. An agent without the credential does not get a container server (the launch prompt says which credential it needs and points at `request_keychain_access`); a gated server stays attached and its calls fail with the same message. A reference shows back unmasked; any other value stays masked.
+- It is not a provider you "connect": `/providers` leaves it out and `POST /api/integrations/custom-mcp/connect` refuses it.
+- **Existing servers move up.** On startup `migrateAgentToolServers` (`lib/integrations/migrate-agent-tool-servers.ts`) turns each server found in an agent's `tools.mcpServers` into one row, with a read & write grant for every agent that had it, and removes it from the agent. The same server on several agents is one row. Left alone: the Maskin entry, anything that belongs to a connected integration (`/api/integrations/...`, a provider's own MCP URL, GitHub), and anything that does not validate. It is idempotent and takes an advisory lock per workspace. An agent created later with `tools.mcpServers` set through the API still works at launch, but nothing shows or edits it on the agent page.
 
 ## The model
 

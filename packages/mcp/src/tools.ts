@@ -1574,7 +1574,7 @@ export const tools = {
 	},
 	ask_user_question: {
 		description:
-			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. It only works inside an agent session started from a chat; elsewhere there is nobody to ask, and the tool says so — then decide for yourself and state the assumption you made. Give 2 to 4 options each; a person can always type something else.',
+			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. Inside a chat session the answer comes back as your next turn. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, and the answer goes there too, so do not wait: decide for yourself, state the assumption you made, and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 options each; a person can always type something else.',
 		inputSchema: z.object({
 			questions: z
 				.array(
@@ -1666,6 +1666,12 @@ export const tools = {
 				.optional()
 				.describe('Filter by notification status'),
 			type: z.enum(['needs_input', 'recommendation', 'good_news', 'alert']).optional(),
+			kind: z
+				.string()
+				.min(1)
+				.max(64)
+				.optional()
+				.describe('Only notifications whose metadata.kind equals this, e.g. "for_you".'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),

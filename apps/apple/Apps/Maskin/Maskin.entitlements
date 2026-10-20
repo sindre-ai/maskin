@@ -10,7 +10,6 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:maskin.io</string>
-		<string>applinks:www.maskin.io</string>
 	</array>
 	<!-- Stub: lets the iOS app, a future watch app and the Mac app share one Keychain session.
 	     Pass the same string as KeychainSecretStore(accessGroup:) when that lands. -->

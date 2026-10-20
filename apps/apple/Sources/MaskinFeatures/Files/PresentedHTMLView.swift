@@ -13,9 +13,11 @@ struct PresentedHTMLView: View {
 	var revision = 0
 	/// A preview inside a card passes `false` so a tap opens the page instead of scrolling it.
 	var isInteractive = true
+	/// Lets a caller drive the page (a deck's cards) from outside.
+	var probe: HTMLProbe?
 
 	var body: some View {
-		HTMLWebView(html: html, revision: revision, probe: nil)
+		HTMLWebView(html: html, revision: revision, probe: probe)
 			.allowsHitTesting(isInteractive)
 	}
 }

@@ -129,6 +129,54 @@ struct BriefPlaybackTests {
 		#expect(!p.isFinished && p.index == 1)
 	}
 
+	@Test("a deck steps through its cards on tap, then moves to the next slide")
+	func deckStepsThenAdvances() {
+		var p = playback()
+		p.setSteps(3)
+		#expect(p.step == 0)
+		p.next()
+		#expect(p.index == 0 && p.step == 1)
+		p.next()
+		#expect(p.index == 0 && p.step == 2)
+		p.next()
+		#expect(p.index == 1 && p.step == 0 && p.steps == 1)
+	}
+
+	@Test("back inside a deck goes to the card before, not the previous slide")
+	func deckStepsBack() {
+		var p = playback()
+		p.next()
+		p.setSteps(4)
+		p.next(); p.next()
+		#expect(p.index == 1 && p.step == 2)
+		p.previous()
+		#expect(p.index == 1 && p.step == 1)
+		p.previous()
+		p.previous()
+		#expect(p.index == 0 && p.steps == 1)
+	}
+
+	@Test("time turns a deck's cards, then moves on")
+	func deckAdvancesOnTime() {
+		var p = playback()
+		p.setSteps(2)
+		#expect(p.currentDuration == 2 * BriefPlayback.secondsPerStep)
+		p.tick(BriefPlayback.secondsPerStep)
+		#expect(p.index == 0 && p.step == 1)
+		p.tick(BriefPlayback.secondsPerStep)
+		#expect(p.index == 1 && p.step == 0)
+	}
+
+	@Test("the last card of the last deck finishes the viewer")
+	func deckEndsViewer() {
+		var p = BriefPlayback(durations: [10], autoAdvances: true)
+		p.setSteps(2)
+		p.next()
+		#expect(!p.isFinished && p.step == 1)
+		p.next()
+		#expect(p.isFinished)
+	}
+
 	@Test("back on the first slide restarts it")
 	func backAtStart() {
 		var p = playback()

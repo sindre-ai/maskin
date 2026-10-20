@@ -10,7 +10,6 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:maskin.io</string>
-		<string>applinks:www.maskin.io</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>

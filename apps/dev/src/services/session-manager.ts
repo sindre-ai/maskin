@@ -104,6 +104,14 @@ import {
 } from '../lib/integrations/agent-access'
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
+	CUSTOM_MCP_PROVIDER,
+	customGatewayServerSpec,
+	customServerKey,
+	isGatedRow,
+	readCustomServer,
+} from '../lib/integrations/custom-mcp'
+import { credentialIndex, referencedVars } from '../lib/integrations/custom-mcp-keychain'
+import {
 	CredentialUndoneError,
 	ScopeDeniedError,
 	isAuthRevokedError,
@@ -163,7 +171,12 @@ import {
 	parseMcpInit,
 	registerMcpInit,
 } from '../lib/mcp-health'
-import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import {
+	MASKIN_MCP_SERVER,
+	MASKIN_MCP_SERVER_KEY,
+	hasMaskinMcpEntry,
+	stampMaskinSessionHeader,
+} from '../lib/mcp-session-header'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
@@ -2595,6 +2608,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const customServers: Array<{
+			integration: typeof integrations.$inferSelect
+			server: NonNullable<ReturnType<typeof readCustomServer>>
+		}> = []
 		// Keys attached because the agent has access to the integration (not GitHub's per-org
 		// entries), so a duplicate of an entry the agent already carries can be dropped.
 		const attachedKeys = new Set<string>()
@@ -2652,6 +2669,16 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				)
 					? mcp.server
 					: null
+
+			// A custom tool server is one row, one server: attached when the agent has access, and
+			// it never has a provider token to load.
+			if (integration.provider === CUSTOM_MCP_PROVIDER) {
+				const server = access !== 'none' ? readCustomServer(integration) : null
+				// Attached after the Keychain env is built: a server that names a saved credential
+				// only works for an agent that has it.
+				if (server) customServers.push({ integration, server })
+				continue
+			}
 
 			// LinkedIn has one server per connected identity and no single spec: attach each.
 			if (integration.provider === 'linkedin-unipile' && !mcp?.server) {
@@ -2818,6 +2845,32 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		const keychainEnv = await this.buildKeychainEnv(session)
 		Object.assign(envVars, keychainEnv)
 
+		// Custom tool servers. One that Maskin fronts (gated) is reached through the gateway, which
+		// fills any saved credential in itself and tells the agent plainly if it may not. One that
+		// runs in the container gets its credentials from the env just built, so without them it
+		// would start with an empty key: leave it out and tell the agent why.
+		const unattached: string[] = []
+		if (customServers.length > 0) {
+			const index = await credentialIndex(this.db, session.workspaceId)
+			for (const { integration, server } of customServers) {
+				const key = customServerKey(integration)
+				const gated = isGatedRow(integration.config)
+				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
+				if (missing.length > 0) {
+					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
+					unattached.push(
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+					)
+					continue
+				}
+				autoInjectedMcpServers[key] = gated ? customGatewayServerSpec(integration.id) : server
+				attachedKeys.add(key)
+			}
+			if (unattached.length > 0 && envVars.SYSTEM_PROMPT !== undefined) {
+				envVars.SYSTEM_PROMPT = `${envVars.SYSTEM_PROMPT}\n\n## Tool servers not attached\nThese tool servers are not available because they use a saved credential you cannot use yet:\n${unattached.join('\n')}\nDo not bring this up unless the task needs one of them. If it does, call list_keychain_credentials and request_keychain_access so a person can allow it, then continue in a new session.`
+			}
+		}
+
 		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
 		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
@@ -2968,6 +3021,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					sessionMcpServers[`session-mcp-${i}`] = mcp
 				}
 			}
+		}
+
+		// The Maskin MCP server is on every agent, whether or not its own config lists it: without
+		// it the agent cannot do anything in Maskin. It is not a per-agent choice.
+		if (!hasMaskinMcpEntry(agentToolsMcpServers, sessionMcpServers)) {
+			sessionMcpServers[MASKIN_MCP_SERVER_KEY] = MASKIN_MCP_SERVER
 		}
 
 		// Startup preflight: live-validate every attached GitHub identity BEFORE the

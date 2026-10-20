@@ -7,7 +7,7 @@ private let token = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE"
 
 @Suite("InviteLink")
 struct InviteLinkTests {
-	@Test("parses the universal link on both hosts", arguments: ["maskin.io", "www.maskin.io"])
+	@Test("parses the universal link on the maskin.io host", arguments: ["maskin.io"])
 	func universal(host: String) {
 		let link = InviteLink(url: URL(string: "https://\(host)/invite?token=\(token)")!)
 		#expect(link?.token == token)
@@ -30,6 +30,7 @@ struct InviteLinkTests {
 		"https://maskin.io/invite?other=1",
 		"https://maskin.io/invite/extra?token=" + token,
 		"https://maskin.io/invite?token=" + token + "&token=" + token,
+		"https://www.maskin.io/invite?token=" + token,
 		"https://evil.example/invite?token=" + token,
 		"https://maskin.io.evil.example/invite?token=" + token,
 		"http://maskin.io/invite?token=" + token,

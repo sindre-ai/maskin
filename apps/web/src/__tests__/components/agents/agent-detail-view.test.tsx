@@ -43,9 +43,6 @@ vi.mock('@/components/agents/agent-instructions-section', () => ({
 vi.mock('@/components/agents/agent-skills-section', () => ({
 	AgentSkillsSection: () => null,
 }))
-vi.mock('@/components/agents/agent-tools-section', () => ({
-	AgentToolsSection: () => null,
-}))
 vi.mock('@/components/agents/agent-composer', () => ({
 	AgentComposer: () => null,
 }))
