@@ -104,35 +104,40 @@ async function stubIntroThread(page: Page, conversationId: string) {
 		editedAt: null,
 	}
 	const posted: Array<Record<string, unknown>> = []
+	// What the server would return: oldest first here, newest first on the wire. A sent
+	// message joins the thread, or the refetch after the send would drop it again.
+	const thread: Array<Record<string, unknown>> = [intro]
 	await page.addInitScript(() => localStorage.setItem('ff:agent-intro-1-1', 'on'))
 	await page.route('**/api/conversations/*/messages*', async (route) => {
 		const method = route.request().method()
 		if (method === 'POST') {
 			const body = route.request().postDataJSON() as Record<string, unknown>
 			posted.push(body)
+			const sent = {
+				id: 9202,
+				conversationId,
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				kind: 'message',
+				content: body.content,
+				metadata: body.metadata ?? null,
+				sessionId: null,
+				createdAt: new Date().toISOString(),
+				editedAt: null,
+			}
+			thread.push(sent)
 			return route.fulfill({
 				status: 201,
 				contentType: 'application/json',
-				body: JSON.stringify({
-					id: 9202,
-					conversationId,
-					actorId: 'me',
-					actorName: 'Me',
-					actorType: 'human',
-					kind: 'message',
-					content: body.content,
-					metadata: body.metadata ?? null,
-					sessionId: null,
-					createdAt: new Date().toISOString(),
-					editedAt: null,
-				}),
+				body: JSON.stringify(sent),
 			})
 		}
 		if (method !== 'GET') return route.continue()
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify({ messages: [intro], has_more: false }),
+			body: JSON.stringify({ messages: [...thread].reverse(), has_more: false }),
 		})
 	})
 	// The step row is disabled when the agent is missing from the actor list, so list it.
